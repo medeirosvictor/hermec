@@ -1,0 +1,95 @@
+# Hermec — Application Plan
+
+> Working document for planning the Hermec application. Nothing here is final — this is where we discuss and shape the idea before writing code.
+
+## What is Hermec?
+
+A small, open-source, censorship-resilient comms app — "simple like TeamSpeak." Voice chat, screensharing, and video conferencing on PC and mobile. Motivated by Discord being blocked/censored in Brazil. Intended as an open base other comms apps can build on, with an eye toward creating standards.
+
+## Goals
+
+- Decentralized: anyone can self-host; **zero project-owned infrastructure**
+- Safe between strangers — privacy (incl. IP privacy) controlled by each participant
+- Portable, easy to install, straightforward to use
+- Lightweight, small codebase, fast
+- Open source, with an easy integration API (moddability)
+
+## Non-goals
+
+- Communities/social platform features (Discord-style nitro, discovery, etc.)
+- Federation between servers (for now — small codebase wins)
+
+## Architecture (agreed so far)
+
+**Connectivity model** — hybrid of TeamSpeak-style hosting and P2P:
+
+- A lightweight **Hermec server** anyone can host: handles rooms, presence, signaling, *and* acts as a TURN-style media relay.
+- **Media is relayed by default** (privacy-safe, works through CGNAT/mobile); **direct P2P is a per-participant opt-in** optimization.
+- A relay-choosing participant is relayed on *every* link, even against direct-mode peers — their choice protects them regardless of others.
+- Mixed calls: direct and relayed links coexist per pair; no whole-room downgrade.
+- Host sees the bandwidth cost of active relayed streams (hosting stays informed-consent).
+- Accepted trade-off: host bandwidth pays for participant privacy.
+
+## Core features
+
+**MVP (first ship):**
+- Voice chat
+- Screensharing
+- Text chat
+- Abstraction service layer — core behind clean interfaces so Hermec works as an agnostic boilerplate for comms apps (integration/modding from day one)
+
+**Later:** camera video conferencing (cheap once screenshare works — same pipeline), mobile and browser clients (same WebRTC protocol, same servers).
+
+## Platform (agreed)
+
+- MVP client: **native desktop app, minimal GUI** (one lightweight window: channels, chat, video area). Low RAM; no browser engine.
+- Packaging goal: **single static binary per OS** — download one file, run it.
+- Target OSes: **Windows + Linux** first; macOS after (signing/notarization deferred).
+- Mobile/browser: deferred, not abandoned — WebRTC wire protocol keeps them compatible later.
+
+## Tech stack (agreed)
+
+- **Go everywhere** — core/service layer, server, desktop client. One language, one repo; cross-compiles to Pi (`GOARCH=arm64`) and every desktop OS.
+- **Pion** — pure-Go WebRTC for server and client transport.
+- **Ebiten** — pure-Go 2D engine rendering the client; custom widgets, Kage shaders for CRT effects.
+- **libopus via CGo** — the one C dependency (voice codec). Caveat: CGo means cross-compiling needs a C toolchain per target; still ships as one file.
+- **Client aesthetic:** old military field-radio / amber phosphor CRT — monochrome amber on black, bitmap fonts, scanline/glow shaders, runtime Floyd–Steinberg-dithered 1-bit avatars.
+
+## Service layer & integration (agreed)
+
+- **Roles & signed identities** are the foundation: every connected thing (human or bot) is an identity; per-server config grants roles; roles gate which views/endpoints may be called.
+- **The service layer is the server's API** — one role-gated protocol over the same connection clients use, addressing the server runtime or a specific channel.
+- **Ephemeral media sessions:** a voice channel's relay pipeline spins up when the first user enters and tears down when the last leaves. Idle server ≈ tiny idle process (Pi-friendly).
+- **Doors:** (1) importable Go core packages — ship in MVP, our GUI is the first consumer; (2) server API for bots/agents — MVP; local client-control API deferred (will reuse the role-gated protocol); (3) theming config — minimal theme file in MVP (palette, font, shader toggles), layout config later.
+- **MCP server:** later, as a separate project that connects as an ordinary bot identity.
+
+## Identity (agreed)
+
+- **Ed25519 keypair identity, SSH-style single key file**; public key = identity, proven by signing a server challenge. No accounts, no issuer.
+- **Per-device keys** (mobile gets its own); device linking/cross-signing deferred post-MVP — until then a user's devices are distinct identities.
+- Display names are free-text; UI shows key fingerprints; servers pin first-seen keys. Key loss is unrecoverable by design; first-run backup prompt.
+
+## Security model (agreed, MVP)
+
+- **No private messaging in MVP** — voice channels (w/ screenshare) + group chat only; all content is channel-scoped.
+- **Access control:** password/invite and/or key allowlist gate server entry; roles gate everything inside.
+- **Transport encryption everywhere** (DTLS-SRTP media, TLS signaling/chat) — answers the ISP/state-blocking adversary fully.
+- **Host is trusted** and documented as such (can see relayed media + chat). E2EE not in MVP; protocol reserves key-exchange message types and frame-encryption hooks for later (DMs/stranger-scale).
+- Hardening: Go memory safety, small attack surface, parser fuzzing.
+
+## Spec
+
+Full design spec: **`docs/specs/2026-10-06-hermec-design.md`** (status: draft, awaiting Victor's review). Next step after approval: implementation plan (writing-plans), then MVP build sessions with Sonnet/Haiku subagents.
+
+## Decisions log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-10-06 | Hybrid connectivity: self-hosted lightweight server (signaling + relay), P2P as opt-in | Zero infra cost for the project; censorship resistance via many small hosts |
+| 2026-10-06 | Relay by default; each **participant** (not host) controls direct vs. relayed | Privacy-first, power to users; also solves mobile CGNAT via the same mechanism |
+| 2026-10-06 | MVP = voice + screenshare + text chat + abstraction service layer | Smallest slice proving the idea; screenshare implies most of the video pipeline anyway |
+| 2026-10-06 | MVP client: native desktop, minimal GUI, single-binary, Win+Linux first | Lightweight TeamSpeak feel; terminal ruled out (can't render screenshare); browser/mobile later via WebRTC |
+| 2026-10-06 | Stack: Go everywhere + Pion + Ebiten client + libopus (CGo) | Pion maturity beat Odin/Rust/Zig on ecosystem & AI-build velocity; Ebiten gives total control for the CRT aesthetic |
+| 2026-10-06 | Service layer: roles + signed identities, role-gated server API, ephemeral media sessions; no client control API in MVP | Bots/agents are first-class identities; idle servers cost ~nothing; door (b) deferrable without loss |
+| 2026-10-06 | Identity: Ed25519 keypairs, SSH-style file, per-device | No central issuer possible (zero infra); TeamSpeak/Nostr precedent; stolen device revokes one key only |
+| 2026-10-06 | Security: access gating + transport encryption + documented host-trust; E2EE slots reserved; **no DMs in MVP** | Threats disentangled: gating & memory safety answer the real concerns; DM cut removes main E2EE pressure consistently |

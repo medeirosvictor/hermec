@@ -1,0 +1,10 @@
+# vibe-wise learning notes (private)
+.vibe-wise/
+
+# Go build artifacts
+/bin/
+*.exe
+
+# OS noise
+Thumbs.db
+.DS_Store
