@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -50,6 +51,7 @@ type geometry struct {
 	statusY              float64
 	paneY0, paneY1       float64 // scrollback/channel vertical extent
 	inputY               float64
+	barY                 float64 // call bar top; meaningful only while barVisible
 	rightX, rightW       float64
 	adv, lh              float64
 	cols, visible, lcols int
@@ -66,6 +68,10 @@ func (g *game) geom() geometry {
 	gm.paneY0 = gm.statusY + lh + pad
 	gm.inputY = float64(g.h) - pad - lh
 	gm.paneY1 = gm.inputY - pad
+	if g.barVisible() {
+		gm.barY = gm.inputY - gm.lh - pad
+		gm.paneY1 = gm.barY - pad
+	}
 	gm.rightX = gm.ox + channelPaneW + pad
 	gm.rightW = float64(g.w) - gm.rightX - pad
 	gm.cols = int(gm.rightW / adv)
@@ -161,13 +167,22 @@ func (g *game) updateMain() {
 		x, y := float64(cx), float64(cy)
 		if state.InRect(x, y, gm.ox, gm.paneY0, gm.ox+channelPaneW, gm.paneY1) {
 			// Only rows drawChannels actually draws are clickable.
+			rows := g.st.Rows()
 			n := int((gm.paneY1 - gm.paneY0) / gm.lh)
-			if n > len(g.st.Channels) {
-				n = len(g.st.Channels)
+			if n > len(rows) {
+				n = len(rows)
 			}
-			g.selectChannel(state.RowAt(y, gm.paneY0, gm.lh, n))
+			if i := state.RowAt(y, gm.paneY0, gm.lh, n); i >= 0 {
+				switch r := rows[i]; r.Kind {
+				case state.RowText:
+					g.selectChannel(r.Index)
+				case state.RowVoice:
+					g.clickVoice(r.Channel)
+				}
+			}
 		}
 	}
+	g.updateBar(gm)
 
 	for _, r := range ebiten.AppendInputChars(nil) {
 		if r >= ' ' && r != 0x7f && len([]rune(g.st.Input.String())) < maxInputRunes {
@@ -260,6 +275,10 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	vector.FillRect(screen, ox, float32(gm.paneY1+pad/2), float32(g.w)-ox, 1, th.Dim, false)
 
 	g.drawChannels(screen, gm)
+	if g.barVisible() {
+		g.drawBar(screen, gm)
+		vector.FillRect(screen, ox, float32(gm.barY+gm.lh+pad/2), float32(g.w)-ox, 1, th.Dim, false)
+	}
 	g.drawScrollback(screen, gm)
 	g.drawInput(screen, gm)
 }
@@ -292,25 +311,91 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 	th := g.th
 	dst := clip(screen, gm.ox, gm.paneY0, gm.ox+channelPaneW, gm.paneY1)
 	y := gm.paneY0
-	for i, ch := range g.st.Channels {
+	for _, row := range g.st.Rows() {
 		if y+gm.lh > gm.paneY1 {
 			break
 		}
-		count := fmt.Sprintf("%d", len(g.st.Members[ch]))
-		name := ch
-		marker, col := "  ", th.FG
-		if i == g.st.Active {
-			marker, col = "> ", th.Bright
+		x := gm.ox + pad
+		switch row.Kind {
+		case state.RowText:
+			ch := row.Channel
+			count := fmt.Sprintf("%d", len(g.st.Members[ch]))
+			name := ch
+			marker, col := "  ", th.FG
+			if row.Index == g.st.Active {
+				marker, col = "> ", th.Bright
+			}
+			room := gm.lcols - len(marker) - len(count) - 1
+			if r := []rune(name); room > 0 && len(r) > room {
+				name = string(r[:room])
+			}
+			g.drawText(dst, marker+name, x, y, col)
+			cw := text.Advance(count, g.face)
+			g.drawText(dst, count, gm.ox+channelPaneW-pad-cw, y, col)
+		case state.RowDivider:
+			label := "voice"
+			lw := text.Advance(label, g.face)
+			mid := y + gm.lh/2
+			side := (channelPaneW - 2*pad - lw - 2*pad) / 2
+			vector.FillRect(dst, float32(x), float32(mid), float32(side), 1, th.Dim, false)
+			g.drawText(dst, label, x+side+pad, y, th.Dim)
+			vector.FillRect(dst, float32(x+side+2*pad+lw), float32(mid), float32(side), 1, th.Dim, false)
+		case state.RowVoice:
+			col := th.FG
+			if row.Channel == g.st.InCall {
+				col = th.Bright
+			}
+			drawSpeaker(dst, float32(x), float32(y), float32(gm.lh), col)
+			name := row.Channel
+			room := gm.lcols - 3
+			if r := []rune(name); room > 0 && len(r) > room {
+				name = string(r[:room])
+			}
+			g.drawText(dst, name, x+gm.lh+4, y, col)
+		case state.RowOccupant:
+			ox := x + gm.adv*2
+			lvl := g.speakLevel(row.FP)
+			col := th.FG
+			if lvl > speakingLevel && !row.Muted {
+				col = th.Bright
+				a := uint8(40 + 160*math.Min(1, math.Sqrt(lvl)))
+				glow := color.RGBA{th.Bright.R, th.Bright.G, th.Bright.B, a}
+				vector.FillRect(dst, float32(ox-2), float32(y), float32(channelPaneW-pad-(ox-gm.ox)+2), float32(gm.lh), premul(glow), false)
+				col = th.BG
+			} else if row.Muted {
+				col = th.Dim
+			}
+			name := row.Name
+			room := gm.lcols - 2 - 3
+			if r := []rune(name); room > 0 && len(r) > room {
+				name = string(r[:room])
+			}
+			g.drawText(dst, name, ox, y, col)
+			if row.Muted {
+				drawMic(dst, float32(gm.ox+channelPaneW-pad-gm.lh), float32(y), float32(gm.lh), th.Dim, true)
+			}
 		}
-		room := gm.lcols - len(marker) - len(count) - 1
-		if r := []rune(name); room > 0 && len(r) > room {
-			name = string(r[:room])
-		}
-		g.drawText(dst, marker+name, gm.ox+pad, y, col)
-		cw := text.Advance(count, g.face)
-		g.drawText(dst, count, gm.ox+channelPaneW-pad-cw, y, col)
 		y += gm.lh
 	}
+}
+
+// speakLevel is fp's current output level; own level comes from the mic
+// meter (playback never carries our own voice back).
+func (g *game) speakLevel(fp string) float64 {
+	if fp == g.fp {
+		if g.vc.muted {
+			return 0
+		}
+		return g.vc.mic.Level()
+	}
+	return g.vc.spk.Level(fp)
+}
+
+// premul converts a straight-alpha colour to the premultiplied form Ebiten's
+// vector drawing expects.
+func premul(c color.RGBA) color.RGBA {
+	a := uint32(c.A)
+	return color.RGBA{uint8(uint32(c.R) * a / 255), uint8(uint32(c.G) * a / 255), uint8(uint32(c.B) * a / 255), c.A}
 }
 
 func (g *game) drawScrollback(screen *ebiten.Image, gm geometry) {

@@ -65,6 +65,8 @@ type game struct {
 	dialCh  chan dialResult
 	joinCh  chan joinResult
 	sendCh  chan error
+	voiceCh chan voiceResult
+	vc      voiceCall
 	dialing bool
 	connect connectForm
 	ms      mainScene
@@ -175,14 +177,15 @@ func Run(opts Options) error {
 
 	g := &game{
 		opts: opts, st: state.New(), th: th, face: face, faceS: faceS, faceT: faceT, id: id, fp: fp, keyAt: opts.KeyPath,
-		dialCh: make(chan dialResult, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), ms: newMainScene(), w: 960, h: 600, crtOn: crtOn,
+		dialCh: make(chan dialResult, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), voiceCh: make(chan voiceResult, 4), ms: newMainScene(), w: 960, h: 600, crtOn: crtOn,
 		settingsPath: boot.settingsPath, set: boot.set, notice: boot.notice, autoName: opts.Name,
 	}
 	url := opts.ServerURL
 	if opts.Local {
 		srv := server.New(server.Config{
 			Addr:     "127.0.0.1:0",
-			Channels: []string{"general"},
+			Channels:      []string{"general"},
+			VoiceChannels: []string{"voice"},
 			Roles:    roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
 		})
 		if err := srv.Start(); err != nil {
@@ -217,6 +220,12 @@ func Run(opts Options) error {
 	err = ebiten.RunGame(g)
 	g.flushName()
 	if g.c != nil {
+		if g.vc.src != nil || g.vc.sink != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = g.c.LeaveVoice(ctx)
+			cancel()
+			closeAll(g.vc.src, g.vc.sink)
+		}
 		_ = g.c.Close()
 	}
 	return err
@@ -302,6 +311,7 @@ func (g *game) Update() error {
 			case ev, ok := <-g.c.Events():
 				g.st.Apply(ev, ok)
 				if !ok {
+					g.dropVoice()
 					g.c = nil
 					break drain
 				}
@@ -311,6 +321,7 @@ func (g *game) Update() error {
 		}
 	}
 
+	g.updateVoice()
 	g.updateRail()
 	if g.settingsOpen {
 		g.updateSettings()

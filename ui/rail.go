@@ -124,6 +124,7 @@ func (g *game) onConnected(chs []string) {
 // leaveServer tears down the current client and returns to a fresh connect
 // scene state.
 func (g *game) leaveServer() {
+	g.dropVoice()
 	if g.c != nil {
 		_ = g.c.Close()
 		g.c = nil
