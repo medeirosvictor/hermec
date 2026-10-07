@@ -33,6 +33,11 @@ type ProbeOpts struct {
 	// TailscalePeers returns peer IPs to probe; nil uses the tailscale CLI.
 	TailscalePeers func() []string
 	Budget         time.Duration // 0 = DefaultBudget
+	// ListenAddr is the local address of the probe sockets. "" (production)
+	// binds the wildcard ":0", which LAN broadcast needs; tests set
+	// "127.0.0.1:0" so they never open a wildcard socket (which triggers OS
+	// firewall prompts).
+	ListenAddr string
 
 	// lanDests overrides the computed LAN broadcast destinations (tests).
 	lanDests []string
@@ -66,7 +71,7 @@ func Probe(ctx context.Context, opts ProbeOpts) []Found {
 
 	run := func(source string, bcast bool, dests func(context.Context) []string) {
 		defer wg.Done()
-		sweep(ctx, source, bcast, dests, opts.Port, add)
+		sweep(ctx, source, bcast, opts.ListenAddr, dests, opts.Port, add)
 	}
 	wg.Add(3)
 	go run("lan", true, func(context.Context) []string {
@@ -94,12 +99,15 @@ func Probe(ctx context.Context, opts ProbeOpts) []Found {
 
 // sweep sends the probe to every destination and collects replies until ctx
 // ends. Destinations without a port use defPort.
-func sweep(ctx context.Context, source string, bcast bool, dests func(context.Context) []string, defPort int, add func(Found)) {
+func sweep(ctx context.Context, source string, bcast bool, listenAddr string, dests func(context.Context) []string, defPort int, add func(Found)) {
 	network := "udp"
 	if bcast {
 		network = "udp4"
 	}
-	conn, err := net.ListenPacket(network, ":0")
+	if listenAddr == "" {
+		listenAddr = ":0"
+	}
+	conn, err := net.ListenPacket(network, listenAddr)
 	if err != nil {
 		return
 	}

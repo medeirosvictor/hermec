@@ -39,10 +39,3 @@ func TestDiscoveryBindsLoopbackForLoopbackServer(t *testing.T) {
 		t.Fatalf("udp bound to %v, want 127.0.0.1", ip)
 	}
 }
-
-func TestDiscoveryBindsWildcardForWildcardServer(t *testing.T) {
-	s := startDiscoverable(t, func(c *Config) { c.Addr = ":0" }, nil)
-	if ip := udpLocalIP(t, s); !ip.IsUnspecified() {
-		t.Fatalf("udp bound to %v, want wildcard", ip)
-	}
-}

@@ -35,6 +35,9 @@ func (g *game) startProbe() {
 	if g.localURL != "" {
 		extra = append(extra, state.HostPort(g.localURL))
 	}
+	// ListenAddr stays empty (wildcard) on purpose, even with -local: real
+	// LAN broadcast discovery needs it. The cost is a possible firewall
+	// prompt per rebuilt exe; keep a stable exe path (see dev docs).
 	opts := discover.ProbeOpts{
 		Port:       discoverPort,
 		ExtraHosts: state.SavedHosts(g.servers, extra...),
