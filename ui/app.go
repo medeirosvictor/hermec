@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
 	"github.com/medeirosvictor/hermec/client"
@@ -59,6 +60,9 @@ type game struct {
 	w, h    int
 
 	lastURL, lastName string // for reconnect
+
+	crt   crt
+	crtOn bool // starts from the theme, toggled with F1
 }
 
 // DefaultKeyPath returns <user config dir>/hermec/identity.key.
@@ -119,7 +123,7 @@ func Run(opts Options) error {
 
 	g := &game{
 		opts: opts, st: state.New(), th: th, face: face, id: id, fp: fp, keyAt: opts.KeyPath,
-		dialCh: make(chan dialResult, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), ms: newMainScene(), w: 960, h: 600,
+		dialCh: make(chan dialResult, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), ms: newMainScene(), w: 960, h: 600, crtOn: th.Scanlines,
 	}
 	url := opts.ServerURL
 	if opts.Local {
@@ -176,6 +180,10 @@ func (g *game) startDial(url, name string) {
 
 func (g *game) Update() error {
 	g.frame++
+	if inpututil.IsKeyJustPressed(ebiten.KeyF1) {
+		g.crtOn = !g.crtOn
+		g.logf("crt effect: %v", g.crtOn)
+	}
 	select {
 	case r := <-g.dialCh:
 		g.dialing = false
@@ -242,6 +250,17 @@ func (g *game) Update() error {
 }
 
 func (g *game) Draw(screen *ebiten.Image) {
+	if !g.crtOn {
+		g.drawScene(screen)
+		return
+	}
+	b := screen.Bounds()
+	off := g.crt.target(b.Dx(), b.Dy())
+	g.drawScene(off)
+	g.crt.apply(screen)
+}
+
+func (g *game) drawScene(screen *ebiten.Image) {
 	screen.Fill(g.th.BG)
 	if g.st.Phase == state.PhaseConnect {
 		g.drawConnect(screen)
