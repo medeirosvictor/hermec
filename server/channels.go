@@ -33,6 +33,7 @@ func (s *Server) initChannels() {
 		s.voice[name] = make(map[*conn]bool)
 	}
 	s.authed = make(map[*conn]struct{})
+	s.sessions = make(map[string]*voiceSession)
 }
 
 func (c *conn) member() proto.Member {

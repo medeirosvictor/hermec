@@ -14,6 +14,11 @@ import (
 // which never blocks). Nothing here may block while chMu is held; conns that
 // cannot accept a broadcast are collected and closed after unlock (dropSlow).
 //
+// Media sessions (sfu.go) hang off the same transitions: removeVoiceLocked and
+// voiceJoin call into Server.sessions under chMu, and the session API they use
+// only queues work for the session's own goroutine (chMu -> session.qmu is the
+// single lock edge; session code never takes chMu).
+//
 // voiceSet maps channel name -> participant -> muted. A conn is in at most
 // one voice channel; conn.voiceCh (guarded by chMu) records which.
 type voiceSet map[string]map[*conn]bool
@@ -103,6 +108,7 @@ func (s *Server) removeVoiceLocked(c *conn) string {
 	}
 	delete(s.voice[ch], c)
 	c.voiceCh = ""
+	s.sessionLeaveLocked(ch, c) // may destroy the channel's media session
 	return ch
 }
 
@@ -124,6 +130,7 @@ func (s *Server) voiceJoin(c *conn, ch string) string {
 		prev := s.removeVoiceLocked(c)
 		s.voice[ch][c] = false
 		c.voiceCh = ch
+		s.sessionJoinLocked(ch, c)
 		if prev != "" {
 			dead = append(dead, s.broadcastVoiceLocked(prev)...)
 		}
@@ -194,15 +201,20 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 	return true
 }
 
-// routeRTC is the seam for the SFU (Task 3). Until media exists, signaling
-// is only valid inside a call, and there is nothing to talk to.
+// routeRTC hands signaling to the channel's voice session. Membership is
+// checked under chMu; the session only queues the work (non-blocking), so no
+// pion call ever happens under chMu.
 func (c *conn) routeRTC(env proto.Envelope) {
 	c.srv.chMu.Lock()
-	inCall := c.voiceCh != ""
-	c.srv.chMu.Unlock()
-	if !inCall {
-		c.sendError("not_joined", "not in a voice channel")
-		return
+	var vs *voiceSession
+	if c.voiceCh != "" {
+		vs = c.srv.sessions[c.voiceCh]
 	}
-	c.sendError("bad_request", "media not supported yet")
+	if vs != nil {
+		vs.handleRTC(c, env)
+	}
+	c.srv.chMu.Unlock()
+	if vs == nil {
+		c.sendError("not_joined", "not in a voice channel")
+	}
 }

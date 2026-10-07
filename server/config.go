@@ -23,6 +23,7 @@ type fileConfig struct {
 	VoiceChannels []string            `toml:"voice_channels"`
 	TLSCert       string              `toml:"tls_cert"`
 	TLSKey        string              `toml:"tls_key"`
+	PublicIP      string              `toml:"public_ip"`
 	DefaultRoles  []string            `toml:"default_roles"`
 	Roles         map[string][]string `toml:"roles"`
 	Grants        map[string][]string `toml:"grants"`
@@ -78,6 +79,7 @@ func LoadConfig(path string) (Config, error) {
 		seen[n] = struct{}{}
 	}
 	cfg.TLSCert, cfg.TLSKey = fc.TLSCert, fc.TLSKey
+	cfg.PublicIP = fc.PublicIP
 	if (cfg.TLSCert == "") != (cfg.TLSKey == "") {
 		return Config{}, errors.New("server: load config: tls_cert and tls_key must be set together")
 	}
@@ -105,6 +107,7 @@ func (c Config) MarshalTOML() ([]byte, error) {
 		VoiceChannels: c.VoiceChannels,
 		TLSCert:       c.TLSCert,
 		TLSKey:        c.TLSKey,
+		PublicIP:      c.PublicIP,
 		DefaultRoles:  c.Roles.DefaultRoles,
 		Roles:         make(map[string][]string, len(c.Roles.Roles)),
 		Grants:        c.Roles.Grants,

@@ -36,6 +36,9 @@ type Config struct {
 	// TLSCert and TLSKey are PEM file paths. Set both to serve wss://;
 	// leave both empty for plain ws://.
 	TLSCert, TLSKey string
+	// PublicIP, if set, is advertised as the server's ICE host address
+	// (NAT 1:1) for voice on internet-facing hosts. Empty = local addresses.
+	PublicIP string
 }
 
 const (
@@ -59,6 +62,8 @@ type Server struct {
 	chans  channelSet
 	voice  voiceSet
 	authed map[*conn]struct{} // authenticated conns; voice_state goes to all
+	// sessions holds the media session of each occupied voice channel; guarded by chMu.
+	sessions map[string]*voiceSession
 
 	http *http.Server
 	ln   net.Listener

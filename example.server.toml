@@ -20,6 +20,9 @@ channels = ["general"]
 # tls_cert = "/etc/hermec/cert.pem"
 # tls_key  = "/etc/hermec/key.pem"
 
+# Voice: public IP to advertise for media on an internet-facing host (NAT 1:1); omit on a LAN.
+# public_ip = "203.0.113.7"
+
 # Roles given to fingerprints that have no entry in [grants].
 default_roles = ["user"]
 
