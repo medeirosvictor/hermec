@@ -20,6 +20,7 @@ const (
 	rowName = iota
 	rowPalette
 	rowScanlines
+	rowUpdateCheck
 	settingsRows
 )
 
@@ -137,6 +138,13 @@ func (g *game) setScanlines(on bool) {
 	g.persistSettings()
 }
 
+// setUpdateCheck persists the update-check opt-in/out.
+func (g *game) setUpdateCheck(on bool) {
+	g.set.UpdateCheck = &on
+	g.logf("update check: %v", on)
+	g.persistSettings()
+}
+
 // cyclePalette advances to the next preset and persists its name. The saved
 // custom theme file (if any) is dropped so the preset wins on next start.
 func (g *game) cyclePalette() {
@@ -246,6 +254,8 @@ func (g *game) activateSetting(row int) {
 		g.cyclePalette()
 	case rowScanlines:
 		g.setScanlines(!g.crtOn)
+	case rowUpdateCheck:
+		g.setUpdateCheck(!g.set.UpdateCheckEnabled())
 	}
 }
 
@@ -265,6 +275,10 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 	if g.crtOn {
 		scan = "on"
 	}
+	upd := "off"
+	if g.set.UpdateCheckEnabled() {
+		upd = "on"
+	}
 	cursor := ""
 	if (g.frame/30)%2 == 0 {
 		cursor = "_"
@@ -277,6 +291,7 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 		"name:      " + nameVal,
 		"palette:   " + pal,
 		"scanlines: " + scan,
+		"update check: " + upd,
 	}
 	for i, s := range rows {
 		marker := "  "

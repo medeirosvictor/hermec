@@ -14,6 +14,14 @@ type Settings struct {
 	Palette   string `toml:"palette,omitempty"`    // preset name; "" = default
 	Scanlines *bool  `toml:"scanlines,omitempty"`  // nil = unset (theme decides)
 	ThemePath string `toml:"theme_path,omitempty"` // custom theme file
+
+	UpdateCheck *bool `toml:"update_check,omitempty"` // nil = unset (enabled)
+}
+
+// UpdateCheckEnabled reports whether the startup update check is on; unset
+// means on.
+func (s Settings) UpdateCheckEnabled() bool {
+	return s.UpdateCheck == nil || *s.UpdateCheck
 }
 
 // LoadSettings reads path. A missing file yields zero Settings and no error.

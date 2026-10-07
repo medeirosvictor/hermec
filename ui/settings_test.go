@@ -79,6 +79,20 @@ func TestStartupThemeBadThemeFallsBackToPalette(t *testing.T) {
 	}
 }
 
+func TestUpdateCheckRowTogglesAndPersists(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	g := &game{st: state.New(), th: theme.Default(), settingsPath: p}
+	g.activateSetting(rowUpdateCheck) // default on -> off
+	s, err := state.LoadSettings(p)
+	if err != nil || s.UpdateCheck == nil || *s.UpdateCheck {
+		t.Fatalf("got %+v %v", s, err)
+	}
+	g.activateSetting(rowUpdateCheck)
+	if s, _ = state.LoadSettings(p); s.UpdateCheck == nil || !*s.UpdateCheck {
+		t.Fatalf("got %+v", s)
+	}
+}
+
 func TestSettingsPersistFromEvents(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.toml")
 	g := &game{st: state.New(), th: theme.Default(), settingsPath: p, autoName: "anon-1"}

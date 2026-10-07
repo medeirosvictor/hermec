@@ -40,6 +40,27 @@ func TestSettingsUnsetScanlinesStaysUnset(t *testing.T) {
 	}
 }
 
+func TestUpdateCheckDefaultsOnAndRoundTrips(t *testing.T) {
+	if !(Settings{}).UpdateCheckEnabled() {
+		t.Fatal("nil must mean enabled")
+	}
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	if err := SaveSettings(p, Settings{Name: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := LoadSettings(p); err != nil || out.UpdateCheck != nil || !out.UpdateCheckEnabled() {
+		t.Fatalf("unset: %+v %v", out, err)
+	}
+	off := false
+	if err := SaveSettings(p, Settings{UpdateCheck: &off}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := LoadSettings(p)
+	if err != nil || out.UpdateCheck == nil || *out.UpdateCheck || out.UpdateCheckEnabled() {
+		t.Fatalf("off: %+v %v", out, err)
+	}
+}
+
 func TestLoadSettingsMalformed(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.toml")
 	if err := os.WriteFile(p, []byte("name = ["), 0o600); err != nil {
