@@ -116,7 +116,9 @@ func (m *mixer) Pull(dst []int16) {
 		t.s.queue = append(t.s.queue[:0], t.s.queue[t.n:]...)
 	}
 	for fp, s := range m.senders {
-		if len(s.queue) == 0 && now.Sub(s.last) > senderIdle {
+		// An idle sender is forgotten when drained, or when it never
+		// primed (a stray sub-prefill frame is dropped, not played stale).
+		if (len(s.queue) == 0 || !s.primed) && now.Sub(s.last) > senderIdle {
 			delete(m.senders, fp)
 		}
 	}

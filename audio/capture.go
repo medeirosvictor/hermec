@@ -15,10 +15,10 @@ import (
 const (
 	// captureRing is how many 20ms PCM frames are kept while nobody is
 	// reading (muted). Older frames are dropped as new ones arrive.
-	captureRing = 3
-	// captureMaxAge: a queued frame older than this is stale and skipped,
-	// so unmuting never replays the pause.
-	captureMaxAge = 3 * frameMs * time.Millisecond
+	captureRing = 2
+	// captureMaxAge: a frame older than this (1.5 frames) is stale and
+	// skipped, so unmuting never replays the pause.
+	captureMaxAge = frameMs * 3 / 2 * time.Millisecond
 )
 
 type pcmFrame struct {
@@ -46,7 +46,8 @@ type capture struct {
 	cur  pcmFrame
 	curN int
 
-	obuf []byte
+	obuf  []byte
+	clock func() time.Time
 }
 
 // Capture opens the default microphone (48kHz mono) and returns an
@@ -74,6 +75,7 @@ func Capture() (client.AudioSource, *Meter, error) {
 		frames: make(chan pcmFrame, captureRing),
 		done:   make(chan struct{}),
 		obuf:   make([]byte, 1500),
+		clock:  time.Now,
 	}
 	cfg := malgo.DefaultDeviceConfig(malgo.Capture)
 	cfg.Capture.Format = malgo.FormatS16
@@ -135,20 +137,51 @@ func (c *capture) push(f pcmFrame) {
 // returns io.EOF after Close.
 func (c *capture) ReadOpusFrame() ([]byte, error) {
 	for {
+		// Check done first: with done closed and frames buffered, a bare
+		// select would pick randomly and could serve a frame after Close.
 		select {
 		case <-c.done:
 			return nil, io.EOF
-		case f := <-c.frames:
-			if time.Since(f.at) > captureMaxAge {
-				continue
-			}
-			n, err := c.enc.Encode(f.pcm[:], c.obuf)
-			if err != nil {
-				return nil, err
-			}
-			out := make([]byte, n)
-			copy(out, c.obuf[:n])
-			return out, nil
+		default:
+		}
+		var f pcmFrame
+		select {
+		case <-c.done:
+			return nil, io.EOF
+		case f = <-c.frames:
+		}
+		// More than one queued means we are behind (e.g. after a mute
+		// pause): keep only the newest so there is never a burst.
+		f = newest(f, c.frames)
+		select {
+		case <-c.done:
+			return nil, io.EOF
+		default:
+		}
+		if stale(f.at, c.clock()) {
+			continue
+		}
+		n, err := c.enc.Encode(f.pcm[:], c.obuf)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]byte, n)
+		copy(out, c.obuf[:n])
+		return out, nil
+	}
+}
+
+// stale reports whether a frame captured at is too old to send at now.
+func stale(at, now time.Time) bool { return now.Sub(at) > captureMaxAge }
+
+// newest drains q without blocking and returns the most recent frame.
+func newest(f pcmFrame, q <-chan pcmFrame) pcmFrame {
+	for {
+		select {
+		case g := <-q:
+			f = g
+		default:
+			return f
 		}
 	}
 }

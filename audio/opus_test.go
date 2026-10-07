@@ -87,6 +87,57 @@ func TestMixerDecodePLCAndCleanup(t *testing.T) {
 	}
 }
 
+func TestMixerStrayFrameCleanedUp(t *testing.T) {
+	m := newMixer()
+	clock := time.Unix(1000, 0)
+	m.now = func() time.Time { return clock }
+	m.Write("a", encodeFrames(t, 1)[0]) // below prefill, never primed
+	clock = clock.Add(senderIdle + time.Second)
+	m.Pull(make([]int16, frameSize))
+	if len(m.senders) != 0 {
+		t.Fatal("unprimed idle sender with stray frame not collected")
+	}
+}
+
+func TestCaptureStalenessAndEOF(t *testing.T) {
+	now := time.Unix(1000, 0)
+	if stale(now, now.Add(frameMs*time.Millisecond)) {
+		t.Fatal("one frame old should be fresh")
+	}
+	if !stale(now, now.Add(2*frameMs*time.Millisecond)) {
+		t.Fatal("two frames old should be stale")
+	}
+
+	enc, err := opus.NewEncoder(sampleRate, 1, opus.AppVoIP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &capture{
+		enc: enc, meter: &Meter{}, frames: make(chan pcmFrame, captureRing),
+		done: make(chan struct{}), obuf: make([]byte, 1500), clock: func() time.Time { return now },
+	}
+	// A backlog after a pause yields exactly one (the newest) frame.
+	c.push(pcmFrame{at: now.Add(-time.Hour)})
+	c.push(pcmFrame{at: now})
+	if f, err := c.ReadOpusFrame(); err != nil || len(f) == 0 {
+		t.Fatalf("read: %v %d", err, len(f))
+	}
+	if len(c.frames) != 0 {
+		t.Fatal("backlog not drained")
+	}
+	// After close, buffered frames must never be served.
+	for i := 0; i < 50; i++ {
+		c.push(pcmFrame{at: now})
+		close2 := i == 0
+		if close2 {
+			close(c.done)
+		}
+		if _, err := c.ReadOpusFrame(); err != io.EOF {
+			t.Fatalf("iteration %d: got %v, want io.EOF", i, err)
+		}
+	}
+}
+
 // Device test: skipped when no microphone can be opened.
 func TestCaptureDevice(t *testing.T) {
 	src, meter, err := Capture()
