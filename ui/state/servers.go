@@ -112,15 +112,21 @@ func Initials(e ServerEntry) string {
 const (
 	RailNone = -1
 	RailAdd  = -2
+
+	RailSettings = -3
 )
 
 // RailHit maps a click to a rail tile: an index in [0,count), RailAdd for the
-// "+" tile pinned to the bottom of a window h tall, or RailNone.
+// "+" tile pinned just above the settings (gear) tile at the bottom of a
+// window h tall, RailSettings for the gear tile, or RailNone.
 func RailHit(x, y, railW, top, tileH float64, count int, h float64) int {
 	if !InRect(x, y, 0, 0, railW, h) {
 		return RailNone
 	}
 	if y >= h-tileH {
+		return RailSettings
+	}
+	if y >= h-2*tileH {
 		return RailAdd
 	}
 	i := RowAt(y, top, tileH, count)

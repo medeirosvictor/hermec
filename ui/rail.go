@@ -31,9 +31,9 @@ func (g *game) railW() float64 {
 	return railWidth
 }
 
-// railTiles is how many entries fit above the "+" tile.
+// railTiles is how many entries fit above the "+" and gear tiles.
 func (g *game) railTiles() int {
-	n := int((float64(g.h) - railTileH - pad) / railTileH)
+	n := int((float64(g.h) - 2*railTileH - pad) / railTileH)
 	if n > len(g.servers) {
 		n = len(g.servers)
 	}
@@ -166,9 +166,13 @@ func (g *game) updateRail() {
 	cx, cy := ebiten.CursorPosition()
 	n := g.railTiles()
 	switch hit := state.RailHit(float64(cx), float64(cy), railWidth, pad, railTileH, n, float64(g.h)); {
+	case hit == state.RailSettings:
+		g.toggleSettings()
 	case hit == state.RailAdd:
+		g.settingsOpen = false
 		g.addServer()
 	case hit >= 0:
+		g.settingsOpen = false
 		g.switchServer(g.servers[hit])
 	}
 }
@@ -193,5 +197,12 @@ func (g *game) drawRail(screen *ebiten.Image) {
 		e := g.servers[i]
 		tile(state.Initials(e), pad+float64(i)*railTileH, e.URL == g.curKey)
 	}
-	tile("+", float64(g.h)-railTileH, false)
+	tile("+", float64(g.h)-2*railTileH, false)
+	gy := float64(g.h) - railTileH
+	tile("", gy, g.settingsOpen)
+	gc := th.FG
+	if g.settingsOpen {
+		gc = th.Bright
+	}
+	drawGear(screen, (railWidth-1)/2, float32(gy+railTileH/2), 11, gc)
 }

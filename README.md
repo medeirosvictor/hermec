@@ -56,6 +56,7 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **F2**: Cycle color palettes
 - **Click rail tile**: Switch servers
 - **Click "+" tile**: Add a server
+- **Click gear tile** or **F10**: Settings page (name, palette, scanlines; F10 works when the rail is hidden). Choices, including F1/F2, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it.
 
 ## Build
 
