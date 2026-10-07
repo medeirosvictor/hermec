@@ -89,6 +89,12 @@ func (r *recSink) marker(m byte) int {
 	return r.markers[m]
 }
 
+func (r *recSink) senders() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.byFP)
+}
+
 func (r *recSink) total() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -205,7 +211,7 @@ func TestVoiceTwoClientsMedia(t *testing.T) {
 	if got := a.sink.marker(0xA1); got != 0 {
 		t.Errorf("A's sink got its own marker %d times", got)
 	}
-	if n := len(b.sink.byFP); n != 1 {
+	if n := b.sink.senders(); n != 1 {
 		t.Errorf("B's sink keyed by %d senders, want 1", n)
 	}
 	if a.c.VoiceChannel() != voiceCh {
@@ -227,9 +233,14 @@ func TestVoiceMute(t *testing.T) {
 	// Bound: in-flight frames drain within 500ms, then silence.
 	time.Sleep(500 * time.Millisecond)
 	before := b.sink.count(a.fp)
+	readsBefore := a.src.seq.Load()
 	time.Sleep(700 * time.Millisecond)
 	if after := b.sink.count(a.fp); after != before {
 		t.Fatalf("muted A still delivered %d frames", after-before)
+	}
+	// Muting pauses source reads, not just transmission.
+	if reads := a.src.seq.Load(); reads != readsBefore {
+		t.Fatalf("source still read %d frames while muted", reads-readsBefore)
 	}
 	// The mute flag is visible to others.
 	eventually(t, 5*time.Second, "B sees A muted", func() bool {
@@ -468,6 +479,71 @@ func newWSProxy(t *testing.T, upstream string) *wsProxy {
 
 func (p *wsProxy) url() string { return "ws" + strings.TrimPrefix(p.srv.URL, "http") }
 
+// TestVoicePostJoinFailureIsObservable: after JoinVoice returned, a call that
+// can no longer be negotiated must end visibly (Err event, VoiceChannel()=="")
+// and leave the client usable. The proxy swallows the server's answers and
+// injects media-reset errors until the consecutive-reset cap is exceeded.
+func TestVoicePostJoinFailureIsObservable(t *testing.T) {
+	url := startVoiceServer(t)
+	p := newWSProxy(t, url)
+	var mu sync.Mutex
+	var inject func([]byte)
+	var dropAnswers bool
+	p.fromServer = func(env proto.Envelope, raw []byte, inj func([]byte)) ([]byte, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		inject = inj
+		if dropAnswers && env.Type == proto.TypeRTCAnswer {
+			return nil, false
+		}
+		return raw, true
+	}
+
+	a := newVoiceClient(t, url, "alice", 0xA1)
+	b := newVoiceClient(t, p.url(), "bob", 0xB2)
+	if err := a.c.Join(testCtx(t), "general"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.c.Join(testCtx(t), "general"); err != nil {
+		t.Fatal(err)
+	}
+	a.join(t)
+	b.join(t)
+	eventually(t, 15*time.Second, "media", func() bool { return b.sink.count(a.fp) >= 5 })
+
+	mu.Lock()
+	dropAnswers = true
+	send := inject
+	mu.Unlock()
+	fake, _ := proto.Encode(proto.TypeError, proto.ErrorMsg{Code: "bad_request", Message: "media reset; send a new rtc_offer"})
+	for i := 0; i < 12; i++ {
+		send(fake)
+	}
+
+	eventually(t, 15*time.Second, "call-ended event", func() bool {
+		for _, e := range b.errStrings() {
+			if strings.Contains(e, "voice call ended") {
+				return true
+			}
+		}
+		return false
+	})
+	if got := b.c.VoiceChannel(); got != "" {
+		t.Fatalf("VoiceChannel after call death = %q", got)
+	}
+	// Still usable: chat works and a fresh join succeeds.
+	if err := b.c.SendChat(testCtx(t), "general", "alive"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 5*time.Second, "chat at A", func() bool { return a.hasChat("alive") })
+	mu.Lock()
+	dropAnswers = false
+	mu.Unlock()
+	before := b.sink.count(a.fp)
+	b.join(t)
+	eventually(t, 20*time.Second, "media after rejoin", func() bool { return b.sink.count(a.fp) >= before+10 })
+}
+
 // TestVoiceMediaResetRecovery corrupts B's first answer to a server offer.
 // The server resets B's media and says "send a new rtc_offer"; the client
 // must discard its PeerConnection, re-offer, and audio must flow again.
@@ -527,6 +603,16 @@ func TestVoiceMediaResetRecovery(t *testing.T) {
 // re-offer; the server rejects that with "offer pending - answer first".
 // Only then is S released: B must answer it first (abandoning its own pending
 // offer), re-offer, and audio must flow.
+//
+// Honesty note: this scenario is contrived. The client never produces glare
+// organically (it only offers initially or after a reset, when the server has
+// dropped its media). Here the server offer S belongs to B's FIRST PC, which
+// B discarded when it processed the fake reset, so B answers S from a fresh
+// PC. The server cannot apply that answer, so the EXPECTED outcome is a
+// server-side media reset followed by one clean re-offer from B. What the
+// test proves is the client's ordering discipline, asserted from the proxy's
+// log: B's second offer is rejected as glare, B answers S before offering
+// again, and does not offer twice at once.
 func TestVoiceGlareAnswerFirst(t *testing.T) {
 	url := startVoiceServer(t)
 	p := newWSProxy(t, url)
@@ -538,12 +624,20 @@ func TestVoiceGlareAnswerFirst(t *testing.T) {
 	held := make(chan struct{})
 	var glareErrs, offersFromB, answersFromB atomic.Int32
 
+	var logMu sync.Mutex
+	var bLog []string // B's offers/answers in send order
 	p.fromClient = func(env proto.Envelope, raw []byte) ([]byte, bool) {
 		switch env.Type {
 		case proto.TypeRTCOffer:
 			offersFromB.Add(1)
+			logMu.Lock()
+			bLog = append(bLog, "offer")
+			logMu.Unlock()
 		case proto.TypeRTCAnswer:
 			answersFromB.Add(1)
+			logMu.Lock()
+			bLog = append(bLog, "answer")
+			logMu.Unlock()
 		}
 		return raw, true
 	}
@@ -600,5 +694,13 @@ func TestVoiceGlareAnswerFirst(t *testing.T) {
 	}
 	if answersFromB.Load() < 1 {
 		t.Errorf("B never answered the released server offer")
+	}
+	// Ordering: offer(initial), offer(after fake reset; glare-rejected),
+	// answer(to released S) strictly BEFORE the next offer.
+	logMu.Lock()
+	seq := append([]string(nil), bLog...)
+	logMu.Unlock()
+	if len(seq) < 4 || seq[0] != "offer" || seq[1] != "offer" || seq[2] != "answer" || seq[3] != "offer" {
+		t.Errorf("B's offer/answer order = %v, want offer, offer, answer, offer...", seq)
 	}
 }

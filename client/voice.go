@@ -20,6 +20,11 @@ import (
 // AudioSource produces Opus frames. ReadOpusFrame blocks until the next
 // frame (the source paces itself, normally one 20ms frame per call) and
 // returns io.EOF (or any error) to end the stream.
+//
+// Mute contract: while the client is muted (SetMuted(true)) it stops calling
+// ReadOpusFrame, and discards a frame read concurrently with the mute.
+// Sources must tolerate the pause and drop stale captured audio on their
+// side, so unmuting does not replay a backlog.
 type AudioSource interface {
 	ReadOpusFrame() ([]byte, error)
 }
@@ -84,15 +89,16 @@ type call struct {
 	wg      sync.WaitGroup
 
 	// actor-owned
-	pc         *webrtc.PeerConnection
-	offerOut   bool // our rtc_offer awaits its answer
-	answered   bool // a remote description from our offer was applied
-	pending    []webrtc.ICECandidateInit
-	resets     int
-	superseded int // our offers abandoned while the server may still reject them
-	senderOn   bool
-	retryGen   uint64
-	glareSeen  bool // the server already rejected our current offer as glare
+	pc        *webrtc.PeerConnection
+	offerOut  bool // our rtc_offer awaits its answer
+	answered  bool // a remote description from our offer was applied
+	pending   []webrtc.ICECandidateInit
+	resets    int
+	resetting bool   // a local reset is in flight: server offers belong to discarded state
+	held      string // latest server offer received while resetting; answered only if the server reports glare
+	senderOn  bool
+	retryGen  uint64
+	glareSeen bool // the server already rejected our current offer as glare
 }
 
 func (c *Client) newAPI() *webrtc.API {
@@ -339,11 +345,37 @@ func (cl *call) run() {
 	}
 }
 
+// fail ends the call with err. Before JoinVoice has returned that is its
+// return value; afterwards the call is cleared (VoiceChannel() == ""), the
+// server is told, and an Err event announces the death.
 func (cl *call) fail(err error) {
 	cl.failOnce.Do(func() {
 		cl.failErr = err
 		close(cl.failCh)
+		select {
+		case <-cl.ready:
+		default:
+			return // JoinVoice is still waiting and will clean up
+		}
+		select {
+		case <-cl.stop:
+			return // already being torn down deliberately
+		default:
+		}
+		cl.c.callEnded(cl, err)
 	})
+}
+
+// callEnded retires a call that died after JoinVoice returned.
+func (c *Client) callEnded(cl *call, err error) {
+	c.mu.Lock()
+	if c.call == cl {
+		c.call = nil
+	}
+	c.mu.Unlock()
+	_ = c.send(proto.TypeVoiceLeave, proto.VoiceLeave{})
+	c.emitNB(Event{Err: fmt.Errorf("client: voice call ended: %w", err)})
+	go cl.teardown() // the actor cannot join itself
 }
 
 func (cl *call) teardown() { cl.teardownCtx(context.Background()) }
@@ -406,11 +438,7 @@ func (cl *call) newPC() error {
 			case webrtc.PeerConnectionStateConnected:
 				cl.checkReady()
 			case webrtc.PeerConnectionStateFailed:
-				select {
-				case <-cl.ready:
-				default:
-					cl.fail(errors.New("client: voice transport failed"))
-				}
+				cl.fail(errors.New("client: voice transport failed"))
 			}
 		})
 	})
@@ -549,32 +577,23 @@ func (cl *call) reset() {
 		return
 	}
 	cl.discardPC()
+	cl.held = ""
+	cl.resetting = true // until our new offer is answered, server offers are not answered
 	cl.startOffer()
 }
 
 // onGlare handles "offer pending": the server has an outstanding offer of
-// its own. Server offers are answered the moment they arrive, so normally
-// ours was the stale one and was already superseded in handleOffer; otherwise
-// back off briefly (the server offer is in flight, or will time out and be
-// reset) and offer again.
+// its own, which protocol 4.13 requires us to answer before offering again.
+// If that offer already arrived (held while we were resetting or offering) it
+// is answered now; if it is still in flight, handleOffer answers it on
+// arrival. If neither happens the server's answer timeout resets us.
 func (cl *call) onGlare() {
-	if cl.superseded > 0 {
-		cl.superseded--
-		return
-	}
-	if cl.pc == nil || !cl.offerOut {
-		return
-	}
 	cl.glareSeen = true
-	cl.retryGen++
-	gen, pc := cl.retryGen, cl.pc
-	time.AfterFunc(250*time.Millisecond, func() {
-		cl.post(func() {
-			if cl.retryGen == gen && cl.pc == pc && cl.offerOut {
-				cl.reset()
-			}
-		})
-	})
+	if cl.held != "" {
+		sdp := cl.held
+		cl.held = ""
+		cl.answerAbandoning(sdp)
+	}
 }
 
 func (cl *call) checkReady() {
@@ -595,6 +614,7 @@ func (cl *call) handleRTC(env proto.Envelope) {
 			return
 		}
 		cl.offerOut, cl.answered = false, true
+		cl.resetting, cl.held, cl.resets = false, "", 0
 		cl.retryGen++
 		cl.flushPending()
 		cl.checkReady()
@@ -631,28 +651,36 @@ func (cl *call) flushPending() {
 // outstanding (glare) it is abandoned in favour of the server's: fresh PC,
 // answer first, then a new offer of ours.
 func (cl *call) handleOffer(sdp string) {
-	reoffer := false
-	if cl.pc != nil && cl.offerOut {
-		cl.discardPC()
-		if !cl.glareSeen {
-			cl.superseded++ // the server's rejection of our old offer is still coming
-		}
-		reoffer = true
+	if cl.pc == nil && !cl.resetting {
+		return // no media state to renegotiate
 	}
-	if cl.pc == nil {
-		if !reoffer && !cl.joined.Load() {
-			return
+	if cl.resetting || cl.offerOut {
+		// Our offer (or reset) is in flight, so this server offer belongs to
+		// state we superseded and must not be answered... unless the server
+		// has told us it is the outstanding one (glare). Hold the latest.
+		if cl.glareSeen {
+			cl.answerAbandoning(sdp)
+		} else {
+			cl.held = sdp
 		}
-		if !reoffer {
-			// Media was reset locally; this offer belongs to state we threw
-			// away. Do not answer it; the server will reset and we re-offer.
-			return
-		}
-		if err := cl.newPC(); err != nil {
-			cl.fail(err)
-			return
-		}
+		return
 	}
+	cl.answerOffer(sdp, false)
+}
+
+// answerAbandoning answers a glare-outstanding server offer on a fresh PC
+// (abandoning our own pending offer), then re-offers after a short delay.
+func (cl *call) answerAbandoning(sdp string) {
+	cl.discardPC()
+	cl.resetting, cl.glareSeen = true, false
+	if err := cl.newPC(); err != nil {
+		cl.fail(err)
+		return
+	}
+	cl.answerOffer(sdp, true)
+}
+
+func (cl *call) answerOffer(sdp string, reoffer bool) {
 	pc := cl.pc
 	if err := pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}); err != nil {
 		cl.reset()

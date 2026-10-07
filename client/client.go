@@ -66,6 +66,9 @@ type Client struct {
 
 	loopbackICE atomic.Bool
 
+	evMu     sync.RWMutex // guards closing events against emitNB
+	evClosed bool
+
 	events   chan Event
 	done     chan struct{} // closed by Close; unblocks the read loop's sends
 	loopDone chan struct{} // closed when the read loop has exited
@@ -281,10 +284,29 @@ func (c *Client) emit(ev Event) {
 	}
 }
 
+// emitNB delivers ev from a goroutine other than the read loop (the voice
+// call). It never blocks and is dropped if the stream is closed or full.
+func (c *Client) emitNB(ev Event) {
+	c.evMu.RLock()
+	defer c.evMu.RUnlock()
+	if c.evClosed {
+		return
+	}
+	select {
+	case c.events <- ev:
+	default:
+	}
+}
+
 // readLoop is the only reader and the only sender on events.
 func (c *Client) readLoop() {
 	defer close(c.loopDone)
-	defer close(c.events)
+	defer func() {
+		c.evMu.Lock()
+		c.evClosed = true
+		close(c.events)
+		c.evMu.Unlock()
+	}()
 	var exitErr error
 	defer func() {
 		c.mu.Lock()
