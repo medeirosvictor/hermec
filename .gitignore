@@ -3,6 +3,7 @@
 
 # Go build artifacts
 /bin/
+/dist/
 *.exe
 
 # OS noise
