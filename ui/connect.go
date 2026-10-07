@@ -6,9 +6,17 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
+
+	"github.com/medeirosvictor/hermec/ui/state"
 )
 
 const maxFieldRunes = 128
+
+// Connect scene layout origin; the title takes two line heights, then the
+// name and server rows follow.
+const connectX, connectY = 48.0, 48.0
+
+func connectFieldsTop(lh float64) float64 { return connectY + 2*lh }
 
 type field struct {
 	runes []rune
@@ -39,9 +47,22 @@ func newConnectForm(name, url string, local bool) connectForm {
 
 // update consumes keyboard input. It reports submit when Enter is pressed
 // and no dial is in flight.
-func (f *connectForm) update(dialing bool) (url, name string, submit bool) {
+func (f *connectForm) update(dialing bool, lh float64, screenW int) (url, name string, submit bool) {
 	if inpututil.IsKeyJustPressed(ebiten.KeyTab) && !f.local {
 		f.focus = 1 - f.focus
+	}
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		cx, cy := ebiten.CursorPosition()
+		if state.InRect(float64(cx), float64(cy), connectX, 0, float64(screenW), 1e9) {
+			switch state.RowAt(float64(cy), connectFieldsTop(lh), lh, 2) {
+			case 0:
+				f.focus = 0
+			case 1:
+				if !f.local {
+					f.focus = 1
+				}
+			}
+		}
 	}
 	cur := &f.name
 	if f.focus == 1 && !f.local {
@@ -79,7 +100,7 @@ func (g *game) drawText(dst *ebiten.Image, s string, x, y float64, c color.RGBA)
 func (g *game) drawConnect(screen *ebiten.Image) {
 	th, f := g.th, &g.connect
 	lh := g.lineH()
-	x, y := 48.0, 48.0
+	x, y := connectX, connectY
 
 	g.drawText(screen, "HERMEC", x, y, th.Bright)
 	y += lh * 2

@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -60,6 +61,8 @@ type game struct {
 	w, h    int
 
 	lastURL, lastName string // for reconnect
+
+	barOnce sync.Once // dark title bar, applied on the first tick
 
 	crt   crt
 	crtOn bool // starts from the theme, toggled with F1
@@ -180,6 +183,7 @@ func (g *game) startDial(url, name string) {
 
 func (g *game) Update() error {
 	g.frame++
+	g.barOnce.Do(darkTitleBar)
 	if inpututil.IsKeyJustPressed(ebiten.KeyF1) {
 		g.crtOn = !g.crtOn
 		g.logf("crt effect: %v", g.crtOn)
@@ -236,7 +240,7 @@ func (g *game) Update() error {
 	}
 
 	if g.st.Phase == state.PhaseConnect {
-		if url, name, submit := g.connect.update(g.dialing); submit {
+		if url, name, submit := g.connect.update(g.dialing, g.lineH(), g.w); submit {
 			g.startDial(url, name)
 		}
 	}

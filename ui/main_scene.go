@@ -21,6 +21,8 @@ const (
 	pad           = 8
 	maxInputRunes = 1000
 	minCols       = 10
+
+	wheelLinesPerNotch = 3
 )
 
 // joinResult is the outcome of a background Join.
@@ -31,11 +33,12 @@ type joinResult struct {
 
 // mainScene is the per-connection view state of the chat scene.
 type mainScene struct {
-	joined    map[string]bool
-	scroll    int // lines scrolled up from the bottom; 0 = pinned
-	prevTotal int
-	lines     []state.Line // laid out in updateMain, drawn in drawMain
-	visible   int
+	joined     map[string]bool
+	scroll     int // lines scrolled up from the bottom; 0 = pinned
+	prevTotal  int
+	wheelCarry float64      // fractional wheel lines carried between frames
+	lines      []state.Line // laid out in updateMain, drawn in drawMain
+	visible    int
 }
 
 func newMainScene() mainScene { return mainScene{joined: map[string]bool{}} }
@@ -99,7 +102,21 @@ func (g *game) switchChannel(next bool) {
 	} else {
 		g.st.PrevChannel()
 	}
-	g.ms.scroll, g.ms.prevTotal = 0, 0
+	g.afterChannelChange()
+}
+
+// selectChannel activates channel index i (mouse click), sharing the
+// keyboard path's reset-and-join behaviour.
+func (g *game) selectChannel(i int) {
+	if i < 0 || i >= len(g.st.Channels) || i == g.st.Active {
+		return
+	}
+	g.st.Active = i
+	g.afterChannelChange()
+}
+
+func (g *game) afterChannelChange() {
+	g.ms.scroll, g.ms.prevTotal, g.ms.wheelCarry = 0, 0, 0
 	g.joinChannel(g.st.Channels[g.st.Active])
 }
 
@@ -137,6 +154,19 @@ func (g *game) updateMain() {
 		g.switchChannel(false)
 	}
 
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		cx, cy := ebiten.CursorPosition()
+		x, y := float64(cx), float64(cy)
+		if state.InRect(x, y, 0, gm.paneY0, channelPaneW, gm.paneY1) {
+			// Only rows drawChannels actually draws are clickable.
+			n := int((gm.paneY1 - gm.paneY0) / gm.lh)
+			if n > len(g.st.Channels) {
+				n = len(g.st.Channels)
+			}
+			g.selectChannel(state.RowAt(y, gm.paneY0, gm.lh, n))
+		}
+	}
+
 	for _, r := range ebiten.AppendInputChars(nil) {
 		if r >= ' ' && r != 0x7f && len([]rune(g.st.Input.String())) < maxInputRunes {
 			g.st.Input.AppendRunes([]rune{r})
@@ -171,8 +201,12 @@ func (g *game) updateMain() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyPageDown) {
 		g.ms.scroll -= gm.visible - 1
 	}
-	if _, wy := ebiten.Wheel(); wy != 0 {
-		g.ms.scroll += int(wy * 3)
+	mx, my := ebiten.CursorPosition()
+	fx, fy := float64(mx), float64(my)
+	if _, wy := ebiten.Wheel(); wy != 0 && state.InRect(fx, fy, gm.rightX, gm.paneY0, float64(g.w), gm.paneY1) {
+		var n int
+		n, g.ms.wheelCarry = state.WheelLines(g.ms.wheelCarry, wy, wheelLinesPerNotch)
+		g.ms.scroll += n
 	}
 	g.ms.scroll = state.ClampScroll(total, gm.visible, g.ms.scroll)
 	g.ms.visible = gm.visible
