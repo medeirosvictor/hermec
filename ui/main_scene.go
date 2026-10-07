@@ -282,7 +282,7 @@ func (g *game) drawStatus(screen *ebiten.Image, gm geometry) {
 	if g.st.Status != "" && g.st.Phase == state.PhaseMain {
 		line += "  |  " + g.st.Status
 	}
-	g.drawText(clip(screen, 0, 0, float64(g.w), gm.paneY0-pad/2), line, pad, gm.statusY, g.th.Dim)
+	g.drawTextF(clip(screen, 0, 0, float64(g.w), gm.paneY0-pad/2), g.faceS, line, pad, gm.statusY, g.th.Dim)
 }
 
 func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {

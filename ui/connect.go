@@ -91,10 +91,14 @@ func (f *connectForm) update(dialing bool, lh float64, screenW int) (url, name s
 func (g *game) lineH() float64 { return g.th.FontSize * 1.6 }
 
 func (g *game) drawText(dst *ebiten.Image, s string, x, y float64, c color.RGBA) {
+	g.drawTextF(dst, g.face, s, x, y, c)
+}
+
+func (g *game) drawTextF(dst *ebiten.Image, f *text.GoTextFace, s string, x, y float64, c color.RGBA) {
 	op := &text.DrawOptions{}
 	op.GeoM.Translate(x, y)
 	op.ColorScale.ScaleWithColor(c)
-	text.Draw(dst, s, g.face, op)
+	text.Draw(dst, s, f, op)
 }
 
 func (g *game) drawConnect(screen *ebiten.Image) {
@@ -102,8 +106,8 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 	lh := g.lineH()
 	x, y := connectX, connectY
 
-	g.drawText(screen, "HERMEC", x, y, th.Bright)
-	y += lh * 2
+	g.drawTextF(screen, g.faceT, "HERMEC", x, y, th.Bright)
+	y += lh * 2.5
 
 	cursor := ""
 	if (g.frame/30)%2 == 0 {
@@ -135,7 +139,7 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 
 	g.drawText(screen, "fingerprint: "+g.fp, x, y, th.FG)
 	y += lh
-	g.drawText(screen, "back up "+g.keyAt, x, y, th.Dim)
+	g.drawTextF(screen, g.faceS, "back up "+g.keyAt, x, y, th.Dim)
 	y += lh * 2
 
 	switch {
@@ -150,6 +154,6 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 		if !f.local {
 			hint += "   Tab to switch field"
 		}
-		g.drawText(screen, hint, x, y, th.Dim)
+		g.drawTextF(screen, g.faceS, hint, x, y, th.Dim)
 	}
 }

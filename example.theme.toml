@@ -16,5 +16,6 @@ bright = "#FFCF40"
 # Enable scanlines effect
 scanlines = true
 
-# Font size for chat and body text
-font_size = 14.0
+# Font size for chat and body text (VT323 reads best larger). Status lines
+# render at 0.75x and the connect title at 1.5x of this.
+font_size = 18.0

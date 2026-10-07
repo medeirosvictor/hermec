@@ -2,11 +2,17 @@ package theme
 
 import (
 	"bytes"
+	_ "embed"
 	"sync"
 
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
-	"golang.org/x/image/font/gofont/gomono"
 )
+
+// VT323 by The VT323 Project Authors, SIL Open Font License 1.1
+// (see VT323-LICENSE.txt).
+//
+//go:embed VT323-Regular.ttf
+var vt323TTF []byte
 
 var (
 	srcOnce sync.Once
@@ -14,10 +20,10 @@ var (
 	srcErr  error
 )
 
-// Face returns a Go Mono face at the given size, sharing one cached source.
+// Face returns a VT323 face at the given size, sharing one cached source.
 func Face(size float64) (*text.GoTextFace, error) {
 	srcOnce.Do(func() {
-		src, srcErr = text.NewGoTextFaceSource(bytes.NewReader(gomono.TTF))
+		src, srcErr = text.NewGoTextFaceSource(bytes.NewReader(vt323TTF))
 	})
 	if srcErr != nil {
 		return nil, srcErr

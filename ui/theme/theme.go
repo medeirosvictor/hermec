@@ -41,6 +41,40 @@ func Default() Theme {
 	return t
 }
 
+var presetNames = []string{"amber", "green", "blue"}
+
+// PresetNames returns the preset names in Presets() order.
+func PresetNames() []string { return append([]string(nil), presetNames...) }
+
+// Presets returns the built-in palettes: amber (the default), green (P1
+// phosphor) and blue (P4). They inherit Scanlines and FontSize from Default.
+func Presets() []Theme {
+	amber := Default()
+	green, blue := amber, amber
+	green.BG, green.FG, green.Dim, green.Bright = rgb(0x0A, 0x0F, 0x0A), rgb(0x33, 0xFF, 0x33), rgb(0x1A, 0x7A, 0x1A), rgb(0x99, 0xFF, 0x99)
+	blue.BG, blue.FG, blue.Dim, blue.Bright = rgb(0x0A, 0x0C, 0x10), rgb(0x9F, 0xD3, 0xFF), rgb(0x4A, 0x6B, 0x8A), rgb(0xE0, 0xF0, 0xFF)
+	return []Theme{amber, green, blue}
+}
+
+func rgb(r, g, b uint8) color.RGBA { return color.RGBA{r, g, b, 0xFF} }
+
+// NextPreset returns the preset after the one whose palette matches cur,
+// keeping cur's Scanlines and FontSize. A palette matching no preset (e.g. a
+// custom -theme file) is followed by the first preset.
+func NextPreset(cur Theme) Theme {
+	ps := Presets()
+	next := 0
+	for i, p := range ps {
+		if p.BG == cur.BG && p.FG == cur.FG && p.Dim == cur.Dim && p.Bright == cur.Bright {
+			next = (i + 1) % len(ps)
+			break
+		}
+	}
+	n := ps[next]
+	n.Scanlines, n.FontSize = cur.Scanlines, cur.FontSize
+	return n
+}
+
 // Load reads a theme TOML file. Missing keys keep Default values; unknown
 // keys and malformed colours are errors. An empty path returns Default().
 func Load(path string) (Theme, error) {

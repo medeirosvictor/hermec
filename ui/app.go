@@ -33,6 +33,12 @@ type Options struct {
 	Verbose   bool // log breadcrumbs
 }
 
+// Size hierarchy relative to Theme.FontSize.
+const (
+	smallScale = 0.75 // status and hint lines
+	titleScale = 1.5  // connect title
+)
+
 // maxEventsPerTick bounds how many client events one Update drains.
 const maxEventsPerTick = 64
 
@@ -45,7 +51,9 @@ type game struct {
 	opts  Options
 	st    *state.State
 	th    theme.Theme
-	face  *text.GoTextFace
+	face  *text.GoTextFace // body/chat size (Theme.FontSize)
+	faceS *text.GoTextFace // status and hint lines, 0.75x
+	faceT *text.GoTextFace // connect title, 1.5x
 	id    *identity.Identity
 	fp    string
 	keyAt string
@@ -123,9 +131,17 @@ func Run(opts Options) error {
 	if err != nil {
 		return fmt.Errorf("font: %w", err)
 	}
+	faceS, err := theme.Face(th.FontSize * smallScale)
+	if err != nil {
+		return fmt.Errorf("font: %w", err)
+	}
+	faceT, err := theme.Face(th.FontSize * titleScale)
+	if err != nil {
+		return fmt.Errorf("font: %w", err)
+	}
 
 	g := &game{
-		opts: opts, st: state.New(), th: th, face: face, id: id, fp: fp, keyAt: opts.KeyPath,
+		opts: opts, st: state.New(), th: th, face: face, faceS: faceS, faceT: faceT, id: id, fp: fp, keyAt: opts.KeyPath,
 		dialCh: make(chan dialResult, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), ms: newMainScene(), w: 960, h: 600, crtOn: th.Scanlines,
 	}
 	url := opts.ServerURL
@@ -187,6 +203,12 @@ func (g *game) Update() error {
 	if inpututil.IsKeyJustPressed(ebiten.KeyF1) {
 		g.crtOn = !g.crtOn
 		g.logf("crt effect: %v", g.crtOn)
+	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyF2) {
+		// Scenes read g.th on every draw, so the swap is live. Face size
+		// does not depend on the palette, so no face rebuild is needed.
+		g.th = theme.NextPreset(g.th)
+		g.logf("palette: bg=%v fg=%v", g.th.BG, g.th.FG)
 	}
 	select {
 	case r := <-g.dialCh:
