@@ -50,10 +50,15 @@ type game struct {
 
 	c       *client.Client
 	dialCh  chan dialResult
-	joinCh  chan error
+	joinCh  chan joinResult
+	sendCh  chan error
 	dialing bool
 	connect connectForm
+	ms      mainScene
 	frame   int
+	w, h    int
+
+	lastURL, lastName string // for reconnect
 }
 
 // DefaultKeyPath returns <user config dir>/hermec/identity.key.
@@ -114,7 +119,7 @@ func Run(opts Options) error {
 
 	g := &game{
 		opts: opts, st: state.New(), th: th, face: face, id: id, fp: fp, keyAt: opts.KeyPath,
-		dialCh: make(chan dialResult, 1), joinCh: make(chan error, 1),
+		dialCh: make(chan dialResult, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), ms: newMainScene(), w: 960, h: 600,
 	}
 	url := opts.ServerURL
 	if opts.Local {
@@ -158,6 +163,7 @@ func (g *game) logf(format string, args ...any) {
 // startDial dials in a goroutine; the result arrives on dialCh.
 func (g *game) startDial(url, name string) {
 	g.dialing = true
+	g.lastURL, g.lastName = url, name
 	g.st.ConnectErr = ""
 	g.logf("dialing %s as %q", url, name)
 	go func() {
@@ -180,22 +186,27 @@ func (g *game) Update() error {
 			g.logf("connected, channels %v", r.c.Channels())
 			g.c = r.c
 			g.st.SetConnected(r.c.Channels(), r.c.Fingerprint())
+			g.ms = newMainScene()
 			if chs := r.c.Channels(); len(chs) > 0 {
-				go func(c *client.Client, ch string) {
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					defer cancel()
-					g.joinCh <- c.Join(ctx, ch)
-				}(r.c, chs[0])
+				g.joinChannel(chs[0])
 			}
 		}
 	default:
 	}
 	select {
-	case err := <-g.joinCh:
-		if err != nil {
-			g.st.Status = fmt.Sprintf("join failed: %v", err)
+	case r := <-g.joinCh:
+		if r.err != nil {
+			delete(g.ms.joined, r.channel) // allow retry on next switch
+			g.st.Status = fmt.Sprintf("join %s failed: %v", r.channel, r.err)
 		} else {
-			g.logf("joined first channel")
+			g.logf("joined %s", r.channel)
+		}
+	default:
+	}
+	select {
+	case err := <-g.sendCh:
+		if err != nil {
+			g.st.Status = fmt.Sprintf("send failed: %v", err)
 		}
 	default:
 	}
@@ -221,6 +232,12 @@ func (g *game) Update() error {
 			g.startDial(url, name)
 		}
 	}
+	switch g.st.Phase {
+	case state.PhaseMain:
+		g.updateMain()
+	case state.PhaseDisconnected:
+		g.updateDisconnected()
+	}
 	return nil
 }
 
@@ -233,19 +250,7 @@ func (g *game) Draw(screen *ebiten.Image) {
 	}
 }
 
-func (g *game) Layout(w, h int) (int, int) { return w, h }
-
-// drawMain is a placeholder until Task 4.
-func (g *game) drawMain(screen *ebiten.Image) {
-	line := "connected"
-	if len(g.st.Channels) > 0 {
-		line = "connected - channel: " + g.st.Channels[g.st.Active]
-	}
-	if g.st.Phase == state.PhaseDisconnected {
-		line = "disconnected"
-	}
-	g.drawText(screen, line, 24, 24, g.th.FG)
-	if g.st.Status != "" {
-		g.drawText(screen, g.st.Status, 24, 24+g.lineH(), g.th.Bright)
-	}
+func (g *game) Layout(w, h int) (int, int) {
+	g.w, g.h = w, h
+	return w, h
 }
