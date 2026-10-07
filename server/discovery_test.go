@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -183,6 +184,61 @@ func TestShutdownClosesDiscovery(t *testing.T) {
 		t.Fatalf("udp still bound after Shutdown: %v", err)
 	}
 	pc.Close()
+}
+
+func TestStartExplicitPortUDPCollision(t *testing.T) {
+	tcp, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := tcp.Addr().(*net.TCPAddr)
+	pc, err := net.ListenPacket("udp", addr.String())
+	if err != nil {
+		tcp.Close()
+		t.Skipf("udp twin port busy: %v", err)
+	}
+	defer pc.Close()
+	tcp.Close()
+
+	cfg := DefaultConfig()
+	cfg.Addr = addr.String()
+	s := New(cfg)
+	err = s.Start()
+	if err == nil {
+		s.Shutdown(context.Background())
+		t.Fatal("Start succeeded despite UDP port in use")
+	}
+	if !errors.Is(err, errDiscoveryBind) {
+		t.Fatalf("err = %v, want errDiscoveryBind", err)
+	}
+	// No TCP listener leaked.
+	ln, err := net.Listen("tcp", addr.String())
+	if err != nil {
+		t.Fatalf("tcp port leaked: %v", err)
+	}
+	ln.Close()
+}
+
+func TestStartEphemeralRetriesUDPBind(t *testing.T) {
+	orig := listenUDP
+	defer func() { listenUDP = orig }()
+	calls := 0
+	listenUDP = func(network, address string) (net.PacketConn, error) {
+		calls++
+		if calls <= 3 {
+			return nil, errors.New("injected bind failure")
+		}
+		return orig(network, address)
+	}
+	s := startDiscoverable(t, nil, nil)
+	if calls != 4 || s.udp == nil {
+		t.Fatalf("calls = %d, udp = %v", calls, s.udp)
+	}
+	c := udpClient(t, s)
+	c.Write([]byte(discover.Magic))
+	if got := readAll(c, 300*time.Millisecond); len(got) != 1 {
+		t.Fatalf("replies = %d", len(got))
+	}
 }
 
 func TestLoadConfigDiscovery(t *testing.T) {

@@ -21,6 +21,9 @@ const (
 	discoverMaxSources = 4096
 )
 
+// listenUDP binds the discovery socket; tests replace it to inject failures.
+var listenUDP = net.ListenPacket
+
 // errDiscoveryBind marks a failure to bind the UDP discovery socket.
 var errDiscoveryBind = errors.New("udp bind failed")
 
@@ -33,7 +36,7 @@ type discoverSource struct {
 // port). Called from Start after the TCP listener is up; its goroutine is
 // joined by Shutdown through s.wg.
 func (s *Server) startDiscovery(host string, port int) error {
-	pc, err := net.ListenPacket("udp", net.JoinHostPort(host, strconv.Itoa(port)))
+	pc, err := listenUDP("udp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		return err
 	}
@@ -68,6 +71,7 @@ func (s *Server) startDiscovery(host string, port int) error {
 func (s *Server) discoverLoop(pc net.PacketConn, reply []byte) {
 	sources := make(map[string]*discoverSource)
 	buf := make([]byte, discover.MaxPacket+1)
+	errRun := 0
 	for {
 		n, from, err := pc.ReadFrom(buf)
 		if err != nil {
@@ -75,9 +79,14 @@ func (s *Server) discoverLoop(pc net.PacketConn, reply []byte) {
 				return // closed by Shutdown
 			}
 			// Other errors (e.g. Windows reports an oversized datagram as
-			// an error); drop that datagram and keep serving.
+			// an error); drop that datagram and keep serving. Back off if
+			// the errors persist so a broken socket cannot hot-spin.
+			if errRun++; errRun >= 3 {
+				time.Sleep(50 * time.Millisecond)
+			}
 			continue
 		}
+		errRun = 0
 		if string(buf[:n]) != discover.Magic {
 			continue
 		}
