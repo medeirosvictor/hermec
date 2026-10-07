@@ -99,6 +99,7 @@ func (c *conn) readLoop() {
 		return
 	}
 	_ = c.ws.SetReadDeadline(time.Time{})
+	limit := newBucket(c.srv.cfg.MsgRate, c.srv.cfg.MsgBurst, c.srv.clock())
 
 	var missed atomic.Int32
 	c.ws.SetPongHandler(func(string) error { missed.Store(0); return nil })
@@ -115,6 +116,12 @@ func (c *conn) readLoop() {
 		if err != nil {
 			return
 		}
+		// Only data messages reach here; ping/pong/close are control frames
+		// handled inside gorilla and are not counted.
+		if !limit.allow(c.srv.clock()) {
+			c.sendError("rate_limited", "too many messages; slow down")
+			return
+		}
 		env, err := proto.Decode(raw)
 		if err != nil {
 			c.sendError("bad_request", "malformed message")
@@ -129,6 +136,7 @@ var errAuthFailed = errors.New("auth failed")
 // authenticate runs the one-shot challenge-response handshake. On failure it
 // queues auth_failed and returns an error; the connection is then closed.
 func (c *conn) authenticate() error {
+	pre := newBucket(preAuthMsgRate, preAuthMsgBurst, c.srv.clock())
 	nonce := make([]byte, nonceSize)
 	if _, err := rand.Read(nonce); err != nil {
 		return err
@@ -141,6 +149,14 @@ func (c *conn) authenticate() error {
 	_, raw, err := c.ws.ReadMessage()
 	if err != nil {
 		return err
+	}
+
+	// Pre-auth bucket: fixed, small, never disabled. The handshake reads one
+	// message today, so this is a guard that keeps any future multi-step
+	// pre-auth exchange bounded; a flood is otherwise cut by auth_failed.
+	if !pre.allow(c.srv.clock()) {
+		c.sendError("rate_limited", "too many messages; slow down")
+		return errAuthFailed
 	}
 
 	fail := func() error {

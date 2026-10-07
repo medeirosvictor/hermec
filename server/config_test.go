@@ -88,6 +88,8 @@ admin = ["join_channel", "send_chat", "manage"]
 		Channels:    []string{"lobby", "dev"},
 		TLSCert:     "cert.pem",
 		TLSKey:      "key.pem",
+		MsgRate:     DefaultMsgRate,
+		MsgBurst:    DefaultMsgBurst,
 		Roles: roles.Config{
 			Roles: map[string][]roles.Permission{
 				"admin": {roles.PermJoinChannel, roles.PermSendChat, roles.PermManage},

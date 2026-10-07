@@ -29,6 +29,8 @@ type fileConfig struct {
 	DefaultRoles  []string            `toml:"default_roles"`
 	Roles         map[string][]string `toml:"roles"`
 	Grants        map[string][]string `toml:"grants"`
+	MsgRate       int                 `toml:"msg_rate"`
+	MsgBurst      int                 `toml:"msg_burst"`
 }
 
 // DefaultConfig returns the configuration used when no file is given.
@@ -36,6 +38,8 @@ func DefaultConfig() Config {
 	return Config{
 		Addr:     DefaultAddr,
 		Channels: []string{"general"},
+		MsgRate:  DefaultMsgRate,
+		MsgBurst: DefaultMsgBurst,
 		Roles: roles.Config{
 			Roles:        roles.Builtin(),
 			DefaultRoles: []string{"user"},
@@ -96,6 +100,15 @@ func LoadConfig(path string) (Config, error) {
 		}
 		cfg.Roles.Roles[name] = ps
 	}
+	if fc.MsgRate < 0 || fc.MsgBurst < 0 {
+		return Config{}, errors.New("server: load config: msg_rate and msg_burst must not be negative")
+	}
+	if md.IsDefined("msg_rate") {
+		cfg.MsgRate = fc.MsgRate
+	}
+	if md.IsDefined("msg_burst") {
+		cfg.MsgBurst = fc.MsgBurst
+	}
 	cfg.Roles.Grants = fc.Grants
 	if md.IsDefined("default_roles") {
 		cfg.Roles.DefaultRoles = fc.DefaultRoles
@@ -119,6 +132,8 @@ func (c Config) MarshalTOML() ([]byte, error) {
 		DefaultRoles:  c.Roles.DefaultRoles,
 		Roles:         make(map[string][]string, len(c.Roles.Roles)),
 		Grants:        c.Roles.Grants,
+		MsgRate:       c.MsgRate,
+		MsgBurst:      c.MsgBurst,
 	}
 	for name, perms := range c.Roles.Roles {
 		ps := make([]string, len(perms))

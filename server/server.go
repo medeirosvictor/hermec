@@ -45,6 +45,10 @@ type Config struct {
 	// AllowLoopbackICE adds loopback ICE candidates. For tests only; not
 	// exposed in the TOML file.
 	AllowLoopbackICE bool
+	// MsgRate and MsgBurst are the post-auth inbound websocket message
+	// limit per connection (messages/sec sustained, bucket size). Either
+	// being 0 disables post-auth limiting. DefaultConfig sets 30 and 60.
+	MsgRate, MsgBurst int
 }
 
 const (
@@ -71,6 +75,9 @@ type Server struct {
 	// sessions holds the media session of each occupied voice channel; guarded by chMu.
 	sessions map[string]*voiceSession
 
+	// clock is the time source for rate limiting; tests replace it.
+	clock func() time.Time
+
 	http *http.Server
 	ln   net.Listener
 }
@@ -79,6 +86,7 @@ type Server struct {
 func New(cfg Config) *Server {
 	s := &Server{
 		cfg:   cfg,
+		clock: time.Now,
 		conns: make(map[*conn]struct{}),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
