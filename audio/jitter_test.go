@@ -150,8 +150,8 @@ func TestJitterCapDropsOldest(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		dropped += j.Arrive()
 	}
-	if j.depth != maxFrames {
-		t.Fatalf("depth %d want cap %d", j.depth, maxFrames)
+	if j.depth > targetDepth+burstSlack || j.depth > maxFrames {
+		t.Fatalf("depth %d exceeds bound %d", j.depth, targetDepth+burstSlack)
 	}
 	if dropped == 0 {
 		t.Fatal("expected drops reported")

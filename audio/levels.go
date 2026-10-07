@@ -1,5 +1,5 @@
 // Package audio is the hardware side of voice: microphone capture and
-// speaker playback. It is the only package that imports malgo, oto and opus
+// speaker playback. It is the only package that imports malgo and opus
 // (all cgo or device code); client and server never import it. The math in
 // this file is pure so it can be tested without devices.
 package audio

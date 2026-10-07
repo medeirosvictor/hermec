@@ -7,8 +7,16 @@ const (
 	targetDepth = 3
 	// startDepth is how many frames must be queued before a sender is heard
 	// after joining or after an outage that outlasted the PLC budget.
+	// Tunable: raise if audio sounds thin on jittery links.
 	startDepth = 2
-	// maxFrames caps a running sender's backlog (200ms); older audio drops.
+	// burstSlack is how far above targetDepth a running sender may queue
+	// before the oldest frames are dropped back to targetDepth. 2 frames
+	// (40ms) tolerates ordinary +-20ms arrival bunching without a drop, but
+	// bounds standing latency to targetDepth+slack (100ms) after a stall
+	// burst or sender clock drift.
+	burstSlack = 2
+	// maxFrames is the ring capacity; depth never exceeds
+	// targetDepth+burstSlack, so this is only a hard safety bound.
 	maxFrames = 10
 	// plcBudget is how many consecutive concealment frames are generated
 	// for an empty buffer before falling back to silence.
@@ -46,13 +54,15 @@ type jitterState struct {
 func (j *jitterState) Arrive() (drop int) {
 	j.depth++
 	j.plcUsed = 0
-	limit := maxFrames
-	if !j.started {
-		limit = targetDepth
-	}
-	if j.depth > limit {
-		drop = j.depth - limit
-		j.depth = limit
+	switch {
+	case !j.started && j.depth > targetDepth:
+		drop = j.depth - targetDepth
+		j.depth = targetDepth
+	case j.started && j.depth > targetDepth+burstSlack:
+		// Burst after a short stall (or a fast sender clock): trim back to
+		// target so latency is not left standing at the old backlog.
+		drop = j.depth - targetDepth
+		j.depth = targetDepth
 	}
 	return drop
 }

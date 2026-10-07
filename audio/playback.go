@@ -23,9 +23,22 @@ const (
 
 // sender is one remote speaker: an Opus decoder, a ring of decoded 20ms
 // frames, and the jitter state machine that decides what each output slot
-// plays. All fields are guarded by mixer.mu.
+// plays.
+//
+// Locking (order: decMu before mu; mixer.mu is never held while taking
+// either):
+//   - decMu guards dec and pcm. Write holds it across the slow Opus decode.
+//     The audio callback only TryLocks it (for PLC), so it never waits on a
+//     decode: if a real frame is mid-decode the slot is left silent and
+//     that frame arrives next.
+//   - mu guards everything below it: the jitter state, ring, cur and last.
+//     It is held only for short copies, never across a decode.
 type sender struct {
+	decMu sync.Mutex
 	dec   *opus.Decoder
+	pcm   [decodeMax]int16
+
+	mu    sync.Mutex
 	js    jitterState
 	ring  []int16 // maxFrames * frameSize decoded samples
 	head  int     // index (in frames) of the oldest queued frame
@@ -38,6 +51,7 @@ type sender struct {
 }
 
 // push queues one decoded 20ms frame (len(pcm) <= frameSize, zero padded).
+// s.mu must be held.
 func (s *sender) push(pcm []int16) {
 	slot := (s.head + s.js.depth) % maxFrames
 	dst := s.ring[slot*frameSize : (slot+1)*frameSize]
@@ -47,17 +61,47 @@ func (s *sender) push(pcm []int16) {
 }
 
 // mixer decodes per-sender Opus into jitter buffers and mixes them on
-// demand. It has no device dependency: Pull is what the audio callback calls.
+// demand. It has no device dependency: Pull is what the audio callback
+// calls. mixer.mu guards only the sender map; Opus decoding happens under
+// the per-sender decMu, never under mixer.mu.
 type mixer struct {
 	mu      sync.Mutex
 	senders map[string]*sender
-	pcm     [decodeMax]int16
-	scratch [][]int16
+	snap    []fpSender // Pull-owned scratch
+	scratch [][]int16  // Pull-owned scratch
 	now     func() time.Time
+}
+
+type fpSender struct {
+	fp string
+	s  *sender
 }
 
 func newMixer() *mixer {
 	return &mixer{senders: map[string]*sender{}, now: time.Now}
+}
+
+// lookup returns fp's sender, creating it (decoder and ring are allocated
+// outside the map lock) if needed.
+func (m *mixer) lookup(fp string) *sender {
+	m.mu.Lock()
+	s := m.senders[fp]
+	m.mu.Unlock()
+	if s != nil {
+		return s
+	}
+	dec, err := opus.NewDecoder(sampleRate, 1)
+	if err != nil {
+		return nil
+	}
+	ns := &sender{dec: dec, meter: &Meter{}, ring: make([]int16, maxFrames*frameSize)}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s = m.senders[fp]; s == nil {
+		s = ns
+		m.senders[fp] = ns
+	}
+	return s
 }
 
 // Write decodes one Opus frame from fp into its jitter buffer. An empty
@@ -65,43 +109,44 @@ func newMixer() *mixer {
 // that fails to decode is concealed the same way, so a corrupt packet never
 // stalls the stream. Longer packets are split into 20ms frames.
 func (m *mixer) Write(fp string, frame []byte) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	s := m.senders[fp]
+	s := m.lookup(fp)
 	if s == nil {
-		dec, err := opus.NewDecoder(sampleRate, 1)
-		if err != nil {
-			return
-		}
-		s = &sender{dec: dec, meter: &Meter{}, ring: make([]int16, maxFrames*frameSize)}
-		m.senders[fp] = s
+		return
 	}
 	now := m.now()
-	s.last = now
+	s.decMu.Lock()
+	defer s.decMu.Unlock()
 	var pcm []int16
 	if len(frame) > 0 {
-		if n, err := s.dec.Decode(frame, m.pcm[:]); err == nil && n > 0 {
-			pcm = m.pcm[:n]
+		if n, err := s.dec.Decode(frame, s.pcm[:]); err == nil && n > 0 {
+			pcm = s.pcm[:n]
 		}
 	}
 	if pcm == nil {
-		if err := s.dec.DecodePLC(m.pcm[:frameSize]); err != nil {
+		if err := s.dec.DecodePLC(s.pcm[:frameSize]); err != nil {
 			return
 		}
-		pcm = m.pcm[:frameSize]
+		pcm = s.pcm[:frameSize]
 	}
 	s.meter.Observe(RMS(pcm), now)
+	s.mu.Lock()
+	s.last = now
 	for len(pcm) > 0 {
 		n := min(len(pcm), frameSize)
 		s.push(pcm[:n])
 		pcm = pcm[n:]
 	}
+	s.mu.Unlock()
 }
 
 // fill writes up to len(out) samples of s's audio into out, asking the
 // jitter state machine for each 20ms slot, and returns how many it wrote
-// (the rest of out is silence). It runs on the audio thread: no allocation
-// once out has grown to the callback size, no blocking.
+// (the rest of out is silence). s.mu must be held. It runs on the audio
+// thread: no allocation once out has grown to the callback size.
+//
+// PLC decodes run here (bounded to plcBudget per outage, ~0.1ms each). The
+// decoder is shared with Write, so it is TryLocked: if a real frame is
+// mid-decode the slot is left silent rather than waiting.
 func (s *sender) fill(out []int16) int {
 	pos := 0
 	for pos < len(out) {
@@ -111,7 +156,12 @@ func (s *sender) fill(out []int16) int {
 				copy(s.cur[:], s.ring[s.head*frameSize:(s.head+1)*frameSize])
 				s.head = (s.head + 1) % maxFrames
 			case actPLC:
-				if err := s.dec.DecodePLC(s.cur[:]); err != nil {
+				if !s.decMu.TryLock() {
+					return pos
+				}
+				err := s.dec.DecodePLC(s.cur[:])
+				s.decMu.Unlock()
+				if err != nil {
 					return pos
 				}
 			default:
@@ -126,13 +176,30 @@ func (s *sender) fill(out []int16) int {
 	return pos
 }
 
+// idle reports whether s may be forgotten: drained (or never started, so a
+// stray sub-start frame is dropped rather than played stale) and silent for
+// senderIdle. s.mu must be held.
+func (s *sender) idle(now time.Time) bool {
+	return (s.js.depth == 0 || !s.js.started) && now.Sub(s.last) > senderIdle
+}
+
 // Pull fills dst with the mix of all senders, silence where none have audio.
+// Locks are brief: the map lock only to snapshot, then each sender's mu for
+// a copy (plus a bounded PLC decode).
 func (m *mixer) Pull(dst []int16) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	now := m.now()
+	m.mu.Lock()
+	m.snap = m.snap[:0]
+	for fp, s := range m.senders {
+		m.snap = append(m.snap, fpSender{fp, s})
+	}
+	m.mu.Unlock()
+
 	m.scratch = m.scratch[:0]
-	for _, s := range m.senders {
+	anyIdle := false
+	for _, e := range m.snap {
+		s := e.s
+		s.mu.Lock()
 		if cap(s.out) < len(dst) {
 			s.out = make([]int16, len(dst))
 		}
@@ -141,15 +208,25 @@ func (m *mixer) Pull(dst []int16) {
 			clear(out[n:])
 			m.scratch = append(m.scratch, out)
 		}
+		if s.idle(now) {
+			anyIdle = true
+		}
+		s.mu.Unlock()
 	}
 	Mix(dst, m.scratch...)
-	for fp, s := range m.senders {
-		// An idle sender is forgotten once drained, or when it never
-		// started (a stray sub-start frame is dropped, not played stale).
-		if (s.js.depth == 0 || !s.js.started) && now.Sub(s.last) > senderIdle {
-			delete(m.senders, fp)
+	if !anyIdle {
+		return
+	}
+	m.mu.Lock()
+	for _, e := range m.snap {
+		e.s.mu.Lock()
+		gone := e.s.idle(now)
+		e.s.mu.Unlock()
+		if gone && m.senders[e.fp] == e.s {
+			delete(m.senders, e.fp)
 		}
 	}
+	m.mu.Unlock()
 }
 
 // Remove forgets fp's decoder immediately.
@@ -186,9 +263,8 @@ func (ms *Meters) Level(fp string) float64 {
 // jitter-buffer slot (no gulp/sip mismatch).
 //
 // Audio-thread discipline (same as capture): the device callback only calls
-// mixer.Pull, which takes the mixer lock briefly (Write holds it only for
-// one Opus decode), never blocks on a channel and allocates nothing once
-// warm.
+// mixer.Pull, which holds each lock briefly (decoding happens outside, in
+// Write), never blocks on a channel and allocates nothing once warm.
 //
 // Shutdown: Close marks the sink closed (later WriteOpusFrame calls are
 // dropped) and Uninit()s the device, which stops it and waits for any
