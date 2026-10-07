@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"image/color"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -40,9 +41,10 @@ type connectForm struct {
 	focus        int // 0 name, 1 server
 	local        bool
 
-	disc    []state.DiscoveredRow // discovered servers, empty = section hidden
-	sel     int                   // selected discovered row, -1 = fields have focus
-	refresh bool                  // set by update when the user asked for a re-probe
+	disc      []state.DiscoveredRow // discovered servers, empty = section hidden
+	sel       int                   // selected discovered row, -1 = fields have focus
+	hintUntil time.Time             // "enter a name first" shown until then
+	refresh   bool                  // set by update when the user asked for a re-probe
 }
 
 // discTop is the y of the first discovered row (below the DISCOVERED header).
@@ -97,12 +99,17 @@ func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64) 
 				if n := f.name.String(); n != "" && !dialing {
 					return f.disc[i].URL, n, true // one click = join
 				}
+				if !dialing {
+					f.hintUntil = time.Now().Add(2 * time.Second)
+				}
 				return "", "", false
 			}
 			switch state.RowAt(float64(cy), connectFieldsTop(lh), lh, 2) {
 			case 0:
+				f.sel = -1 // back to typing
 				f.focus = 0
 			case 1:
+				f.sel = -1
 				if !f.local {
 					f.focus = 1
 				}
@@ -186,6 +193,7 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 	y += lh
 
 	if len(f.disc) > 0 {
+		y = f.discTop(lh) - lh // single layout source, shared with hit-testing
 		g.drawTextF(screen, g.faceS, "DISCOVERED", x, y, th.Dim)
 		y += lh
 		cx, cy := ebiten.CursorPosition()
@@ -224,6 +232,9 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 		g.drawText(screen, "Enter to retry", x, y, th.Dim)
 	default:
 		hint := "Enter to connect"
+		if time.Now().Before(f.hintUntil) {
+			hint = "enter a name first"
+		}
 		if !f.local {
 			hint += "   Tab to switch field"
 		}
