@@ -251,6 +251,49 @@ func TestCaptureEOF(t *testing.T) {
 	}
 }
 
+func TestCaptureEOFWithPending(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := newTestCapture(t, &now)
+	c.pending = append(c.pending, seqFrame(1, now), seqFrame(2, now))
+	close(c.done)
+	if _, err := c.nextFrame(); err != io.EOF {
+		t.Fatalf("got %v, want io.EOF", err)
+	}
+}
+
+// A consumer slower than the producer that never pauses must not grow
+// latency: pending stays within captureRing and the newest audio wins.
+func TestCaptureSlowConsumerBounded(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := newTestCapture(t, &now)
+	seq, prev := 0, -1
+	for i := 0; i < 2000; i++ {
+		// Consumer reads every 25ms; producer averages 1.25 frames per read
+		// so it outpaces the consumer without any 100ms pause gap.
+		c.push(seqFrame(seq, now))
+		seq++
+		if i%4 == 3 { // extra frame every 4th read: producer faster overall
+			c.push(seqFrame(seq, now))
+			seq++
+		}
+		now = now.Add(25 * time.Millisecond)
+		f, err := c.nextFrame()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(c.pending) > captureRing {
+			t.Fatalf("pending %d exceeds captureRing", len(c.pending))
+		}
+		if int(f.pcm[0]) <= prev {
+			t.Fatalf("out of order: %d after %d", f.pcm[0], prev)
+		}
+		prev = int(f.pcm[0])
+		if lag := seq - 1 - prev; lag > captureRing {
+			t.Fatalf("read %d is %d frames behind newest", i, lag)
+		}
+	}
+}
+
 // Device test: skipped when no microphone can be opened.
 func TestCaptureDevice(t *testing.T) {
 	src, meter, err := Capture()

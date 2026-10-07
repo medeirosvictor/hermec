@@ -183,7 +183,13 @@ drain:
 			break drain
 		}
 	}
+	// Draining bypasses the channel's drop-oldest, so enforce the same hard
+	// cap here: a slow-but-never-pausing consumer must not grow latency.
+	if over := len(c.pending) - captureRing; over > 0 {
+		c.pending = append(c.pending[:0], c.pending[over:]...)
+	}
 	now := c.clock()
+	// pending (not just the channel) is what dropCount sees.
 	c.times = c.times[:0]
 	for _, p := range c.pending {
 		c.times = append(c.times, p.at)
