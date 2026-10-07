@@ -35,7 +35,7 @@ func TestTailscalePeersCLIAbsent(t *testing.T) {
 	old := lookPath
 	lookPath = func(string) (string, error) { return "", errors.New("not found") }
 	defer func() { lookPath = old }()
-	if got := tailscalePeers(); got != nil {
+	if got := tailscalePeers(context.Background()); got != nil {
 		t.Fatalf("got %v, want nil", got)
 	}
 }
@@ -46,11 +46,11 @@ func TestTailscalePeersPresentUsesStatus(t *testing.T) {
 	lookPath = func(string) (string, error) { return "tailscale", nil }
 	runStatus = func(context.Context, string) ([]byte, error) { return b, nil }
 	defer func() { lookPath, runStatus = oldL, oldR }()
-	if got := tailscalePeers(); len(got) != 2 {
+	if got := tailscalePeers(context.Background()); len(got) != 2 {
 		t.Fatalf("got %v", got)
 	}
 	runStatus = func(context.Context, string) ([]byte, error) { return nil, errors.New("boom") }
-	if got := tailscalePeers(); got != nil {
+	if got := tailscalePeers(context.Background()); got != nil {
 		t.Fatalf("got %v, want nil on exec failure", got)
 	}
 }

@@ -18,18 +18,20 @@ var cgnat = netip.MustParsePrefix("100.64.0.0/10")
 var (
 	lookPath  = exec.LookPath
 	runStatus = func(ctx context.Context, bin string) ([]byte, error) {
-		return exec.CommandContext(ctx, bin, "status", "--json").Output()
+		cmd := exec.CommandContext(ctx, bin, "status", "--json")
+		cmd.WaitDelay = 500 * time.Millisecond
+		return cmd.Output()
 	}
 )
 
 // tailscalePeers returns the IPs of online tailnet peers, or nil when the
 // tailscale CLI is absent or fails.
-func tailscalePeers() []string {
+func tailscalePeers(parent context.Context) []string {
 	bin, err := lookPath("tailscale")
 	if err != nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), statusTimeout)
+	ctx, cancel := context.WithTimeout(parent, statusTimeout) // min(2s, probe budget left)
 	defer cancel()
 	out, err := runStatus(ctx, bin)
 	if err != nil {
@@ -57,13 +59,14 @@ func parseTailscaleStatus(b []byte) []string {
 		if !p.Online {
 			continue
 		}
+		// CGNAT IPv4 preferred, else first IPv4, else skip the peer.
 		pick := ""
 		for _, s := range p.TailscaleIPs {
 			ip, err := netip.ParseAddr(s)
-			if err != nil {
+			if err != nil || !ip.Is4() {
 				continue
 			}
-			if ip.Is4() && cgnat.Contains(ip) {
+			if cgnat.Contains(ip) {
 				pick = s
 				break
 			}

@@ -91,3 +91,31 @@ func TestProbeCtxCancelReturnsEarly(t *testing.T) {
 		t.Fatalf("took %v", d)
 	}
 }
+
+func TestProbeBlockedPeersSeamHonorsBudget(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	start := time.Now()
+	discover.Probe(context.Background(), discover.ProbeOpts{
+		Port: 1, Budget: 300 * time.Millisecond,
+		TailscalePeers: func() []string { <-release; return nil },
+	}.WithLANDestsForTest())
+	if d := time.Since(start); d > 500*time.Millisecond {
+		t.Fatalf("took %v with 300ms budget", d)
+	}
+}
+
+func TestProbeCtxCancelMidSweep(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(100 * time.Millisecond); cancel() }()
+	start := time.Now()
+	discover.Probe(ctx, discover.ProbeOpts{
+		Port: 1, Budget: 10 * time.Second, ExtraHosts: []string{"127.0.0.1:1"},
+		TailscalePeers: func() []string { <-release; return nil },
+	}.WithLANDestsForTest())
+	if d := time.Since(start); d > 600*time.Millisecond {
+		t.Fatalf("took %v after cancel", d)
+	}
+}

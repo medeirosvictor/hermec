@@ -1,4 +1,5 @@
 {
+  "_comment": "Trimmed representative sample of real `tailscale status --json` output (only fields the parser uses, plus a few identifying ones).",
   "Version": "1.76.1",
   "BackendState": "Running",
   "Self": {

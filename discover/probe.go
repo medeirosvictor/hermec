@@ -3,6 +3,7 @@ package discover
 import (
 	"context"
 	"net"
+	"net/netip"
 	"sort"
 	"strconv"
 	"sync"
@@ -63,25 +64,24 @@ func Probe(ctx context.Context, opts ProbeOpts) []Found {
 		best[f.Addr] = f
 	}
 
-	run := func(source string, bcast bool, dests func() []string) {
+	run := func(source string, bcast bool, dests func(context.Context) []string) {
 		defer wg.Done()
 		sweep(ctx, source, bcast, dests, opts.Port, add)
 	}
 	wg.Add(3)
-	go run("lan", true, func() []string {
+	go run("lan", true, func(context.Context) []string {
 		if opts.lanDests != nil {
 			return opts.lanDests
 		}
 		return broadcastDests(opts.Port)
 	})
-	go run("tailnet", false, func() []string {
-		peers := opts.TailscalePeers
-		if peers == nil {
-			peers = tailscalePeers
+	go run("tailnet", false, func(ctx context.Context) []string {
+		if opts.TailscalePeers != nil {
+			return opts.TailscalePeers()
 		}
-		return peers()
+		return tailscalePeers(ctx)
 	})
-	go run("saved", false, func() []string { return opts.ExtraHosts })
+	go run("saved", false, func(context.Context) []string { return opts.ExtraHosts })
 	wg.Wait()
 
 	out := make([]Found, 0, len(best))
@@ -94,7 +94,7 @@ func Probe(ctx context.Context, opts ProbeOpts) []Found {
 
 // sweep sends the probe to every destination and collects replies until ctx
 // ends. Destinations without a port use defPort.
-func sweep(ctx context.Context, source string, bcast bool, dests func() []string, defPort int, add func(Found)) {
+func sweep(ctx context.Context, source string, bcast bool, dests func(context.Context) []string, defPort int, add func(Found)) {
 	network := "udp"
 	if bcast {
 		network = "udp4"
@@ -117,12 +117,17 @@ func sweep(ctx context.Context, source string, bcast bool, dests func() []string
 		}
 	}()
 
-	sendDone := make(chan struct{})
+	// Peers/destinations are resolved concurrently with the reply window
+	// (not before it): the window is bounded by the overall deadline either
+	// way, so resolving first would only shrink it. Senders are not joined:
+	// once the reader exits the conn is closed, so pending WriteTo calls
+	// fail fast and DNS lookups are ctx-bound; the only goroutine that can
+	// outlive Probe is a caller-supplied TailscalePeers seam that ignores
+	// the deadline, which exits when that seam returns.
 	go func() {
-		defer close(sendDone)
 		sem := make(chan struct{}, maxUnicast)
 		var swg sync.WaitGroup
-		for _, d := range dests() {
+		for _, d := range dests(ctx) {
 			if ctx.Err() != nil {
 				break
 			}
@@ -131,7 +136,7 @@ func sweep(ctx context.Context, source string, bcast bool, dests func() []string
 			go func(d string) {
 				defer swg.Done()
 				defer func() { <-sem }()
-				sendProbe(conn, d, defPort)
+				sendProbe(ctx, conn, d, defPort)
 			}(d)
 		}
 		swg.Wait()
@@ -163,18 +168,34 @@ func sweep(ctx context.Context, source string, bcast bool, dests func() []string
 			Source:   source,
 		})
 	}
-	<-sendDone
 }
 
-func sendProbe(conn net.PacketConn, dest string, defPort int) {
+func sendProbe(ctx context.Context, conn net.PacketConn, dest string, defPort int) {
 	host, port, err := net.SplitHostPort(dest)
 	if err != nil {
 		host, port = dest, strconv.Itoa(defPort)
 	}
-	ua, err := net.ResolveUDPAddr("udp", net.JoinHostPort(host, port))
-	if err != nil {
+	pn, err := strconv.Atoi(port)
+	if err != nil || pn < 1 || pn > 65535 {
 		return
 	}
+	var ip net.IP
+	if a, err := netip.ParseAddr(host); err == nil {
+		ip = net.IP(a.AsSlice())
+	} else {
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host) // ctx-bound DNS
+		if err != nil || len(ips) == 0 {
+			return
+		}
+		ip = ips[0].IP
+		for _, c := range ips {
+			if c.IP.To4() != nil {
+				ip = c.IP
+				break
+			}
+		}
+	}
+	ua := &net.UDPAddr{IP: ip, Port: pn}
 	_, _ = conn.WriteTo([]byte(Magic), ua)
 }
 
