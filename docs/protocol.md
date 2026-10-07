@@ -334,3 +334,47 @@ The voice release added new message types (section 4.12) and changed the
 `auth_ok` `channels` shape (a breaking change) without bumping the version,
 because the protocol is pre-release; future incompatible changes require a new
 version number.
+
+## 8. Discovery
+
+Servers may announce themselves to clients on the same LAN over UDP. Discovery
+is independent of the websocket protocol and its `v` envelope.
+
+**Probe.** A client sends one UDP datagram whose payload is exactly the 17
+ASCII bytes `HERMEC_DISCOVER_1` to the server's port (the same port number as
+the websocket listener, UDP instead of TCP), typically by broadcast or to a
+known host. Any other payload, including one with extra bytes, is dropped
+without a reply.
+
+**Reply.** The server answers the probe's source address, and only that
+address, with exactly one UDP datagram of at most 512 bytes containing a JSON
+object:
+
+```json
+{"hermec":1,"name":"Lab","port":7697,"ver":"dev"}
+```
+
+| Field    | Meaning                                                              |
+|----------|----------------------------------------------------------------------|
+| `hermec` | Discovery format version; must be `1`.                               |
+| `name`   | Human-readable server name, at most 64 characters.                   |
+| `port`   | The websocket port, 1-65535. Connect to the reply's source IP on it. |
+| `ver`    | The server's software version string.                                |
+
+Clients must reject replies that are larger than 512 bytes, have `hermec` other
+than `1`, a port outside 1-65535, or a name over 64 characters. A reply
+carries no secrets and does not imply the client may connect; authentication
+is unchanged.
+
+**Amplification.** UDP source addresses can be forged, so a responder can be
+used to reflect traffic at a victim. The probe is 17 bytes and a reply may be
+up to 512 bytes, a worst-case amplification of about 30x (a typical reply is
+roughly 70 bytes, about 4x). Mitigations: replies go only to the probe's
+source address (never broadcast), one reply per probe, at most 10 replies per
+second per source IP (burst 10), and operators can disable the responder
+entirely with `discoverable = false`.
+
+**Configuration.** Two server TOML keys control it: `discoverable` (boolean,
+default `true`; `false` binds no UDP socket at all) and `server_name` (string,
+at most 64 characters; default is the server's listen `host:port`). The
+responder binds after the TCP listener, to the same port number.

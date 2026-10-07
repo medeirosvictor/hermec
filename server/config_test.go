@@ -82,14 +82,15 @@ admin = ["join_channel", "send_chat", "manage"]
 		t.Fatal(err)
 	}
 	want := Config{
-		Addr:        "127.0.0.1:9000",
-		Password:    "hunter2",
-		AllowedKeys: []string{"aaaa-bbbb", "cccc-dddd"},
-		Channels:    []string{"lobby", "dev"},
-		TLSCert:     "cert.pem",
-		TLSKey:      "key.pem",
-		MsgRate:     DefaultMsgRate,
-		MsgBurst:    DefaultMsgBurst,
+		Addr:         "127.0.0.1:9000",
+		Password:     "hunter2",
+		AllowedKeys:  []string{"aaaa-bbbb", "cccc-dddd"},
+		Channels:     []string{"lobby", "dev"},
+		TLSCert:      "cert.pem",
+		TLSKey:       "key.pem",
+		MsgRate:      DefaultMsgRate,
+		MsgBurst:     DefaultMsgBurst,
+		Discoverable: true,
 		Roles: roles.Config{
 			Roles: map[string][]roles.Permission{
 				"admin": {roles.PermJoinChannel, roles.PermSendChat, roles.PermManage},

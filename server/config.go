@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 
 	"github.com/medeirosvictor/hermec/core/roles"
+	"github.com/medeirosvictor/hermec/discover"
 )
 
 // DefaultAddr is the listen address used when none is configured.
@@ -31,15 +33,18 @@ type fileConfig struct {
 	Grants        map[string][]string `toml:"grants"`
 	MsgRate       int                 `toml:"msg_rate"`
 	MsgBurst      int                 `toml:"msg_burst"`
+	Discoverable  *bool               `toml:"discoverable"`
+	ServerName    string              `toml:"server_name"`
 }
 
 // DefaultConfig returns the configuration used when no file is given.
 func DefaultConfig() Config {
 	return Config{
-		Addr:     DefaultAddr,
-		Channels: []string{"general"},
-		MsgRate:  DefaultMsgRate,
-		MsgBurst: DefaultMsgBurst,
+		Addr:         DefaultAddr,
+		Channels:     []string{"general"},
+		MsgRate:      DefaultMsgRate,
+		MsgBurst:     DefaultMsgBurst,
+		Discoverable: true,
 		Roles: roles.Config{
 			Roles:        roles.Builtin(),
 			DefaultRoles: []string{"user"},
@@ -109,6 +114,13 @@ func LoadConfig(path string) (Config, error) {
 	if md.IsDefined("msg_burst") {
 		cfg.MsgBurst = fc.MsgBurst
 	}
+	if utf8.RuneCountInString(fc.ServerName) > discover.MaxNameRunes {
+		return Config{}, fmt.Errorf("server: load config: server_name must be at most %d characters", discover.MaxNameRunes)
+	}
+	cfg.ServerName = fc.ServerName
+	if md.IsDefined("discoverable") {
+		cfg.Discoverable = *fc.Discoverable
+	}
 	cfg.Roles.Grants = fc.Grants
 	if md.IsDefined("default_roles") {
 		cfg.Roles.DefaultRoles = fc.DefaultRoles
@@ -134,6 +146,8 @@ func (c Config) MarshalTOML() ([]byte, error) {
 		Grants:        c.Roles.Grants,
 		MsgRate:       c.MsgRate,
 		MsgBurst:      c.MsgBurst,
+		Discoverable:  &c.Discoverable,
+		ServerName:    c.ServerName,
 	}
 	for name, perms := range c.Roles.Roles {
 		ps := make([]string, len(perms))

@@ -49,6 +49,13 @@ type Config struct {
 	// limit per connection (messages/sec sustained, bucket size). Either
 	// being 0 disables post-auth limiting. DefaultConfig sets 30 and 60.
 	MsgRate, MsgBurst int
+	// Discoverable, when true, binds a UDP discovery responder on the same
+	// port number as the listener. DefaultConfig sets it true; the zero
+	// value (programmatic Config literals) is off.
+	Discoverable bool
+	// ServerName is advertised in discovery replies (max 64 runes). Empty
+	// means the listener's host:port.
+	ServerName string
 }
 
 const (
@@ -80,6 +87,7 @@ type Server struct {
 
 	http *http.Server
 	ln   net.Listener
+	udp  net.PacketConn // discovery responder; nil when not discoverable
 }
 
 // New returns a Server for cfg. Call Start to begin serving.
@@ -105,6 +113,23 @@ func New(cfg Config) *Server {
 
 // Start listens on cfg.Addr and serves in the background.
 func (s *Server) Start() error {
+	// With an ephemeral port (":0") the matching UDP port may already be
+	// taken; try a fresh TCP port a few times before giving up.
+	_, port, _ := net.SplitHostPort(s.cfg.Addr)
+	attempts := 1
+	if port == "0" {
+		attempts = 10
+	}
+	var err error
+	for i := 0; i < attempts; i++ {
+		if err = s.start(); !errors.Is(err, errDiscoveryBind) {
+			return err
+		}
+	}
+	return err
+}
+
+func (s *Server) start() error {
 	if (s.cfg.TLSCert == "") != (s.cfg.TLSKey == "") {
 		return errors.New("server: TLSCert and TLSKey must be set together")
 	}
@@ -124,6 +149,19 @@ func (s *Server) Start() error {
 		})
 	}
 	s.ln = ln
+	if s.cfg.Discoverable {
+		if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
+			host := ""
+			if !tcp.IP.IsUnspecified() {
+				host = tcp.IP.String()
+			}
+			if err := s.startDiscovery(host, tcp.Port); err != nil {
+				ln.Close()
+				s.ln = nil
+				return fmt.Errorf("server: discovery listen: %w: %w", errDiscoveryBind, err)
+			}
+		}
+	}
 	s.http = &http.Server{
 		Handler:           http.HandlerFunc(s.handleWS),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -158,6 +196,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	var err error
 	if s.http != nil {
 		err = s.http.Shutdown(ctx)
+	}
+	if s.udp != nil {
+		s.udp.Close() // unblocks the discovery loop
 	}
 	// Hijacked websocket connections are not closed by http.Server.Shutdown.
 	for _, c := range open {

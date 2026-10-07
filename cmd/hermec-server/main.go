@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 func main() {
@@ -49,6 +50,7 @@ func main() {
 	if cfg.TLSCert != "" {
 		scheme = "wss"
 	}
+	log.Printf("hermec-server %s", version.Version)
 	log.Printf("listening on %s (%s)", displayAddr(srv.Addr()), scheme)
 	if cfg.TLSCert == "" && !isLoopback(srv.Addr()) {
 		log.Print("WARNING: serving plain ws on a non-loopback address; traffic is unencrypted (set tls_cert/tls_key)")

@@ -35,6 +35,13 @@ voice_channels = ["voice"]
 # msg_rate = 30
 # msg_burst = 60
 
+# LAN discovery: answer UDP probes on the same port number as addr (default true).
+# Set false to bind no UDP discovery socket at all.
+# discoverable = true
+
+# Name shown in discovery replies, at most 64 characters (default: the listen host:port).
+# server_name = "My Hermec Server"
+
 # Roles given to fingerprints that have no entry in [grants].
 default_roles = ["user"]
 
