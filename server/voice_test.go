@@ -166,3 +166,35 @@ func TestAuthOKCarriesVoiceChannels(t *testing.T) {
 		t.Fatalf("channels = %v", ok.Channels)
 	}
 }
+
+func TestVoiceSnapshotToLateJoiner(t *testing.T) {
+	url := startServer(t, voiceCfg())
+	a, _ := authed(t, url)
+	sendEnv(t, a, proto.TypeVoiceJoin, proto.VoiceJoin{Channel: "lounge"})
+	readVoiceState(t, a)
+	// B authenticates after the call began; no membership change happens.
+	b, _ := authed(t, url)
+	v := readVoiceState(t, b)
+	if v.Channel != "lounge" || len(v.Members) != 1 {
+		t.Fatalf("snapshot = %+v", v)
+	}
+}
+
+// A connection that has not authenticated yet gets no voice_state; once it
+// does, auth_ok comes first and the snapshot follows.
+func TestVoiceNotSentBeforeAuth(t *testing.T) {
+	url := startServer(t, voiceCfg())
+	a, _ := authed(t, url)
+	pre := dial(t, url)
+	nonce := readChallenge(t, pre)
+	sendEnv(t, a, proto.TypeVoiceJoin, proto.VoiceJoin{Channel: "lounge"})
+	readVoiceState(t, a) // the broadcast has happened; pre was not a target
+	id := mustID(t)
+	sendEnv(t, pre, proto.TypeAuth, proto.Auth{PubKey: id.PublicKey(), Name: "late", Sig: id.Sign(nonce)})
+	if env := readEnv(t, pre); env.Type != proto.TypeAuthOK {
+		t.Fatalf("first message = %q, want auth_ok", env.Type)
+	}
+	if v := readVoiceState(t, pre); len(v.Members) != 1 {
+		t.Fatalf("snapshot = %+v", v)
+	}
+}

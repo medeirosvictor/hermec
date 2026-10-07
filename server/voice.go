@@ -45,11 +45,24 @@ func (s *Server) channelInfos() []proto.ChannelInfo {
 	return out
 }
 
-// markAuthed registers c to receive server-wide voice_state broadcasts.
+// markAuthed registers c to receive server-wide voice_state broadcasts and,
+// under the same chMu hold (so no change can slip between snapshot and
+// registration), queues a snapshot of every occupied voice channel to c.
+// auth_ok is already queued, so the snapshot follows it.
 func (s *Server) markAuthed(c *conn) {
 	s.chMu.Lock()
 	s.authed[c] = struct{}{}
+	slow := false
+	for _, ch := range s.cfg.VoiceChannels {
+		if len(s.voice[ch]) > 0 && !c.enqueue(s.voiceStateLocked(ch)) {
+			slow = true
+			break
+		}
+	}
 	s.chMu.Unlock()
+	if slow {
+		dropSlow([]*conn{c})
+	}
 }
 
 // voiceStateLocked encodes the current participants of ch. Caller holds chMu.

@@ -238,6 +238,9 @@ Semantics:
 - `voice_state` always carries the complete participant list of the channel
   (not a delta), including the recipient, and is sent to every participant
   on any join, leave or mute change. A newly joined member is unmuted.
+- `voice_state` is sent to every authenticated connection, not only
+  participants. On successful auth, right after `auth_ok`, the server sends a
+  `voice_state` for every currently occupied voice channel.
 - `voice_mute` while not in a call yields `error` `not_joined`.
 - Voice membership is separate from chat membership (`join`/`leave`).
 

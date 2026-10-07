@@ -73,7 +73,7 @@ func LoadConfig(path string) (Config, error) {
 	}
 	for _, n := range cfg.VoiceChannels {
 		if _, dup := seen[n]; dup {
-			return Config{}, fmt.Errorf("server: load config: channel %q is in both channels and voice_channels", n)
+			return Config{}, fmt.Errorf("server: load config: channel %q is duplicated across channels and voice_channels", n)
 		}
 		seen[n] = struct{}{}
 	}

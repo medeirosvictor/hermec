@@ -55,6 +55,9 @@ func TestLoadConfigVoiceChannels(t *testing.T) {
 	if _, err := LoadConfig(writeTOML(t, "channels = [\"a\"]\nvoice_channels = [\"a\"]")); err == nil {
 		t.Error("expected name collision error")
 	}
+	if _, err := LoadConfig(writeTOML(t, `voice_channels = ["a", "a"]`)); err == nil {
+		t.Error("expected duplicate voice channel error")
+	}
 }
 
 func TestLoadConfigFull(t *testing.T) {
