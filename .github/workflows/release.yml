@@ -38,8 +38,10 @@ jobs:
       # C:\msys64), so hand the script the real ucrt64 bin dir.
       - name: Build client zip and Windows server
         shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          ./scripts/build-release.ps1 -Tag '${{ github.ref_name }}' -SkipLinux -Msys2Bin (Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'ucrt64\bin')
+          ./scripts/build-release.ps1 -Tag $env:TAG -SkipLinux -Msys2Bin (Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'ucrt64\bin')
       - uses: actions/upload-artifact@v4
         with:
           name: windows
