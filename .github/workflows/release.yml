@@ -1,0 +1,100 @@
+name: release
+
+# Builds and publishes release artifacts when a v* tag is pushed.
+#
+# This workflow BUILDS; it never tests. ci.yml remains the correctness gate
+# (only tag commits that are green there).
+#
+# Clean-machine caveat: these jobs run on runners that have toolchains
+# installed, so CI cannot prove the client zip runs on a machine with no
+# toolchain/DLLs. The gates for that are the v0.1.0-rc1 dry run plus a test
+# on a friend's machine (no Go, no msys2).
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-opus
+            mingw-w64-ucrt-x86_64-opusfile
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-ntldd
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+      # The action installs msys2 wherever it likes (not necessarily
+      # C:\msys64), so hand the script the real ucrt64 bin dir.
+      - name: Build client zip and Windows server
+        shell: pwsh
+        run: |
+          ./scripts/build-release.ps1 -Tag '${{ github.ref_name }}' -SkipLinux -Msys2Bin (Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'ucrt64\bin')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+          if-no-files-found: error
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: true
+      # Duplicates the two linux go build lines of scripts/build-release.ps1
+      # (same ldflags stamp). Pure Go, no DLLs: not worth a second script.
+      - name: Build linux servers
+        env:
+          CGO_ENABLED: '0'
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir dist
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X github.com/medeirosvictor/hermec/version.Version=$TAG" \
+              -o "dist/hermec-server-linux-$arch" ./cmd/hermec-server
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Combined checksums
+        working-directory: artifacts
+        run: |
+          rm -f SHA256SUMS.txt
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          flags=""
+          # A hyphen in the tag (v0.1.0-rc1) marks a prerelease.
+          case "$TAG" in *-*) flags="--prerelease" ;; esac
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --generate-notes $flags artifacts/*

@@ -21,6 +21,10 @@ the GUI, with audio relayed through the self-hosted server. Screenshare, camera
 video, and the direct peer-to-peer opt-in remain unimplemented. The
 wire protocol for what exists is specified in [docs/protocol.md](docs/protocol.md).
 
+## Releases
+
+Prebuilt binaries: https://github.com/medeirosvictor/hermec/releases
+
 ## Development
 
 To run the GUI client in one command with an embedded server:
