@@ -86,9 +86,10 @@ Full design spec: **`docs/specs/2026-10-06-hermec-design.md`** (approved 2026-10
 Four sequential plans, each ending in working software:
 
 1. **Foundation** — identity, wire protocol, roles, server + headless client with group chat. Plan: `docs/superpowers/plans/2026-10-06-hermec-foundation.md` — ✅ **merged to main 2026-10-06 (PR #1)**
-2. **Voice** — Pion relay (SFU), ephemeral media sessions, Opus, headless voice calls, host bandwidth stats. Must also absorb from the foundation review: **rate limiting** (spec §8 — scheduled in no plan yet), ping-interval test seam, slow-consumer drop test.
-3. **GUI client** — Ebiten window, theme file, CRT aesthetic, dithered avatars, fingerprint display + first-seen key pinning, key backup prompt.
-4. **Screenshare + direct-P2P opt-in + packaging** — capture per OS, VP8, per-participant direct mode, cross-compile releases.
+2. **GUI chat client** *(reordered before voice — Victor wants to see the app take shape incrementally)* — Ebiten window, connect screen, channel list + chat, amber CRT theme v1, and a single run-everything dev command (`-local` spawns an in-process server). Plan: `docs/superpowers/plans/2026-10-06-hermec-gui-chat.md`. Deferred to a later pass: `--headless` client mode with structured logging for dev/agent debugging (Victor's explicit intent, when debugging needs it).
+3. **Voice** — Pion relay (SFU), ephemeral media sessions, Opus, voice in the GUI, host bandwidth stats. Must also absorb from the foundation review: **rate limiting** (spec §8 — scheduled in no plan yet), ping-interval test seam, slow-consumer drop test.
+4. **GUI polish + identity trust** — dithered avatars, fingerprint display + first-seen key pinning, key backup prompt flow.
+5. **Screenshare + direct-P2P opt-in + packaging** — capture per OS, VP8, per-participant direct mode, cross-compile releases.
 
 **Standing follow-ups** (from the foundation final review): Linux CI with `-race` and a fuzz budget (race detector can't run on the Windows dev box — cgo disabled); decide auth-signature domain separation (`"hermec-auth-v1" || nonce`) before protocol v1 is frozen as a public spec.
 
