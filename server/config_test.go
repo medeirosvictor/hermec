@@ -40,6 +40,23 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigVoiceChannels(t *testing.T) {
+	cfg, err := LoadConfig(writeTOML(t, `voice_channels = ["lounge"]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.VoiceChannels, []string{"lounge"}) {
+		t.Errorf("VoiceChannels = %v", cfg.VoiceChannels)
+	}
+	def, _ := LoadConfig(writeTOML(t, ""))
+	if len(def.VoiceChannels) != 0 {
+		t.Errorf("default VoiceChannels = %v", def.VoiceChannels)
+	}
+	if _, err := LoadConfig(writeTOML(t, "channels = [\"a\"]\nvoice_channels = [\"a\"]")); err == nil {
+		t.Error("expected name collision error")
+	}
+}
+
 func TestLoadConfigFull(t *testing.T) {
 	p := writeTOML(t, `
 addr = "127.0.0.1:9000"

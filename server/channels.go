@@ -28,6 +28,11 @@ func (s *Server) initChannels() {
 	for _, name := range s.cfg.Channels {
 		s.chans[name] = make(map[*conn]struct{})
 	}
+	s.voice = make(voiceSet, len(s.cfg.VoiceChannels))
+	for _, name := range s.cfg.VoiceChannels {
+		s.voice[name] = make(map[*conn]bool)
+	}
+	s.authed = make(map[*conn]struct{})
 }
 
 func (c *conn) member() proto.Member {
@@ -114,6 +119,10 @@ func (s *Server) leaveAll(c *conn) {
 		delete(set, c)
 		dead = append(dead, s.broadcastLocked(ch, s.presenceLocked(ch))...)
 	}
+	delete(s.authed, c)
+	if vch := s.removeVoiceLocked(c); vch != "" {
+		dead = append(dead, s.broadcastVoiceLocked(vch)...)
+	}
 	s.chMu.Unlock()
 	dropSlow(dead)
 }
@@ -178,6 +187,9 @@ func (c *conn) route(env proto.Envelope) {
 			c.sendError("forbidden", "not permitted to send chat")
 		}
 	default:
+		if c.routeVoice(env) {
+			return
+		}
 		c.sendError("bad_request", "unsupported message type "+env.Type)
 	}
 }

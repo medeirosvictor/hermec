@@ -30,6 +30,9 @@ type Config struct {
 	Roles roles.Config
 	// Channels are the server's static channel names.
 	Channels []string
+	// VoiceChannels are the server's static voice channel names; they must
+	// not collide with Channels.
+	VoiceChannels []string
 	// TLSCert and TLSKey are PEM file paths. Set both to serve wss://;
 	// leave both empty for plain ws://.
 	TLSCert, TLSKey string
@@ -52,8 +55,10 @@ type Server struct {
 	closing bool
 	wg      sync.WaitGroup // per-connection goroutines and the accept loop
 
-	chMu  sync.Mutex // guards chans; see channels.go
-	chans channelSet
+	chMu   sync.Mutex // guards chans, voice, authed, conn.voiceCh; see channels.go, voice.go
+	chans  channelSet
+	voice  voiceSet
+	authed map[*conn]struct{} // authenticated conns; voice_state goes to all
 
 	http *http.Server
 	ln   net.Listener
