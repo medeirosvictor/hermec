@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -29,6 +30,9 @@ type Config struct {
 	Roles roles.Config
 	// Channels are the server's static channel names.
 	Channels []string
+	// TLSCert and TLSKey are PEM file paths. Set both to serve wss://;
+	// leave both empty for plain ws://.
+	TLSCert, TLSKey string
 }
 
 const (
@@ -77,9 +81,23 @@ func New(cfg Config) *Server {
 
 // Start listens on cfg.Addr and serves in the background.
 func (s *Server) Start() error {
+	if (s.cfg.TLSCert == "") != (s.cfg.TLSKey == "") {
+		return errors.New("server: TLSCert and TLSKey must be set together")
+	}
 	ln, err := net.Listen("tcp", s.cfg.Addr)
 	if err != nil {
 		return fmt.Errorf("server: listen: %w", err)
+	}
+	if s.cfg.TLSCert != "" {
+		cert, err := tls.LoadX509KeyPair(s.cfg.TLSCert, s.cfg.TLSKey)
+		if err != nil {
+			ln.Close()
+			return fmt.Errorf("server: load tls keypair: %w", err)
+		}
+		ln = tls.NewListener(ln, &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		})
 	}
 	s.ln = ln
 	s.http = &http.Server{Handler: http.HandlerFunc(s.handleWS)}
