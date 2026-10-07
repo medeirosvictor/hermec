@@ -74,6 +74,8 @@ for ev := range c.Events() {
 
 ## Test
 
+CI (`.github/workflows/ci.yml`) runs vet, `-race` tests, a fuzz smoke run and Windows/arm64 cross-builds.
+
 ```sh
 go vet ./...
 go test ./...
