@@ -17,7 +17,7 @@ func chat(ch, text string) client.Event {
 
 func TestApplyChatAppendsToItsChannel(t *testing.T) {
 	s := New()
-	s.SetConnected([]string{"general", "dev"}, "me")
+	s.SetConnected(chans("general", "dev"), "me")
 	s.Apply(chat("general", "oi"), true)
 	if len(s.Messages["dev"]) != 0 || len(s.Messages["general"]) != 1 {
 		t.Fatalf("bad routing: %+v", s.Messages)
@@ -30,7 +30,7 @@ func TestApplyChatAppendsToItsChannel(t *testing.T) {
 
 func TestApplyCapsAt500(t *testing.T) {
 	s := New()
-	s.SetConnected([]string{"general"}, "me")
+	s.SetConnected(chans("general"), "me")
 	for i := 0; i < 501; i++ {
 		s.Apply(chat("general", fmt.Sprint(i)), true)
 	}
@@ -42,7 +42,7 @@ func TestApplyCapsAt500(t *testing.T) {
 
 func TestApplyPresenceReplacesMembers(t *testing.T) {
 	s := New()
-	s.SetConnected([]string{"general"}, "me")
+	s.SetConnected(chans("general"), "me")
 	s.Apply(client.Event{Presence: &proto.Presence{Channel: "general", Members: []proto.Member{{Name: "a"}, {Name: "b"}}}}, true)
 	s.Apply(client.Event{Presence: &proto.Presence{Channel: "general", Members: []proto.Member{{Name: "c"}}}}, true)
 	if len(s.Members["general"]) != 1 || s.Members["general"][0].Name != "c" {
@@ -52,7 +52,7 @@ func TestApplyPresenceReplacesMembers(t *testing.T) {
 
 func TestApplyErrSetsStatus(t *testing.T) {
 	s := New()
-	s.SetConnected([]string{"general"}, "me")
+	s.SetConnected(chans("general"), "me")
 	s.Apply(client.Event{Err: errors.New("boom")}, true)
 	if !strings.Contains(s.Status, "boom") || s.Phase != PhaseMain {
 		t.Fatalf("status=%q phase=%v", s.Status, s.Phase)
@@ -61,7 +61,7 @@ func TestApplyErrSetsStatus(t *testing.T) {
 
 func TestEventsClosedMeansDisconnected(t *testing.T) {
 	s := New()
-	s.SetConnected([]string{"general"}, "me")
+	s.SetConnected(chans("general"), "me")
 	s.Apply(client.Event{}, false)
 	if s.Phase != PhaseDisconnected {
 		t.Fatalf("phase=%v", s.Phase)
@@ -70,7 +70,7 @@ func TestEventsClosedMeansDisconnected(t *testing.T) {
 
 func TestChannelNav(t *testing.T) {
 	s := New()
-	s.SetConnected([]string{"a", "b", "c"}, "me")
+	s.SetConnected(chans("a", "b", "c"), "me")
 	s.PrevChannel()
 	if s.Active != 2 {
 		t.Fatalf("prev wrap: %d", s.Active)
@@ -83,4 +83,12 @@ func TestChannelNav(t *testing.T) {
 	if s.Active != 1 {
 		t.Fatalf("next: %d", s.Active)
 	}
+}
+
+func chans(names ...string) []proto.ChannelInfo {
+	out := make([]proto.ChannelInfo, len(names))
+	for i, n := range names {
+		out[i] = proto.ChannelInfo{Name: n, Type: "text"}
+	}
+	return out
 }

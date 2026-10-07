@@ -53,7 +53,7 @@ type Client struct {
 	ws          *websocket.Conn
 	fingerprint string
 	roles       []string
-	channels    []string
+	channels    []proto.ChannelInfo
 
 	writeMu sync.Mutex // gorilla permits a single concurrent writer
 
@@ -175,7 +175,9 @@ func (c *Client) Fingerprint() string { return c.fingerprint }
 func (c *Client) Roles() []string { return append([]string(nil), c.roles...) }
 
 // Channels returns the server's channel list from auth_ok.
-func (c *Client) Channels() []string { return append([]string(nil), c.channels...) }
+func (c *Client) Channels() []proto.ChannelInfo {
+	return append([]proto.ChannelInfo(nil), c.channels...)
+}
 
 // Events returns the event stream. It is closed when the connection dies.
 // Consumers must drain it: a full buffer applies backpressure to the read

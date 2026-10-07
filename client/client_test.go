@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/medeirosvictor/hermec/core/identity"
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/server"
 )
@@ -53,7 +54,7 @@ func TestDialAuthAndJoin(t *testing.T) {
 	if len(c.Roles()) != 1 || c.Roles()[0] != "user" {
 		t.Errorf("Roles = %v", c.Roles())
 	}
-	if len(c.Channels()) != 1 || c.Channels()[0] != "general" {
+	if len(c.Channels()) != 1 || c.Channels()[0] != (proto.ChannelInfo{Name: "general", Type: "text"}) {
 		t.Errorf("Channels = %v", c.Channels())
 	}
 	if err := c.Join(testCtx(t), "general"); err != nil {

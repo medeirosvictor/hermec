@@ -50,3 +50,71 @@ func TestDecodeRejects(t *testing.T) {
 		})
 	}
 }
+
+func TestVoicePayloadsRoundTrip(t *testing.T) {
+	tests := []struct {
+		typ  string
+		want string
+		in   any
+		out  any
+	}{
+		{TypeVoiceJoin, "voice_join", VoiceJoin{Channel: "lounge"}, new(VoiceJoin)},
+		{TypeVoiceLeave, "voice_leave", VoiceLeave{}, new(VoiceLeave)},
+		{TypeVoiceMute, "voice_mute", VoiceMute{Muted: true}, new(VoiceMute)},
+		{TypeVoiceState, "voice_state", VoiceState{Channel: "lounge", Members: []VoiceMember{
+			{Fingerprint: "k7mv-q3xp-9dfw-02hj", Name: "alice", Muted: true},
+			{Fingerprint: "aaaa-bbbb-cccc-dddd", Name: "bob"},
+		}}, new(VoiceState)},
+		{TypeRTCOffer, "rtc_offer", RTCOffer{SDP: "v=0\r\n"}, new(RTCOffer)},
+		{TypeRTCAnswer, "rtc_answer", RTCAnswer{SDP: "v=0\r\n"}, new(RTCAnswer)},
+		{TypeRTCCandidate, "rtc_candidate", RTCCandidate{Candidate: `{"candidate":"x"}`}, new(RTCCandidate)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			if tt.typ != tt.want {
+				t.Errorf("type constant = %q, want %q", tt.typ, tt.want)
+			}
+			raw, err := Encode(tt.typ, tt.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			env, err := Decode(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if env.Type != tt.want {
+				t.Errorf("Type = %q", env.Type)
+			}
+			if err := json.Unmarshal(env.Data, tt.out); err != nil {
+				t.Fatal(err)
+			}
+			if got := reflect.ValueOf(tt.out).Elem().Interface(); !reflect.DeepEqual(got, tt.in) {
+				t.Errorf("got %+v, want %+v", got, tt.in)
+			}
+		})
+	}
+}
+
+func TestAuthOKTypedChannels(t *testing.T) {
+	in := AuthOK{Fingerprint: "fp", Roles: []string{"user"}, Channels: []ChannelInfo{
+		{Name: "general", Type: "text"}, {Name: "lounge", Type: "voice"},
+	}}
+	raw, err := Encode(TypeAuthOK, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(env.Data), `"channels":[{"name":"general","type":"text"}`) {
+		t.Errorf("wire form = %s", env.Data)
+	}
+	var out AuthOK
+	if err := json.Unmarshal(env.Data, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(in, out) {
+		t.Errorf("got %+v, want %+v", out, in)
+	}
+}

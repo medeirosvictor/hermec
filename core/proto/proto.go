@@ -28,6 +28,14 @@ const (
 	TypeChatSend    = "chat_send"
 	TypeChatMessage = "chat_message"
 	TypeChannelList = "channel_list"
+
+	TypeVoiceJoin    = "voice_join"
+	TypeVoiceLeave   = "voice_leave"
+	TypeVoiceState   = "voice_state"
+	TypeVoiceMute    = "voice_mute"
+	TypeRTCOffer     = "rtc_offer"
+	TypeRTCAnswer    = "rtc_answer"
+	TypeRTCCandidate = "rtc_candidate"
 )
 
 // Reserved for future end-to-end encryption. They have no handler in v1.
@@ -56,15 +64,62 @@ type Auth struct {
 	Password string `json:"password,omitempty"`
 }
 
+// ChannelInfo describes a server channel. Type is "text" or "voice".
+type ChannelInfo struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
 // AuthOK confirms authentication.
 type AuthOK struct {
-	Fingerprint string   `json:"fingerprint"`
-	Roles       []string `json:"roles"`
-	Channels    []string `json:"channels"`
+	Fingerprint string        `json:"fingerprint"`
+	Roles       []string      `json:"roles"`
+	Channels    []ChannelInfo `json:"channels"`
+}
+
+// VoiceJoin requests joining a voice channel.
+type VoiceJoin struct {
+	Channel string `json:"channel"`
+}
+
+// VoiceLeave requests leaving the current voice channel.
+type VoiceLeave struct{}
+
+// VoiceMute sets the sender's mute state.
+type VoiceMute struct {
+	Muted bool `json:"muted"`
+}
+
+// VoiceMember is one participant of a voice channel.
+type VoiceMember struct {
+	Fingerprint string `json:"fingerprint"`
+	Name        string `json:"name"`
+	Muted       bool   `json:"muted"`
+}
+
+// VoiceState is the full participant list of a voice channel.
+type VoiceState struct {
+	Channel string        `json:"channel"`
+	Members []VoiceMember `json:"members"`
+}
+
+// RTCOffer carries an SDP offer.
+type RTCOffer struct {
+	SDP string `json:"sdp"`
+}
+
+// RTCAnswer carries an SDP answer.
+type RTCAnswer struct {
+	SDP string `json:"sdp"`
+}
+
+// RTCCandidate carries one ICE candidate (JSON-encoded candidate init).
+type RTCCandidate struct {
+	Candidate string `json:"candidate"`
 }
 
 // ErrorMsg reports a failure. Codes: "auth_failed", "forbidden",
-// "bad_request", "not_joined".
+// "bad_request", "not_joined", "rate_limited".
 type ErrorMsg struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

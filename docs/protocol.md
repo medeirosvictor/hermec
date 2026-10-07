@@ -2,8 +2,8 @@
 
 This document specifies the Hermec signaling/chat protocol, version 1. It
 covers the chat subset implemented by the foundation release: authentication,
-channels, presence and text chat. Voice and screenshare media ride WebRTC and
-are specified separately, later.
+channels, presence and text chat, plus voice signaling (section 4.12).
+Screenshare is specified separately, later.
 
 The reference implementation is `core/proto` (types and codec) and `server`
 (behavior). Where this document and the code disagree, that is a bug in one of
@@ -118,7 +118,17 @@ Direction: C is client to server, S is server to client.
 |---------------|----------|--------------------------------------------------|
 | `fingerprint` | string   | The authenticated key's fingerprint.             |
 | `roles`       | string[] | Roles assigned to this fingerprint.              |
-| `channels`    | string[] | Names of all channels on the server.             |
+| `channels`    | ChannelInfo[] | All channels on the server.                 |
+
+Changed in the voice release (additively, still protocol version 1):
+`channels` was previously an array of channel-name strings and is now an array
+of `ChannelInfo` objects. This is a wire-format change for `auth_ok`; clients
+must be updated alongside servers.
+
+| Field  | Type   | Description                              |
+|--------|--------|------------------------------------------|
+| `name` | string | Channel name.                            |
+| `type` | string | `"text"` or `"voice"`.                   |
 
 ### 4.4 `error` (S)
 
@@ -199,6 +209,72 @@ Reserved for future end-to-end encryption. In v1 these types are **reserved,
 v1 servers must reject**: a v1 server answers with `error`
 `bad_request` and does not relay them. They are never to be sent by v1 clients.
 
+### 4.12 Voice messages
+
+Voice signaling rides the same WebSocket as chat; audio media travels over
+WebRTC (negotiated as in section 4.13). The server acts as an SFU (selective forwarding unit).
+
+| Type            | Dir | Payload                                                        |
+|-----------------|-----|----------------------------------------------------------------|
+| `voice_join`    | C   | `{"channel": string}` join a voice channel.                    |
+| `voice_leave`   | C   | `{}` leave the current voice channel.                          |
+| `voice_mute`    | C   | `{"muted": bool}` set the sender's mute state.                 |
+| `voice_state`   | S   | `{"channel": string, "members": VoiceMember[]}`                |
+| `rtc_offer`     | C/S | `{"sdp": string}` SDP offer.                                   |
+| `rtc_answer`    | C/S | `{"sdp": string}` SDP answer.                                  |
+| `rtc_candidate` | C/S | `{"candidate": string}` one ICE candidate (JSON candidate init). |
+
+`VoiceMember`: `fingerprint` (string), `name` (string), `muted` (bool).
+
+Semantics:
+
+- `voice_join` targets a channel whose `type` is `voice`; unknown or non-voice
+  channels yield `bad_request`. It requires the `join_channel` permission.
+- **One call at a time.** A connection is in at most one voice channel.
+  Sending `voice_join` for another channel while in a call moves the client:
+  it leaves the old channel (whose members get a fresh `voice_state`) and
+  joins the new one. Re-joining the current channel is not an error.
+- `voice_leave` while not in a call is a no-op. Disconnecting leaves the call.
+- `voice_state` always carries the complete participant list of the channel
+  (not a delta), including the recipient, and is sent to every participant
+  on any join, leave or mute change. A newly joined member is unmuted.
+- `voice_mute` while not in a call yields `error` `not_joined`.
+- Voice membership is separate from chat membership (`join`/`leave`).
+
+### 4.13 Voice negotiation flow
+
+```
+Client                                   Server (SFU)
+  | ------------ voice_join -----------> |
+  | <---------- voice_state ------------ |   client is now a member
+  | ------------ rtc_offer ------------> |   sent after the client's first
+  | <----------- rtc_answer ------------ |   voice_state listing itself
+  | <-------- rtc_candidate ------------ |   candidates flow both ways
+  | --------- rtc_candidate -----------> |   (trickle ICE)
+  |                                      |
+  | <----------- rtc_offer ------------- |   server-initiated renegotiation
+  | ------------ rtc_answer -----------> |   when topology changes
+```
+
+1. After `voice_join`, the client waits for the first `voice_state` in which it
+   is itself a member, then sends `rtc_offer` with its audio send track.
+2. The server replies with `rtc_answer`. Both sides then exchange
+   `rtc_candidate` messages as ICE candidates are gathered.
+3. The server forwards each participant's audio to the other participants.
+   When the topology changes (a participant joins or leaves, so tracks are
+   added or removed), the **server** initiates renegotiation by sending
+   `rtc_offer`; the client replies with `rtc_answer`. Clients must therefore
+   handle server-originated offers at any time during a call.
+4. `rtc_*` messages outside a call are ignored or answered with `not_joined`.
+
+**Rate limiting.** Servers may rate-limit voice and signaling messages. A
+message dropped for that reason is answered with `error` `rate_limited`;
+the connection stays open.
+
+**No echo cancellation.** Hermec does not perform acoustic echo cancellation.
+Using speakers will feed other participants' audio back into your microphone;
+headsets are strongly recommended.
+
 ## 5. Errors
 
 | Code          | Meaning                                                              |
@@ -207,6 +283,7 @@ v1 servers must reject**: a v1 server answers with `error`
 | `forbidden`   | The role lacks the required permission (`join_channel`, `send_chat`). |
 | `bad_request` | Malformed message, unknown channel, or unsupported message type.     |
 | `not_joined`  | The operation needs channel membership the client does not have.     |
+| `rate_limited`| The client is sending too fast; the request was dropped. Back off.   |
 
 Except for `auth_failed`, errors do not close the connection.
 
@@ -238,5 +315,8 @@ each request. Unknown role names grant nothing.
 
 The envelope carries `v`. A server that receives an unsupported version treats
 the message as malformed (`bad_request`). Within a version, new optional
-fields may be added to payloads and receivers must ignore unknown fields; new
-message types or changed semantics require a new version number.
+fields may be added to payloads and receivers must ignore unknown fields.
+The voice release added new message types (section 4.12) and changed the
+`auth_ok` `channels` shape without bumping the version, since the protocol has
+not yet been deployed outside coordinated releases; future incompatible
+changes require a new version number.

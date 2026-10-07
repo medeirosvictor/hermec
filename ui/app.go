@@ -273,7 +273,7 @@ func (g *game) Update() error {
 			g.c = r.c
 			g.st.SetConnected(r.c.Channels(), r.c.Fingerprint())
 			g.ms = newMainScene()
-			g.onConnected(r.c.Channels())
+			g.onConnected(g.st.Channels)
 		}
 	default:
 	}

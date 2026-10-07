@@ -140,7 +140,7 @@ func TestAuthHappyPath(t *testing.T) {
 	if want := []string{"user"}; !reflect.DeepEqual(ok.Roles, want) {
 		t.Errorf("roles = %v, want %v", ok.Roles, want)
 	}
-	if want := []string{"general", "dev"}; !reflect.DeepEqual(ok.Channels, want) {
+	if want := []proto.ChannelInfo{{Name: "general", Type: "text"}, {Name: "dev", Type: "text"}}; !reflect.DeepEqual(ok.Channels, want) {
 		t.Errorf("channels = %v, want %v", ok.Channels, want)
 	}
 }

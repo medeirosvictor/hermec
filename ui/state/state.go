@@ -47,9 +47,12 @@ func New() *State {
 }
 
 // SetConnected enters PhaseMain with the given channels.
-func (s *State) SetConnected(channels []string, fingerprint string) {
+func (s *State) SetConnected(channels []proto.ChannelInfo, fingerprint string) {
 	s.Phase = PhaseMain
-	s.Channels = channels
+	s.Channels = make([]string, len(channels))
+	for i, ch := range channels {
+		s.Channels[i] = ch.Name
+	}
 	s.Active = 0
 	s.fingerprint = fingerprint
 	s.ConnectErr = ""

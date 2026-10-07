@@ -174,10 +174,14 @@ func (c *conn) authenticate() error {
 
 	c.fingerprint = fp
 	c.name = auth.Name
+	chans := make([]proto.ChannelInfo, 0, len(c.srv.cfg.Channels))
+	for _, name := range c.srv.cfg.Channels {
+		chans = append(chans, proto.ChannelInfo{Name: name, Type: "text"})
+	}
 	c.sendMsg(proto.TypeAuthOK, proto.AuthOK{
 		Fingerprint: fp,
 		Roles:       c.srv.cfg.Roles.RolesFor(fp),
-		Channels:    c.srv.cfg.Channels,
+		Channels:    chans,
 	})
 	return nil
 }
