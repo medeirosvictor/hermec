@@ -94,12 +94,14 @@ func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64) 
 		cx, cy := ebiten.CursorPosition()
 		if state.InRect(float64(cx), float64(cy), connectX+ox, 0, float64(screenW), 1e9) {
 			if i := state.RowAt(float64(cy), f.discTop(lh), lh, len(f.disc)); i >= 0 {
-				f.sel = i
 				f.server.runes = []rune(f.disc[i].URL)
 				if n := f.name.String(); n != "" && !dialing {
+					f.sel = i
 					return f.disc[i].URL, n, true // one click = join
 				}
 				if !dialing {
+					f.sel = -1
+					f.focus = 0
 					f.hintUntil = time.Now().Add(2 * time.Second)
 				}
 				return "", "", false

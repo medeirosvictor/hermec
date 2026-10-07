@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/medeirosvictor/hermec/ui"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 func main() {
@@ -16,6 +17,8 @@ func main() {
 	local := flag.Bool("local", false, "ignore -server and run an in-process server")
 	verbose := flag.Bool("v", false, "log breadcrumbs")
 	flag.Parse()
+
+	log.Printf("hermec %s", version.Version)
 
 	if err := ui.Run(ui.Options{
 		ServerURL: *server, Name: *name, KeyPath: *key, ThemePath: *themePath,

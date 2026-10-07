@@ -151,6 +151,7 @@ func sweep(ctx context.Context, source string, bcast bool, listenAddr string, de
 	}()
 
 	buf := make([]byte, MaxPacket+1)
+	var errCount int
 	for {
 		n, from, err := conn.ReadFrom(buf)
 		if err != nil {
@@ -160,8 +161,14 @@ func sweep(ctx context.Context, source string, bcast bool, listenAddr string, de
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				break
 			}
+			errCount++
+			if errCount >= 3 {
+				time.Sleep(50 * time.Millisecond)
+				errCount = 0
+			}
 			continue // e.g. ICMP-induced errors on Windows; keep reading
 		}
+		errCount = 0
 		a, err := ParseAnnounce(buf[:n])
 		if err != nil {
 			continue

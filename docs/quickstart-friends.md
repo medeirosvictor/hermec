@@ -41,8 +41,8 @@ just use discovery—but here's the nitty-gritty if you want to understand it:
 
 Everyone is on the same Wi-Fi or router, for example a LAN party. The server is
 automatically discoverable; friends will see it in the DISCOVERED list. As a
-fallback, the host's LAN IP is `192.168.1.20` (find it with `ipconfig` on
-Windows).
+fallback, find the host's LAN IP with `ipconfig` on Windows (it looks like
+`192.168.1.20`), then friends type `ws://<that IP>:7697/` into the server field.
 
 Nothing is exposed to the internet. Leave `public_ip` unset on a LAN.
 
