@@ -15,10 +15,13 @@ import (
 // endpoint is a var so tests can point it at a stub server.
 var endpoint = "https://api.github.com/repos/medeirosvictor/hermec/releases/latest"
 
+// timeout is a var so tests can shorten it.
+var timeout = 3 * time.Second
+
 const (
-	timeout  = 3 * time.Second
-	maxBody  = 64 << 10
-	devBuild = "dev"
+	maxBody     = 64 << 10
+	devBuild    = "dev"
+	fallbackURL = "https://github.com/medeirosvictor/hermec/releases"
 )
 
 // Available describes a newer release.
@@ -64,7 +67,14 @@ func Check(ctx context.Context, current string) (Available, bool) {
 	if !newer(rel.Tag, current) {
 		return Available{}, false
 	}
-	return Available{Version: rel.Tag, URL: rel.URL}, true
+	// html_url is response data a caller will open in a browser, so only
+	// trust github.com https links; otherwise fall back to the releases page
+	// (the version info is still good).
+	url := rel.URL
+	if !strings.HasPrefix(url, "https://github.com/") {
+		url = fallbackURL
+	}
+	return Available{Version: rel.Tag, URL: url}, true
 }
 
 // parse reads strict vMAJOR.MINOR.PATCH. Hyphenated tags (prereleases) are

@@ -63,7 +63,11 @@ func TestCheck(t *testing.T) {
 		want    Available
 		wantOK  bool
 	}{
-		{"happy", ok(`{"tag_name":"v0.2.0","html_url":"https://x/r","name":"ignored"}`), "v0.1.0", Available{"v0.2.0", "https://x/r"}, true},
+		{"happy", ok(`{"tag_name":"v0.2.0","html_url":"https://github.com/medeirosvictor/hermec/releases/tag/v0.2.0","name":"ignored"}`), "v0.1.0", Available{"v0.2.0", "https://github.com/medeirosvictor/hermec/releases/tag/v0.2.0"}, true},
+		{"http url -> fallback", ok(`{"tag_name":"v0.2.0","html_url":"http://github.com/x"}`), "v0.1.0", Available{"v0.2.0", fallbackURL}, true},
+		{"other host -> fallback", ok(`{"tag_name":"v0.2.0","html_url":"https://github.com.evil.com/x"}`), "v0.1.0", Available{"v0.2.0", fallbackURL}, true},
+		{"javascript url -> fallback", ok(`{"tag_name":"v0.2.0","html_url":"javascript:alert(1)"}`), "v0.1.0", Available{"v0.2.0", fallbackURL}, true},
+		{"missing url -> fallback", ok(`{"tag_name":"v0.2.0"}`), "v0.1.0", Available{"v0.2.0", fallbackURL}, true},
 		{"same", ok(`{"tag_name":"v0.1.0","html_url":"u"}`), "v0.1.0", Available{}, false},
 		{"older", ok(`{"tag_name":"v0.0.9","html_url":"u"}`), "v0.1.0", Available{}, false},
 		{"404", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }, "v0.1.0", Available{}, false},
@@ -117,6 +121,27 @@ func TestCheckTimeoutViaContext(t *testing.T) {
 	}
 	if time.Since(start) > 2*time.Second {
 		t.Fatalf("did not honor ctx: %v", time.Since(start))
+	}
+}
+
+func TestCheckBuiltInTimeout(t *testing.T) {
+	old := timeout
+	timeout = 100 * time.Millisecond
+	t.Cleanup(func() { timeout = old })
+	release := make(chan struct{})
+	stub(t, func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	defer close(release)
+	start := time.Now()
+	if _, ok := Check(context.Background(), "v0.1.0"); ok {
+		t.Fatal("want false on timeout")
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("built-in timeout not applied: %v", d)
 	}
 }
 
