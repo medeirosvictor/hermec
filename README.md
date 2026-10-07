@@ -56,6 +56,7 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **F1**: Toggle CRT effect
 - **F2**: Cycle color palettes
 - **Ctrl+M**: Mute or unmute voice
+- **Ctrl+R**: Refresh discovered servers (connect screen)
 - **Click rail tile**: Switch servers
 - **Click "+" tile**: Add a server
 - **Click voice channel in the pane**: Join or leave voice call
@@ -99,11 +100,15 @@ go build ./cmd/hermec-server           # or ./... for everything
 ./hermec-server -config server.toml -print-config   # show effective config and exit
 ```
 
-See [example.server.toml](example.server.toml) for every option (password, key
-allow list, channels, TLS, roles). The server logs its listen address on start
-and shuts down cleanly on Ctrl-C. Note: the desktop GUI does not yet have a
-password field; password-protected servers are currently reachable only from
-headless clients. A password field is planned.
+Servers announce themselves on the LAN and on Tailscale (if the `tailscale` CLI
+is on PATH), so friends see them in the app's DISCOVERED list. To label your
+server or hide it from discovery, see the `server_name` and `discoverable` keys
+below.
+
+See [example.server.toml](example.server.toml) for every option. The server logs
+its listen address on start and shuts down cleanly on Ctrl-C. Note: the desktop
+GUI does not yet have a password field; password-protected servers are
+currently reachable only from headless clients. A password field is planned.
 
 ### Voice
 
@@ -167,6 +172,42 @@ for ev := range c.Events() {
   relayed traffic, the same way a TeamSpeak host can. Choose hosts like you
   choose group admins. See section 8 of
   [the design spec](docs/specs/2026-10-06-hermec-design.md).
+
+## Troubleshooting
+
+### Build error: `undefined: Stream` in hraban/opus
+
+If building `cmd/hermec` fails with an undefined reference in the opus package,
+your C compiler is not on PATH, and Go silently set `CGO_ENABLED=0`. This breaks
+the voice-enabled build.
+
+**Fix:** ensure your C compiler is on PATH. On Windows with MSYS2:
+
+```sh
+export PATH="/c/msys64/ucrt64/bin:$PATH"
+CGO_ENABLED=1 go build ./cmd/hermec
+```
+
+Add `C:\msys64\ucrt64\bin` to your system PATH (via Settings > Environment
+Variables) to make it permanent.
+
+### Windows Firewall prompts
+
+**Expected:** The real app prompts once for firewall access (UDP socket for LAN
+discovery and voice media relay).
+
+**During development:** Running with `go run` or `go test` creates temporary
+executables, each triggering a new prompt. To avoid repeated prompts, build a
+stable executable once and run it instead:
+
+```sh
+go build -o bin/hermec.exe ./cmd/hermec
+./bin/hermec.exe -local
+```
+
+**Denying the prompt:** If you deny firewall access, loopback (localhost,
+127.0.0.1) and Tailscale still work. LAN discovery is the only feature that
+requires the firewall exception.
 
 ## Test
 

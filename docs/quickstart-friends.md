@@ -11,15 +11,38 @@ for a group of friends, and the **friends**, who just run the app and connect.
   points it at the host's address.
 - Headphones for everyone (see [Notes for friends](#what-friends-receive)).
 
-## Three ways to connect (pick one)
+## Connecting to a discovered server
+
+Hermec servers announce themselves on the local network and Tailscale (if the
+`tailscale` CLI is on PATH). When you run the app, the connect screen shows
+a "DISCOVERED" list of nearby servers—just **click one and you're in** (no need
+to type an address). Press **Ctrl+R** to refresh the list.
+
+To label your server so friends recognize it, set `server_name` in your config:
+
+```toml
+server_name = "Alice's Game Room"
+```
+
+To hide your server from discovery, set `discoverable = false`.
+
+## Fallback: type the address
+
+If you don't see your server in the DISCOVERED list, you can still type its
+address manually on the connect screen. This is also the way to reach servers
+outside your local network and Tailscale (for example, a public VPS).
+
+The rest of this guide covers the three network setups. Most of the time, you'll
+just use discovery—but here's the nitty-gritty if you want to understand it:
+
+## Three ways to connect (traditional paths)
 
 ### (a) Same network (LAN)
 
-Everyone is on the same Wi-Fi or router, for example a LAN party.
-
-1. The host finds their LAN IP (on Windows run `ipconfig`, look for the IPv4
-   address, such as `192.168.1.20`).
-2. Friends connect to `ws://192.168.1.20:7697/`.
+Everyone is on the same Wi-Fi or router, for example a LAN party. The server is
+automatically discoverable; friends will see it in the DISCOVERED list. As a
+fallback, the host's LAN IP is `192.168.1.20` (find it with `ipconfig` on
+Windows).
 
 Nothing is exposed to the internet. Leave `public_ip` unset on a LAN.
 
@@ -34,8 +57,10 @@ between machines is encrypted in transit by WireGuard.
 2. The host invites each friend to their tailnet (Tailscale admin console,
    share/invite users, or share the host machine with them).
 3. The host starts the server (see below).
-4. Friends connect to `ws://<your-machine-name>.<tailnet>.ts.net:7697/`, for
-   example `ws://vito.tail1234.ts.net:7697/`. The host can read the exact name
+4. The server will appear in friends' DISCOVERED lists (if the `tailscale` CLI
+   is on PATH). As a fallback, friends can connect to
+   `ws://<your-machine-name>.<tailnet>.ts.net:7697/`, for example
+   `ws://vito.tail1234.ts.net:7697/`. The host can read the exact name
    in the Tailscale app.
 
 If voice does not connect, check that your Tailscale policy lets friends reach
