@@ -172,3 +172,64 @@ func TestLoadRejects(t *testing.T)         // unknown key errors; "#GGGGGG" erro
 - [ ] **Step 2: Run `go test -count=1 ./...` — PASS; `go vet ./...` clean**
 - [ ] **Step 3: Cross-build checks — `GOOS=windows go build ./...`; `GOOS=linux GOARCH=arm64 go build ./...` (Ebiten linux build may need the CI's X11 headers — if the local linux cross-build of ui fails on C headers, verify `GOOS=linux` builds in CI instead and note it in the report)**
 - [ ] **Step 4: Commit** — `docs: one-command run, theme example`
+
+### Task 7: Mouse support & Windows title bar (added 2026-10-07, Victor's feedback)
+
+**Files:**
+- Modify: `ui/main_scene.go`, `ui/connect.go`, `ui/app.go`; Create: `ui/winbar_windows.go` (+ no-op `ui/winbar_other.go`)
+- Test: build check + manual checklist; pure hit-testing helpers (point-in-row math) go in `ui/state` with tests
+
+**Interfaces:**
+- Consumes: Task 4's layout contract (180px channel pane, row height from face metrics); `ebiten.CursorPosition()`, `inpututil.IsMouseButtonJustPressed`, `ebiten.Wheel()`.
+- Produces:
+  - Click on a channel row → same switch+join path as keyboard nav; click elsewhere is inert (input line is always focused)
+  - Mouse wheel over the chat pane scrolls scrollback (3 lines per notch), same clamp/pin rules as PageUp/Down
+  - Connect scene: click selects the name/server field for editing
+  - Windows title bar: best-effort dark title bar via `DwmSetWindowAttribute(DWMWA_USE_IMMERSIVE_DARK_MODE)` using `golang.org/x/sys/windows` (no cgo); HWND found by window title; errors silently ignored; behind `//go:build windows`
+
+- [ ] **Step 1: Implement hit-testing helper(s) in ui/state with tests; wire clicks + wheel; winbar files**
+- [ ] **Step 2: Build + vet clean (windows AND `GOOS=linux go vet ./...` for the build-tag split); full suite PASS**
+- [ ] **Step 3: Manual checklist:** click switches channel and joins; wheel scrolls and re-pins at bottom; field click works on connect scene; title bar renders dark on Windows 11; app still builds/runs where DWM is absent
+- [ ] **Step 4: Commit** — `feat: mouse support and dark Windows title bar`
+
+### Task 8: Terminal font & palette presets (added 2026-10-07, Victor's feedback)
+
+**Files:**
+- Modify: `ui/theme/theme.go`, `ui/theme/font.go`, `ui/theme/default.toml`, scenes as needed for size hierarchy; Create: embedded VT323 font file under `ui/theme/`
+- Test: `ui/theme/theme_test.go` additions (presets, font_size defaults)
+
+**Interfaces:**
+- Consumes: Google Fonts **VT323** (OFL license — include the license file beside the embedded .ttf).
+- Produces:
+  - `Face()` serves VT323 instead of gomono (still cached; still the only Ebiten-touching theme file)
+  - Size hierarchy: `Theme.FontSize` is the chat/body size (new default 18 — VT323 reads best larger); status/dim lines render at ~0.75×; connect-title larger. Scenes derive from FontSize, no new theme keys.
+  - `func Presets() []Theme` + preset names: "amber" (current palette), "green" (P1 phosphor: bg #0A0F0A, fg #33FF33, dim #1A7A1A, bright #99FF99), "blue" (P4: bg #0A0C10, fg #9FD3FF, dim #4A6B8A, bright #E0F0FF)
+  - **F2** cycles presets at runtime (Update-side, like F1); an explicit `-theme` file pins the theme and F2 still cycles from it as the starting point
+  - OFL license text embedded/shipped alongside (file `ui/theme/VT323-LICENSE.txt`)
+
+- [ ] **Step 1: Add failing theme tests (presets exact palettes; default FontSize 18), swap font, wire F2 + hierarchy**
+- [ ] **Step 2: Build/vet/full suite PASS**
+- [ ] **Step 3: Manual checklist:** VT323 renders crisply at 18 with scanlines; accents (ç ã é) exist in VT323 and render; F2 cycles amber→green→blue→amber live; hierarchy reads well
+- [ ] **Step 4: Commit** — `feat: VT323 terminal font, size hierarchy, F2 palette presets`
+
+### Task 9: Servers rail & local persistence (added 2026-10-07, Victor's feedback; design confirmed)
+
+**Files:**
+- Create: `ui/state/servers.go` (+test), `ui/rail.go`
+- Modify: `ui/app.go`, `ui/connect.go`, `ui/main_scene.go` (shift layout right by the rail width)
+- Test: TDD for persistence + hit-testing; manual checklist for the rail UI
+
+**Interfaces:**
+- Produces:
+  - `type ServerEntry struct { URL, Label, LastChannel string; LastSeen time.Time }`
+  - `ui/state`: `LoadServers(path) ([]ServerEntry, error)` / `SaveServers(path, []ServerEntry) error` (TOML, path default `os.UserConfigDir()/hermec/servers.toml`, missing file → empty list, atomic-ish write via temp+rename); `Touch(entries, url, label, channel) []ServerEntry` (upsert, newest first, cap 20)
+  - Rail (56px, far left, all scenes once ≥1 server saved): one tile per entry — label initials (or first 2 runes of host) in a bordered box, current server highlighted bright, click = connect/switch (reuses the reconnect flow; switching tears down the old client cleanly); bottom "+" tile opens the connect scene (add-server flow)
+  - Startup: servers.toml non-empty → auto-focus most recent entry's connect (NOT auto-connect; one Enter connects) and show the rail; empty → today's first-run connect scene
+  - On successful connect: Touch + SaveServers (URL, label = user name of server? label = host:port for now, LastChannel updated on every channel switch)
+  - Save errors surface in Status, never crash
+
+- [ ] **Step 1: TDD LoadServers/SaveServers/Touch (round-trip, missing file, cap, upsert order)**
+- [ ] **Step 2: Implement rail + wiring + layout shift**
+- [ ] **Step 3: Build/vet/full suite PASS**
+- [ ] **Step 4: Manual checklist:** first run (no file) = old flow; after connecting, rail appears; relaunch shows rail + one-Enter reconnect to last server; "+" adds a second (-local + the real server); click-switching works and LastChannel is remembered per server
+- [ ] **Step 5: Commit** — `feat: servers rail with local persistence`

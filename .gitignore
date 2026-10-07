@@ -8,3 +8,6 @@
 # OS noise
 Thumbs.db
 .DS_Store
+
+# SDD workspace dirs must never be committed
+.superpowers/
