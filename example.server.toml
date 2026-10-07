@@ -1,0 +1,34 @@
+# Example Hermec server configuration.
+# Every key is optional; the values shown for addr, channels and
+# default_roles are the defaults. Unknown keys are rejected.
+# Run with:  hermec-server -config example.server.toml
+# Inspect the effective config with:  hermec-server -config ... -print-config
+
+# Listen address (host:port). ":7697" listens on all interfaces.
+addr = ":7697"
+
+# If set, every client must present this password. Leave empty for none.
+# password = "change-me"
+
+# Only these key fingerprints may connect. Empty or omitted = open server.
+# allowed_keys = ["k7mv-q3xp-9dfw-02hj"]
+
+# Static channel names.
+channels = ["general"]
+
+# TLS: set both to serve wss://, or neither for plain ws://.
+# tls_cert = "/etc/hermec/cert.pem"
+# tls_key  = "/etc/hermec/key.pem"
+
+# Roles given to fingerprints that have no entry in [grants].
+default_roles = ["user"]
+
+# Role definitions. The builtin roles (admin, user, bot) always exist;
+# entries here add new roles or replace a builtin role's permissions.
+# Permissions: join_channel, send_chat, manage.
+[roles]
+# listener = ["join_channel"]
+
+# Fingerprint -> roles.
+[grants]
+# "k7mv-q3xp-9dfw-02hj" = ["admin"]
