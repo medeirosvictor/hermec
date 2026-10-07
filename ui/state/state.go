@@ -27,13 +27,13 @@ type Message struct {
 }
 
 type State struct {
-	Phase       Phase
-	Status      string
-	ConnectErr  string
-	Channels    []string
-	Active      int
-	Messages    map[string][]Message
-	Members     map[string][]proto.Member
+	Phase      Phase
+	Status     string
+	ConnectErr string
+	Channels   []string
+	Active     int
+	Messages   map[string][]Message
+	Members    map[string][]proto.Member
 	// VoiceChannels are the server's voice channel names (not part of
 	// Channels, which stays text-only for keyboard navigation).
 	VoiceChannels []string
@@ -42,8 +42,8 @@ type State struct {
 	Voice map[string][]proto.VoiceMember
 	// InCall is the voice channel this client is in, maintained from its own
 	// actions (SetInCall), never from events.
-	InCall string
-	Input      InputBuffer
+	InCall      string
+	Input       InputBuffer
 	fingerprint string
 }
 

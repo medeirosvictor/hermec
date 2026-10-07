@@ -66,12 +66,15 @@ type game struct {
 	joinCh  chan joinResult
 	sendCh  chan error
 	voiceCh chan voiceResult
-	vc      voiceCall
-	dialing bool
-	connect connectForm
-	ms      mainScene
-	frame   int
-	w, h    int
+
+	muteCh     chan muteReq
+	muteFailCh chan muteFail
+	vc         voiceCall
+	dialing    bool
+	connect    connectForm
+	ms         mainScene
+	frame      int
+	w, h       int
 
 	lastURL, lastName string // for reconnect
 
@@ -180,13 +183,15 @@ func Run(opts Options) error {
 		dialCh: make(chan dialResult, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), voiceCh: make(chan voiceResult, 4), ms: newMainScene(), w: 960, h: 600, crtOn: crtOn,
 		settingsPath: boot.settingsPath, set: boot.set, notice: boot.notice, autoName: opts.Name,
 	}
+	g.muteCh, g.muteFailCh = make(chan muteReq, 1), make(chan muteFail, 4)
+	go g.muteWorker()
 	url := opts.ServerURL
 	if opts.Local {
 		srv := server.New(server.Config{
-			Addr:     "127.0.0.1:0",
+			Addr:          "127.0.0.1:0",
 			Channels:      []string{"general"},
 			VoiceChannels: []string{"voice"},
-			Roles:    roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
+			Roles:         roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
 		})
 		if err := srv.Start(); err != nil {
 			return fmt.Errorf("local server: %w", err)

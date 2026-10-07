@@ -148,6 +148,7 @@ func (g *game) dropVoice() {
 
 // updateVoice consumes background results and notices a dead call.
 func (g *game) updateVoice() {
+	g.applyMuteFail()
 	select {
 	case r := <-g.voiceCh:
 		g.vc.busy = false
@@ -183,12 +184,49 @@ func (g *game) toggleMute() {
 		return
 	}
 	g.vc.muted = !g.vc.muted
-	m, c := g.vc.muted, g.c
-	go func() {
-		if err := c.SetMuted(m); err != nil && !errors.Is(err, client.ErrNotInVoice) {
-			g.sendCh <- fmt.Errorf("mute: %w", err)
+	// Single slot, latest wins: drop a pending older value, then queue ours.
+	// Only this goroutine fills the slot, so the send cannot block.
+	select {
+	case <-g.muteCh:
+	default:
+	}
+	g.muteCh <- muteReq{c: g.c, muted: g.vc.muted}
+}
+
+// muteReq is the desired mute state for one client.
+type muteReq struct {
+	c     *client.Client
+	muted bool
+}
+
+// muteFail reports a SetMuted that did not reach the server.
+type muteFail struct {
+	muted bool // the value that failed to send
+	err   error
+}
+
+// muteWorker sends the latest desired mute state, in order, one at a time.
+func (g *game) muteWorker() {
+	for r := range g.muteCh {
+		if err := r.c.SetMuted(r.muted); err != nil && !errors.Is(err, client.ErrNotInVoice) {
+			select {
+			case g.muteFailCh <- muteFail{r.muted, err}:
+			default:
+			}
 		}
-	}()
+	}
+}
+
+// applyMuteFail reverts the local flag when the server never got the value.
+func (g *game) applyMuteFail() {
+	select {
+	case f := <-g.muteFailCh:
+		if g.vc.muted == f.muted {
+			g.vc.muted = !f.muted
+		}
+		g.st.Status = fmt.Sprintf("mute failed: %v", f.err)
+	default:
+	}
 }
 
 // barLayout is the pixel layout of the call bar, shared by update and draw.
