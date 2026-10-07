@@ -26,7 +26,8 @@ const (
 // plays.
 //
 // Locking (order: decMu before mu; mixer.mu is never held while taking
-// either):
+// either; the one reverse acquisition, fill taking decMu while holding mu,
+// uses TryLock and so can never block or deadlock):
 //   - decMu guards dec and pcm. Write holds it across the slow Opus decode.
 //     The audio callback only TryLocks it (for PLC), so it never waits on a
 //     decode: if a real frame is mid-decode the slot is left silent and
@@ -48,6 +49,13 @@ type sender struct {
 	out   []int16
 	last  time.Time
 	meter *Meter
+}
+
+// touch marks the sender active at now.
+func (s *sender) touch(now time.Time) {
+	s.mu.Lock()
+	s.last = now
+	s.mu.Unlock()
 }
 
 // push queues one decoded 20ms frame (len(pcm) <= frameSize, zero padded).
@@ -94,7 +102,9 @@ func (m *mixer) lookup(fp string) *sender {
 	if err != nil {
 		return nil
 	}
-	ns := &sender{dec: dec, meter: &Meter{}, ring: make([]int16, maxFrames*frameSize)}
+	// last starts at now so Pull's idle sweep cannot collect the sender in
+	// the window before its first frame is pushed.
+	ns := &sender{dec: dec, meter: &Meter{}, ring: make([]int16, maxFrames*frameSize), last: m.now()}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s = m.senders[fp]; s == nil {
@@ -114,6 +124,7 @@ func (m *mixer) Write(fp string, frame []byte) {
 		return
 	}
 	now := m.now()
+	s.touch(now) // before the decode: an idle sender must not be swept mid-Write
 	s.decMu.Lock()
 	defer s.decMu.Unlock()
 	var pcm []int16
@@ -189,6 +200,7 @@ func (s *sender) idle(now time.Time) bool {
 func (m *mixer) Pull(dst []int16) {
 	now := m.now()
 	m.mu.Lock()
+	clear(m.snap) // drop references so forgotten senders can be freed
 	m.snap = m.snap[:0]
 	for fp, s := range m.senders {
 		m.snap = append(m.snap, fpSender{fp, s})
