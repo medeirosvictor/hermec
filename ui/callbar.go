@@ -93,7 +93,7 @@ func (g *game) joinCall(ch string) {
 			g.voiceCh <- res
 			return
 		}
-		sink, spk, err := audio.Playback()
+		sink, spk, err := audio.Playback("")
 		if err != nil {
 			closeAll(asCloser(src))
 			res.err = fmt.Errorf("audio output unavailable: %w", err)

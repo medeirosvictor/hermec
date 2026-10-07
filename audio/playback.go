@@ -2,22 +2,18 @@ package audio
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"sync"
 	"time"
 
-	"github.com/ebitengine/oto/v3"
+	"github.com/gen2brain/malgo"
 	"github.com/hraban/opus"
 
 	"github.com/medeirosvictor/hermec/client"
 )
 
 const (
-	// maxQueued caps one sender's decoded backlog; older audio is dropped.
-	maxQueued = 10 * frameSize // 200ms
-	// prefill is how much a sender must have queued before it is heard
-	// (after start or an underrun); it absorbs network jitter.
-	prefill = 2 * frameSize // 40ms
 	// senderIdle: a sender silent this long (and drained) is forgotten and
 	// its decoder freed.
 	senderIdle = 3 * time.Second
@@ -25,27 +21,38 @@ const (
 	decodeMax = 5760
 )
 
-type take struct {
-	s *sender
-	n int
-}
-
+// sender is one remote speaker: an Opus decoder, a ring of decoded 20ms
+// frames, and the jitter state machine that decides what each output slot
+// plays. All fields are guarded by mixer.mu.
 type sender struct {
-	dec    *opus.Decoder
-	queue  []int16
-	primed bool
-	last   time.Time
-	meter  *Meter
+	dec   *opus.Decoder
+	js    jitterState
+	ring  []int16 // maxFrames * frameSize decoded samples
+	head  int     // index (in frames) of the oldest queued frame
+	cur   [frameSize]int16
+	curN  int // valid samples in cur
+	curAt int // next unread sample in cur
+	out   []int16
+	last  time.Time
+	meter *Meter
 }
 
-// mixer decodes per-sender Opus into queues and mixes them on demand. It has
-// no device dependency: Pull is what the oto reader calls.
+// push queues one decoded 20ms frame (len(pcm) <= frameSize, zero padded).
+func (s *sender) push(pcm []int16) {
+	slot := (s.head + s.js.depth) % maxFrames
+	dst := s.ring[slot*frameSize : (slot+1)*frameSize]
+	n := copy(dst, pcm)
+	clear(dst[n:])
+	s.head = (s.head + s.js.Arrive()) % maxFrames
+}
+
+// mixer decodes per-sender Opus into jitter buffers and mixes them on
+// demand. It has no device dependency: Pull is what the audio callback calls.
 type mixer struct {
 	mu      sync.Mutex
 	senders map[string]*sender
 	pcm     [decodeMax]int16
 	scratch [][]int16
-	taken   []take
 	now     func() time.Time
 }
 
@@ -53,9 +60,10 @@ func newMixer() *mixer {
 	return &mixer{senders: map[string]*sender{}, now: time.Now}
 }
 
-// Write decodes one Opus frame from fp. An empty frame means "this frame was
-// lost" and is concealed with Opus PLC. A frame that fails to decode is
-// concealed the same way, so a corrupt packet never stalls the stream.
+// Write decodes one Opus frame from fp into its jitter buffer. An empty
+// frame means "this frame was lost" and is concealed with Opus PLC; a frame
+// that fails to decode is concealed the same way, so a corrupt packet never
+// stalls the stream. Longer packets are split into 20ms frames.
 func (m *mixer) Write(fp string, frame []byte) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -65,15 +73,14 @@ func (m *mixer) Write(fp string, frame []byte) {
 		if err != nil {
 			return
 		}
-		s = &sender{dec: dec, meter: &Meter{}}
+		s = &sender{dec: dec, meter: &Meter{}, ring: make([]int16, maxFrames*frameSize)}
 		m.senders[fp] = s
 	}
 	now := m.now()
 	s.last = now
 	var pcm []int16
 	if len(frame) > 0 {
-		n, err := s.dec.Decode(frame, m.pcm[:])
-		if err == nil {
+		if n, err := s.dec.Decode(frame, m.pcm[:]); err == nil && n > 0 {
 			pcm = m.pcm[:n]
 		}
 	}
@@ -84,10 +91,39 @@ func (m *mixer) Write(fp string, frame []byte) {
 		pcm = m.pcm[:frameSize]
 	}
 	s.meter.Observe(RMS(pcm), now)
-	s.queue = append(s.queue, pcm...)
-	if over := len(s.queue) - maxQueued; over > 0 {
-		s.queue = append(s.queue[:0], s.queue[over:]...)
+	for len(pcm) > 0 {
+		n := min(len(pcm), frameSize)
+		s.push(pcm[:n])
+		pcm = pcm[n:]
 	}
+}
+
+// fill writes up to len(out) samples of s's audio into out, asking the
+// jitter state machine for each 20ms slot, and returns how many it wrote
+// (the rest of out is silence). It runs on the audio thread: no allocation
+// once out has grown to the callback size, no blocking.
+func (s *sender) fill(out []int16) int {
+	pos := 0
+	for pos < len(out) {
+		if s.curAt >= s.curN {
+			switch s.js.Next() {
+			case actPlay:
+				copy(s.cur[:], s.ring[s.head*frameSize:(s.head+1)*frameSize])
+				s.head = (s.head + 1) % maxFrames
+			case actPLC:
+				if err := s.dec.DecodePLC(s.cur[:]); err != nil {
+					return pos
+				}
+			default:
+				return pos
+			}
+			s.curN, s.curAt = frameSize, 0
+		}
+		n := copy(out[pos:], s.cur[s.curAt:s.curN])
+		s.curAt += n
+		pos += n
+	}
+	return pos
 }
 
 // Pull fills dst with the mix of all senders, silence where none have audio.
@@ -96,29 +132,21 @@ func (m *mixer) Pull(dst []int16) {
 	defer m.mu.Unlock()
 	now := m.now()
 	m.scratch = m.scratch[:0]
-	m.taken = m.taken[:0]
 	for _, s := range m.senders {
-		if !s.primed && len(s.queue) >= prefill {
-			s.primed = true
+		if cap(s.out) < len(dst) {
+			s.out = make([]int16, len(dst))
 		}
-		if !s.primed {
-			continue
-		}
-		n := min(len(dst), len(s.queue))
-		m.scratch = append(m.scratch, s.queue[:n])
-		m.taken = append(m.taken, take{s, n})
-		if n < len(dst) {
-			s.primed = false // underrun: rebuffer
+		out := s.out[:len(dst)]
+		if n := s.fill(out); n > 0 {
+			clear(out[n:])
+			m.scratch = append(m.scratch, out)
 		}
 	}
 	Mix(dst, m.scratch...)
-	for _, t := range m.taken {
-		t.s.queue = append(t.s.queue[:0], t.s.queue[t.n:]...)
-	}
 	for fp, s := range m.senders {
-		// An idle sender is forgotten when drained, or when it never
-		// primed (a stray sub-prefill frame is dropped, not played stale).
-		if (len(s.queue) == 0 || !s.primed) && now.Sub(s.last) > senderIdle {
+		// An idle sender is forgotten once drained, or when it never
+		// started (a stray sub-start frame is dropped, not played stale).
+		if (s.js.depth == 0 || !s.js.started) && now.Sub(s.last) > senderIdle {
 			delete(m.senders, fp)
 		}
 	}
@@ -153,56 +181,81 @@ func (ms *Meters) Level(fp string) float64 {
 	return ms.m.level(fp)
 }
 
-// playback is the speaker AudioSink. Close stops the player; frames
-// written afterwards are ignored.
+// playback is the speaker AudioSink, backed by a malgo playback device whose
+// period is one 20ms frame, so each device callback consumes exactly one
+// jitter-buffer slot (no gulp/sip mismatch).
+//
+// Audio-thread discipline (same as capture): the device callback only calls
+// mixer.Pull, which takes the mixer lock briefly (Write holds it only for
+// one Opus decode), never blocks on a channel and allocates nothing once
+// warm.
+//
+// Shutdown: Close marks the sink closed (later WriteOpusFrame calls are
+// dropped) and Uninit()s the device, which stops it and waits for any
+// in-flight callback to return. Do not call Close from the callback.
 type playback struct {
 	mix    *mixer
-	player *oto.Player
+	mctx   *malgo.AllocatedContext
+	dev    *malgo.Device
 	closed chan struct{}
 	once   sync.Once
 	buf    []int16
 }
 
-var (
-	otoOnce sync.Once
-	otoCtx  *oto.Context
-	otoErr  error
-)
-
-// otoContext returns the process-wide oto context (oto allows only one).
-func otoContext() (*oto.Context, error) {
-	otoOnce.Do(func() {
-		ctx, ready, err := oto.NewContext(&oto.NewContextOptions{
-			SampleRate:   sampleRate,
-			ChannelCount: 1,
-			Format:       oto.FormatSignedInt16LE,
-			BufferSize:   60 * time.Millisecond,
-		})
-		if err != nil {
-			otoErr = err
-			return
-		}
-		<-ready
-		if err := ctx.Err(); err != nil {
-			otoErr = err
-			return
-		}
-		otoCtx = ctx
-	})
-	return otoCtx, otoErr
-}
-
-// Playback opens the default speaker (48kHz mono) and returns an AudioSink
-// that decodes and mixes Opus frames from any number of senders, plus
-// per-speaker level meters. Type-assert the sink to io.Closer to stop it.
-func Playback() (client.AudioSink, *Meters, error) {
-	ctx, err := otoContext()
+// Playback opens the output device named device (48kHz mono; "" = system
+// default) and returns an AudioSink that decodes, jitter-buffers and mixes
+// Opus frames from any number of senders, plus per-speaker level meters.
+// Type-assert the sink to io.Closer to stop it.
+func Playback(device string) (client.AudioSink, *Meters, error) {
+	mctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	p := &playback{mix: newMixer(), closed: make(chan struct{})}
-	p.player = ctx.NewPlayer(p)
-	p.player.Play()
+	free := func() {
+		_ = mctx.Uninit()
+		mctx.Free()
+	}
+	cfg := malgo.DefaultDeviceConfig(malgo.Playback)
+	cfg.Playback.Format = malgo.FormatS16
+	cfg.Playback.Channels = 1
+	cfg.SampleRate = sampleRate
+	cfg.PeriodSizeInMilliseconds = frameMs
+	if device != "" {
+		infos, err := mctx.Devices(malgo.Playback)
+		if err != nil {
+			free()
+			return nil, nil, err
+		}
+		found := false
+		for i := range infos {
+			if infos[i].Name() == device {
+				cfg.Playback.DeviceID = infos[i].ID.Pointer()
+				found = true
+				break
+			}
+		}
+		if !found {
+			free()
+			return nil, nil, fmt.Errorf("output device %q not found", device)
+		}
+	}
+	p := &playback{
+		mix:    newMixer(),
+		mctx:   mctx,
+		closed: make(chan struct{}),
+		buf:    make([]int16, 4*frameSize),
+	}
+	dev, err := malgo.InitDevice(mctx.Context, cfg, malgo.DeviceCallbacks{Data: p.onData})
+	if err != nil {
+		free()
+		return nil, nil, err
+	}
+	p.dev = dev
+	if err := dev.Start(); err != nil {
+		dev.Uninit()
+		free()
+		return nil, nil, err
+	}
 	return p, &Meters{m: p.mix}, nil
 }
 
@@ -216,31 +269,26 @@ func (p *playback) WriteOpusFrame(fromFP string, frame []byte) {
 	p.mix.Write(fromFP, frame)
 }
 
-// Read implements io.Reader for oto: always a full buffer, silence when idle.
-func (p *playback) Read(b []byte) (int, error) {
-	select {
-	case <-p.closed:
-		return 0, io.EOF
-	default:
-	}
-	n := len(b) / 2
-	if cap(p.buf) < n {
-		p.buf = make([]int16, n)
+// onData runs on the audio thread: pull, mix, convert. Nothing else.
+func (p *playback) onData(out, _ []byte, _ uint32) {
+	n := len(out) / 2
+	if n > len(p.buf) {
+		p.buf = make([]int16, n) // device asked for a bigger period; rare
 	}
 	buf := p.buf[:n]
 	p.mix.Pull(buf)
 	for i, s := range buf {
-		binary.LittleEndian.PutUint16(b[2*i:], uint16(s))
+		binary.LittleEndian.PutUint16(out[2*i:], uint16(s))
 	}
-	return 2 * n, nil
 }
 
-// Close stops playback. Safe to call more than once. The shared oto context
-// stays alive for a later Playback().
+// Close stops playback. Safe to call more than once.
 func (p *playback) Close() error {
 	p.once.Do(func() {
 		close(p.closed)
-		p.player.PauseAndStopReading()
+		p.dev.Uninit() // stops the device and waits for the callback
+		_ = p.mctx.Uninit()
+		p.mctx.Free()
 	})
 	return nil
 }
