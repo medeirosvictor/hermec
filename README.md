@@ -21,9 +21,27 @@ the GUI, with audio relayed through the self-hosted server. Screenshare, camera
 video, and the direct peer-to-peer opt-in remain unimplemented. The
 wire protocol for what exists is specified in [docs/protocol.md](docs/protocol.md).
 
-## Releases
+## Install
 
-Prebuilt binaries: https://github.com/medeirosvictor/hermec/releases
+Download the latest build from the
+[Releases page](https://github.com/medeirosvictor/hermec/releases):
+
+1. Download `hermec-windows-amd64.zip`.
+2. Unzip it anywhere.
+3. Run `hermec.exe`.
+
+No toolchain is needed; the zip includes the runtime DLLs voice requires.
+The exe is unsigned, so Windows SmartScreen may warn: click **More info**, then
+**Run anyway** (see [the friends quickstart](docs/quickstart-friends.md#what-friends-receive)).
+Each release also ships Linux and Windows servers (`hermec-server-*`) and a
+`SHA256SUMS.txt` to verify downloads. Release notes are generated from the
+commits in each release.
+
+**Update check:** on startup the app asks GitHub's public releases API whether a
+newer version exists and, if so, shows a banner linking to the Releases page.
+It sends no identifiers beyond a normal HTTPS request. To turn it off, toggle
+"update check" in Settings (gear tile or F10), or set `update_check = false` in
+`<user config dir>/hermec/settings.toml`.
 
 ## Development
 
@@ -67,6 +85,8 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Click gear tile** or **F10**: Settings page (name, palette, scanlines; F10 works when the rail is hidden). Choices, including F1/F2, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it.
 
 ## Build
+
+Most people should use the [prebuilt release](#install) instead.
 
 **Prerequisites:** Go 1.26 or newer. If building `cmd/hermec` (GUI client) with
 voice support, also install a C compiler and Opus audio libraries:

@@ -114,14 +114,17 @@ It listens on `:7697` by default and logs its address on start. Add
 
 ## What friends receive
 
-The host sends each friend a zip containing:
+The host sends each friend the Releases link:
+<https://github.com/medeirosvictor/hermec/releases>. Friends download
+`hermec-windows-amd64.zip`, unzip it anywhere (it already contains `hermec.exe`
+and the runtime DLLs it needs), and run it. No toolchain is required.
 
-- `hermec.exe`
-- the MSYS2 runtime DLLs it needs: `libopus-0.dll`, `libopusfile-0.dll` and
-  their dependencies (see the Build section of the [README](../README.md); they
-  come from `C:\msys64\ucrt64\bin` on the build machine).
+*Fallback:* if a friend cannot reach GitHub, the host can instead zip
+`hermec.exe` together with `libopus-0.dll`, `libopusfile-0.dll` and their
+dependencies (from `C:\msys64\ucrt64\bin` on the build machine; see the Build
+section of the [README](../README.md)) and send that.
 
-Friends unzip it anywhere and run:
+Then friends run:
 
 ```sh
 hermec.exe -server ws://<address-from-above>:7697/ -name Alice
@@ -131,6 +134,8 @@ Notes:
 
 - **SmartScreen:** the exe is unsigned, so Windows may warn. Click
   **More info**, then **Run anyway**.
+- **Update check:** the app checks GitHub for a newer release at startup and
+  shows a banner if there is one. It can be turned off in Settings.
 - **Use headphones.** Hermec has no echo cancellation; speakers feed other
   people's voices back into your mic.
 - **Your identity key:** the first run creates your identity key at
