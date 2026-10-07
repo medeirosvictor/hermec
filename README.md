@@ -16,9 +16,9 @@ core and a versioned, documented wire protocol. See
 
 This repository currently ships the **foundation only**: a Go server with
 Ed25519 key-based authentication, roles, channels, presence and text chat, plus
-a headless client library and integration tests. There is no voice, screenshare,
-relay, P2P, or GUI client yet. The wire protocol for what exists is specified
-in [docs/protocol.md](docs/protocol.md).
+a headless client library, a desktop GUI chat client, and integration tests.
+Voice, screenshare, relay, and peer-to-peer media remain unimplemented. The
+wire protocol for what exists is specified in [docs/protocol.md](docs/protocol.md).
 
 ## Development
 
@@ -47,6 +47,16 @@ Customize the look with a theme file (see [example.theme.toml](example.theme.tom
 go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 ```
 
+### Keys
+
+- **Enter**: Connect to server or send message
+- **Tab** or **Ctrl+Up/Down**: Switch channel
+- **PgUp/PgDn** or **mouse wheel**: Scroll chat
+- **F1**: Toggle CRT effect
+- **F2**: Cycle color palettes
+- **Click rail tile**: Switch servers
+- **Click "+" tile**: Add a server
+
 ## Build
 
 Requires Go 1.26 or newer.
@@ -66,7 +76,9 @@ go build -o hermec-server ./cmd/hermec-server
 
 See [example.server.toml](example.server.toml) for every option (password, key
 allow list, channels, TLS, roles). The server logs its listen address on start
-and shuts down cleanly on Ctrl-C.
+and shuts down cleanly on Ctrl-C. Note: the desktop GUI does not yet have a
+password field; password-protected servers are currently reachable only from
+headless clients. A password field is planned.
 
 ## Use as a library
 

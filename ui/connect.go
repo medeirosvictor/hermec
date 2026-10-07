@@ -16,7 +16,10 @@ const maxFieldRunes = 128
 // name and server rows follow.
 const connectX, connectY = 48.0, 48.0
 
-func connectFieldsTop(lh float64) float64 { return connectY + 2*lh }
+func connectFieldsTop(lh float64) float64 {
+	// Must match drawConnect's title advance (y += lh * 2.5)
+	return connectY + 2.5*lh
+}
 
 type field struct {
 	runes []rune
