@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -32,6 +33,7 @@ var ErrClosed = errors.New("client: connection closed")
 type Event struct {
 	Chat     *proto.ChatMessage
 	Presence *proto.Presence
+	Voice    *proto.VoiceState
 	Err      error
 }
 
@@ -60,6 +62,9 @@ type Client struct {
 	mu      sync.Mutex // guards waiters and closed
 	waiters []*joinWaiter
 	closed  bool
+	call    *call // active voice call, if any
+
+	loopbackICE atomic.Bool
 
 	events   chan Event
 	done     chan struct{} // closed by Close; unblocks the read loop's sends
@@ -286,11 +291,15 @@ func (c *Client) readLoop() {
 		c.closed = true
 		ws := c.waiters
 		c.waiters = nil
+		cl := c.call
 		c.mu.Unlock()
 		for _, w := range ws {
 			w.res <- ErrClosed
 		}
 		c.ws.Close()
+		if cl != nil {
+			cl.teardown()
+		}
 	}()
 
 	for {
@@ -325,11 +334,24 @@ func (c *Client) readLoop() {
 				continue
 			}
 			c.emit(Event{Chat: &m})
+		case proto.TypeVoiceState:
+			var st proto.VoiceState
+			if err := json.Unmarshal(env.Data, &st); err != nil {
+				c.emit(Event{Err: fmt.Errorf("client: bad voice_state: %w", err)})
+				continue
+			}
+			c.onVoiceState(st)
+			c.emit(Event{Voice: &st})
+		case proto.TypeRTCOffer, proto.TypeRTCAnswer, proto.TypeRTCCandidate:
+			c.onRTC(env)
 		case proto.TypeError:
 			var em proto.ErrorMsg
 			_ = json.Unmarshal(env.Data, &em)
 			se := &ServerError{em.Code, em.Message}
-			if !c.failOldestJoin(se) {
+			if c.failOldestJoin(se) {
+				continue
+			}
+			if !c.onError(em) {
 				c.emit(Event{Err: se})
 			}
 		default:
