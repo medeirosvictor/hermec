@@ -32,7 +32,8 @@ type Options struct {
 	Local     bool // ignore ServerURL; run an in-process server
 	Verbose   bool // log breadcrumbs
 
-	ServersPath string // empty: <user config dir>/hermec/servers.toml
+	ServersPath  string // empty: <user config dir>/hermec/servers.toml
+	SettingsPath string // empty: <user config dir>/hermec/settings.toml
 }
 
 // Size hierarchy relative to Theme.FontSize.
@@ -77,6 +78,13 @@ type game struct {
 	localURL    string // URL of the in-process server; empty without -local
 	curKey      string // saved-list key of the current server; empty = none
 	notice      string // persistent load/save error, shown on the connect scene
+
+	settingsPath string
+	set          state.Settings
+	settingsOpen bool   // settings scene replaces the connect/main scene
+	setRow       int    // focused settings row
+	autoName     string // name in effect at startup; not persisted unless edited
+	nameDirty    bool   // settings name field edited, not yet saved
 
 	barOnce sync.Once // dark title bar, applied on the first tick
 
@@ -137,12 +145,20 @@ func Run(opts Options) error {
 		return fmt.Errorf("identity: %w", err)
 	}
 	fp := identity.Fingerprint(id.PublicKey())
+	var boot game // holds load results until the real game is built
+	boot.loadSettings(opts.SettingsPath)
+	if opts.Name == "" {
+		opts.Name = boot.set.Name
+	}
 	if opts.Name == "" {
 		opts.Name = state.DefaultName(fp)
 	}
-	th, err := theme.Load(opts.ThemePath)
+	th, crtOn, themeNotice, err := startupTheme(opts.ThemePath, boot.set)
 	if err != nil {
 		return err
+	}
+	if themeNotice != "" && boot.notice == "" {
+		boot.notice = themeNotice
 	}
 	face, err := theme.Face(th.FontSize)
 	if err != nil {
@@ -159,7 +175,8 @@ func Run(opts Options) error {
 
 	g := &game{
 		opts: opts, st: state.New(), th: th, face: face, faceS: faceS, faceT: faceT, id: id, fp: fp, keyAt: opts.KeyPath,
-		dialCh: make(chan dialResult, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), ms: newMainScene(), w: 960, h: 600, crtOn: th.Scanlines,
+		dialCh: make(chan dialResult, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), ms: newMainScene(), w: 960, h: 600, crtOn: crtOn,
+		settingsPath: boot.settingsPath, set: boot.set, notice: boot.notice, autoName: opts.Name,
 	}
 	url := opts.ServerURL
 	if opts.Local {
@@ -198,6 +215,7 @@ func Run(opts Options) error {
 	ebiten.SetWindowTitle("Hermec")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	err = ebiten.RunGame(g)
+	g.flushName()
 	if g.c != nil {
 		_ = g.c.Close()
 	}
@@ -220,6 +238,8 @@ func (g *game) startDial(url, name string) {
 	}
 	g.dialing = true
 	g.lastURL, g.lastName = url, name
+	g.flushName()
+	g.rememberName(name)
 	g.curKey = g.keyFor(url)
 	g.logf("dialing %s as %q", url, name)
 	go func() {
@@ -234,14 +254,13 @@ func (g *game) Update() error {
 	g.frame++
 	g.barOnce.Do(darkTitleBar)
 	if inpututil.IsKeyJustPressed(ebiten.KeyF1) {
-		g.crtOn = !g.crtOn
-		g.logf("crt effect: %v", g.crtOn)
+		g.setScanlines(!g.crtOn)
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyF2) {
-		// Scenes read g.th on every draw, so the swap is live. Face size
-		// does not depend on the palette, so no face rebuild is needed.
-		g.th = theme.NextPreset(g.th)
-		g.logf("palette: bg=%v fg=%v", g.th.BG, g.th.FG)
+		g.cyclePalette()
+	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyF10) {
+		g.toggleSettings()
 	}
 	select {
 	case r := <-g.dialCh:
@@ -293,6 +312,10 @@ func (g *game) Update() error {
 	}
 
 	g.updateRail()
+	if g.settingsOpen {
+		g.updateSettings()
+		return nil
+	}
 	if g.st.Phase == state.PhaseConnect {
 		if url, name, submit := g.connect.update(g.dialing, g.lineH(), g.w, g.railW()); submit {
 			g.startDial(url, name)
@@ -320,7 +343,9 @@ func (g *game) Draw(screen *ebiten.Image) {
 
 func (g *game) drawScene(screen *ebiten.Image) {
 	screen.Fill(g.th.BG)
-	if g.st.Phase == state.PhaseConnect {
+	if g.settingsOpen {
+		g.drawSettings(screen)
+	} else if g.st.Phase == state.PhaseConnect {
 		g.drawConnect(screen)
 	} else {
 		g.drawMain(screen)

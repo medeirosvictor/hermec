@@ -123,7 +123,8 @@ func TestRailHit(t *testing.T) {
 		{10, 64, 1},
 		{10, 8 + 3*56, RailNone}, // below last tile
 		{60, 20, RailNone},       // outside rail
-		{10, h - 10, RailAdd},
+		{10, h - 10, RailSettings},
+		{10, h - th - 10, RailAdd},
 		{10, 2, RailNone},
 	}
 	for _, c := range cases {
