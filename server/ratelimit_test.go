@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -237,7 +238,7 @@ func TestInboundFloodDoesNotCutReceiver(t *testing.T) {
 	sendEnv(t, b, proto.TypeChatSend, proto.ChatSend{Channel: "general", Text: "still here"})
 }
 
-func TestPreAuthFloodCut(t *testing.T) {
+func TestPreAuthFloodCutByOneShotAuth(t *testing.T) {
 	clk := &fakeClock{now: t0}
 	url := startRateServer(t, rateCfg(), clk)
 	c := dial(t, url)
@@ -251,6 +252,41 @@ func TestPreAuthFloodCut(t *testing.T) {
 	for {
 		if _, _, err := c.ReadMessage(); err != nil {
 			return // closed
+		}
+	}
+}
+
+func TestPreAuthBucketLimits(t *testing.T) {
+	b := newBucket(preAuthMsgRate, preAuthMsgBurst, t0)
+	for i := 0; i < preAuthMsgBurst; i++ {
+		if !b.allow(t0) {
+			t.Fatalf("message %d denied within pre-auth burst", i+1)
+		}
+	}
+	if b.allow(t0) {
+		t.Fatal("message past pre-auth burst allowed")
+	}
+}
+
+// A spammer that keeps writing well past the cut still receives the
+// rate_limited error (the server drains inbound before closing).
+func TestSpammerStillReceivesRateLimited(t *testing.T) {
+	clk := &fakeClock{now: t0}
+	url := startRateServer(t, rateCfg(), clk)
+	c, _ := authed(t, url)
+	for i := 0; i < 300; i++ {
+		if err := c.WriteJSON(map[string]any{"type": "chat_send", "data": map[string]any{"channel": "general", "text": "x"}}); err != nil {
+			break
+		}
+	}
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		_, raw, err := c.ReadMessage()
+		if err != nil {
+			t.Fatalf("closed without rate_limited: %v", err)
+		}
+		if env, derr := proto.Decode(raw); derr == nil && env.Type == proto.TypeError && strings.Contains(string(env.Data), "rate_limited") {
+			return
 		}
 	}
 }

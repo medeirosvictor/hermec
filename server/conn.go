@@ -120,6 +120,7 @@ func (c *conn) readLoop() {
 		// handled inside gorilla and are not counted.
 		if !limit.allow(c.srv.clock()) {
 			c.sendError("rate_limited", "too many messages; slow down")
+			c.drainInbound()
 			return
 		}
 		env, err := proto.Decode(raw)
@@ -130,6 +131,22 @@ func (c *conn) readLoop() {
 		c.route(env)
 	}
 }
+
+// drainInbound discards incoming frames for a short, fixed window after a
+// rate-limit violation. Closing a socket that still holds unread inbound data
+// makes Linux send RST, which can discard the client's not-yet-read
+// rate_limited frame; draining lets the queued error flush first. Delivery
+// remains best-effort (a spammer outpacing the window can still be reset).
+func (c *conn) drainInbound() {
+	_ = c.ws.SetReadDeadline(time.Now().Add(rateLimitDrain))
+	for {
+		if _, _, err := c.ws.ReadMessage(); err != nil {
+			return
+		}
+	}
+}
+
+const rateLimitDrain = 200 * time.Millisecond
 
 var errAuthFailed = errors.New("auth failed")
 
