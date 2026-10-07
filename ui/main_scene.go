@@ -39,6 +39,10 @@ type mainScene struct {
 	prevTotal  int
 	wheelCarry float64      // fractional wheel lines carried between frames
 	lines      []state.Line // laid out in updateMain, drawn in drawMain
+	layout     state.LayoutCache
+	layoutGen  int           // bumps on every relayout
+	sbImg      *ebiten.Image // cached render of the scrollback pane
+	sbKey      sbKey
 	visible    int
 }
 
@@ -64,7 +68,7 @@ func (g *game) geom() geometry {
 		adv = 1
 	}
 	gm := geometry{w: g.w, h: g.h, ox: g.railW(), adv: adv, lh: lh}
-	gm.statusY = pad
+	gm.statusY = pad + g.bannerH()
 	gm.paneY0 = gm.statusY + lh + pad
 	gm.inputY = float64(g.h) - pad - lh
 	gm.paneY1 = gm.inputY - pad
@@ -206,7 +210,16 @@ func (g *game) updateMain() {
 	if len(g.st.Channels) > 0 {
 		msgs = g.st.Messages[g.st.Channels[g.st.Active]]
 	}
-	g.ms.lines = state.Scrollback(msgs, gm.cols)
+	ch := ""
+	if len(g.st.Channels) > 0 {
+		ch = g.st.Channels[g.st.Active]
+	}
+	// Re-wrap only when the layout key changes; colours are applied at draw.
+	var relaid bool
+	g.ms.lines, relaid = g.ms.layout.Lines(ch, msgs, gm.cols, g.th.FontSize)
+	if relaid {
+		g.ms.layoutGen++
+	}
 	total := len(g.ms.lines)
 	if g.ms.scroll > 0 && total > g.ms.prevTotal {
 		g.ms.scroll += total - g.ms.prevTotal // keep the view stable while scrolled up
@@ -398,9 +411,48 @@ func premul(c color.RGBA) color.RGBA {
 	return color.RGBA{uint8(uint32(c.R) * a / 255), uint8(uint32(c.G) * a / 255), uint8(uint32(c.B) * a / 255), c.A}
 }
 
+// sbKey is everything the rendered scrollback pane depends on. The pane is
+// redrawn into an offscreen image only when it changes; every other frame is a
+// single blit instead of per-glyph draws (the dominant idle cost).
+type sbKey struct {
+	gen        int // layout generation: bumps whenever the wrapped lines change
+	off        int
+	w, h       int
+	adv, lh    float64
+	fg, br, dm color.RGBA
+}
+
 func (g *game) drawScrollback(screen *ebiten.Image, gm geometry) {
+	r := image.Rect(int(gm.rightX), int(gm.paneY0), g.w, int(gm.paneY1)).Intersect(screen.Bounds())
+	if r.Empty() {
+		return
+	}
+	ms := &g.ms
+	k := sbKey{ms.layoutGen, state.ClampScroll(len(ms.lines), gm.visible, ms.scroll), r.Dx(), r.Dy(), gm.adv, gm.lh, g.th.FG, g.th.Bright, g.th.Dim}
+	if ms.sbImg == nil || k != ms.sbKey {
+		if ms.sbImg == nil || ms.sbImg.Bounds().Dx() != k.w || ms.sbImg.Bounds().Dy() != k.h {
+			if ms.sbImg != nil {
+				ms.sbImg.Deallocate()
+			}
+			ms.sbImg = ebiten.NewImage(k.w, k.h)
+		} else {
+			ms.sbImg.Clear()
+		}
+		ms.sbKey = k
+		g.renderScrollback(ms.sbImg, gm, float64(r.Min.X), float64(r.Min.Y))
+	}
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(float64(r.Min.X), float64(r.Min.Y))
+	screen.DrawImage(ms.sbImg, op)
+}
+
+// renderScrollback draws the visible scrollback lines into dst, whose origin
+// is the pane's top-left at (ox, oy) in screen coordinates.
+func (g *game) renderScrollback(dst *ebiten.Image, gm geometry, ox, oy float64) {
 	th := g.th
-	dst := clip(screen, gm.rightX, gm.paneY0, float64(g.w), gm.paneY1)
+	gm.rightX -= ox
+	gm.paneY0 -= oy
+	gm.paneY1 -= oy
 	lines := g.ms.lines
 	total := len(lines)
 	off := state.ClampScroll(total, gm.visible, g.ms.scroll)
@@ -423,7 +475,7 @@ func (g *game) drawScrollback(screen *ebiten.Image, gm geometry) {
 	}
 	if off > 0 {
 		ind := fmt.Sprintf("-- %d lines up (PgDn) --", off)
-		g.drawText(dst, ind, float64(g.w)-pad-text.Advance(ind, g.face), gm.paneY1-gm.lh, th.Dim)
+		g.drawText(dst, ind, float64(g.w)-ox-pad-text.Advance(ind, g.face), gm.paneY1-gm.lh, th.Dim)
 	}
 }
 

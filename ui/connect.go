@@ -40,6 +40,7 @@ type connectForm struct {
 	name, server field
 	focus        int // 0 name, 1 server
 	local        bool
+	dy           float64 // banner shift applied to the whole layout
 
 	disc      []state.DiscoveredRow // discovered servers, empty = section hidden
 	sel       int                   // selected discovered row, -1 = fields have focus
@@ -50,7 +51,7 @@ type connectForm struct {
 // discTop is the y of the first discovered row (below the DISCOVERED header).
 // It must match drawConnect's layout.
 func (f *connectForm) discTop(lh float64) float64 {
-	y := connectFieldsTop(lh) + 2*lh
+	y := connectFieldsTop(lh) + f.dy + 2*lh
 	if f.local {
 		y += lh
 	}
@@ -106,7 +107,7 @@ func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64) 
 				}
 				return "", "", false
 			}
-			switch state.RowAt(float64(cy), connectFieldsTop(lh), lh, 2) {
+			switch state.RowAt(float64(cy), connectFieldsTop(lh)+f.dy, lh, 2) {
 			case 0:
 				f.sel = -1 // back to typing
 				f.focus = 0
@@ -161,7 +162,7 @@ func (g *game) drawTextF(dst *ebiten.Image, f *text.GoTextFace, s string, x, y f
 func (g *game) drawConnect(screen *ebiten.Image) {
 	th, f := g.th, &g.connect
 	lh := g.lineH()
-	x, y := connectX+g.railW(), connectY
+	x, y := connectX+g.railW(), connectY+g.bannerH()
 
 	g.drawTextF(screen, g.faceT, "HERMEC", x, y, th.Bright)
 	y += lh * 2.5

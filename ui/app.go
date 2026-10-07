@@ -21,6 +21,7 @@ import (
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/ui/theme"
+	"github.com/medeirosvictor/hermec/update"
 )
 
 // Options configures Run.
@@ -102,6 +103,9 @@ type game struct {
 
 	crt   crt
 	crtOn bool // starts from the theme, toggled with F1
+
+	update   *update.Available // non-nil: a newer release exists, banner shown
+	updateCh chan update.Available
 }
 
 // DefaultKeyPath returns <user config dir>/hermec/identity.key.
@@ -190,6 +194,8 @@ func Run(opts Options) error {
 		dialCh: make(chan dialResult, 1), probeCh: make(chan []state.DiscoveredIn, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), voiceCh: make(chan voiceResult, 4), ms: newMainScene(), w: 960, h: 600, crtOn: crtOn,
 		settingsPath: boot.settingsPath, set: boot.set, notice: boot.notice, autoName: opts.Name,
 	}
+	g.updateCh = make(chan update.Available, 1)
+	g.startUpdateCheck()
 	g.muteCh, g.muteFailCh = make(chan muteReq, 1), make(chan muteFail, 4)
 	go g.muteWorker()
 	url := opts.ServerURL
@@ -335,6 +341,10 @@ func (g *game) Update() error {
 		}
 	}
 
+	g.pollUpdate()
+	if !g.settingsOpen {
+		g.updateKey()
+	}
 	g.updateVoice()
 	g.updateRail()
 	g.updateDiscovery()
@@ -343,6 +353,7 @@ func (g *game) Update() error {
 		return nil
 	}
 	if g.st.Phase == state.PhaseConnect {
+		g.connect.dy = g.bannerH()
 		if url, name, submit := g.connect.update(g.dialing, g.lineH(), g.w, g.railW()); submit {
 			g.startDial(url, name)
 		}
@@ -373,8 +384,10 @@ func (g *game) drawScene(screen *ebiten.Image) {
 		g.drawSettings(screen)
 	} else if g.st.Phase == state.PhaseConnect {
 		g.drawConnect(screen)
+		g.drawBanner(screen)
 	} else {
 		g.drawMain(screen)
+		g.drawBanner(screen)
 	}
 	g.drawRail(screen)
 }
