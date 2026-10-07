@@ -172,3 +172,22 @@ func TestLoadRejects(t *testing.T)         // unknown key errors; "#GGGGGG" erro
 - [ ] **Step 2: Run `go test -count=1 ./...` — PASS; `go vet ./...` clean**
 - [ ] **Step 3: Cross-build checks — `GOOS=windows go build ./...`; `GOOS=linux GOARCH=arm64 go build ./...` (Ebiten linux build may need the CI's X11 headers — if the local linux cross-build of ui fails on C headers, verify `GOOS=linux` builds in CI instead and note it in the report)**
 - [ ] **Step 4: Commit** — `docs: one-command run, theme example`
+
+### Task 7: Mouse support & Windows title bar (added 2026-10-07, Victor's feedback)
+
+**Files:**
+- Modify: `ui/main_scene.go`, `ui/connect.go`, `ui/app.go`; Create: `ui/winbar_windows.go` (+ no-op `ui/winbar_other.go`)
+- Test: build check + manual checklist; pure hit-testing helpers (point-in-row math) go in `ui/state` with tests
+
+**Interfaces:**
+- Consumes: Task 4's layout contract (180px channel pane, row height from face metrics); `ebiten.CursorPosition()`, `inpututil.IsMouseButtonJustPressed`, `ebiten.Wheel()`.
+- Produces:
+  - Click on a channel row → same switch+join path as keyboard nav; click elsewhere is inert (input line is always focused)
+  - Mouse wheel over the chat pane scrolls scrollback (3 lines per notch), same clamp/pin rules as PageUp/Down
+  - Connect scene: click selects the name/server field for editing
+  - Windows title bar: best-effort dark title bar via `DwmSetWindowAttribute(DWMWA_USE_IMMERSIVE_DARK_MODE)` using `golang.org/x/sys/windows` (no cgo); HWND found by window title; errors silently ignored; behind `//go:build windows`
+
+- [ ] **Step 1: Implement hit-testing helper(s) in ui/state with tests; wire clicks + wheel; winbar files**
+- [ ] **Step 2: Build + vet clean (windows AND `GOOS=linux go vet ./...` for the build-tag split); full suite PASS**
+- [ ] **Step 3: Manual checklist:** click switches channel and joins; wheel scrolls and re-pins at bottom; field click works on connect scene; title bar renders dark on Windows 11; app still builds/runs where DWM is absent
+- [ ] **Step 4: Commit** — `feat: mouse support and dark Windows title bar`
