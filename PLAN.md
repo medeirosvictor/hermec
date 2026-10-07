@@ -85,10 +85,12 @@ Full design spec: **`docs/specs/2026-10-06-hermec-design.md`** (approved 2026-10
 
 Four sequential plans, each ending in working software:
 
-1. **Foundation** — identity, wire protocol, roles, server + headless client with group chat. Plan: `docs/superpowers/plans/2026-10-06-hermec-foundation.md` *(written, awaiting review)*
-2. **Voice** — Pion relay (SFU), ephemeral media sessions, Opus, headless voice calls, host bandwidth stats.
+1. **Foundation** — identity, wire protocol, roles, server + headless client with group chat. Plan: `docs/superpowers/plans/2026-10-06-hermec-foundation.md` — ✅ **merged to main 2026-10-06 (PR #1)**
+2. **Voice** — Pion relay (SFU), ephemeral media sessions, Opus, headless voice calls, host bandwidth stats. Must also absorb from the foundation review: **rate limiting** (spec §8 — scheduled in no plan yet), ping-interval test seam, slow-consumer drop test.
 3. **GUI client** — Ebiten window, theme file, CRT aesthetic, dithered avatars, fingerprint display + first-seen key pinning, key backup prompt.
 4. **Screenshare + direct-P2P opt-in + packaging** — capture per OS, VP8, per-participant direct mode, cross-compile releases.
+
+**Standing follow-ups** (from the foundation final review): Linux CI with `-race` and a fuzz budget (race detector can't run on the Windows dev box — cgo disabled); decide auth-signature domain separation (`"hermec-auth-v1" || nonce`) before protocol v1 is frozen as a public spec.
 
 ## Decisions log
 
