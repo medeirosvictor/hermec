@@ -269,6 +269,15 @@ Client                                   Server (SFU)
    `rtc_offer`; the client replies with `rtc_answer`. Clients must therefore
    handle server-originated offers at any time during a call.
 4. `rtc_*` messages outside a call are answered with `error` `not_joined`.
+5. **Glare.** If the client sends `rtc_offer` while a server offer is
+   outstanding, the server rejects it with `error` `bad_request` and the exact
+   message `offer pending — answer first`. The client must answer the
+   outstanding server offer and may then send its offer again.
+6. **Recovery.** If the server cannot apply an `rtc_answer`, cannot produce a
+   renegotiation offer, or receives no `rtc_answer` within 15 seconds of a
+   server offer, it discards that participant's media state, sends `error`
+   `bad_request`, and keeps the participant in the call. The client recovers by
+   building a new PeerConnection and sending a fresh `rtc_offer`.
 
 **Rate limiting.** Servers may rate-limit voice and signaling messages. A
 violation is answered with `error` `rate_limited`, after which the server

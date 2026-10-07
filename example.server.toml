@@ -22,6 +22,9 @@ channels = ["general"]
 
 # Voice: public IP to advertise for media on an internet-facing host (NAT 1:1); omit on a LAN.
 # public_ip = "203.0.113.7"
+# Voice: restrict media to this UDP port range (open it in your firewall); both or neither.
+# udp_port_min = 50000
+# udp_port_max = 50100
 
 # Roles given to fingerprints that have no entry in [grants].
 default_roles = ["user"]

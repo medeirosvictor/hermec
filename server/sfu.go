@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -56,9 +58,18 @@ type voiceSession struct {
 	wg       sync.WaitGroup // forwarders and RTCP readers
 
 	relayedBytes atomic.Uint64 // payload bytes written to subscribers
+	writeErrors  atomic.Uint64 // transient subscriber write errors (not pruned)
 	statsAt      time.Time
 	statsBytes   uint64
 }
+
+// answerTimeout bounds how long a server-initiated offer may go unanswered
+// before the peer's media state is reset. A variable so tests can shorten it.
+var answerTimeout = 15 * time.Second
+
+// errOfferPending is the fixed glare message: a client rtc_offer arrived while
+// a server offer is outstanding. See docs/protocol.md 4.13.
+const errOfferPending = "offer pending — answer first"
 
 // statsInterval is how often an active session logs its participant count and
 // relay rate (spec 3.1). A variable so tests can shorten it.
@@ -70,8 +81,10 @@ type peer struct {
 	pc      *webrtc.PeerConnection
 	pending []webrtc.ICECandidateInit // candidates that arrived before the remote description
 
-	negotiating bool // a server-initiated offer awaits its answer
-	dirty       bool // topology changed while busy; renegotiate when stable
+	negotiating bool        // a server-initiated offer awaits its answer
+	dirty       bool        // topology changed while busy; renegotiate when stable
+	offerGen    uint64      // generation of the outstanding/last server offer
+	offerTimer  *time.Timer // answer deadline for the outstanding offer
 
 	fwds    []*forwarder                     // tracks this peer publishes
 	senders map[*forwarder]*webrtc.RTPSender // tracks this peer receives
@@ -83,8 +96,15 @@ type forwarder struct {
 	remote *webrtc.TrackRemote
 
 	mu    sync.Mutex
-	sinks map[*peer]*webrtc.TrackLocalStaticRTP
+	sinks map[*peer]sink
 	dead  bool
+}
+
+// sink is one subscriber's outgoing copy of a track. pc is immutable and
+// safe to query from the forwarder goroutine (ConnectionState is thread-safe).
+type sink struct {
+	t  *webrtc.TrackLocalStaticRTP
+	pc *webrtc.PeerConnection
 }
 
 func (f *forwarder) isDead() bool {
@@ -100,10 +120,10 @@ func (f *forwarder) kill() {
 	f.mu.Unlock()
 }
 
-func (f *forwarder) addSink(p *peer, t *webrtc.TrackLocalStaticRTP) {
+func (f *forwarder) addSink(p *peer, t *webrtc.TrackLocalStaticRTP, pc *webrtc.PeerConnection) {
 	f.mu.Lock()
 	if !f.dead {
-		f.sinks[p] = t
+		f.sinks[p] = sink{t, pc}
 	}
 	f.mu.Unlock()
 }
@@ -116,7 +136,7 @@ func (f *forwarder) removeSink(p *peer) {
 
 type sinkRef struct {
 	p *peer
-	t *webrtc.TrackLocalStaticRTP
+	sink
 }
 
 // newVoiceSession builds a session and starts its actor. Caller holds chMu
@@ -154,6 +174,12 @@ func (s *Server) newRTCAPI() *webrtc.API {
 	ir := &interceptor.Registry{}
 	_ = webrtc.RegisterDefaultInterceptors(me, ir)
 	se := webrtc.SettingEngine{}
+	if s.cfg.UDPPortMin != 0 && s.cfg.UDPPortMax != 0 {
+		_ = se.SetEphemeralUDPPortRange(s.cfg.UDPPortMin, s.cfg.UDPPortMax)
+	}
+	if s.cfg.AllowLoopbackICE {
+		se.SetIncludeLoopbackCandidate(true)
+	}
 	if s.cfg.PublicIP != "" {
 		se.SetNAT1To1IPs([]string{s.cfg.PublicIP}, webrtc.ICECandidateTypeHost)
 	}
@@ -234,7 +260,7 @@ func (vs *voiceSession) logStats() {
 		kbps = float64(total-vs.statsBytes) * 8 / 1000 / secs
 	}
 	vs.statsAt, vs.statsBytes = now, total
-	log.Printf("voice %q: %d participants, ~%.0f kbps relayed", vs.channel, len(vs.peers), kbps)
+	log.Printf("voice %q: %d participants, ~%.0f kbps relayed, %d write errors", vs.channel, len(vs.peers), kbps, vs.writeErrors.Load())
 }
 
 // teardown (actor): close every PeerConnection, then join every goroutine
@@ -244,6 +270,7 @@ func (vs *voiceSession) teardown() {
 		for _, f := range p.fwds {
 			f.kill()
 		}
+		vs.stopOfferTimer(p)
 		pc := p.pc
 		p.pc = nil
 		if pc != nil {
@@ -340,12 +367,14 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 			}
 		})
 	})
-	pc.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+	pc.OnTrack(func(remote *webrtc.TrackRemote, recv *webrtc.RTPReceiver) {
 		vs.post(func() {
 			if p.pc != pc {
 				return
 			}
-			f := &forwarder{pub: p, remote: remote, sinks: make(map[*peer]*webrtc.TrackLocalStaticRTP)}
+			vs.wg.Add(1)
+			go vs.drainReceiverRTCP(recv)
+			f := &forwarder{pub: p, remote: remote, sinks: make(map[*peer]sink)}
 			p.fwds = append(p.fwds, f)
 			vs.wg.Add(1)
 			go vs.runForwarder(f)
@@ -371,7 +400,7 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 
 func (vs *voiceSession) handleOffer(p *peer, sdp string) {
 	if p.negotiating {
-		p.c.sendError("bad_request", "rtc_offer while a server offer is pending")
+		p.c.sendError("bad_request", errOfferPending)
 		return
 	}
 	fresh := false
@@ -392,6 +421,9 @@ func (vs *voiceSession) handleOffer(p *peer, sdp string) {
 			pc := p.pc
 			p.pc = nil
 			_ = pc.Close()
+		} else {
+			// pion may be stuck mid-negotiation; start over.
+			vs.releaseMedia(p)
 		}
 	}
 	pc := p.pc
@@ -417,11 +449,15 @@ func (vs *voiceSession) handleAnswer(p *peer, sdp string) {
 		p.c.sendError("bad_request", "unexpected rtc_answer")
 		return
 	}
-	p.negotiating = false
 	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: sdp}); err != nil {
-		p.c.sendError("bad_request", "invalid rtc_answer")
+		// pion stays in have-local-offer; start over so the peer can recover
+		// by sending a fresh rtc_offer.
+		p.c.sendError("bad_request", "invalid rtc_answer; media reset, send a new rtc_offer")
+		vs.releaseMedia(p)
 		return
 	}
+	p.negotiating = false
+	vs.stopOfferTimer(p)
 	vs.flushPending(p)
 	if p.dirty {
 		p.dirty = false
@@ -463,10 +499,31 @@ func (vs *voiceSession) renegotiate(p *peer) {
 	}
 	if err != nil {
 		log.Printf("voice %q: renegotiation offer failed: %v", vs.channel, err)
+		p.c.sendError("bad_request", "renegotiation failed; media reset, send a new rtc_offer")
+		vs.releaseMedia(p)
 		return
 	}
 	p.negotiating = true
+	p.offerGen++
+	gen, pc := p.offerGen, p.pc
+	vs.stopOfferTimer(p)
+	p.offerTimer = time.AfterFunc(answerTimeout, func() {
+		vs.post(func() {
+			if p.negotiating && p.offerGen == gen && p.pc == pc {
+				log.Printf("voice %q: no rtc_answer from %s; resetting its media", vs.channel, p.c.fingerprint)
+				p.c.sendError("bad_request", "rtc_answer timeout; media reset, send a new rtc_offer")
+				vs.releaseMedia(p)
+			}
+		})
+	})
 	vs.reply(p, proto.TypeRTCOffer, proto.RTCOffer{SDP: p.pc.LocalDescription().SDP})
+}
+
+func (vs *voiceSession) stopOfferTimer(p *peer) {
+	if p.offerTimer != nil {
+		p.offerTimer.Stop()
+		p.offerTimer = nil
+	}
 }
 
 // syncTracks makes q's outgoing tracks match the live publishers of every
@@ -502,7 +559,7 @@ func (vs *voiceSession) syncTracks(q *peer) {
 			}
 			snd := tr.Sender()
 			q.senders[f] = snd
-			f.addSink(q, local)
+			f.addSink(q, local, q.pc)
 			vs.wg.Add(1)
 			go vs.drainRTCP(snd)
 			changed = true
@@ -519,6 +576,7 @@ func (vs *voiceSession) releaseMedia(p *peer) {
 	pc := p.pc
 	p.pc = nil
 	p.negotiating, p.dirty, p.pending = false, false, nil
+	vs.stopOfferTimer(p)
 	for _, f := range p.fwds {
 		f.kill()
 	}
@@ -552,15 +610,22 @@ func (vs *voiceSession) runForwarder(f *forwarder) {
 		}
 		snap = snap[:0]
 		f.mu.Lock()
-		for p, t := range f.sinks {
-			snap = append(snap, sinkRef{p, t})
+		for p, sk := range f.sinks {
+			snap = append(snap, sinkRef{p, sk})
 		}
 		f.mu.Unlock()
 		for _, s := range snap {
 			if err := s.t.WriteRTP(pkt); err != nil {
-				f.removeSink(s.p)
-				p := s.p
-				vs.post(func() { vs.pruneSender(p, f) })
+				// Only a closed/failed subscriber is pruned; other write
+				// errors are transient and counted.
+				st := s.pc.ConnectionState()
+				if errors.Is(err, io.ErrClosedPipe) || st == webrtc.PeerConnectionStateClosed || st == webrtc.PeerConnectionStateFailed {
+					f.removeSink(s.p)
+					p := s.p
+					vs.post(func() { vs.pruneSender(p, f) })
+				} else {
+					vs.writeErrors.Add(1)
+				}
 				continue
 			}
 			vs.relayedBytes.Add(uint64(len(pkt.Payload)))
@@ -576,6 +641,12 @@ func (vs *voiceSession) pruneSender(sub *peer, f *forwarder) {
 	delete(sub.senders, f)
 	if sub.pc != nil {
 		_ = sub.pc.RemoveTrack(snd)
+		// Re-sync: if the publisher is still alive and the subscriber's PC
+		// is usable, the track comes back (fresh local track) in the same
+		// renegotiation instead of waiting for an unrelated topology change.
+		if st := sub.pc.ConnectionState(); st != webrtc.PeerConnectionStateClosed && st != webrtc.PeerConnectionStateFailed {
+			vs.syncTracks(sub)
+		}
 		vs.renegotiate(sub)
 	}
 }
@@ -592,6 +663,18 @@ func (vs *voiceSession) forwarderEnded(f *forwarder) {
 	for _, q := range vs.peers {
 		if q != f.pub {
 			vs.syncTracks(q)
+		}
+	}
+}
+
+// drainReceiverRTCP reads (and discards) RTCP on a publisher's receiver so
+// receiver-side interceptors run. Ends when the receiver is stopped.
+func (vs *voiceSession) drainReceiverRTCP(r *webrtc.RTPReceiver) {
+	defer vs.wg.Done()
+	buf := make([]byte, 1500)
+	for {
+		if _, _, err := r.Read(buf); err != nil {
+			return
 		}
 	}
 }

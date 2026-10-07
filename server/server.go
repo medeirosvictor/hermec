@@ -39,6 +39,12 @@ type Config struct {
 	// PublicIP, if set, is advertised as the server's ICE host address
 	// (NAT 1:1) for voice on internet-facing hosts. Empty = local addresses.
 	PublicIP string
+	// UDPPortMin and UDPPortMax, when both non-zero, restrict the UDP ports
+	// used for voice media (for firewalls). Min must be <= Max.
+	UDPPortMin, UDPPortMax uint16
+	// AllowLoopbackICE adds loopback ICE candidates. For tests only; not
+	// exposed in the TOML file.
+	AllowLoopbackICE bool
 }
 
 const (

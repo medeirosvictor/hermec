@@ -24,6 +24,8 @@ type fileConfig struct {
 	TLSCert       string              `toml:"tls_cert"`
 	TLSKey        string              `toml:"tls_key"`
 	PublicIP      string              `toml:"public_ip"`
+	UDPPortMin    uint16              `toml:"udp_port_min"`
+	UDPPortMax    uint16              `toml:"udp_port_max"`
 	DefaultRoles  []string            `toml:"default_roles"`
 	Roles         map[string][]string `toml:"roles"`
 	Grants        map[string][]string `toml:"grants"`
@@ -80,6 +82,10 @@ func LoadConfig(path string) (Config, error) {
 	}
 	cfg.TLSCert, cfg.TLSKey = fc.TLSCert, fc.TLSKey
 	cfg.PublicIP = fc.PublicIP
+	cfg.UDPPortMin, cfg.UDPPortMax = fc.UDPPortMin, fc.UDPPortMax
+	if (cfg.UDPPortMin == 0) != (cfg.UDPPortMax == 0) || cfg.UDPPortMin > cfg.UDPPortMax {
+		return Config{}, errors.New("server: load config: udp_port_min and udp_port_max must be set together with min <= max")
+	}
 	if (cfg.TLSCert == "") != (cfg.TLSKey == "") {
 		return Config{}, errors.New("server: load config: tls_cert and tls_key must be set together")
 	}
@@ -108,6 +114,8 @@ func (c Config) MarshalTOML() ([]byte, error) {
 		TLSCert:       c.TLSCert,
 		TLSKey:        c.TLSKey,
 		PublicIP:      c.PublicIP,
+		UDPPortMin:    c.UDPPortMin,
+		UDPPortMax:    c.UDPPortMax,
 		DefaultRoles:  c.Roles.DefaultRoles,
 		Roles:         make(map[string][]string, len(c.Roles.Roles)),
 		Grants:        c.Roles.Grants,
