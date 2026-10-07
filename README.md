@@ -14,10 +14,11 @@ core and a versioned, documented wire protocol. See
 
 ## Status
 
-This repository currently ships the **foundation only**: a Go server with
-Ed25519 key-based authentication, roles, channels, presence and text chat, plus
-a headless client library, a desktop GUI chat client, and integration tests.
-Voice, screenshare, relay, and peer-to-peer media remain unimplemented. The
+This repository currently ships a Go server with Ed25519 key-based
+authentication, roles, channels, presence and text chat, plus a headless client
+library, a desktop GUI client, and integration tests. Voice chat now works in
+the GUI, with audio relayed through the self-hosted server. Screenshare, camera
+video, and the direct peer-to-peer opt-in remain unimplemented. The
 wire protocol for what exists is specified in [docs/protocol.md](docs/protocol.md).
 
 ## Development
@@ -157,8 +158,11 @@ for ev := range c.Events() {
 ## Security
 
 - **Use TLS.** Transport encryption is required for Hermec's threat model.
-  Configure `tls_cert` and `tls_key` for any non-loopback deployment; plain
-  `ws://` means an on-path observer can read everything, including chat.
+  Configure `tls_cert` and `tls_key` for any non-loopback deployment, unless a
+  network layer already encrypts and restricts access (a Tailscale/WireGuard
+  network or a trusted LAN, as in the
+  [friends quickstart](docs/quickstart-friends.md)). Plain `ws://` over the
+  public internet means an on-path observer can read everything, including chat.
 - **The host is trusted by design.** The room host can read all chat and
   relayed traffic, the same way a TeamSpeak host can. Choose hosts like you
   choose group admins. See section 8 of

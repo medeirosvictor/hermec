@@ -109,7 +109,7 @@ Notes:
 - **Use headphones.** Hermec has no echo cancellation; speakers feed other
   people's voices back into your mic.
 - **Your identity key:** the first run creates your identity key at
-  `<user config dir>/hermec/identity.key` (on Windows, under
+  `<user config dir>/hermec/identity.key` (on Windows, typically under
   `%AppData%`). It *is* your account, so back it up. Lose it and you become a
   new person.
 - **Passwords:** the GUI has no password field yet. If the host sets a
