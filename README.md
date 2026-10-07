@@ -126,6 +126,13 @@ For internet-facing servers, configure `public_ip` (your server's public IPv4)
 and optionally `udp_port_min`/`udp_port_max` for firewall policy. See
 [example.server.toml](example.server.toml) for details.
 
+## Chat with friends
+
+Want to try Hermec with a few friends? One person runs the server, everyone
+else just runs the app. The easiest private setup is Tailscale, with no router
+changes and no public IP exposed. See the step-by-step
+[friends quickstart](docs/quickstart-friends.md).
+
 ## Use as a library
 
 ```go
