@@ -25,9 +25,10 @@ const (
 // frames, and the jitter state machine that decides what each output slot
 // plays.
 //
-// Locking (order: decMu before mu; mixer.mu is never held while taking
-// either; the one reverse acquisition, fill taking decMu while holding mu,
-// uses TryLock and so can never block or deadlock):
+// Locking order: mixer.mu before sender.mu (Pull's idle sweep holds
+// mixer.mu while taking s.mu — never take mixer.mu while holding s.mu),
+// and decMu before mu; the one reverse acquisition, fill taking decMu
+// while holding mu, uses TryLock and so can never block or deadlock:
 //   - decMu guards dec and pcm. Write holds it across the slow Opus decode.
 //     The audio callback only TryLocks it (for PLC), so it never waits on a
 //     decode: if a real frame is mid-decode the slot is left silent and
