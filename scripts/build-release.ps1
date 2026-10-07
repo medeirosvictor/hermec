@@ -34,6 +34,15 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+if ($Tag -cnotmatch '^v[0-9A-Za-z.\-+]+$') {
+    throw "Invalid -Tag '$Tag': must match ^v[0-9A-Za-z.\-+]+$ (leading v; letters, digits, '.', '-', '+' only)."
+}
+# $IsWindows exists only on PowerShell 6+; Windows PowerShell 5.1 is always Windows.
+$onWindows = if (Test-Path variable:IsWindows) { $IsWindows } else { $true }
+if (-not $onWindows) {
+    throw 'build-release.ps1 is Windows-only (client build and DLL walk need msys2); -SkipLinux does not change that.'
+}
+
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
