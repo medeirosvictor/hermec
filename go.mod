@@ -6,7 +6,10 @@ require github.com/gorilla/websocket v1.5.3
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/ebitengine/oto/v3 v3.5.1
+	github.com/gen2brain/malgo v0.11.26
 	github.com/hajimehoshi/ebiten/v2 v2.10.4
+	github.com/hraban/opus v0.0.0-20260708213942-bde8e4304501
 	github.com/pion/interceptor v0.1.49
 	github.com/pion/webrtc/v4 v4.2.23
 	golang.org/x/sys v0.48.0
@@ -18,6 +21,7 @@ require (
 	github.com/ebitengine/purego v0.11.0 // indirect
 	github.com/go-text/typesetting v0.3.5 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/jfreymuth/pulse v0.1.3 // indirect
 	github.com/pion/datachannel v1.6.3 // indirect
 	github.com/pion/dtls/v3 v3.1.10 // indirect
 	github.com/pion/ice/v4 v4.4.7 // indirect
