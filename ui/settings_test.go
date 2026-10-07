@@ -39,6 +39,46 @@ func TestPresetNameRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFlagNameDoesNotOverwriteSavedName(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	if err := state.SaveSettings(p, state.Settings{Name: "zoe"}); err != nil {
+		t.Fatal(err)
+	}
+	g := &game{st: state.New(), th: theme.Default(), settingsPath: p, autoName: "bob", set: state.Settings{Name: "zoe"}}
+	g.rememberName("bob") // connecting with the unedited -name flag value
+	if s, _ := state.LoadSettings(p); s.Name != "zoe" {
+		t.Fatalf("flag name stuck: %+v", s)
+	}
+}
+
+func TestNameFlushOnCommit(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	g := &game{st: state.New(), th: theme.Default(), settingsPath: p, set: state.Settings{Name: "zoe"}, settingsOpen: true}
+	g.connect = newConnectForm("zo", "ws://", false)
+	g.nameDirty = true // typing marks dirty without writing
+	if s, _ := state.LoadSettings(p); s.Name != "" {
+		t.Fatalf("written before commit: %+v", s)
+	}
+	g.closeSettings()
+	if s, _ := state.LoadSettings(p); s.Name != "zo" || g.settingsOpen {
+		t.Fatalf("not flushed: %+v", s)
+	}
+	// An emptied field persists as empty (default name next start).
+	g.connect.name = field{}
+	g.nameDirty = true
+	g.flushName()
+	if s, _ := state.LoadSettings(p); s.Name != "" {
+		t.Fatalf("empty not persisted: %+v", s)
+	}
+}
+
+func TestStartupThemeBadThemeFallsBackToPalette(t *testing.T) {
+	th, _, n, err := startupTheme("", state.Settings{ThemePath: "missing.toml", Palette: "blue"})
+	if err != nil || n == "" || presetName(th) != "blue" {
+		t.Fatalf("got %q %q %v", presetName(th), n, err)
+	}
+}
+
 func TestSettingsPersistFromEvents(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.toml")
 	g := &game{st: state.New(), th: theme.Default(), settingsPath: p, autoName: "anon-1"}

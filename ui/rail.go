@@ -169,10 +169,10 @@ func (g *game) updateRail() {
 	case hit == state.RailSettings:
 		g.toggleSettings()
 	case hit == state.RailAdd:
-		g.settingsOpen = false
+		g.closeSettings()
 		g.addServer()
 	case hit >= 0:
-		g.settingsOpen = false
+		g.closeSettings()
 		g.switchServer(g.servers[hit])
 	}
 }

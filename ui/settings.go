@@ -68,18 +68,23 @@ func startupTheme(flagPath string, s state.Settings) (th theme.Theme, crt bool, 
 		return th, scanlinesOr(s, th.Scanlines), "", nil
 	}
 	th = theme.Default()
+	loaded := false
 	if s.ThemePath != "" {
 		t, lerr := theme.Load(s.ThemePath)
 		if lerr != nil {
 			notice = fmt.Sprintf("settings theme: %v", lerr)
 		} else {
-			th = t
+			th, loaded = t, true
 		}
-	} else if s.Palette != "" {
+	}
+	// A failed theme file falls back to the saved preset, then the default.
+	if !loaded && s.Palette != "" {
 		if p, ok := presetByName(s.Palette); ok {
 			th = p
 		} else {
-			notice = fmt.Sprintf("settings: unknown palette %q", s.Palette)
+			if notice == "" {
+				notice = fmt.Sprintf("settings: unknown palette %q", s.Palette)
+			}
 		}
 	}
 	return th, scanlinesOr(s, th.Scanlines), notice, nil
@@ -147,29 +152,53 @@ func (g *game) cyclePalette() {
 // rememberName persists a name the user chose, skipping the unedited startup
 // name so a -name flag does not become sticky.
 func (g *game) rememberName(name string) {
-	if name == "" || name == g.set.Name || (name == g.autoName && g.set.Name == "") {
+	if name == "" || name == g.set.Name || name == g.autoName {
 		return
 	}
 	g.set.Name = name
 	g.persistSettings()
 }
 
+// flushName writes a name edited in the settings field. An emptied field is
+// persisted as empty, meaning "use the derived default name on next start".
+func (g *game) flushName() {
+	if !g.nameDirty {
+		return
+	}
+	g.nameDirty = false
+	g.set.Name = g.connect.name.String()
+	g.persistSettings()
+}
+
+func (g *game) closeSettings() {
+	g.flushName()
+	g.settingsOpen = false
+}
+
 func (g *game) toggleSettings() {
-	g.settingsOpen = !g.settingsOpen
+	if g.settingsOpen {
+		g.closeSettings()
+		return
+	}
+	g.settingsOpen = true
 	g.setRow = rowName
 }
 
 // updateSettings handles input for the settings scene. Every change saves.
 func (g *game) updateSettings() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-		g.settingsOpen = false
+		g.closeSettings()
 		return
 	}
+	prev := g.setRow
 	if inpututil.IsKeyJustPressed(ebiten.KeyTab) || inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) {
 		g.setRow = (g.setRow + 1) % settingsRows
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) {
 		g.setRow = (g.setRow + settingsRows - 1) % settingsRows
+	}
+	if g.setRow != prev {
+		g.flushName()
 	}
 	lh := g.lineH()
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
@@ -177,6 +206,9 @@ func (g *game) updateSettings() {
 		if state.InRect(float64(cx), float64(cy), connectX+g.railW(), 0, float64(g.w), 1e9) {
 			if r := state.RowAt(float64(cy), connectFieldsTop(lh), lh, settingsRows); r >= 0 {
 				g.setRow = r
+				if r != rowName {
+					g.flushName()
+				}
 				g.activateSetting(r)
 			}
 		}
@@ -199,7 +231,7 @@ func (g *game) updateSettings() {
 			changed = true
 		}
 		if changed {
-			g.rememberName(f.String())
+			g.nameDirty = true
 		}
 	default:
 		if enterPressed() {

@@ -84,6 +84,7 @@ type game struct {
 	settingsOpen bool   // settings scene replaces the connect/main scene
 	setRow       int    // focused settings row
 	autoName     string // name in effect at startup; not persisted unless edited
+	nameDirty    bool   // settings name field edited, not yet saved
 
 	barOnce sync.Once // dark title bar, applied on the first tick
 
@@ -214,6 +215,7 @@ func Run(opts Options) error {
 	ebiten.SetWindowTitle("Hermec")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	err = ebiten.RunGame(g)
+	g.flushName()
 	if g.c != nil {
 		_ = g.c.Close()
 	}
@@ -236,6 +238,7 @@ func (g *game) startDial(url, name string) {
 	}
 	g.dialing = true
 	g.lastURL, g.lastName = url, name
+	g.flushName()
 	g.rememberName(name)
 	g.curKey = g.keyFor(url)
 	g.logf("dialing %s as %q", url, name)
