@@ -47,13 +47,13 @@ func newConnectForm(name, url string, local bool) connectForm {
 
 // update consumes keyboard input. It reports submit when Enter is pressed
 // and no dial is in flight.
-func (f *connectForm) update(dialing bool, lh float64, screenW int) (url, name string, submit bool) {
+func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64) (url, name string, submit bool) {
 	if inpututil.IsKeyJustPressed(ebiten.KeyTab) && !f.local {
 		f.focus = 1 - f.focus
 	}
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		cx, cy := ebiten.CursorPosition()
-		if state.InRect(float64(cx), float64(cy), connectX, 0, float64(screenW), 1e9) {
+		if state.InRect(float64(cx), float64(cy), connectX+ox, 0, float64(screenW), 1e9) {
 			switch state.RowAt(float64(cy), connectFieldsTop(lh), lh, 2) {
 			case 0:
 				f.focus = 0
@@ -104,7 +104,7 @@ func (g *game) drawTextF(dst *ebiten.Image, f *text.GoTextFace, s string, x, y f
 func (g *game) drawConnect(screen *ebiten.Image) {
 	th, f := g.th, &g.connect
 	lh := g.lineH()
-	x, y := connectX, connectY
+	x, y := connectX+g.railW(), connectY
 
 	g.drawTextF(screen, g.faceT, "HERMEC", x, y, th.Bright)
 	y += lh * 2.5

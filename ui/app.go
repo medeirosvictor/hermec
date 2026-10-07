@@ -31,6 +31,8 @@ type Options struct {
 	ThemePath string
 	Local     bool // ignore ServerURL; run an in-process server
 	Verbose   bool // log breadcrumbs
+
+	ServersPath string // empty: <user config dir>/hermec/servers.toml
 }
 
 // Size hierarchy relative to Theme.FontSize.
@@ -70,6 +72,11 @@ type game struct {
 
 	lastURL, lastName string // for reconnect
 
+	serversPath string
+	servers     []state.ServerEntry
+	localURL    string // URL of the in-process server; empty without -local
+	curKey      string // saved-list key of the current server; empty = none
+
 	barOnce sync.Once // dark title bar, applied on the first tick
 
 	crt   crt
@@ -104,6 +111,15 @@ func LoadOrCreateIdentity(path string) (*identity.Identity, error) {
 		return nil, err
 	}
 	return id, nil
+}
+
+// DefaultServersPath returns <user config dir>/hermec/servers.toml.
+func DefaultServersPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "hermec", "servers.toml"), nil
 }
 
 // Run opens the window and blocks until it closes.
@@ -163,7 +179,12 @@ func Run(opts Options) error {
 			g.logf("local server stopped")
 		}()
 		url = "ws://" + srv.Addr() + "/"
+		g.localURL = url
 		g.logf("local server on %s", url)
+	}
+	g.loadServers(opts.ServersPath)
+	if len(g.servers) > 0 && !opts.Local {
+		url = g.realURL(g.servers[0].URL) // one Enter reconnects the most recent
 	}
 	g.connect = newConnectForm(opts.Name, url, opts.Local)
 
@@ -186,8 +207,14 @@ func (g *game) logf(format string, args ...any) {
 // startDial dials in a goroutine; the result arrives on dialCh.
 func (g *game) startDial(url, name string) {
 	g.dialing = true
-	g.lastURL, g.lastName = url, name
 	g.st.ConnectErr = ""
+	url = g.realURL(url)
+	if url == localKey {
+		g.st.ConnectErr = "local server not running (start with -local)"
+		return
+	}
+	g.lastURL, g.lastName = url, name
+	g.curKey = g.keyFor(url)
 	g.logf("dialing %s as %q", url, name)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -221,9 +248,7 @@ func (g *game) Update() error {
 			g.c = r.c
 			g.st.SetConnected(r.c.Channels(), r.c.Fingerprint())
 			g.ms = newMainScene()
-			if chs := r.c.Channels(); len(chs) > 0 {
-				g.joinChannel(chs[0])
-			}
+			g.onConnected(r.c.Channels())
 		}
 	default:
 	}
@@ -261,8 +286,9 @@ func (g *game) Update() error {
 		}
 	}
 
+	g.updateRail()
 	if g.st.Phase == state.PhaseConnect {
-		if url, name, submit := g.connect.update(g.dialing, g.lineH(), g.w); submit {
+		if url, name, submit := g.connect.update(g.dialing, g.lineH(), g.w, g.railW()); submit {
 			g.startDial(url, name)
 		}
 	}
@@ -293,6 +319,7 @@ func (g *game) drawScene(screen *ebiten.Image) {
 	} else {
 		g.drawMain(screen)
 	}
+	g.drawRail(screen)
 }
 
 func (g *game) Layout(w, h int) (int, int) {
