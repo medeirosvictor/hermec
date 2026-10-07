@@ -79,7 +79,16 @@ A small, open-source, censorship-resilient comms app — "simple like TeamSpeak.
 
 ## Spec
 
-Full design spec: **`docs/specs/2026-10-06-hermec-design.md`** (status: draft, awaiting Victor's review). Next step after approval: implementation plan (writing-plans), then MVP build sessions with Sonnet/Haiku subagents.
+Full design spec: **`docs/specs/2026-10-06-hermec-design.md`** (approved 2026-10-06). Repo: https://github.com/medeirosvictor/hermec
+
+## Implementation roadmap
+
+Four sequential plans, each ending in working software:
+
+1. **Foundation** — identity, wire protocol, roles, server + headless client with group chat. Plan: `docs/superpowers/plans/2026-10-06-hermec-foundation.md` *(written, awaiting review)*
+2. **Voice** — Pion relay (SFU), ephemeral media sessions, Opus, headless voice calls, host bandwidth stats.
+3. **GUI client** — Ebiten window, theme file, CRT aesthetic, dithered avatars, fingerprint display + first-seen key pinning, key backup prompt.
+4. **Screenshare + direct-P2P opt-in + packaging** — capture per OS, VP8, per-participant direct mode, cross-compile releases.
 
 ## Decisions log
 
