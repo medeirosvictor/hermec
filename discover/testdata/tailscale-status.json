@@ -1,0 +1,34 @@
+{
+  "Version": "1.76.1",
+  "BackendState": "Running",
+  "Self": {
+    "ID": "nSELF1CNTRL",
+    "HostName": "desktop",
+    "DNSName": "desktop.tail56a469.ts.net.",
+    "Online": true,
+    "TailscaleIPs": ["100.64.0.1", "fd7a:115c:a1e0::1"]
+  },
+  "Peer": {
+    "nodekey:aaaa000000000000000000000000000000000000000000000000000000000001": {
+      "ID": "nPEER1CNTRL",
+      "HostName": "vitoserver",
+      "DNSName": "vitoserver.tail56a469.ts.net.",
+      "Online": true,
+      "TailscaleIPs": ["fd7a:115c:a1e0::2", "100.101.102.103"]
+    },
+    "nodekey:aaaa000000000000000000000000000000000000000000000000000000000002": {
+      "ID": "nPEER2CNTRL",
+      "HostName": "laptop",
+      "DNSName": "laptop.tail56a469.ts.net.",
+      "Online": false,
+      "TailscaleIPs": ["100.100.0.5", "fd7a:115c:a1e0::3"]
+    },
+    "nodekey:aaaa000000000000000000000000000000000000000000000000000000000003": {
+      "ID": "nPEER3CNTRL",
+      "HostName": "phone",
+      "DNSName": "phone.tail56a469.ts.net.",
+      "Online": true,
+      "TailscaleIPs": ["100.90.1.2"]
+    }
+  }
+}
