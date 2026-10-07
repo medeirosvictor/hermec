@@ -54,17 +54,35 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **PgUp/PgDn** or **mouse wheel**: Scroll chat
 - **F1**: Toggle CRT effect
 - **F2**: Cycle color palettes
+- **Ctrl+M**: Mute or unmute voice
 - **Click rail tile**: Switch servers
 - **Click "+" tile**: Add a server
+- **Click voice channel in the pane**: Join or leave voice call
 - **Click gear tile** or **F10**: Settings page (name, palette, scanlines; F10 works when the rail is hidden). Choices, including F1/F2, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it.
 
 ## Build
 
-Requires Go 1.26 or newer.
+**Prerequisites:** Go 1.26 or newer. If building `cmd/hermec` (GUI client) with
+voice support, also install a C compiler and Opus audio libraries:
+
+**Windows (MSYS2):**
 
 ```sh
-go build ./...
-go build -o hermec-server ./cmd/hermec-server
+winget install MSYS2.MSYS2
+pacman -S mingw-w64-ucrt-x86_64-{gcc,opus,opusfile,pkgconf}
+export PATH="/c/msys64/ucrt64/bin:$PATH"
+CGO_ENABLED=1 go build ./cmd/hermec
+```
+
+The server (`cmd/hermec-server`) is pure Go and does not require cgo on any
+platform.
+
+**Linux/macOS:**
+
+```sh
+# Install development libraries (e.g., libopus-dev on Debian/Ubuntu, opus via Homebrew)
+CGO_ENABLED=1 go build ./cmd/hermec    # GUI client (voice enabled)
+go build ./cmd/hermec-server           # or ./... for everything
 ```
 
 ## Run
@@ -80,6 +98,26 @@ allow list, channels, TLS, roles). The server logs its listen address on start
 and shuts down cleanly on Ctrl-C. Note: the desktop GUI does not yet have a
 password field; password-protected servers are currently reachable only from
 headless clients. A password field is planned.
+
+### Voice
+
+To use voice channels, configure them in your server config:
+
+```toml
+voice_channels = ["voice", "private-call"]
+```
+
+Click a voice channel in the pane to join; the call bar appears at the bottom
+showing participants, mute toggle (Ctrl+M), and speaking indicators. The call
+bar tracks occupancy (empty voice channels show only in the list).
+
+**Important: Hermec does not perform acoustic echo cancellation. Using speakers
+will feed other participants' audio back into your microphone; headsets are
+strongly recommended.**
+
+For internet-facing servers, configure `public_ip` (your server's public IPv4)
+and optionally `udp_port_min`/`udp_port_max` for firewall policy. See
+[example.server.toml](example.server.toml) for details.
 
 ## Use as a library
 

@@ -16,15 +16,24 @@ addr = ":7697"
 # Static channel names.
 channels = ["general"]
 
+# Static voice channel names.
+voice_channels = ["voice"]
+
 # TLS: set both to serve wss://, or neither for plain ws://.
 # tls_cert = "/etc/hermec/cert.pem"
 # tls_key  = "/etc/hermec/key.pem"
 
 # Voice: public IP to advertise for media on an internet-facing host (NAT 1:1); omit on a LAN.
 # public_ip = "203.0.113.7"
+
 # Voice: restrict media to this UDP port range (open it in your firewall); both or neither.
 # udp_port_min = 50000
 # udp_port_max = 50100
+
+# Message rate limiting: messages per second sustained rate and burst bucket size.
+# Either being 0 disables all rate limiting. Defaults: 30 sustained, 60 burst.
+# msg_rate = 30
+# msg_burst = 60
 
 # Roles given to fingerprints that have no entry in [grants].
 default_roles = ["user"]

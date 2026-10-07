@@ -125,3 +125,19 @@ func TestLoadConfigErrors(t *testing.T) {
 		t.Error("unknown key: expected error")
 	}
 }
+
+func TestLoadExampleFile(t *testing.T) {
+	// Load example.server.toml from repo root (../example.server.toml from server/)
+	examplePath := filepath.Join("..", "example.server.toml")
+	cfg, err := LoadConfig(examplePath)
+	if err != nil {
+		t.Fatalf("failed to load example.server.toml: %v", err)
+	}
+	// Verify that the example config loads successfully and has voice_channels
+	if !reflect.DeepEqual(cfg.VoiceChannels, []string{"voice"}) {
+		t.Errorf("VoiceChannels = %v, want [voice]", cfg.VoiceChannels)
+	}
+	if !reflect.DeepEqual(cfg.Channels, []string{"general"}) {
+		t.Errorf("Channels = %v, want [general]", cfg.Channels)
+	}
+}

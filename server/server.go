@@ -18,7 +18,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/roles"
 )
 
-// Config configures a Server.
+// Config configures a Server. Programmatic embedders should start from DefaultConfig().
 type Config struct {
 	// Addr is the listen address; use "127.0.0.1:0" in tests.
 	Addr string
