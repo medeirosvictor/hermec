@@ -58,3 +58,17 @@ func TestLoadRejects(t *testing.T) {
 		t.Errorf("empty path: %+v %v", th, err)
 	}
 }
+
+func TestLoadExampleFile(t *testing.T) {
+	// Load example.theme.toml from repo root (../../example.theme.toml from ui/theme/)
+	examplePath := filepath.Join("..", "..", "example.theme.toml")
+	th, err := Load(examplePath)
+	if err != nil {
+		t.Fatalf("failed to load example.theme.toml: %v", err)
+	}
+	// Verify that defaults are loaded properly
+	want := Default()
+	if th != want {
+		t.Errorf("example.theme.toml loaded incorrectly: got %+v, want %+v", th, want)
+	}
+}

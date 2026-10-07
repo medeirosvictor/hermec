@@ -1,0 +1,20 @@
+# Theme configuration for Hermec GUI client.
+# All colors are hex format #RRGGBB. Missing keys use defaults; unknown keys are rejected.
+
+# Background colour
+bg = "#0A0A08"
+
+# Foreground (primary text) colour
+fg = "#FFB000"
+
+# Dim colour (secondary text, disabled state)
+dim = "#7A5500"
+
+# Bright colour (highlights, emphasis)
+bright = "#FFCF40"
+
+# Enable scanlines effect
+scanlines = true
+
+# Font size for chat and body text
+font_size = 14.0

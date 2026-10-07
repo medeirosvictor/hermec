@@ -20,9 +20,36 @@ a headless client library and integration tests. There is no voice, screenshare,
 relay, P2P, or GUI client yet. The wire protocol for what exists is specified
 in [docs/protocol.md](docs/protocol.md).
 
+## Development
+
+To run the GUI client in one command with an embedded server:
+
+```sh
+go run ./cmd/hermec -local
+```
+
+This launches the full Hermec experience locally: a server and GUI in one process,
+with a default theme. In a multi-machine setup, run the server on one host:
+
+```sh
+go run ./cmd/hermec-server
+```
+
+Then connect from other machines, specifying the server URL:
+
+```sh
+go run ./cmd/hermec -server ws://hostname:7697/
+```
+
+Customize the look with a theme file (see [example.theme.toml](example.theme.toml)):
+
+```sh
+go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
+```
+
 ## Build
 
-Requires Go 1.23 or newer.
+Requires Go 1.26 or newer.
 
 ```sh
 go build ./...
