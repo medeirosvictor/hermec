@@ -1,0 +1,7 @@
+# Default amber-phosphor palette.
+bg = "#0A0A08"
+fg = "#FFB000"
+dim = "#7A5500"
+bright = "#FFCF40"
+scanlines = true
+font_size = 14.0
