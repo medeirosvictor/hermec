@@ -277,7 +277,9 @@ Client                                   Server (SFU)
    renegotiation offer, or receives no `rtc_answer` within 15 seconds of a
    server offer, it discards that participant's media state, sends `error`
    `bad_request`, and keeps the participant in the call. The client recovers by
-   building a new PeerConnection and sending a fresh `rtc_offer`.
+   building a new PeerConnection and sending a fresh `rtc_offer`. The server's
+   error message always ends with the exact hint `send a new rtc_offer`; clients
+   may rely on this suffix to trigger recovery.
 
 **Rate limiting.** Servers may rate-limit voice and signaling messages. A
 violation is answered with `error` `rate_limited`, after which the server

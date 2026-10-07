@@ -74,6 +74,11 @@ export PATH="/c/msys64/ucrt64/bin:$PATH"
 CGO_ENABLED=1 go build ./cmd/hermec
 ```
 
+**Windows runtime note:** Running a voice-enabled `hermec.exe` requires the MSYS2
+runtime DLLs on PATH. Either add `C:\msys64\ucrt64\bin` to your system PATH, or
+copy the needed DLLs (`libopus-0.dll`, `libopusfile-0.dll`, and their dependencies)
+next to the executable.
+
 The server (`cmd/hermec-server`) is pure Go and does not require cgo on any
 platform.
 
@@ -108,8 +113,10 @@ voice_channels = ["voice", "private-call"]
 ```
 
 Click a voice channel in the pane to join; the call bar appears at the bottom
-showing participants, mute toggle (Ctrl+M), and speaking indicators. The call
-bar tracks occupancy (empty voice channels show only in the list).
+showing the channel name, elapsed time, mute button (Ctrl+M), leave button, and
+your mic level. Participants, occupancy, mute icons, and speaking indicators live
+in the channel pane under each voice channel; empty voice channels show only in
+the list.
 
 **Important: Hermec does not perform acoustic echo cancellation. Using speakers
 will feed other participants' audio back into your microphone; headsets are
