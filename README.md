@@ -37,8 +37,8 @@ Each release also ships Linux and Windows servers (`hermec-server-*`) and a
 `SHA256SUMS.txt` to verify downloads. Release notes are generated from the
 commits in each release.
 
-**Update check:** on startup the app asks GitHub's public releases API whether a
-newer version exists and, if so, shows a banner linking to the Releases page.
+**Update check:** on startup, release builds ask GitHub's public releases API
+whether a newer version exists (development builds never make this request) and, if so, shows a banner linking to the Releases page.
 It sends no identifiers beyond a normal HTTPS request. To turn it off, toggle
 "update check" in Settings (gear tile or F10), or set `update_check = false` in
 `<user config dir>/hermec/settings.toml`.
