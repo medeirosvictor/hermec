@@ -63,7 +63,7 @@ func (g *game) loadServers(path string) {
 	if path == "" {
 		p, err := DefaultServersPath()
 		if err != nil {
-			g.st.Status = fmt.Sprintf("servers: %v", err)
+			g.notice = fmt.Sprintf("servers: %v", err)
 			return
 		}
 		path = p
@@ -72,7 +72,7 @@ func (g *game) loadServers(path string) {
 	es, err := state.LoadServers(path)
 	if err != nil {
 		// Keep the unreadable file around rather than overwrite it later.
-		g.st.Status = fmt.Sprintf("servers.toml unreadable (%v); moved to .bad", err)
+		g.notice = fmt.Sprintf("servers.toml unreadable (%v); moved to .bad", err)
 		_ = os.Rename(path, filepath.Clean(path)+".bad")
 		return
 	}
@@ -91,7 +91,10 @@ func (g *game) saveServer(channel string) {
 	}
 	g.servers = state.Touch(g.servers, g.curKey, label, channel)
 	if err := state.SaveServers(g.serversPath, g.servers); err != nil {
-		g.st.Status = fmt.Sprintf("save servers: %v", err)
+		g.notice = fmt.Sprintf("save servers: %v", err)
+		g.st.Status = g.notice
+	} else {
+		g.notice = ""
 	}
 }
 

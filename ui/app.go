@@ -76,6 +76,7 @@ type game struct {
 	servers     []state.ServerEntry
 	localURL    string // URL of the in-process server; empty without -local
 	curKey      string // saved-list key of the current server; empty = none
+	notice      string // persistent load/save error, shown on the connect scene
 
 	barOnce sync.Once // dark title bar, applied on the first tick
 
@@ -183,8 +184,13 @@ func Run(opts Options) error {
 		g.logf("local server on %s", url)
 	}
 	g.loadServers(opts.ServersPath)
-	if len(g.servers) > 0 && !opts.Local {
-		url = g.realURL(g.servers[0].URL) // one Enter reconnects the most recent
+	if !opts.Local {
+		for _, e := range g.servers { // one Enter reconnects the most recent dialable
+			if e.URL != localKey {
+				url = e.URL
+				break
+			}
+		}
 	}
 	g.connect = newConnectForm(opts.Name, url, opts.Local)
 
@@ -206,13 +212,13 @@ func (g *game) logf(format string, args ...any) {
 
 // startDial dials in a goroutine; the result arrives on dialCh.
 func (g *game) startDial(url, name string) {
-	g.dialing = true
 	g.st.ConnectErr = ""
 	url = g.realURL(url)
 	if url == localKey {
 		g.st.ConnectErr = "local server not running (start with -local)"
-		return
+		return // no dial goroutine: must not set g.dialing
 	}
+	g.dialing = true
 	g.lastURL, g.lastName = url, name
 	g.curKey = g.keyFor(url)
 	g.logf("dialing %s as %q", url, name)

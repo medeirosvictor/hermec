@@ -142,6 +142,9 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 	g.drawTextF(screen, g.faceS, "back up "+g.keyAt, x, y, th.Dim)
 	y += lh * 2
 
+	if g.notice != "" {
+		g.drawTextF(screen, g.faceS, g.notice, x, float64(g.h)-lh, th.Bright)
+	}
 	switch {
 	case g.dialing:
 		g.drawText(screen, "connecting...", x, y, th.FG)
