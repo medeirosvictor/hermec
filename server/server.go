@@ -48,6 +48,9 @@ type Server struct {
 	closing bool
 	wg      sync.WaitGroup // per-connection goroutines and the accept loop
 
+	chMu  sync.Mutex // guards chans; see channels.go
+	chans channelSet
+
 	http *http.Server
 	ln   net.Listener
 }
@@ -62,6 +65,7 @@ func New(cfg Config) *Server {
 			WriteBufferSize: 4096,
 		},
 	}
+	s.initChannels()
 	if len(cfg.AllowedKeys) > 0 {
 		s.allowed = make(map[string]struct{}, len(cfg.AllowedKeys))
 		for _, fp := range cfg.AllowedKeys {

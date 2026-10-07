@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -68,6 +69,7 @@ func (c *conn) sendError(code, message string) {
 // queued (e.g. a final error), then closes the socket.
 func (c *conn) finish() {
 	c.srv.unregister(c)
+	c.srv.leaveAll(c)
 	c.sendMu.Lock()
 	if !c.closed {
 		c.closed = true
@@ -96,6 +98,16 @@ func (c *conn) readLoop() {
 	}
 	_ = c.ws.SetReadDeadline(time.Time{})
 
+	var missed atomic.Int32
+	c.ws.SetPongHandler(func(string) error { missed.Store(0); return nil })
+	done := make(chan struct{})
+	defer close(done)
+	c.srv.wg.Add(1)
+	go func() {
+		defer c.srv.wg.Done()
+		c.keepalive(done, &missed)
+	}()
+
 	for {
 		_, raw, err := c.ws.ReadMessage()
 		if err != nil {
@@ -108,12 +120,6 @@ func (c *conn) readLoop() {
 		}
 		c.route(env)
 	}
-}
-
-// route handles one post-auth message. The next task replaces this stub with
-// channel join/leave/chat handling.
-func (c *conn) route(env proto.Envelope) {
-	c.sendError("bad_request", "unsupported message type "+env.Type)
 }
 
 var errAuthFailed = errors.New("auth failed")
