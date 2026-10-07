@@ -71,10 +71,17 @@ type game struct {
 	muteFailCh chan muteFail
 	vc         voiceCall
 	dialing    bool
-	connect    connectForm
-	ms         mainScene
-	frame      int
-	w, h       int
+
+	probeCh    chan []state.DiscoveredIn
+	probing    bool // a discovery probe is in flight
+	discActive bool // connect scene was active last tick
+	nextProbe  time.Time
+	discRows   []state.DiscoveredRow
+
+	connect connectForm
+	ms      mainScene
+	frame   int
+	w, h    int
 
 	lastURL, lastName string // for reconnect
 
@@ -180,7 +187,7 @@ func Run(opts Options) error {
 
 	g := &game{
 		opts: opts, st: state.New(), th: th, face: face, faceS: faceS, faceT: faceT, id: id, fp: fp, keyAt: opts.KeyPath,
-		dialCh: make(chan dialResult, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), voiceCh: make(chan voiceResult, 4), ms: newMainScene(), w: 960, h: 600, crtOn: crtOn,
+		dialCh: make(chan dialResult, 1), probeCh: make(chan []state.DiscoveredIn, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), voiceCh: make(chan voiceResult, 4), ms: newMainScene(), w: 960, h: 600, crtOn: crtOn,
 		settingsPath: boot.settingsPath, set: boot.set, notice: boot.notice, autoName: opts.Name,
 	}
 	g.muteCh, g.muteFailCh = make(chan muteReq, 1), make(chan muteFail, 4)
@@ -189,6 +196,8 @@ func Run(opts Options) error {
 	if opts.Local {
 		srv := server.New(server.Config{
 			Addr:          "127.0.0.1:0",
+			Discoverable:  true,
+			ServerName:    "local",
 			Channels:      []string{"general"},
 			VoiceChannels: []string{"voice"},
 			Roles:         roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
@@ -328,6 +337,7 @@ func (g *game) Update() error {
 
 	g.updateVoice()
 	g.updateRail()
+	g.updateDiscovery()
 	if g.settingsOpen {
 		g.updateSettings()
 		return nil

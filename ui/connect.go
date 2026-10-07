@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image/color"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -38,6 +39,20 @@ type connectForm struct {
 	name, server field
 	focus        int // 0 name, 1 server
 	local        bool
+
+	disc    []state.DiscoveredRow // discovered servers, empty = section hidden
+	sel     int                   // selected discovered row, -1 = fields have focus
+	refresh bool                  // set by update when the user asked for a re-probe
+}
+
+// discTop is the y of the first discovered row (below the DISCOVERED header).
+// It must match drawConnect's layout.
+func (f *connectForm) discTop(lh float64) float64 {
+	y := connectFieldsTop(lh) + 2*lh
+	if f.local {
+		y += lh
+	}
+	return y + lh + lh // blank line, then the header
 }
 
 func newConnectForm(name, url string, local bool) connectForm {
@@ -45,18 +60,45 @@ func newConnectForm(name, url string, local bool) connectForm {
 		name:   field{runes: []rune(name)},
 		server: field{runes: []rune(url)},
 		local:  local,
+		sel:    -1,
 	}
 }
 
 // update consumes keyboard input. It reports submit when Enter is pressed
 // and no dial is in flight.
 func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64) (url, name string, submit bool) {
-	if inpututil.IsKeyJustPressed(ebiten.KeyTab) && !f.local {
-		f.focus = 1 - f.focus
+	f.refresh = false
+	if inpututil.IsKeyJustPressed(ebiten.KeyTab) {
+		f.sel = -1
+		if !f.local {
+			f.focus = 1 - f.focus
+		}
+	}
+	if len(f.disc) > 0 {
+		if inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) {
+			f.sel = state.MoveSel(f.sel, 1, len(f.disc))
+		}
+		if inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) {
+			f.sel = state.MoveSel(f.sel, -1, len(f.disc))
+		}
+	} else {
+		f.sel = -1
+	}
+	ctrl := ebiten.IsKeyPressed(ebiten.KeyControl)
+	if inpututil.IsKeyJustPressed(ebiten.KeyR) && (ctrl || f.sel >= 0) {
+		f.refresh = true // plain R is a letter while a field has focus
 	}
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		cx, cy := ebiten.CursorPosition()
 		if state.InRect(float64(cx), float64(cy), connectX+ox, 0, float64(screenW), 1e9) {
+			if i := state.RowAt(float64(cy), f.discTop(lh), lh, len(f.disc)); i >= 0 {
+				f.sel = i
+				f.server.runes = []rune(f.disc[i].URL)
+				if n := f.name.String(); n != "" && !dialing {
+					return f.disc[i].URL, n, true // one click = join
+				}
+				return "", "", false
+			}
 			switch state.RowAt(float64(cy), connectFieldsTop(lh), lh, 2) {
 			case 0:
 				f.focus = 0
@@ -71,7 +113,7 @@ func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64) 
 	if f.focus == 1 && !f.local {
 		cur = &f.server
 	}
-	if !dialing {
+	if !dialing && f.sel < 0 {
 		for _, r := range ebiten.AppendInputChars(nil) {
 			if r >= ' ' && r != 0x7f && len(cur.runes) < maxFieldRunes {
 				cur.runes = append(cur.runes, r)
@@ -84,6 +126,9 @@ func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64) 
 		}
 	}
 	if !dialing && (inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeyNumpadEnter)) {
+		if f.sel >= 0 && f.sel < len(f.disc) {
+			f.server.runes = []rune(f.disc[f.sel].URL)
+		}
 		if n := f.name.String(); n != "" && f.server.String() != "" {
 			return f.server.String(), n, true
 		}
@@ -140,6 +185,28 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 	}
 	y += lh
 
+	if len(f.disc) > 0 {
+		g.drawTextF(screen, g.faceS, "DISCOVERED", x, y, th.Dim)
+		y += lh
+		cx, cy := ebiten.CursorPosition()
+		hover := -1
+		if state.InRect(float64(cx), float64(cy), connectX+g.railW(), 0, float64(g.w), 1e9) {
+			hover = state.RowAt(float64(cy), y, lh, len(f.disc))
+		}
+		for i, r := range f.disc {
+			col, marker := th.FG, "  "
+			if i == f.sel || i == hover {
+				col = th.Bright
+			}
+			if i == f.sel {
+				marker = "> "
+			}
+			g.drawText(screen, fmt.Sprintf("%s%s  (%s)  %s", marker, r.Name, r.Source, r.Addr), x, y, col)
+			y += lh
+		}
+		y += lh
+	}
+
 	g.drawText(screen, "fingerprint: "+g.fp, x, y, th.FG)
 	y += lh
 	g.drawTextF(screen, g.faceS, "back up "+g.keyAt, x, y, th.Dim)
@@ -159,6 +226,9 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 		hint := "Enter to connect"
 		if !f.local {
 			hint += "   Tab to switch field"
+		}
+		if len(f.disc) > 0 {
+			hint += "   Up/Down pick discovered   Ctrl+R refresh"
 		}
 		g.drawTextF(screen, g.faceS, hint, x, y, th.Dim)
 	}
