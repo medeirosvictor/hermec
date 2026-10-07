@@ -11,6 +11,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
+	"github.com/medeirosvictor/hermec/audio"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/ui/theme"
 )
@@ -20,6 +21,8 @@ const (
 	rowName = iota
 	rowPalette
 	rowScanlines
+	rowInput
+	rowOutput
 	rowUpdateCheck
 	settingsRows
 )
@@ -190,6 +193,55 @@ func (g *game) toggleSettings() {
 	}
 	g.settingsOpen = true
 	g.setRow = rowName
+	g.refreshDevices()
+}
+
+// refreshDevices enumerates audio devices. Called once on settings scene
+// entry (never per frame). A failure leaves the lists empty: the rows then
+// just show the saved value and cycling selects "default".
+func (g *game) refreshDevices() {
+	ins, outs, err := audio.ListDevices()
+	if err != nil {
+		g.logf("list audio devices: %v", err)
+		ins, outs = nil, nil
+	}
+	g.devIn, g.devOut = ins, outs
+}
+
+// savedDevicesNotice reports, at startup, saved devices that are no longer
+// present (the call itself falls back to the default; see resolveDevices).
+// It enumerates only when a device is saved.
+func savedDevicesNotice(s state.Settings) string {
+	if s.InputDevice == "" && s.OutputDevice == "" {
+		return ""
+	}
+	_, _, n := resolveDevices(s.InputDevice, s.OutputDevice)
+	return n
+}
+
+// deviceLabel is how a device row shows saved against the available names.
+func deviceLabel(saved string, available []string) string {
+	if saved == "" {
+		return "default"
+	}
+	for _, d := range available {
+		if d == saved {
+			return saved
+		}
+	}
+	return saved + " (missing)"
+}
+
+func (g *game) cycleInput() {
+	g.set.InputDevice = state.NextDevice(g.set.InputDevice, g.devIn)
+	g.logf("input device: %q", g.set.InputDevice)
+	g.persistSettings()
+}
+
+func (g *game) cycleOutput() {
+	g.set.OutputDevice = state.NextDevice(g.set.OutputDevice, g.devOut)
+	g.logf("output device: %q", g.set.OutputDevice)
+	g.persistSettings()
 }
 
 // updateSettings handles input for the settings scene. Every change saves.
@@ -254,6 +306,10 @@ func (g *game) activateSetting(row int) {
 		g.cyclePalette()
 	case rowScanlines:
 		g.setScanlines(!g.crtOn)
+	case rowInput:
+		g.cycleInput()
+	case rowOutput:
+		g.cycleOutput()
 	case rowUpdateCheck:
 		g.setUpdateCheck(!g.set.UpdateCheckEnabled())
 	}
@@ -291,6 +347,8 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 		"name:      " + nameVal,
 		"palette:   " + pal,
 		"scanlines: " + scan,
+		"input:     " + deviceLabel(g.set.InputDevice, g.devIn),
+		"output:    " + deviceLabel(g.set.OutputDevice, g.devOut),
 		"update check: " + upd,
 	}
 	for i, s := range rows {

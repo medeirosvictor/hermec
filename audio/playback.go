@@ -309,23 +309,13 @@ func Playback(device string) (client.AudioSink, *Meters, error) {
 	cfg.SampleRate = sampleRate
 	cfg.PeriodSizeInMilliseconds = frameMs
 	if device != "" {
-		infos, err := mctx.Devices(malgo.Playback)
+		// Opened by name once per voice join (see deviceID's leak note).
+		id, err := deviceID(mctx, malgo.Playback, device)
 		if err != nil {
 			free()
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("output %w", err)
 		}
-		found := false
-		for i := range infos {
-			if infos[i].Name() == device {
-				cfg.Playback.DeviceID = infos[i].ID.Pointer()
-				found = true
-				break
-			}
-		}
-		if !found {
-			free()
-			return nil, nil, fmt.Errorf("output device %q not found", device)
-		}
+		cfg.Playback.DeviceID = id
 	}
 	p := &playback{
 		mix:    newMixer(),

@@ -53,8 +53,9 @@ type geometry struct {
 	w, h                 int
 	ox                   float64 // left edge (rail width)
 	statusY              float64
-	paneY0, paneY1       float64 // scrollback/channel vertical extent
-	inputY               float64
+	paneY0, paneY1       float64 // scrollback (chat pane) vertical extent
+	chanY1               float64 // channel pane bottom; runs below the chat pane, beside the input line
+	inputY               float64 // chat input line: right column only, directly under the chat pane
 	barY                 float64 // call bar top; meaningful only while barVisible
 	rightX, rightW       float64
 	adv, lh              float64
@@ -70,12 +71,15 @@ func (g *game) geom() geometry {
 	gm := geometry{w: g.w, h: g.h, ox: g.railW(), adv: adv, lh: lh}
 	gm.statusY = pad + g.bannerH()
 	gm.paneY0 = gm.statusY + lh + pad
-	gm.inputY = float64(g.h) - pad - lh
-	gm.paneY1 = gm.inputY - pad
+	// The call bar (when shown) is the full-width bottom strip; everything
+	// above it is content. The input line sits under the right column only.
+	gm.chanY1 = float64(g.h) - pad
 	if g.barVisible() {
-		gm.barY = gm.inputY - gm.lh - pad
-		gm.paneY1 = gm.barY - pad
+		gm.barY = float64(g.h) - pad - lh
+		gm.chanY1 = gm.barY - pad
 	}
+	gm.inputY = gm.chanY1 - lh
+	gm.paneY1 = gm.inputY - pad
 	gm.rightX = gm.ox + channelPaneW + pad
 	gm.rightW = float64(g.w) - gm.rightX - pad
 	gm.cols = int(gm.rightW / adv)
@@ -169,10 +173,10 @@ func (g *game) updateMain() {
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		cx, cy := ebiten.CursorPosition()
 		x, y := float64(cx), float64(cy)
-		if state.InRect(x, y, gm.ox, gm.paneY0, gm.ox+channelPaneW, gm.paneY1) {
+		if state.InRect(x, y, gm.ox, gm.paneY0, gm.ox+channelPaneW, gm.chanY1) {
 			// Only rows drawChannels actually draws are clickable.
 			rows := g.st.Rows()
-			n := int((gm.paneY1 - gm.paneY0) / gm.lh)
+			n := int((gm.chanY1 - gm.paneY0) / gm.lh)
 			if n > len(rows) {
 				n = len(rows)
 			}
@@ -284,13 +288,13 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	// Separators.
 	ox := float32(gm.ox)
 	vector.FillRect(screen, ox, float32(gm.paneY0-pad/2), float32(g.w)-ox, 1, th.Dim, false)
-	vector.FillRect(screen, ox+channelPaneW, float32(gm.paneY0-pad/2), 1, float32(gm.paneY1-gm.paneY0+pad/2), th.Dim, false)
-	vector.FillRect(screen, ox, float32(gm.paneY1+pad/2), float32(g.w)-ox, 1, th.Dim, false)
+	vector.FillRect(screen, ox+channelPaneW, float32(gm.paneY0-pad/2), 1, float32(gm.chanY1-gm.paneY0+pad/2), th.Dim, false)
+	vector.FillRect(screen, ox+channelPaneW, float32(gm.paneY1+pad/2), float32(g.w)-ox-channelPaneW, 1, th.Dim, false)
 
 	g.drawChannels(screen, gm)
 	if g.barVisible() {
 		g.drawBar(screen, gm)
-		vector.FillRect(screen, ox, float32(gm.barY+gm.lh+pad/2), float32(g.w)-ox, 1, th.Dim, false)
+		vector.FillRect(screen, ox, float32(gm.barY-pad/2), float32(g.w)-ox, 1, th.Dim, false)
 	}
 	g.drawScrollback(screen, gm)
 	g.drawInput(screen, gm)
@@ -322,10 +326,10 @@ func (g *game) drawStatus(screen *ebiten.Image, gm geometry) {
 
 func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 	th := g.th
-	dst := clip(screen, gm.ox, gm.paneY0, gm.ox+channelPaneW, gm.paneY1)
+	dst := clip(screen, gm.ox, gm.paneY0, gm.ox+channelPaneW, gm.chanY1)
 	y := gm.paneY0
 	for _, row := range g.st.Rows() {
-		if y+gm.lh > gm.paneY1 {
+		if y+gm.lh > gm.chanY1 {
 			break
 		}
 		x := gm.ox + pad
@@ -481,9 +485,9 @@ func (g *game) renderScrollback(dst *ebiten.Image, gm geometry, ox, oy float64) 
 
 func (g *game) drawInput(screen *ebiten.Image, gm geometry) {
 	th := g.th
-	dst := clip(screen, gm.ox, gm.inputY, float64(g.w), float64(g.h))
+	dst := clip(screen, gm.rightX, gm.inputY, float64(g.w), gm.inputY+gm.lh)
 	in := []rune(g.st.Input.String())
-	room := int((float64(g.w)-gm.ox-2*pad)/gm.adv) - 3 // prompt + cursor
+	room := int(gm.rightW/gm.adv) - 3 // prompt + cursor
 	if room < 1 {
 		room = 1
 	}
@@ -491,9 +495,9 @@ func (g *game) drawInput(screen *ebiten.Image, gm geometry) {
 		in = in[len(in)-room:]
 	}
 	s := "> " + string(in)
-	g.drawText(dst, s, gm.ox+pad, gm.inputY, th.FG)
+	g.drawText(dst, s, gm.rightX, gm.inputY, th.FG)
 	if (g.frame/30)%2 == 0 {
-		cx := gm.ox + pad + float64(len([]rune(s)))*gm.adv
+		cx := gm.rightX + float64(len([]rune(s)))*gm.adv
 		vector.FillRect(dst, float32(cx), float32(gm.inputY+2), float32(gm.adv), float32(g.th.FontSize), th.Bright, false)
 	}
 }

@@ -296,7 +296,7 @@ func TestCaptureSlowConsumerBounded(t *testing.T) {
 
 // Device test: skipped when no microphone can be opened.
 func TestCaptureDevice(t *testing.T) {
-	src, meter, err := Capture()
+	src, meter, err := Capture("")
 	if err != nil {
 		t.Skipf("no capture device: %v", err)
 	}

@@ -16,6 +16,9 @@ type Settings struct {
 	ThemePath string `toml:"theme_path,omitempty"` // custom theme file
 
 	UpdateCheck *bool `toml:"update_check,omitempty"` // nil = unset (enabled)
+
+	InputDevice  string `toml:"input_device,omitempty"`  // "" = system default
+	OutputDevice string `toml:"output_device,omitempty"` // "" = system default
 }
 
 // UpdateCheckEnabled reports whether the startup update check is on; unset

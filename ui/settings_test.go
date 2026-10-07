@@ -108,3 +108,33 @@ func TestSettingsPersistFromEvents(t *testing.T) {
 		t.Fatalf("got %+v", s)
 	}
 }
+
+func TestDeviceRowsCycleAndPersist(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	g := &game{st: state.New(), th: theme.Default(), settingsPath: p,
+		devIn: []string{"Micrófono 日本", "B"}, devOut: []string{"Altavoz"}}
+	g.activateSetting(rowInput)
+	g.activateSetting(rowOutput)
+	s, err := state.LoadSettings(p)
+	if err != nil || s.InputDevice != "Micrófono 日本" || s.OutputDevice != "Altavoz" {
+		t.Fatalf("got %+v %v", s, err)
+	}
+	g.activateSetting(rowOutput) // wraps back to default
+	if s, _ = state.LoadSettings(p); s.OutputDevice != "" {
+		t.Fatalf("got %+v", s)
+	}
+}
+
+func TestDeviceLabel(t *testing.T) {
+	av := []string{"A"}
+	if deviceLabel("", av) != "default" || deviceLabel("A", av) != "A" || deviceLabel("Z", av) != "Z (missing)" {
+		t.Fatal("labels")
+	}
+}
+
+func TestSavedDevicesNoticeNothingSaved(t *testing.T) {
+	// Must not enumerate (or notice) when nothing is saved.
+	if n := savedDevicesNotice(state.Settings{}); n != "" {
+		t.Fatalf("got %q", n)
+	}
+}

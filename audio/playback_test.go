@@ -99,7 +99,7 @@ func TestMixerMultiSenderMixes(t *testing.T) {
 // Skipped without both devices. It checks plumbing and lifecycle, not
 // audibility (the speaker may be muted, the mic quiet).
 func TestLoopbackSelfTest(t *testing.T) {
-	src, mic, err := Capture()
+	src, mic, err := Capture("")
 	if err != nil {
 		t.Skipf("no capture device: %v", err)
 	}

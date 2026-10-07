@@ -96,6 +96,7 @@ type game struct {
 	set          state.Settings
 	settingsOpen bool   // settings scene replaces the connect/main scene
 	setRow       int    // focused settings row
+	devIn, devOut []string // device names, enumerated on settings scene entry
 	autoName     string // name in effect at startup; not persisted unless edited
 	nameDirty    bool   // settings name field edited, not yet saved
 
@@ -175,6 +176,9 @@ func Run(opts Options) error {
 	}
 	if themeNotice != "" && boot.notice == "" {
 		boot.notice = themeNotice
+	}
+	if boot.notice == "" {
+		boot.notice = savedDevicesNotice(boot.set)
 	}
 	face, err := theme.Face(th.FontSize)
 	if err != nil {

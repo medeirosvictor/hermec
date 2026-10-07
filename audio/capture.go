@@ -2,6 +2,7 @@ package audio
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -72,10 +73,11 @@ type capture struct {
 	times      []time.Time // scratch for dropCount
 }
 
-// Capture opens the default microphone (48kHz mono) and returns an
-// AudioSource of 20ms Opus frames at 32kbps, plus a Meter of the mic level.
-// Type-assert the source to io.Closer to stop it.
-func Capture() (client.AudioSource, *Meter, error) {
+// Capture opens the microphone named deviceName ("" = system default; a
+// missing name is an error, callers resolve fallbacks first) at 48kHz mono
+// and returns an AudioSource of 20ms Opus frames at 32kbps, plus a Meter of
+// the mic level. Type-assert the source to io.Closer to stop it.
+func Capture(deviceName string) (client.AudioSource, *Meter, error) {
 	enc, err := opus.NewEncoder(sampleRate, 1, opus.AppVoIP)
 	if err != nil {
 		return nil, nil, err
@@ -104,6 +106,15 @@ func Capture() (client.AudioSource, *Meter, error) {
 	cfg.Capture.Channels = 1
 	cfg.SampleRate = sampleRate
 	cfg.PeriodSizeInMilliseconds = frameMs
+	if deviceName != "" {
+		// Opened by name once per voice join (see deviceID's leak note).
+		id, err := deviceID(mctx, malgo.Capture, deviceName)
+		if err != nil {
+			c.freeCtx()
+			return nil, nil, fmt.Errorf("input %w", err)
+		}
+		cfg.Capture.DeviceID = id
+	}
 	dev, err := malgo.InitDevice(mctx.Context, cfg, malgo.DeviceCallbacks{Data: c.onData})
 	if err != nil {
 		c.freeCtx()

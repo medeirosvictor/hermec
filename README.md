@@ -82,7 +82,7 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Click rail tile**: Switch servers
 - **Click "+" tile**: Add a server
 - **Click voice channel in the pane**: Join or leave voice call
-- **Click gear tile** or **F10**: Settings page (name, palette, scanlines; F10 works when the rail is hidden). Choices, including F1/F2, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it.
+- **Click gear tile** or **F10**: Settings page (name, palette, scanlines, input/output audio device, update check; F10 works when the rail is hidden). Choices, including F1/F2, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it.
 
 ## Build
 
@@ -230,8 +230,12 @@ go build -o bin/hermec.exe ./cmd/hermec
 ```
 
 **Denying the prompt:** If you deny firewall access, loopback (localhost,
-127.0.0.1) and Tailscale still work. LAN discovery is the only feature that
-requires the firewall exception.
+127.0.0.1) and Tailscale still work. LAN discovery, and anyone else on your LAN
+reaching a server you host, are the only things that
+require the firewall exception. The machine hosting the server must have its
+server executable (`hermec-server.exe`, or `hermec.exe` when using `-local`)
+**Allowed**, or LAN peers cannot connect or hear voice; clients that only join
+someone else's server need no inbound exception.
 
 ## Test
 

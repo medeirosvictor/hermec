@@ -32,6 +32,7 @@ type voiceResult struct {
 	src, sink io.Closer
 	mic       *audio.Meter
 	spk       *audio.Meters
+	notice    string // device fallback notice, shown on a successful join
 }
 
 // voiceCall is the GUI's side of the current call (the protocol side lives in
@@ -75,6 +76,7 @@ func (g *game) clickVoice(ch string) {
 func (g *game) joinCall(ch string) {
 	c := g.c
 	oldSrc, oldSink := g.vc.src, g.vc.sink
+	savedIn, savedOut := g.set.InputDevice, g.set.OutputDevice // read here: g.set belongs to the update goroutine
 	g.vc = voiceCall{busy: true, joining: ch}
 	g.st.SetInCall("")
 	g.st.Status = ""
@@ -87,13 +89,14 @@ func (g *game) joinCall(ch string) {
 			cancel()
 			closeAll(oldSrc, oldSink)
 		}
-		src, mic, err := audio.Capture()
+		inDev, outDev, notice := resolveDevices(savedIn, savedOut)
+		src, mic, err := audio.Capture(inDev)
 		if err != nil {
 			res.err = fmt.Errorf("microphone unavailable: %w", err)
 			g.voiceCh <- res
 			return
 		}
-		sink, spk, err := audio.Playback("")
+		sink, spk, err := audio.Playback(outDev)
 		if err != nil {
 			closeAll(asCloser(src))
 			res.err = fmt.Errorf("audio output unavailable: %w", err)
@@ -109,6 +112,7 @@ func (g *game) joinCall(ch string) {
 			return
 		}
 		res.src, res.sink, res.mic, res.spk = asCloser(src), asCloser(sink), mic, spk
+		res.notice = notice
 		g.voiceCh <- res
 	}()
 }
@@ -167,6 +171,9 @@ func (g *game) updateVoice() {
 			g.logf("joined voice %s", r.channel)
 			g.vc = voiceCall{start: time.Now(), src: r.src, sink: r.sink, mic: r.mic, spk: r.spk}
 			g.st.SetInCall(r.channel)
+			if r.notice != "" {
+				g.st.Status = r.notice
+			}
 		}
 	default:
 	}
@@ -362,4 +369,26 @@ func scaleOf(c color.RGBA) ebiten.ColorScale {
 	var cs ebiten.ColorScale
 	cs.ScaleWithColor(c)
 	return cs
+}
+
+// resolveDevices maps the saved device names to what to open, enumerating
+// once per voice join. A saved device that is gone, or an enumeration
+// failure, falls back to the system default with a notice; it never blocks
+// the call.
+func resolveDevices(savedIn, savedOut string) (in, out, notice string) {
+	if savedIn == "" && savedOut == "" {
+		return "", "", ""
+	}
+	ins, outs, err := audio.ListDevices()
+	if err != nil {
+		return "", "", fmt.Sprintf("audio devices: %v; using defaults", err)
+	}
+	in, n1 := state.ResolveDevice("input", savedIn, ins)
+	out, n2 := state.ResolveDevice("output", savedOut, outs)
+	if n1 != "" && n2 != "" {
+		n1 += "; " + n2
+	} else if n2 != "" {
+		n1 = n2
+	}
+	return in, out, n1
 }
