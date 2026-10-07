@@ -3,6 +3,7 @@ package audio
 import (
 	"io"
 	"math"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -99,32 +100,144 @@ func TestMixerStrayFrameCleanedUp(t *testing.T) {
 	}
 }
 
-func TestCaptureStalenessAndEOF(t *testing.T) {
+func TestDropCount(t *testing.T) {
 	now := time.Unix(1000, 0)
-	if stale(now, now.Add(frameMs*time.Millisecond)) {
-		t.Fatal("one frame old should be fresh")
+	ms := func(d int) time.Time { return now.Add(time.Duration(d) * time.Millisecond) }
+	q := func(ds ...int) []time.Time {
+		var out []time.Time
+		for _, d := range ds {
+			out = append(out, ms(d))
+		}
+		return out
 	}
-	if !stale(now, now.Add(2*frameMs*time.Millisecond)) {
-		t.Fatal("two frames old should be stale")
+	cases := []struct {
+		name string
+		last time.Time
+		q    []time.Time
+		want int
+	}{
+		{"continuous, 2 queued", ms(-20), q(-30, -10), 0},
+		{"continuous, ring full", ms(-30), q(-70, -50, -30, -10), 0},
+		{"gap exactly pauseGap", ms(-100), q(-70, -50, -30, -10), 0},
+		{"after pause, backlog", ms(-101), q(-70, -50, -30, -10), 3},
+		{"after 5s mute", ms(-5000), q(-70, -50, -30, -10), 3},
+		{"after pause, single", ms(-5000), q(-10), 0},
+		{"first read", time.Time{}, q(-50, -30, -10), 2},
+		{"empty", ms(-5000), nil, 0},
 	}
+	for _, c := range cases {
+		if got := dropCount(now, c.last, c.q); got != c.want {
+			t.Errorf("%s: got %d want %d", c.name, got, c.want)
+		}
+	}
+}
 
+func newTestCapture(t *testing.T, clock *time.Time) *capture {
+	t.Helper()
 	enc, err := opus.NewEncoder(sampleRate, 1, opus.AppVoIP)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &capture{
+	return &capture{
 		enc: enc, meter: &Meter{}, frames: make(chan pcmFrame, captureRing),
-		done: make(chan struct{}), obuf: make([]byte, 1500), clock: func() time.Time { return now },
+		done: make(chan struct{}), obuf: make([]byte, 1500), clock: func() time.Time { return *clock },
 	}
-	// A backlog after a pause yields exactly one (the newest) frame.
-	c.push(pcmFrame{at: now.Add(-time.Hour)})
-	c.push(pcmFrame{at: now})
-	if f, err := c.ReadOpusFrame(); err != nil || len(f) == 0 {
-		t.Fatalf("read: %v %d", err, len(f))
+}
+
+func seqFrame(seq int, at time.Time) pcmFrame {
+	var f pcmFrame
+	f.pcm[0] = int16(seq)
+	f.at = at
+	return f
+}
+
+// Review Focus 1: a simulated minute at 20ms cadence with +-10ms jitter on
+// both producer and consumer must lose nothing and keep order.
+func TestCaptureSteadyJitterNoDiscards(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := newTestCapture(t, &now)
+	rng := rand.New(rand.NewSource(7))
+	jit := func() time.Duration { return time.Duration(rng.Intn(21)-10) * time.Millisecond }
+	const total = 3000 // 60s of frames
+	step := frameMs * time.Millisecond
+	start := now
+	prodAt := func(k int) time.Time { return start.Add(time.Duration(k)*step + jit()) }
+	nextProd, nextProdAt := 0, prodAt(0)
+	produce := func() {
+		c.push(seqFrame(nextProd, nextProdAt))
+		nextProd++
+		nextProdAt = prodAt(nextProd)
+	}
+	read := 0
+	for k := 0; read < total; k++ {
+		readAt := start.Add(time.Duration(k)*step + jit() + 5*time.Millisecond)
+		for nextProd < total && !nextProdAt.After(readAt) {
+			produce()
+		}
+		if len(c.frames)+len(c.pending) == 0 { // a blocking read wakes when the next frame lands
+			if nextProd >= total {
+				break
+			}
+			readAt = nextProdAt
+			produce()
+		}
+		now = readAt
+		f, err := c.nextFrame()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if int(f.pcm[0]) != read {
+			t.Fatalf("read %d: got frame %d (discard or reorder)", read, f.pcm[0])
+		}
+		read++
+	}
+	if read != total {
+		t.Fatalf("read %d of %d frames", read, total)
+	}
+}
+
+// Review Focus 2: after a long mute (reads stop, ring churns) resuming
+// returns at most one stale frame before fresh audio.
+func TestCaptureResumeAfterMuteNoBurst(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := newTestCapture(t, &now)
+	step := frameMs * time.Millisecond
+	for i := 0; i < 5; i++ {
+		c.push(seqFrame(i, now))
+		now = now.Add(step)
+		if f, err := c.nextFrame(); err != nil || int(f.pcm[0]) != i {
+			t.Fatalf("warmup %d: got %d %v", i, f.pcm[0], err)
+		}
+	}
+	last := 0
+	for i := 5; i < 5+250; i++ { // 5s muted, producer keeps running
+		c.push(seqFrame(i, now))
+		now = now.Add(step)
+		last = i
+	}
+	f, err := c.nextFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale := last - int(f.pcm[0]); stale > 1 {
+		t.Fatalf("first frame after unmute is %d frames stale", stale)
 	}
 	if len(c.frames) != 0 {
-		t.Fatal("backlog not drained")
+		t.Fatal("backlog not drained after pause")
 	}
+	for i := last + 1; i < last+10; i++ {
+		c.push(seqFrame(i, now))
+		now = now.Add(step)
+		f, err := c.nextFrame()
+		if err != nil || int(f.pcm[0]) != i {
+			t.Fatalf("after resume: want %d got %d (%v)", i, f.pcm[0], err)
+		}
+	}
+}
+
+func TestCaptureEOF(t *testing.T) {
+	now := time.Unix(1000, 0)
+	c := newTestCapture(t, &now)
 	// After close, buffered frames must never be served.
 	for i := 0; i < 50; i++ {
 		c.push(pcmFrame{at: now})

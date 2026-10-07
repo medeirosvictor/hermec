@@ -13,13 +13,30 @@ import (
 )
 
 const (
-	// captureRing is how many 20ms PCM frames are kept while nobody is
-	// reading (muted). Older frames are dropped as new ones arrive.
-	captureRing = 2
-	// captureMaxAge: a frame older than this (1.5 frames) is stale and
-	// skipped, so unmuting never replays the pause.
-	captureMaxAge = frameMs * 3 / 2 * time.Millisecond
+	// captureRing is how many 20ms PCM frames are kept. It absorbs normal
+	// producer/consumer jitter; when nobody reads (muted) older frames are
+	// dropped as new ones arrive, bounding latency at 4*20ms = 80ms.
+	captureRing = 4
+	// pauseGap: if the previous read was longer ago than this, the caller
+	// was paused (muted/stalled) and the backlog is skipped to the newest
+	// frame. Below it, frames are served strictly in order.
+	pauseGap = 100 * time.Millisecond
 )
+
+// dropCount decides how many of the oldest queued frames to discard before
+// serving, given the current time, the previous read time, and the capture
+// times of the queued frames (oldest first). After a pause (gap > pauseGap,
+// or no previous read) everything but the newest is dropped so unmuting
+// never replays the pause; during continuous reading nothing is dropped.
+func dropCount(now, lastReadAt time.Time, queued []time.Time) int {
+	if len(queued) < 2 {
+		return 0
+	}
+	if lastReadAt.IsZero() || now.Sub(lastReadAt) > pauseGap {
+		return len(queued) - 1
+	}
+	return 0
+}
 
 type pcmFrame struct {
 	pcm [frameSize]int16
@@ -48,6 +65,11 @@ type capture struct {
 
 	obuf  []byte
 	clock func() time.Time
+
+	// reader-owned: when the previous frame was served (zero before first)
+	lastReadAt time.Time
+	pending    []pcmFrame  // drained from frames, not yet served
+	times      []time.Time // scratch for dropCount
 }
 
 // Capture opens the default microphone (48kHz mono) and returns an
@@ -132,58 +154,66 @@ func (c *capture) push(f pcmFrame) {
 	}
 }
 
-// ReadOpusFrame blocks for the next fresh 20ms frame and returns it encoded.
-// Stale frames (captured while the caller was paused) are discarded. It
-// returns io.EOF after Close.
-func (c *capture) ReadOpusFrame() ([]byte, error) {
-	for {
-		// Check done first: with done closed and frames buffered, a bare
-		// select would pick randomly and could serve a frame after Close.
-		select {
-		case <-c.done:
-			return nil, io.EOF
-		default:
-		}
-		var f pcmFrame
-		select {
-		case <-c.done:
-			return nil, io.EOF
-		case f = <-c.frames:
-		}
-		// More than one queued means we are behind (e.g. after a mute
-		// pause): keep only the newest so there is never a burst.
-		f = newest(f, c.frames)
-		select {
-		case <-c.done:
-			return nil, io.EOF
-		default:
-		}
-		if stale(f.at, c.clock()) {
-			continue
-		}
-		n, err := c.enc.Encode(f.pcm[:], c.obuf)
-		if err != nil {
-			return nil, err
-		}
-		out := make([]byte, n)
-		copy(out, c.obuf[:n])
-		return out, nil
+// nextFrame blocks for the next PCM frame to send. Frames are returned in
+// order; the backlog is skipped to the newest only when resuming after a
+// pause (see dropCount). It returns io.EOF after Close.
+func (c *capture) nextFrame() (pcmFrame, error) {
+	// Check done first: with done closed and frames buffered, a bare
+	// select would pick randomly and could serve a frame after Close.
+	select {
+	case <-c.done:
+		return pcmFrame{}, io.EOF
+	default:
 	}
+	if len(c.pending) == 0 {
+		select {
+		case <-c.done:
+			return pcmFrame{}, io.EOF
+		case f := <-c.frames:
+			c.pending = append(c.pending, f)
+		}
+	}
+	// Move whatever else is queued into pending (oldest first).
+drain:
+	for {
+		select {
+		case g := <-c.frames:
+			c.pending = append(c.pending, g)
+		default:
+			break drain
+		}
+	}
+	now := c.clock()
+	c.times = c.times[:0]
+	for _, p := range c.pending {
+		c.times = append(c.times, p.at)
+	}
+	drop := dropCount(now, c.lastReadAt, c.times)
+	f := c.pending[drop]
+	c.pending = append(c.pending[:0], c.pending[drop+1:]...)
+	select {
+	case <-c.done:
+		return pcmFrame{}, io.EOF
+	default:
+	}
+	c.lastReadAt = now
+	return f, nil
 }
 
-// stale reports whether a frame captured at is too old to send at now.
-func stale(at, now time.Time) bool { return now.Sub(at) > captureMaxAge }
-
-// newest drains q without blocking and returns the most recent frame.
-func newest(f pcmFrame, q <-chan pcmFrame) pcmFrame {
-	for {
-		select {
-		case g := <-q:
-			f = g
-		default:
-			return f
-		}
+// ReadOpusFrame blocks for the next 20ms frame and returns it encoded. It
+// returns io.EOF after Close.
+func (c *capture) ReadOpusFrame() ([]byte, error) {
+	f, err := c.nextFrame()
+	if err != nil {
+		return nil, err
 	}
+	n, err := c.enc.Encode(f.pcm[:], c.obuf)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, n)
+	copy(out, c.obuf[:n])
+	return out, nil
 }
 
 // Close stops the microphone. Safe to call more than once.
