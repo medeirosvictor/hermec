@@ -92,13 +92,13 @@ type game struct {
 	curKey      string // saved-list key of the current server; empty = none
 	notice      string // persistent load/save error, shown on the connect scene
 
-	settingsPath string
-	set          state.Settings
-	settingsOpen bool   // settings scene replaces the connect/main scene
-	setRow       int    // focused settings row
+	settingsPath  string
+	set           state.Settings
+	settingsOpen  bool     // settings scene replaces the connect/main scene
+	setRow        int      // focused settings row
 	devIn, devOut []string // device names, enumerated on settings scene entry
-	autoName     string // name in effect at startup; not persisted unless edited
-	nameDirty    bool   // settings name field edited, not yet saved
+	autoName      string   // name in effect at startup; not persisted unless edited
+	nameDirty     bool     // settings name field edited, not yet saved
 
 	barOnce sync.Once // dark title bar, applied on the first tick
 
