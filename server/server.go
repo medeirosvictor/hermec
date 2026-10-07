@@ -100,7 +100,10 @@ func (s *Server) Start() error {
 		})
 	}
 	s.ln = ln
-	s.http = &http.Server{Handler: http.HandlerFunc(s.handleWS)}
+	s.http = &http.Server{
+		Handler:           http.HandlerFunc(s.handleWS),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()

@@ -50,6 +50,9 @@ func main() {
 		scheme = "wss"
 	}
 	log.Printf("listening on %s (%s)", displayAddr(srv.Addr()), scheme)
+	if cfg.TLSCert == "" && !isLoopback(srv.Addr()) {
+		log.Print("WARNING: serving plain ws on a non-loopback address; traffic is unencrypted (set tls_cert/tls_key)")
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
@@ -61,6 +64,19 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("shutdown: %v", err)
 	}
+}
+
+// isLoopback reports whether addr is bound to a loopback host only.
+func isLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // displayAddr renders a wildcard listen address as ":port".

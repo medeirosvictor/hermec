@@ -169,3 +169,24 @@ func TestUnknownChannelRejected(t *testing.T) {
 	sendEnv(t, a, proto.TypeJoin, proto.Join{Channel: "nope"})
 	requireErrCode(t, a, "bad_request")
 }
+
+func TestChatWithoutSendPermRejected(t *testing.T) {
+	cfg := chatCfg()
+	listener := mustID(t)
+	cfg.Roles = roles.Config{
+		Roles:        map[string][]roles.Permission{"listener": {roles.PermJoinChannel}},
+		Grants:       map[string][]string{identity.Fingerprint(listener.PublicKey()): {"listener"}},
+		DefaultRoles: []string{"listener"},
+	}
+	url := startServer(t, cfg)
+	a, _ := authAs(t, url, listener, "")
+	b, _ := authed(t, url)
+	sendEnv(t, a, proto.TypeJoin, proto.Join{Channel: "general"})
+	readPresence(t, a)
+	sendEnv(t, b, proto.TypeJoin, proto.Join{Channel: "general"})
+	readPresence(t, a)
+	readPresence(t, b)
+	sendEnv(t, a, proto.TypeChatSend, proto.ChatSend{Channel: "general", Text: "hi"})
+	requireErrCode(t, a, "forbidden")
+	requireNothing(t, b)
+}

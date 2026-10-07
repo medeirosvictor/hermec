@@ -211,6 +211,8 @@ func (c *Client) Join(ctx context.Context, channel string) error {
 
 // SendChat sends text to channel. It returns once the frame is written;
 // server-side rejections (not_joined, forbidden) arrive as Err events.
+// While a Join is pending, a rejection may instead be attributed to that Join
+// (see docs/protocol.md section 5).
 func (c *Client) SendChat(ctx context.Context, channel, text string) error {
 	if err := ctx.Err(); err != nil {
 		return err

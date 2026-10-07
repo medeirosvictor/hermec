@@ -41,6 +41,37 @@ See [example.server.toml](example.server.toml) for every option (password, key
 allow list, channels, TLS, roles). The server logs its listen address on start
 and shuts down cleanly on Ctrl-C.
 
+## Use as a library
+
+```go
+id, _ := identity.Generate()
+ctx := context.Background()
+c, err := client.Dial(ctx, "ws://localhost:7697/", id, "alice", "")
+if err != nil {
+	log.Fatal(err)
+}
+defer c.Close()
+if err := c.Join(ctx, "general"); err != nil {
+	log.Fatal(err)
+}
+_ = c.SendChat(ctx, "general", "hello")
+for ev := range c.Events() {
+	if ev.Chat != nil {
+		fmt.Printf("%s: %s\n", ev.Chat.From.Name, ev.Chat.Text)
+	}
+}
+```
+
+## Security
+
+- **Use TLS.** Transport encryption is required for Hermec's threat model.
+  Configure `tls_cert` and `tls_key` for any non-loopback deployment; plain
+  `ws://` means an on-path observer can read everything, including chat.
+- **The host is trusted by design.** The room host can read all chat and
+  relayed traffic, the same way a TeamSpeak host can. Choose hosts like you
+  choose group admins. See section 8 of
+  [the design spec](docs/specs/2026-10-06-hermec-design.md).
+
 ## Test
 
 ```sh

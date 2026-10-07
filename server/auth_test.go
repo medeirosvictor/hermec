@@ -180,6 +180,19 @@ func TestAuthAllowlist(t *testing.T) {
 	}
 }
 
+func TestAuthNonceReplayRejected(t *testing.T) {
+	url := startServer(t, Config{})
+	id := mustID(t)
+	a := dial(t, url)
+	oldNonce := readChallenge(t, a)
+	b := dial(t, url)
+	_ = readChallenge(t, b)
+	sendEnv(t, b, proto.TypeAuth, proto.Auth{
+		PubKey: id.PublicKey(), Name: "x", Sig: id.Sign(oldNonce),
+	})
+	requireAuthFailed(t, b, readEnv(t, b))
+}
+
 func TestOversizedFrameCloses(t *testing.T) {
 	url := startServer(t, Config{})
 	c := dial(t, url)

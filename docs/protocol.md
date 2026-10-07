@@ -19,7 +19,8 @@ them; please report it.
   The server's WebSocket read limit is set to this value, so a larger frame
   terminates the connection. `proto.Decode` also rejects larger input.
 - Keepalive: the server sends a WebSocket ping every 15 seconds and closes the
-  connection after more than two consecutive unanswered pings. Clients must
+  connection on the tick after two consecutive unanswered pings (about 45
+  seconds after the last pong), without sending a third. Clients must
   answer pings (standard WebSocket libraries do so automatically).
 - The default port is 7697.
 
@@ -195,7 +196,7 @@ unsupported type (`bad_request`).
 ### 4.11 Reserved: `e2ee_key_exchange` and `e2ee_frame`
 
 Reserved for future end-to-end encryption. In v1 these types are **reserved,
-v1 servers must reject**: a v1 server answers either with `error`
+v1 servers must reject**: a v1 server answers with `error`
 `bad_request` and does not relay them. They are never to be sent by v1 clients.
 
 ## 5. Errors
