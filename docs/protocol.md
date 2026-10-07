@@ -377,4 +377,6 @@ entirely with `discoverable = false`.
 **Configuration.** Two server TOML keys control it: `discoverable` (boolean,
 default `true`; `false` binds no UDP socket at all) and `server_name` (string,
 at most 64 characters; default is the server's listen `host:port`). The
-responder binds after the TCP listener, to the same port number.
+responder binds after the TCP listener, to the same port number and on the same interface as the server address (a
+loopback server answers only on loopback; only a wildcard server address binds
+the responder to all interfaces).

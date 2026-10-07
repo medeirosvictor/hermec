@@ -32,6 +32,17 @@ type discoverSource struct {
 	seen time.Time
 }
 
+// discoveryBindHost returns the UDP bind host for a TCP listener bound to ip:
+// the same interface, so a loopback-only server never opens a wildcard UDP
+// socket (which would trigger OS firewall prompts and announce on the LAN).
+// Only a genuinely unspecified (wildcard) address yields "" (wildcard).
+func discoveryBindHost(ip net.IP) string {
+	if ip == nil || ip.IsUnspecified() {
+		return ""
+	}
+	return ip.String()
+}
+
 // startDiscovery binds the UDP responder on host:port (the TCP listener's
 // port). Called from Start after the TCP listener is up; its goroutine is
 // joined by Shutdown through s.wg.

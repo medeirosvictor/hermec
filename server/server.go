@@ -151,11 +151,7 @@ func (s *Server) start() error {
 	s.ln = ln
 	if s.cfg.Discoverable {
 		if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
-			host := ""
-			if !tcp.IP.IsUnspecified() {
-				host = tcp.IP.String()
-			}
-			if err := s.startDiscovery(host, tcp.Port); err != nil {
+			if err := s.startDiscovery(discoveryBindHost(tcp.IP), tcp.Port); err != nil {
 				ln.Close()
 				s.ln = nil
 				return fmt.Errorf("server: discovery listen: %w: %w", errDiscoveryBind, err)
