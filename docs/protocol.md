@@ -114,16 +114,16 @@ Direction: C is client to server, S is server to client.
 
 ### 4.3 `auth_ok` (S)
 
-| Field         | Type     | Description                                      |
-|---------------|----------|--------------------------------------------------|
-| `fingerprint` | string   | The authenticated key's fingerprint.             |
-| `roles`       | string[] | Roles assigned to this fingerprint.              |
-| `channels`    | ChannelInfo[] | All channels on the server.                 |
+| Field         | Type          | Description                          |
+|---------------|---------------|--------------------------------------|
+| `fingerprint` | string        | The authenticated key's fingerprint. |
+| `roles`       | string[]      | Roles assigned to this fingerprint.  |
+| `channels`    | ChannelInfo[] | All channels on the server.          |
 
-Changed in the voice release (additively, still protocol version 1):
+Changed in the voice release (breaking, protocol version stays 1):
 `channels` was previously an array of channel-name strings and is now an array
-of `ChannelInfo` objects. This is a wire-format change for `auth_ok`; clients
-must be updated alongside servers.
+of `ChannelInfo` objects. Clients and servers must be updated together; see
+section 7.
 
 | Field  | Type   | Description                              |
 |--------|--------|------------------------------------------|
@@ -265,11 +265,11 @@ Client                                   Server (SFU)
    added or removed), the **server** initiates renegotiation by sending
    `rtc_offer`; the client replies with `rtc_answer`. Clients must therefore
    handle server-originated offers at any time during a call.
-4. `rtc_*` messages outside a call are ignored or answered with `not_joined`.
+4. `rtc_*` messages outside a call are answered with `error` `not_joined`.
 
 **Rate limiting.** Servers may rate-limit voice and signaling messages. A
-message dropped for that reason is answered with `error` `rate_limited`;
-the connection stays open.
+violation is answered with `error` `rate_limited`, after which the server
+closes the connection.
 
 **No echo cancellation.** Hermec does not perform acoustic echo cancellation.
 Using speakers will feed other participants' audio back into your microphone;
@@ -283,9 +283,9 @@ headsets are strongly recommended.
 | `forbidden`   | The role lacks the required permission (`join_channel`, `send_chat`). |
 | `bad_request` | Malformed message, unknown channel, or unsupported message type.     |
 | `not_joined`  | The operation needs channel membership the client does not have.     |
-| `rate_limited`| The client is sending too fast; the request was dropped. Back off.   |
+| `rate_limited`| The client is sending too fast; the connection is closed after this message. |
 
-Except for `auth_failed`, errors do not close the connection.
+Except for `auth_failed` and `rate_limited`, errors do not close the connection.
 
 **Known v1 limitation: no error correlation.** Messages carry no request or
 correlation ID, so an `error` cannot be tied to the request that caused it.
@@ -317,6 +317,6 @@ The envelope carries `v`. A server that receives an unsupported version treats
 the message as malformed (`bad_request`). Within a version, new optional
 fields may be added to payloads and receivers must ignore unknown fields.
 The voice release added new message types (section 4.12) and changed the
-`auth_ok` `channels` shape without bumping the version, since the protocol has
-not yet been deployed outside coordinated releases; future incompatible
-changes require a new version number.
+`auth_ok` `channels` shape (a breaking change) without bumping the version,
+because the protocol is pre-release; future incompatible changes require a new
+version number.
