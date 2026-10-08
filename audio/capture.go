@@ -160,6 +160,9 @@ func (c *capture) push(f pcmFrame) {
 		}
 		select {
 		case <-c.frames:
+			if dbg != nil {
+				dbg.capDrops.Add(1)
+			}
 		default:
 		}
 	}
@@ -198,6 +201,9 @@ drain:
 	// cap here: a slow-but-never-pausing consumer must not grow latency.
 	if over := len(c.pending) - captureRing; over > 0 {
 		c.pending = append(c.pending[:0], c.pending[over:]...)
+		if dbg != nil {
+			dbg.capDrops.Add(int64(over))
+		}
 	}
 	now := c.clock()
 	// pending (not just the channel) is what dropCount sees.
@@ -206,6 +212,9 @@ drain:
 		c.times = append(c.times, p.at)
 	}
 	drop := dropCount(now, c.lastReadAt, c.times)
+	if dbg != nil && drop > 0 {
+		dbg.capSkips.Add(int64(drop))
+	}
 	f := c.pending[drop]
 	c.pending = append(c.pending[:0], c.pending[drop+1:]...)
 	select {

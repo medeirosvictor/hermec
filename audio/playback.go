@@ -52,11 +52,13 @@ type sender struct {
 	meter *Meter
 }
 
-// touch marks the sender active at now.
-func (s *sender) touch(now time.Time) {
+// touch marks the sender active at now and returns the previous mark.
+func (s *sender) touch(now time.Time) (prev time.Time) {
 	s.mu.Lock()
+	prev = s.last
 	s.last = now
 	s.mu.Unlock()
+	return prev
 }
 
 // push queues one decoded 20ms frame (len(pcm) <= frameSize, zero padded).
@@ -66,7 +68,15 @@ func (s *sender) push(pcm []int16) {
 	dst := s.ring[slot*frameSize : (slot+1)*frameSize]
 	n := copy(dst, pcm)
 	clear(dst[n:])
-	s.head = (s.head + s.js.Arrive()) % maxFrames
+	drop := s.js.Arrive()
+	s.head = (s.head + drop) % maxFrames
+	if dbg != nil {
+		if drop > 0 {
+			dbg.trims.Add(1)
+			dbg.dropped.Add(int64(drop))
+		}
+		dbg.depth(s.js.depth)
+	}
 }
 
 // mixer decodes per-sender Opus into jitter buffers and mixes them on
@@ -125,7 +135,15 @@ func (m *mixer) Write(fp string, frame []byte) {
 		return
 	}
 	now := m.now()
-	s.touch(now) // before the decode: an idle sender must not be swept mid-Write
+	prev := s.touch(now) // before the decode: an idle sender must not be swept mid-Write
+	if dbg != nil {
+		dbg.arrivals.Add(1)
+		if gap := now.Sub(prev); gap < 5*time.Millisecond {
+			dbg.clumped.Add(1)
+		} else if gap > 40*time.Millisecond {
+			dbg.stalled.Add(1)
+		}
+	}
 	s.decMu.Lock()
 	defer s.decMu.Unlock()
 	var pcm []int16
@@ -167,8 +185,14 @@ func (s *sender) fill(out []int16) int {
 			case actPlay:
 				copy(s.cur[:], s.ring[s.head*frameSize:(s.head+1)*frameSize])
 				s.head = (s.head + 1) % maxFrames
+				if dbg != nil {
+					dbg.played.Add(1)
+				}
 			case actPLC:
 				if !s.decMu.TryLock() {
+					if dbg != nil {
+						dbg.silence.Add(1)
+					}
 					return pos
 				}
 				err := s.dec.DecodePLC(s.cur[:])
@@ -176,7 +200,13 @@ func (s *sender) fill(out []int16) int {
 				if err != nil {
 					return pos
 				}
+				if dbg != nil {
+					dbg.plc.Add(1)
+				}
 			default:
+				if dbg != nil {
+					dbg.silence.Add(1)
+				}
 				return pos
 			}
 			s.curN, s.curAt = frameSize, 0
@@ -334,6 +364,9 @@ func Playback(device string) (client.AudioSink, *Meters, error) {
 		dev.Uninit()
 		free()
 		return nil, nil, err
+	}
+	if dbg != nil {
+		go dbg.run(p.closed)
 	}
 	return p, &Meters{m: p.mix}, nil
 }
