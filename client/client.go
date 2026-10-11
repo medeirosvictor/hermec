@@ -72,6 +72,8 @@ type Client struct {
 	events   chan Event
 	done     chan struct{} // closed by Close; unblocks the read loop's sends
 	loopDone chan struct{} // closed when the read loop has exited
+	pingDone chan struct{} // closed when the pinger has exited
+	rtt      *rttTracker
 	once     sync.Once
 }
 
@@ -122,8 +124,17 @@ func Dial(ctx context.Context, url string, id *identity.Identity, name, password
 		events:      make(chan Event, eventBuffer),
 		done:        make(chan struct{}),
 		loopDone:    make(chan struct{}),
+		pingDone:    make(chan struct{}),
+		rtt:         newRTTTracker(),
 	}
+	// Only the pong handler is set: the default ping handler keeps answering
+	// the server's keepalive pings.
+	ws.SetPongHandler(func(p string) error {
+		c.rtt.pong(p, time.Now())
+		return nil
+	})
 	go c.readLoop()
+	c.startPinger(pingInterval, pongTimeout, time.Now)
 	return c, nil
 }
 
@@ -242,6 +253,7 @@ func (c *Client) Close() error {
 		err = c.ws.Close()
 	})
 	<-c.loopDone
+	<-c.pingDone
 	return err
 }
 
