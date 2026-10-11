@@ -86,6 +86,41 @@ func (g *game) addConnectHits() {
 	g.connect.addHits(&g.hits, g.lineH(), connectX+g.railW(), float64(g.w))
 }
 
+// click applies a left click on target h. done means update should return
+// the results immediately (a discovered row was clicked).
+func (f *connectForm) click(h state.Hit, dialing bool) (url, name string, submit, done bool) {
+	switch h.Kind {
+	case state.HitDiscovered:
+		i := h.ID
+		if i < 0 || i >= len(f.disc) {
+			return "", "", false, true // stale target: the list changed since the registry was built
+		}
+		f.server.runes = []rune(f.disc[i].URL)
+		if n := f.name.String(); n != "" && !dialing {
+			f.sel = i
+			return f.disc[i].URL, n, true, true // one click = join
+		}
+		if !dialing {
+			f.sel = -1
+			f.focus = 0
+			f.hintUntil = time.Now().Add(2 * time.Second)
+		}
+		return "", "", false, true
+	case state.HitText:
+		switch h.ID {
+		case 0:
+			f.sel = -1 // back to typing
+			f.focus = 0
+		case 1:
+			f.sel = -1
+			if !f.local {
+				f.focus = 1
+			}
+		}
+	}
+	return "", "", false, false
+}
+
 // update consumes keyboard input. It reports submit when Enter is pressed
 // and no dial is in flight. at returns the click target under the mouse.
 func (f *connectForm) update(dialing bool, at func() (state.Hit, bool)) (url, name string, submit bool) {
@@ -112,31 +147,8 @@ func (f *connectForm) update(dialing bool, at func() (state.Hit, bool)) (url, na
 	}
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		if h, ok := at(); ok {
-			switch h.Kind {
-			case state.HitDiscovered:
-				i := h.ID
-				f.server.runes = []rune(f.disc[i].URL)
-				if n := f.name.String(); n != "" && !dialing {
-					f.sel = i
-					return f.disc[i].URL, n, true // one click = join
-				}
-				if !dialing {
-					f.sel = -1
-					f.focus = 0
-					f.hintUntil = time.Now().Add(2 * time.Second)
-				}
-				return "", "", false
-			case state.HitText:
-				switch h.ID {
-				case 0:
-					f.sel = -1 // back to typing
-					f.focus = 0
-				case 1:
-					f.sel = -1
-					if !f.local {
-						f.focus = 1
-					}
-				}
+			if url, name, submit, done := f.click(h, dialing); done {
+				return url, name, submit
 			}
 		}
 	}

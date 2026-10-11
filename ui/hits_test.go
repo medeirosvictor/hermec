@@ -7,6 +7,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
+	"github.com/medeirosvictor/hermec/update"
 )
 
 func mainGame(t *testing.T) *game {
@@ -101,6 +102,41 @@ func TestHitsSettingsRows(t *testing.T) {
 	}
 	if _, ok := g.hits.At(connectX+g.railW()+5, connectFieldsTop(lh)+float64(settingsRows)*lh+1); ok {
 		t.Fatal("hit below the last settings row")
+	}
+}
+
+// A click resolved against a registry built before the discovered list shrank
+// must not index past the new list.
+func TestConnectClickStaleDiscoveredRow(t *testing.T) {
+	g := testGame(t)
+	f := &g.connect
+	f.disc = make([]state.DiscoveredRow, 3)
+	f.name.runes = []rune("me")
+	f.sel = -1
+	g.buildHits() // PhaseConnect: registers 3 discovered rows
+	lh := g.lineH()
+	y := f.discTop(lh) + 2*lh + 1 // the last row
+	h, ok := g.hits.At(connectX+g.railW()+5, y)
+	if !ok || h.Kind != state.HitDiscovered || h.ID != 2 {
+		t.Fatalf("setup: hit = %+v %v", h, ok)
+	}
+	f.disc = f.disc[:1] // probe result shrinks the list after the registry was built
+	url, name, submit, done := f.click(h, false)
+	if submit || url != "" || name != "" || !done {
+		t.Fatalf("stale click acted: %q %q submit=%v done=%v", url, name, submit, done)
+	}
+	if f.sel != -1 {
+		t.Fatalf("stale click changed selection: %d", f.sel)
+	}
+}
+
+// The banner shift must be on the form for the tick.
+func TestBuildHitsSetsConnectBannerShift(t *testing.T) {
+	g := testGame(t)
+	g.update = &update.Available{Version: "v9", URL: "u"}
+	g.buildHits()
+	if g.connect.dy != g.bannerH() || g.bannerH() == 0 {
+		t.Fatalf("dy = %v, bannerH = %v", g.connect.dy, g.bannerH())
 	}
 }
 

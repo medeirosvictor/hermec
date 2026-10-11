@@ -362,16 +362,18 @@ func (g *game) Update() error {
 		g.updateKey()
 	}
 	g.updateVoice()
+	g.updateDiscovery() // mutates connect.disc, which the hit targets depend on
 	g.buildHits()
 	g.updateCursorShape()
 	g.updateBanner()
 	g.updateRail()
-	g.updateDiscovery()
+	g.connect.disc = g.discRows // updateRail may have replaced the form
 	if g.settingsOpen {
 		g.updateSettings()
 		return nil
 	}
 	if g.st.Phase == state.PhaseConnect {
+		g.connect.dy = g.bannerH() // updateRail may have replaced the form
 		if url, name, submit := g.connect.update(g.dialing, g.hitAt); submit {
 			g.startDial(url, name)
 		}
