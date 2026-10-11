@@ -119,6 +119,21 @@ func TestPanelDrawShape(t *testing.T) {
 	})
 }
 
+// After a warm-up draw, drawing a panel allocates nothing (uniform map and
+// slices are reused).
+func TestPanelDrawNoAllocs(t *testing.T) {
+	withGraphics(t, func() {
+		g := &game{th: theme.Default()}
+		img := ebiten.NewImage(160, 120)
+		fill := color.RGBA{40, 60, 80, 255}
+		g.drawPanel(img, 30, 30, 130, 90, fill)
+		n := testing.AllocsPerRun(100, func() { g.drawPanel(img, 30, 30, 130, 90, fill) })
+		if n != 0 {
+			t.Errorf("drawPanel allocs/op = %v, want 0", n)
+		}
+	})
+}
+
 func TestPanelShaderCompiles(t *testing.T) {
 	withGraphics(t, func() {
 		var p panelShader

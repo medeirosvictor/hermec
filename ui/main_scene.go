@@ -284,6 +284,7 @@ func (g *game) connStatus() string {
 func (g *game) drawMain(screen *ebiten.Image) {
 	th := g.th
 	gm := g.geom()
+	g.drawPanelR(screen, gm.statusR)
 	g.drawStatus(screen, gm)
 
 	if g.st.Phase == state.PhaseDisconnected {
@@ -337,7 +338,6 @@ func (g *game) drawStatus(screen *ebiten.Image, gm geometry) {
 		line += "  |  " + g.st.Status
 	}
 	r := gm.statusR
-	g.drawPanelR(screen, r)
 	g.drawTextF(clip(screen, r.x0+pad, r.y0, r.x1-pad, r.y1), g.faceS, line, r.x0+pad, gm.statusY, g.th.Dim)
 }
 
@@ -461,7 +461,6 @@ type sbKey struct {
 	w, h       int
 	adv, lh    float64
 	fg, br, dm color.RGBA
-	panel      color.RGBA // not drawn into the cache today, but part of the key so a panel-aware render never goes stale
 }
 
 func (g *game) drawScrollback(screen *ebiten.Image, gm geometry) {
@@ -470,7 +469,7 @@ func (g *game) drawScrollback(screen *ebiten.Image, gm geometry) {
 		return
 	}
 	ms := &g.ms
-	k := sbKey{ms.layoutGen, state.ClampScroll(len(ms.lines), gm.visible, ms.scroll), r.Dx(), r.Dy(), gm.adv, gm.lh, g.th.FG, g.th.Bright, g.th.Dim, g.th.Panel}
+	k := sbKey{ms.layoutGen, state.ClampScroll(len(ms.lines), gm.visible, ms.scroll), r.Dx(), r.Dy(), gm.adv, gm.lh, g.th.FG, g.th.Bright, g.th.Dim}
 	if ms.sbImg == nil || k != ms.sbKey {
 		if ms.sbImg == nil || ms.sbImg.Bounds().Dx() != k.w || ms.sbImg.Bounds().Dy() != k.h {
 			if ms.sbImg != nil {
