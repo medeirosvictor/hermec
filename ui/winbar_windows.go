@@ -72,6 +72,7 @@ var (
 	procSetLongPtr  = user32.NewProc("SetWindowLongPtrW")
 	procCallWndProc = user32.NewProc("CallWindowProcW")
 	procDwmExtend   = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
+	procDwmSetAttr  = dwmapi.NewProc("DwmSetWindowAttribute")
 
 	subclassCB = syscall.NewCallback(subclassProc)
 )
@@ -170,6 +171,18 @@ func sysMetric(idx, hwnd uintptr) int32 {
 	return int32(r)
 }
 
+// darkCaption asks DWM for a dark native caption (attribute 20, or 19 on
+// older Windows 10 builds). It is the fallback look when the custom bar
+// cannot be installed; best-effort, errors ignored.
+func darkCaption(hwnd uintptr) {
+	on := int32(1)
+	for _, attr := range []uintptr{20, 19} {
+		if r, _, _ := procDwmSetAttr.Call(hwnd, attr, uintptr(unsafe.Pointer(&on)), unsafe.Sizeof(on)); r == 0 {
+			return
+		}
+	}
+}
+
 // installBar subclasses the Hermec window and applies the frame change. On any
 // failure it leaves the native frame alone and clears the custom-bar flag, so
 // the user never gets a frameless window that cannot be moved. info is a short
@@ -186,11 +199,13 @@ func installBar() (ok bool, info string) {
 	prev, _, _ := procGetLongPtr.Call(hwnd, gwlpWndProc)
 	if prev == 0 {
 		customBar.Store(false)
+		darkCaption(hwnd)
 		return false, method + ": GetWindowLongPtrW failed"
 	}
 	prevProc.Store(prev) // before the swap: the callback may run at once
 	if old, _, _ := procSetLongPtr.Call(hwnd, gwlpWndProc, subclassCB); old == 0 {
 		customBar.Store(false)
+		darkCaption(hwnd)
 		return false, method + ": SetWindowLongPtrW failed"
 	}
 	margins := [4]int32{0, 0, 1, 0} // keeps the drop shadow; best-effort
