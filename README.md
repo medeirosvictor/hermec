@@ -12,6 +12,42 @@ also meant to be a reusable base for communications apps, with a role-gated Go
 core and a versioned, documented wire protocol. See
 [the design spec](docs/specs/2026-10-06-hermec-design.md) and [PLAN.md](PLAN.md).
 
+## How people actually reach each other (plain-language version)
+
+Think of a Hermec server as a small meeting room that one friend keeps open on
+their own computer. Everyone else opens the Hermec app and connects to that
+room. The app opens one long-lived connection to the server, called a
+WebSocket, on port 7697. Before anything else happens, the server sends a
+random number and the app signs it with your personal key file (like an SSH
+key). That proves "this is really the same person as last time" without any
+account or password. After that, the same connection carries everything that
+isn't sound: chat messages, who is in which channel, who is muted, and so on.
+The server simply passes each chat message on to everyone in that channel. It
+does not save chat history, so if you were not there, you missed it.
+
+Voice works a little differently. When you click a voice channel, the app and
+the server use that same WebSocket to agree on how to send audio (this
+"negotiation" is standard WebRTC). Your microphone audio then travels to the
+server over a separate fast UDP link, and the server copies it out to everyone
+else in the call. This is called an SFU, or "relay": nobody connects directly
+to anybody else, so friends never see each other's IP addresses, only the
+host's. The trade-off is that the host can technically see all the traffic, so
+you pick a host the way you'd pick a group admin.
+
+The hard part of all this is the internet itself: home routers normally block
+anyone from the outside from reaching your computer. Hermec does not use any
+outside helper servers (no STUN/TURN services) to sneak around that, because
+the project owns no infrastructure. Instead we rely on three simple
+workarounds. On the **same Wi-Fi/LAN**, it just works, and the app even finds
+servers automatically by shouting a small "anyone there?" message on the
+network. Across the internet, the easiest option is **Tailscale**: the host
+shares their machine with friends, everyone gets a private address that
+already reaches the host, and the app finds tailnet servers automatically too.
+The last option is the **classic way**: the host opens port 7697 (TCP) and the
+voice UDP ports on their router and sets `public_ip` in the server config. In
+every case the app only needs to be able to reach the host; the host does the
+rest.
+
 ## Status
 
 This repository currently ships a Go server with Ed25519 key-based
