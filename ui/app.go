@@ -107,6 +107,7 @@ type game struct {
 	dt       float64                    // seconds per tick, for eased values
 	barF     float64                    // call bar slide, 0 hidden .. 1 shown; valid once barInit
 	barInit  bool                       // barF has been seeded by the first animation step
+	q        quality                    // signal bars and their detail panel
 	speakEnv map[string]*state.Envelope // per-occupant speaking envelope, by fingerprint
 	rowHL    map[string]float64         // eased hover/active highlight per channel row
 
@@ -371,6 +372,7 @@ func (g *game) Update() error {
 	g.updateDiscovery() // mutates connect.disc, which the hit targets depend on
 	g.dt = frameDT()
 	g.stepBar(g.dt) // before buildHits: hit rects follow the drawn bar
+	g.stepQuality(g.dt) // after stepBar (geometry), before buildHits
 	g.buildHits()
 	g.stepHighlights(g.dt)
 	g.updateCursorShape()

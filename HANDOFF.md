@@ -5,6 +5,8 @@
 
 ## Where things stand
 
+- **Visual refresh, Round A: tasks 1-9 done on branch `worktree-hermec-visual`** (pending Victor's eyeball checklist). Remaining: task 11 (title bar), task 12 (icon), task 10 (footprint). **Round B next:** concurrent server sessions + rail presence bust. Task 9 added the connection-quality signal bars (`ui/quality.go`, `ui/state/grade.go`) and the click-to-open detail panel.
+
 - **Shipped on main, all reviewed, CI green:** foundation (chat server + headless client) → GUI (Ebiten, amber CRT, VT323, servers rail, settings) → voice (SFU relay, call bar, occupancy) → discovery (DISCOVERED list: LAN + tailnet + saved) → release & update (**v0.1.0 released**; update banner Ctrl+U; GUI idle CPU 34%→6.5%).
 - **v0.1.0:** https://github.com/medeirosvictor/hermec/releases/tag/v0.1.0 — NOTE: repo was PRIVATE at last check; Victor said he'll flip it public (blocks friends' downloads + the update banner until then).
 - **Deployment state:** primos config = `primos.server.toml` (repo root, untracked). vitoserver has the server installed + systemd user service, currently **disabled/parked** (re-enable: `ssh vito "systemctl --user enable --now hermec"`; linger already on). Victor hosts from desktop meanwhile. Desktop firewall: "Hermec Server" Allow-rule installed (he had denied the prompt once — that was the connection-refused bug).

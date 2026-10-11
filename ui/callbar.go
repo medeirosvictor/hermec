@@ -253,7 +253,7 @@ func (g *game) barLayout(gm geometry) barLayout {
 	x := gm.barR.x0 + pad
 	l.nameX = x + gm.lh + 4 // after the speaker icon
 	// Right-aligned controls: [mic mute] [leave] meter.
-	right := gm.barR.x1 - pad
+	right := gm.barR.x1 - pad - signalW(gm.lh) - pad // signal bars sit at the far right
 	l.meterW = meterWidth
 	l.meterX = right - l.meterW
 	right = l.meterX - pad*2
@@ -337,6 +337,8 @@ func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
 		lvl = 0
 	}
 	drawMeter(dst, float32(l.meterX), float32(l.y+l.h/2-3), float32(l.meterW), 6, lvl, th.Dim, th.Bright)
+	sr := g.signalRect(gm)
+	g.drawSignal(dst, sr.x0, sr.y0, l.h, g.q.grade)
 }
 
 // drawMeter draws a horizontal level bar (level 0..1).

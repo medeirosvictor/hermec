@@ -131,6 +131,7 @@ func (g *game) addMainHits(gm geometry) {
 	}
 	g.hits.Add(state.Hit{X0: gm.inputR.x0, Y0: gm.inputR.y0, X1: gm.inputR.x1, Y1: gm.inputR.y1, Kind: state.HitText})
 	g.addBarHits(gm)
+	g.addSignalHits(gm) // last: the open panel wins over anything under it
 }
 
 // joinChannel joins ch in the background unless it is already joined/joining.
@@ -216,6 +217,10 @@ func (g *game) updateMain() {
 				g.selectChannel(h.ID)
 			case state.HitVoice:
 				g.clickVoice(h.Key)
+			case state.HitSignal:
+				if h.ID == signalBars {
+					g.toggleQuality()
+				}
 			}
 		}
 	}
@@ -232,7 +237,11 @@ func (g *game) updateMain() {
 		g.st.Input.Backspace()
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-		g.st.Input.Submit()
+		if g.q.open { // Esc closes the quality panel first
+			g.q.open = false
+		} else {
+			g.st.Input.Submit()
+		}
 	}
 	if enterPressed() {
 		g.sendChat()
@@ -326,6 +335,7 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	}
 	g.drawScrollback(screen, gm)
 	g.drawInput(screen, gm)
+	g.drawQualityPanel(screen, gm)
 }
 
 // clip returns a sub-image so text cannot bleed outside its pane.
@@ -350,7 +360,13 @@ func (g *game) drawStatus(screen *ebiten.Image, gm geometry) {
 		line += "  |  " + g.st.Status
 	}
 	r := gm.statusR
-	g.drawTextF(clip(screen, r.x0+pad, r.y0, r.x1-pad, r.y1), g.faceS, line, r.x0+pad, gm.statusY, g.th.Dim)
+	textR := r.x1 - pad
+	if g.st.InCall == "" || g.barFrac() == 0 { // otherwise the bars live on the call bar
+		textR -= signalW(gm.lh) + pad
+		sr := g.signalRect(gm)
+		g.drawSignal(screen, sr.x0, sr.y0, gm.lh, g.q.grade)
+	}
+	g.drawTextF(clip(screen, r.x0+pad, r.y0, textR, r.y1), g.faceS, line, r.x0+pad, gm.statusY, g.th.Dim)
 }
 
 func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {

@@ -55,6 +55,31 @@ func TestHitsRegisterSameAsClickHandlers(t *testing.T) {
 	}
 }
 
+func TestSignalHitsAndPanelSwallow(t *testing.T) {
+	g := mainGame(t)
+	gm := g.geom()
+	sr := g.signalRect(gm)
+	h, ok := g.hits.At(sr.x0+1, sr.y0+1)
+	if !ok || h.Kind != state.HitSignal || h.ID != signalBars {
+		t.Fatalf("bars hit = %+v %v", h, ok)
+	}
+	g.q.open = true
+	g.stepQuality(1) // settles the ease
+	g.buildHits()
+	if g.q.rect.y1 <= g.q.rect.y0 {
+		t.Fatal("panel has no rect while open")
+	}
+	h, ok = g.hits.At(g.q.rect.x0+1, g.q.rect.y0+1)
+	if !ok || h.Kind != state.HitSignal || h.ID != signalPanel {
+		t.Fatalf("panel hit = %+v %v", h, ok)
+	}
+	g.q.open = false
+	g.stepQuality(1)
+	if g.q.rect.y1 > g.q.rect.y0 {
+		t.Error("panel rect remains after close")
+	}
+}
+
 func TestHitsBarOnlyInCall(t *testing.T) {
 	g := mainGame(t)
 	for _, k := range []state.HitKind{state.HitBarMute, state.HitBarLeave} {
