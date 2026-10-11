@@ -102,10 +102,10 @@ type game struct {
 
 	barOnce sync.Once // dark title bar, applied on the first tick
 
-	crt   crt
-	startAt time.Time // first CRT frame; drives the scan bar
-	crtOn bool       // starts from the theme, toggled with F1
-	dev   *devReload // live reload of shaders/theme; nil unless HERMEC_DEV is set
+	crt     crt
+	startAt time.Time  // first CRT frame; drives the scan bar
+	crtOn   bool       // starts from the theme, toggled with F1
+	dev     *devReload // live reload of shaders/theme; nil unless HERMEC_DEV is set
 
 	update   *update.Available // non-nil: a newer release exists, banner shown
 	updateCh chan update.Available
