@@ -2,19 +2,21 @@ package ui
 
 import (
 	"image/color"
+	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
+	"github.com/medeirosvictor/hermec/ui/icon"
 	"github.com/medeirosvictor/hermec/ui/state"
 )
 
 const (
 	titleBarH = state.TitleBarH // height of the custom title bar
 	titleEdge = state.TitleEdge // resize band width
-	titleIcon = 16.0            // icon square (placeholder until the app icon lands)
+	titleIcon = 16              // icon square, px
 )
 
 // Fixed title-bar colours (not themed, like Discord's app bar).
@@ -136,7 +138,12 @@ func (g *game) drawTitleBar(screen *ebiten.Image) {
 	if min := 12.0; x < min {
 		x = min
 	}
-	vector.FillRect(screen, float32(x), (bh-titleIcon)/2, titleIcon, titleIcon, g.th.Bright, false)
+	if g.barIcon == nil {
+		g.barIcon = ebiten.NewImageFromImage(icon.Render(titleIcon))
+	}
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(math.Round(x), math.Round((float64(bh)-titleIcon)/2))
+	screen.DrawImage(g.barIcon, op)
 	g.drawTextF(screen, f, title, x+titleIcon+8, (titleBarH-th)/2, barText)
 
 	// Caption buttons: minimise, maximise/restore, close.

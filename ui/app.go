@@ -19,6 +19,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/ui/icon"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/ui/theme"
 	"github.com/medeirosvictor/hermec/update"
@@ -57,10 +58,12 @@ type game struct {
 	th    theme.Theme
 	face  *text.GoTextFace // body/chat size (Theme.FontSize)
 	faceS *text.GoTextFace // status and hint lines, 0.75x
-	faceT *text.GoTextFace // connect title, 1.5x
-	id    *identity.Identity
-	fp    string
-	keyAt string
+
+	barIcon *ebiten.Image    // 16px app icon for the title bar, built on first draw
+	faceT   *text.GoTextFace // connect title, 1.5x
+	id      *identity.Identity
+	fp      string
+	keyAt   string
 
 	c       *client.Client
 	dialCh  chan dialResult
@@ -257,6 +260,11 @@ func Run(opts Options) error {
 	ebiten.SetWindowSize(960, 600)
 	ebiten.SetWindowTitle("Hermec")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
+	var icons []image.Image
+	for _, s := range []int{16, 32, 48, 256} {
+		icons = append(icons, icon.Render(s))
+	}
+	ebiten.SetWindowIcon(icons)
 	err = ebiten.RunGame(g)
 	g.flushName()
 	if g.c != nil {
