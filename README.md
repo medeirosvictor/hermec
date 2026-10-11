@@ -55,7 +55,7 @@ This launches the full Hermec experience locally: a server and GUI in one proces
 with a default theme.
 
 **Dev live reload.** Set `HERMEC_DEV=1` and run from the repo root to reload
-`ui/crt.kage`, the active `ui/theme/presets/*.toml` and any `-theme` file
+`ui/crt.kage`, `ui/panel.kage`, the active `ui/theme/presets/*.toml` and any `-theme` file
 within about a second of saving them. A file that fails to compile or parse
 shows `dev reload <file>: <error>` in the status line and the previous version
 stays active. Without the variable nothing is polled.
