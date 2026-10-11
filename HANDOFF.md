@@ -3,6 +3,14 @@
 > Living brief for picking up work in a fresh Claude session. Update at every milestone.
 > Last updated: 2026-10-11 (Round A visual refresh merged to main and pushed at a162ac1; Round B brainstorm next; audio round merged, still awaiting Victor's listening test).
 
+## Start here (fresh session)
+
+1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and the memory note `hermec-project`.
+2. Repo state: `main` = `origin/main`, clean apart from untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`), which are never committed. The four `.claude/worktrees/agent-*` worktrees are old, from earlier rounds, and left alone.
+3. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload: `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In the owner's real settings, **CRT and curvature are currently off**: F1 toggles CRT, F3 toggles curvature, F2 cycles themes.
+4. The first thing to do is pipeline item 1 below (Victor's real-mouse checklist), then **brainstorm Round B** with `superpowers:brainstorming` on the architectural path, which needs a written spec. Round B is one brainstorm; decompose it there.
+5. Never run the GUI from an agent against `%APPDATA%\hermec` (see Gotchas). Build the separate-config-dir flag first if automated GUI runs are needed.
+
 ## Where things stand
 
 - **Round A merged to main (a162ac1, pushed 2026-10-11)**, pending Victor's eyeball/real-mouse checklist; spec `docs/superpowers/specs/2026-10-11-hermec-visual-refresh-design.md`, plan `docs/superpowers/plans/2026-10-11-hermec-visual-refresh.md`: CRT curvature + scan bar + F3 toggle, parchment theme, soft panels, hand cursor, speaking glow, signal bars + connection-quality panel (`ui/quality.go`, `ui/state/grade.go`), Discord-style title bar via a replaced window procedure (WM_NCCALCSIZE + WM_NCHITTEST), envelope-with-angel-wings icon (`ui/icon`, regenerate with `go run ./cmd/hermec-icon -out assets`), HERMEC_DEV live reload. Also: the tailscale discovery probe no longer flashes a console window on Windows.
