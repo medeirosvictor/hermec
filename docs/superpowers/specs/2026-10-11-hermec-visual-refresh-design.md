@@ -99,12 +99,18 @@ The existing `scanlines` key keeps working as the on/off switch for the whole CR
 
 ## 7a. Custom title bar and app icon (added 2026-10-11, approved by Victor)
 
-**Title bar (Windows).** The native frame is removed (`ebiten.SetWindowDecorated(false)`) and Hermec draws its own 32px bar across the top, Discord-style:
+**Title bar (Windows).** The window stays decorated (`WS_OVERLAPPEDWINDOW`, so snap, resize, maximize and Win+arrows remain native), but its native caption is hidden and Hermec draws its own 32px bar across the top, Discord-style (as built, ruling R13; the originally planned undecorated window with `WM_NCLBUTTONDOWN` hand-off was abandoned because synthesising non-client presses from the game loop left drag, snap and resize unreliable and fought Ebiten's own input handling):
 - The bar is a flat dark panel in every theme, parchment included (it frames the screen like a device bezel). It sits **outside** the CRT pass: no curvature, no scanlines.
 - Fixed colours, independent of the theme: bg `#1E1F22`, text `#DBDEE1`, button hover `#2E3035`, close hover `#DA373C` with a white glyph.
 - Centre: the 16px app icon, then "HERMEC", then " — <server name>" while connected.
 - Right: minimize, maximize/restore and close as 1px line glyphs, each 46×32px.
-- Native behaviour is kept by handing presses to Windows. A left press on the empty bar area (not a button) → `ReleaseCapture` + `SendMessage(WM_NCLBUTTONDOWN, HTCAPTION)`. A press within 6px of a window edge or corner (outside the bar's buttons) → the matching `HTLEFT/HTRIGHT/HTTOP/HTBOTTOM/HTTOPLEFT/…`. Windows then performs the drag, Aero snap and resize. A double-click on the bar toggles maximize. Resize cursors show over the edge bands.
+- Native behaviour is kept by replacing the window procedure, so Windows itself performs drag, Aero snap, resize, double-click maximize and resize cursors:
+  - The procedure is installed with `SetWindowLongPtrW(GWLP_WNDPROC)` and chains to the original with `CallWindowProcW`. `SetWindowSubclass` was rejected because it must be called on the window's own thread, which Ebiten's update loop is not.
+  - `WM_NCCALCSIZE` returns 0 so the client area covers the whole window (no native caption). When maximized, it applies a per-DPI frame inset so the window does not overhang the screen.
+  - `WM_NCHITTEST` maps `state.TitleZone(physical px)` to `HT*` codes (`HTCAPTION`, the edge and corner codes, and so on). Over the bar's buttons and the scene it returns `HTCLIENT`, so Ebiten still receives those clicks.
+  - The frame change is applied with `SWP_FRAMECHANGED | SWP_ASYNCWINDOWPOS`: a synchronous call from the update thread deadlocks against the window thread.
+  - Our own window is found with `EnumWindows` (matching process id and the GLFW30 window class), never by title.
+  - **Runtime fallback:** if installation fails, the native frame is kept and the bar height is 0 (and the native caption is darkened best-effort via DWM).
 - The scene renders into an offscreen of size w × (h − 32) and is blitted at y = 32. The CRT pass and all scene geometry see only that area; `g.cursor()` subtracts the bar height before curvature correction. Bar hit targets live in screen space.
 - **Linux/macOS:** native decorations stay and the bar height is 0 (no behaviour change). The existing DWM dark-title-bar call becomes moot on Windows and is removed.
 
