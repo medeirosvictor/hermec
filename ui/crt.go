@@ -22,7 +22,19 @@ type crt struct {
 	w, h   int
 	once   sync.Once
 	shader *ebiten.Shader
+
+	// Reused per frame so apply boxes a uniform only when it changes.
+	op     ebiten.DrawRectShaderOptions
+	blitOp ebiten.DrawImageOptions
+	glowOp ebiten.DrawImageOptions
+	last   [len(crtScalars)]float32
+	size   []float32
+	bg     []float32
+	primed bool
 }
+
+// crtScalars are the float uniforms apply keeps current, in cache order.
+var crtScalars = [...]string{"Curvature", "CornerRadius", "Vignette", "ScanlineStrength", "ScanBarStrength", "ScanBarPeriod", "Time", "ScanBar"}
 
 // compile builds the shader once; on failure it logs and leaves shader nil,
 // which makes apply fall back to a plain blit.
@@ -106,7 +118,8 @@ func (c *crt) apply(screen *ebiten.Image, th theme.Theme, t float64) {
 	if th.ScanBar {
 		bar = 1
 	}
-	op := &ebiten.DrawRectShaderOptions{}
+	op := &c.op
+	op.GeoM.Reset()
 	// Drawing into a sub-image keeps the parent's coordinates, so move the
 	// rect to the sub-image's own top-left (zero for whole images).
 	m := screen.Bounds().Min
@@ -115,24 +128,35 @@ func (c *crt) apply(screen *ebiten.Image, th theme.Theme, t float64) {
 	}
 	op.GeoM.Translate(float64(m.X), float64(m.Y))
 	op.Images[0] = c.off
-	op.Uniforms = map[string]any{
-		"Curvature":        float32(th.Curvature),
-		"CornerRadius":     float32(th.CornerRadius),
-		"Vignette":         float32(th.Vignette),
-		"ScanlineStrength": float32(th.ScanlineStrength),
-		"ScanBarStrength":  float32(th.ScanBarStrength),
-		"ScanBarPeriod":    float32(th.ScanBarPeriod),
-		"Time":             float32(t),
-		"ScanBar":          float32(bar),
-		"Size":             []float32{float32(c.w), float32(c.h)},
-		"BG":               []float32{float32(th.BG.R) / 255, float32(th.BG.G) / 255, float32(th.BG.B) / 255, 1},
+	if op.Uniforms == nil {
+		c.size, c.bg = make([]float32, 2), make([]float32, 4)
+		op.Uniforms = map[string]any{"Size": c.size, "BG": c.bg}
 	}
+	c.size[0], c.size[1] = float32(c.w), float32(c.h)
+	c.bg[0], c.bg[1], c.bg[2], c.bg[3] = float32(th.BG.R)/255, float32(th.BG.G)/255, float32(th.BG.B)/255, 1
+	vals := [len(crtScalars)]float32{
+		float32(th.Curvature), float32(th.CornerRadius), float32(th.Vignette),
+		float32(th.ScanlineStrength), float32(th.ScanBarStrength), float32(th.ScanBarPeriod),
+		float32(t), float32(bar),
+	}
+	for i, v := range vals {
+		if !c.primed || v != c.last[i] {
+			c.last[i] = v
+			op.Uniforms[crtScalars[i]] = v
+		}
+	}
+	c.primed = true
 	dst.DrawRectShader(c.w, c.h, c.shader, op)
 	if th.Glow > 0 {
 		sm := screen.Bounds().Min
-		blit(screen, dst)
-		glow := &ebiten.DrawImageOptions{Blend: ebiten.BlendLighter}
+		c.blitOp.GeoM.Reset()
+		c.blitOp.GeoM.Translate(float64(sm.X), float64(sm.Y))
+		screen.DrawImage(dst, &c.blitOp)
+		glow := &c.glowOp
+		glow.Blend = ebiten.BlendLighter
+		glow.GeoM.Reset()
 		glow.GeoM.Translate(float64(sm.X)+1, float64(sm.Y))
+		glow.ColorScale.Reset()
 		glow.ColorScale.ScaleAlpha(float32(th.Glow))
 		screen.DrawImage(dst, glow)
 	}
