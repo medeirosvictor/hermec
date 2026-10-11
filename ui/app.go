@@ -295,6 +295,9 @@ func (g *game) Update() error {
 	if inpututil.IsKeyJustPressed(ebiten.KeyF1) {
 		g.setScanlines(!g.crtOn)
 	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyF3) {
+		g.toggleCurvature()
+	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyF2) {
 		g.cyclePalette()
 	}
@@ -388,7 +391,9 @@ func (g *game) Draw(screen *ebiten.Image) {
 	if g.startAt.IsZero() {
 		g.startAt = time.Now()
 	}
-	g.crt.apply(screen, g.th, time.Since(g.startAt).Seconds())
+	th := g.th
+	th.Curvature = g.curvature()
+	g.crt.apply(screen, th, time.Since(g.startAt).Seconds())
 }
 
 func (g *game) drawScene(screen *ebiten.Image) {

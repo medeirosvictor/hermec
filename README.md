@@ -88,13 +88,14 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Tab** or **Ctrl+Up/Down**: Switch channel
 - **PgUp/PgDn** or **mouse wheel**: Scroll chat
 - **F1**: Toggle CRT effect
+- **F3**: Toggle CRT screen curvature (persisted; the rest of the CRT effect stays on)
 - **F2**: Cycle color palettes (amber, green, blue, parchment light theme)
 - **Ctrl+M**: Mute or unmute voice
 - **Ctrl+R**: Refresh discovered servers (connect screen)
 - **Click rail tile**: Switch servers
 - **Click "+" tile**: Add a server
 - **Click voice channel in the pane**: Join or leave voice call
-- **Click gear tile** or **F10**: Settings page (name, palette, scanlines, input/output audio device, update check; F10 works when the rail is hidden). Choices, including F1/F2, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it.
+- **Click gear tile** or **F10**: Settings page (name, palette, scanlines, curvature, input/output audio device, update check; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it.
 
 ## Build
 

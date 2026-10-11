@@ -40,6 +40,21 @@ func TestSettingsUnsetScanlinesStaysUnset(t *testing.T) {
 	}
 }
 
+func TestCurvatureSettingDefaultsOnAndRoundTrips(t *testing.T) {
+	if !(Settings{}).CurvatureEnabled() {
+		t.Fatal("nil must mean on")
+	}
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	off := false
+	if err := SaveSettings(p, Settings{Curvature: &off}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := LoadSettings(p)
+	if err != nil || out.Curvature == nil || *out.Curvature || out.CurvatureEnabled() {
+		t.Fatalf("got %+v, %v", out, err)
+	}
+}
+
 func TestUpdateCheckDefaultsOnAndRoundTrips(t *testing.T) {
 	if !(Settings{}).UpdateCheckEnabled() {
 		t.Fatal("nil must mean enabled")

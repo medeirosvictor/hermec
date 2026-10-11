@@ -33,10 +33,10 @@ Presets move from Go literals into embedded TOML files (`ui/theme/presets/{amber
 
 Applied as today to the offscreen scene; F1 toggles it as a whole.
 
-- **Barrel distortion.** Normalised coordinates centred on the screen, `uv' = uv · (1 + k·|uv|²)`, `k = curvature`. Pixels whose source falls outside the scene render as background (the rounded tube edge).
-- **Rounded corners + vignette.** A rounded-rectangle mask (corner radius scales with curvature) with a soft dark falloff toward the edges, strength `vignette`.
-- **Scanlines.** As today, strength `scanline_strength` (today's 0.12 for dark presets).
-- **Rolling scan bar.** A soft horizontal band, about 6% of screen height, sweeping top to bottom with period `scan_bar_period` (default 8s), adding `scan_bar_strength` (default 0.04) brightness. Needs a `Time` uniform. `scan_bar = false` disables it.
+- **Barrel distortion.** Normalised coordinates centred on the screen, `uv' = uv · (1 + k·|uv|²)`, `k = curvature`, deliberately subtle (default 0.015). Sampling is 4-tap bilinear so bent edges and text stay smooth. Pixels whose source falls outside the scene render as background. Curvature has its own on/off switch (F3 and a Settings row, persisted as `curvature` in settings.toml, default on); when off the effective curvature is 0 for both the shader and click correction.
+- **Rounded corners + vignette.** A rounded-rectangle mask with radius `corner_radius` (px, default 18, independent of curvature, active whenever the CRT pass is on) and a 2px soft edge that sits outside the screen along straight edges, so there is no dark outer ring at radius 0. Plus a soft dark falloff toward the edges, strength `vignette`.
+- **Scanlines.** Strength `scanline_strength` (today's 0.12 for dark presets). Computed from the distorted source row, so the lines bend with the curve.
+- **Rolling scan bar.** Positioned in the distorted source row, so it follows the curve. A soft horizontal band, about 6% of screen height, sweeping top to bottom with period `scan_bar_period` (default 8s), adding `scan_bar_strength` (default 0.04) brightness. Needs a `Time` uniform. `scan_bar = false` disables it.
 - **Phosphor glow.** The existing additive 1px glow pass, strength from `glow` (0.12 dark presets, 0 for parchment because additive glow washes out a light background).
 
 **Click correction.** Because the scene is sampled at `distort(p)` for screen pixel `p`, the content under the cursor is at `distort(cursor)`. A pure Go function `state.Barrel(x, y, w, h, k)` implements exactly the shader's formula; every hit test runs on the corrected position when the CRT is on. A unit test pins Go and shader together with known points (centre unchanged; corners pulled outward by the expected amount).
@@ -48,7 +48,8 @@ New keys (all optional; missing keys keep the preset defaults; unknown keys stay
 | Key | Type | Meaning |
 |---|---|---|
 | `panel` | colour | Panel surface. If absent, derived as BG mixed 6% toward FG. |
-| `curvature` | float | Barrel strength (default 0.06; 0 = flat). |
+| `curvature` | float | Barrel strength (default 0.015; 0 = flat). |
+| `corner_radius` | float | CRT tube corner radius in px (default 18; independent of curvature). |
 | `vignette` | float | Edge darkening (default 0.35). |
 | `scanline_strength` | float | Row darkening (default 0.12). |
 | `scan_bar` | bool | Rolling scan bar on/off (default true). |
@@ -108,5 +109,5 @@ The existing `scanlines` key keeps working as the on/off switch for the whole CR
 
 - **Click mismatch from curvature:** mitigated by the shared `Barrel` function and its pinning test.
 - **CPU from animation:** the shader already runs every frame; the new cost is a few ALU ops plus panel shader draws. Panels are cached into the existing offscreen render where possible.
-- **Text legibility on curvature:** curvature defaults low (0.06), configurable to 0.
+- **Text legibility on curvature:** curvature defaults low (0.015), configurable to 0.
 - **Light theme versus CRT effects:** parchment turns off glow and lightens scanlines; tuned live through dev reload.

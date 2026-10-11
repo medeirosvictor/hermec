@@ -17,6 +17,8 @@ type Settings struct {
 
 	UpdateCheck *bool `toml:"update_check,omitempty"` // nil = unset (enabled)
 
+	Curvature *bool `toml:"curvature,omitempty"` // nil = unset (on)
+
 	InputDevice  string `toml:"input_device,omitempty"`  // "" = system default
 	OutputDevice string `toml:"output_device,omitempty"` // "" = system default
 }
@@ -25,6 +27,11 @@ type Settings struct {
 // means on.
 func (s Settings) UpdateCheckEnabled() bool {
 	return s.UpdateCheck == nil || *s.UpdateCheck
+}
+
+// CurvatureEnabled reports whether the CRT curvature is on; unset means on.
+func (s Settings) CurvatureEnabled() bool {
+	return s.Curvature == nil || *s.Curvature
 }
 
 // LoadSettings reads path. A missing file yields zero Settings and no error.

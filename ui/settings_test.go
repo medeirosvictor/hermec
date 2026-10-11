@@ -93,6 +93,26 @@ func TestUpdateCheckRowTogglesAndPersists(t *testing.T) {
 	}
 }
 
+func TestCurvatureRowTogglesAndPersists(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	g := &game{st: state.New(), th: theme.Default(), settingsPath: p, crtOn: true, w: 960, h: 600}
+	if g.curvature() != g.th.Curvature || g.curvature() <= 0 {
+		t.Fatalf("default curvature = %v", g.curvature())
+	}
+	g.activateSetting(rowCurvature) // on -> off
+	s, err := state.LoadSettings(p)
+	if err != nil || s.Curvature == nil || *s.Curvature {
+		t.Fatalf("got %+v %v", s, err)
+	}
+	if g.curvature() != 0 || g.curvedCursor() {
+		t.Fatal("curvature off must zero the effective curvature and cursor correction")
+	}
+	g.toggleCurvature() // F3: off -> on
+	if g.curvature() == 0 || !g.curvedCursor() {
+		t.Fatal("toggle back on failed")
+	}
+}
+
 func TestSettingsPersistFromEvents(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.toml")
 	g := &game{st: state.New(), th: theme.Default(), settingsPath: p, autoName: "anon-1"}

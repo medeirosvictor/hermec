@@ -26,7 +26,10 @@ scanlines = true
 font_size = 18.0
 
 # Barrel distortion strength (0 = flat screen)
-curvature = 0.06
+curvature = 0.015
+
+# CRT tube corner radius in px (independent of curvature)
+corner_radius = 18.0
 
 # Edge darkening
 vignette = 0.35

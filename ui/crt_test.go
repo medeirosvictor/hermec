@@ -22,7 +22,7 @@ func TestCRTApplyUniforms(t *testing.T) {
 	withGraphics(t, func() {
 		var c crt
 		th := theme.Default()
-		th.Curvature, th.Glow, th.ScanBar = 0.06, 0.1, true
+		th.Curvature, th.Glow, th.ScanBar = 0.015, 0.1, true
 		th.ScanBarPeriod = 8
 		c.target(64, 48)
 		c.apply(ebiten.NewImage(64, 48), th, 1.5)
@@ -36,7 +36,7 @@ func TestCRTApplyUniforms(t *testing.T) {
 // The shader samples the scene at Barrel(screen pos), so the screen position
 // showing the tile centre is the inverse of Barrel there.
 func TestBarrelClickHitsDrawnTarget(t *testing.T) {
-	const w, h, k = 960.0, 600.0, 0.06
+	const w, h, k = 960.0, 600.0, 0.015
 	// A tile hugging the top-left corner of the scene.
 	rx0, ry0, rx1, ry1 := 4.0, 4.0, 60.0, 40.0
 	cx, cy := (rx0+rx1)/2, (ry0+ry1)/2
@@ -57,7 +57,7 @@ func TestBarrelClickHitsDrawnTarget(t *testing.T) {
 
 func TestCursorCorrectionGating(t *testing.T) {
 	g := &game{th: theme.Default(), w: 960, h: 600}
-	g.th.Curvature = 0.06
+	g.th.Curvature = 0.015
 	g.crtOn = false
 	if g.curvedCursor() {
 		t.Fatal("correction active with CRT off")

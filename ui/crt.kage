@@ -2,11 +2,14 @@
 
 package main
 
-// Curved CRT: barrel distortion, rounded vignetted tube corners, scanlines and
-// a slow rolling scan bar. The barrel formula must match state.Barrel in
-// ui/state/barrel.go (it is what maps mouse clicks back to the scene).
+// Curved CRT: subtle barrel distortion, rounded vignetted tube corners,
+// scanlines and a slow rolling scan bar. The barrel formula must match
+// state.Barrel in ui/state/barrel.go (it maps mouse clicks back to the scene).
+// Scanlines and the scan bar are computed from the distorted source
+// coordinate so they bend with the content.
 
 var Curvature float
+var CornerRadius float // px; independent of Curvature
 var Vignette float
 var ScanlineStrength float
 var ScanBarStrength float
@@ -16,15 +19,33 @@ var ScanBar float // 0 or 1
 var Size vec2
 var BG vec4
 
+// tap reads one source texel by integer index, clamped to the image.
+func tap(i vec2) vec4 {
+	i = clamp(i, vec2(0.0), Size-vec2(1.0))
+	return imageSrc0At(i + vec2(0.5) + imageSrc0Origin())
+}
+
+// bilinear samples the scene at pixel-space coordinate s with 4 taps so bent
+// edges and glyphs are smooth rather than stepped.
+func bilinear(s vec2) vec4 {
+	t := s - vec2(0.5)
+	b := floor(t)
+	fr := t - b
+	top := mix(tap(b), tap(b+vec2(1.0, 0.0)), fr.x)
+	bot := mix(tap(b+vec2(0.0, 1.0)), tap(b+vec2(1.0, 1.0)), fr.x)
+	return mix(top, bot, fr.y)
+}
+
 func Fragment(dst vec4, src vec2, color vec4) vec4 {
 	p := dst.xy
 	u := 2.0*p/Size - vec2(1.0)
 	f := 1.0 + Curvature*dot(u, u)
 	s := (u*f + vec2(1.0)) * Size / 2.0
 
-	// Tube corner mask: rounded box signed distance, 2px soft edge.
-	r := Curvature * 0.5 * min(Size.x, Size.y)
-	q := abs(p-Size/2.0) - (Size/2.0 - vec2(r))
+	// Tube corner mask: rounded box with a 2px soft edge that sits outside the
+	// screen along straight edges (box grown by 1px), so no dark outer ring.
+	r := CornerRadius
+	q := abs(p-Size/2.0) - (Size/2.0 + vec2(1.0) - vec2(r))
 	d := length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r
 	mask := 1.0 - smoothstep(-1.0, 1.0, d)
 
@@ -32,18 +53,18 @@ func Fragment(dst vec4, src vec2, color vec4) vec4 {
 	if s.x < 0.0 || s.y < 0.0 || s.x >= Size.x || s.y >= Size.y {
 		c = BG
 	} else {
-		c = imageSrc0At(s + imageSrc0Origin())
-		if mod(floor(p.y), 2.0) >= 1.0 {
-			c.rgb *= 1.0 - ScanlineStrength
-		}
+		c = bilinear(s)
+		// Scanlines from the distorted row: dark on odd source rows, smooth.
+		dark := 0.5 - 0.5*cos(3.14159265*(s.y-0.5))
+		c.rgb *= 1.0 - ScanlineStrength*dark
 	}
 
 	// Vignette: darken toward the corners (u.u = 2 at a corner).
 	c.rgb *= 1.0 - Vignette*dot(u, u)*0.5
 
-	// Rolling scan bar, 6% of the height, smooth falloff.
+	// Rolling scan bar, 6% of the height, smooth falloff, following the curve.
 	cy := Size.y * fract(Time/max(ScanBarPeriod, 0.001))
-	a := 1.0 - smoothstep(0.0, 0.03*Size.y, abs(p.y-cy))
+	a := 1.0 - smoothstep(0.0, 0.03*Size.y, abs(s.y-cy))
 	c.rgb += ScanBar * ScanBarStrength * a
 
 	return vec4(c.rgb*mask, mask)

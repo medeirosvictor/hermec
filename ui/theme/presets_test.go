@@ -45,7 +45,7 @@ func TestParchmentValues(t *testing.T) {
 	if p.Glow != 0 || p.ScanlineStrength != 0.04 {
 		t.Errorf("glow=%v scanline=%v", p.Glow, p.ScanlineStrength)
 	}
-	if p.Curvature != 0.06 || p.Vignette != 0.35 {
+	if p.Curvature != 0.015 || p.Vignette != 0.35 {
 		t.Errorf("curvature=%v vignette=%v", p.Curvature, p.Vignette)
 	}
 }
@@ -74,8 +74,8 @@ func TestNewKeyDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if th.Curvature != 0.06 || th.Vignette != 0.35 || th.ScanlineStrength != 0.12 || !th.ScanBar ||
-		th.ScanBarPeriod != 8 || th.ScanBarStrength != 0.04 || th.Glow != 0.12 || th.Radius != 6 {
+	if th.Curvature != 0.015 || th.Vignette != 0.35 || th.ScanlineStrength != 0.12 || !th.ScanBar ||
+		th.ScanBarPeriod != 8 || th.ScanBarStrength != 0.04 || th.Glow != 0.12 || th.Radius != 6 || th.CornerRadius != 18 {
 		t.Errorf("defaults wrong: %+v", th)
 	}
 	if th.Name != "" {

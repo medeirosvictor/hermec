@@ -36,6 +36,7 @@ type Theme struct {
 	ScanBarPeriod       float64 // seconds per sweep
 	Glow                float64 // additive phosphor glow
 	Radius              float64 // panel corner radius in px
+	CornerRadius        float64 // CRT tube corner radius in px
 }
 
 // file mirrors the TOML layout. An empty Panel means "derive from BG/FG".
@@ -55,6 +56,7 @@ type file struct {
 	ScanBarPeriod    float64 `toml:"scan_bar_period"`
 	Glow             float64 `toml:"glow"`
 	Radius           float64 `toml:"radius"`
+	CornerRadius     float64 `toml:"corner_radius"`
 }
 
 // baseFile is default.toml decoded, with Panel cleared so a file that sets
@@ -203,6 +205,7 @@ func build(f file) (Theme, error) {
 	t.ScanlineStrength = f.ScanlineStrength
 	t.ScanBar, t.ScanBarStrength, t.ScanBarPeriod = f.ScanBar, f.ScanBarStrength, f.ScanBarPeriod
 	t.Glow, t.Radius = f.Glow, f.Radius
+	t.CornerRadius = f.CornerRadius
 	return t, nil
 }
 

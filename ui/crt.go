@@ -100,6 +100,7 @@ func (c *crt) apply(screen *ebiten.Image, th theme.Theme, t float64) {
 	op.Images[0] = c.off
 	op.Uniforms = map[string]any{
 		"Curvature":        float32(th.Curvature),
+		"CornerRadius":     float32(th.CornerRadius),
 		"Vignette":         float32(th.Vignette),
 		"ScanlineStrength": float32(th.ScanlineStrength),
 		"ScanBarStrength":  float32(th.ScanBarStrength),

@@ -21,6 +21,7 @@ const (
 	rowName = iota
 	rowPalette
 	rowScanlines
+	rowCurvature
 	rowInput
 	rowOutput
 	rowUpdateCheck
@@ -128,6 +129,14 @@ func (g *game) setScanlines(on bool) {
 	g.crtOn = on
 	g.set.Scanlines = &on
 	g.logf("crt effect: %v", on)
+	g.persistSettings()
+}
+
+// toggleCurvature flips and persists the CRT curvature switch.
+func (g *game) toggleCurvature() {
+	on := !g.set.CurvatureEnabled()
+	g.set.Curvature = &on
+	g.logf("crt curvature: %v", on)
 	g.persistSettings()
 }
 
@@ -294,6 +303,8 @@ func (g *game) activateSetting(row int) {
 	switch row {
 	case rowPalette:
 		g.cyclePalette()
+	case rowCurvature:
+		g.toggleCurvature()
 	case rowScanlines:
 		g.setScanlines(!g.crtOn)
 	case rowInput:
@@ -321,6 +332,10 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 	if g.crtOn {
 		scan = "on"
 	}
+	curv := "off"
+	if g.set.CurvatureEnabled() {
+		curv = "on"
+	}
 	upd := "off"
 	if g.set.UpdateCheckEnabled() {
 		upd = "on"
@@ -337,6 +352,7 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 		"name:      " + nameVal,
 		"palette:   " + pal,
 		"scanlines: " + scan,
+		"curvature: " + curv,
 		"input:     " + deviceLabel(g.set.InputDevice, g.devIn),
 		"output:    " + deviceLabel(g.set.OutputDevice, g.devOut),
 		"update check: " + upd,
