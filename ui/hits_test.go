@@ -5,6 +5,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 
+	"github.com/medeirosvictor/hermec/client"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/update"
@@ -77,6 +78,66 @@ func TestSignalHitsAndPanelSwallow(t *testing.T) {
 	g.stepQuality(1)
 	if g.q.rect.y1 > g.q.rect.y0 {
 		t.Error("panel rect remains after close")
+	}
+}
+
+// In a call but with the bar hidden (not yet slid in), the bars draw on the
+// status line, so the hit target must be there too.
+func TestSignalHitFollowsDrawnPlaceBarHidden(t *testing.T) {
+	g := mainGame(t)
+	g.st.SetInCall("lounge")
+	g.barF, g.barInit = 0, true
+	g.buildHits()
+	gm := g.geom()
+	sr := g.signalRect(gm)
+	if sr.y0 != gm.statusY {
+		t.Fatalf("signal not on status line: %+v", sr)
+	}
+	if h, ok := g.hits.At(sr.x0+1, sr.y0+1); !ok || h.Kind != state.HitSignal || h.ID != signalBars {
+		t.Errorf("no bars hit on status line: %+v %v", h, ok)
+	}
+	g.barF = 1
+	g.buildHits()
+	gm = g.geom()
+	sr = g.signalRect(gm)
+	if h, ok := g.hits.At(sr.x0+1, sr.y0+1); sr.y0 != gm.barY || !ok || h.ID != signalBars {
+		t.Errorf("no bars hit on call bar: %+v %v", h, ok)
+	}
+}
+
+func TestQualityDisconnectWhileOpenInCall(t *testing.T) {
+	g := mainGame(t)
+	g.st.SetInCall("lounge")
+	g.q.open = true
+	g.stepQuality(1)
+	if g.q.open != true || len(g.q.lines) == 0 {
+		t.Fatalf("panel not open before disconnect: %+v", g.q)
+	}
+	// What Update does when the events channel closes.
+	g.st.Apply(client.Event{}, false)
+	g.dropVoice()
+	g.c = nil
+	g.stepQuality(1)
+	if g.q.grade != 0 || g.q.open {
+		t.Errorf("after disconnect grade=%d open=%v, want 0 and closed", g.q.grade, g.q.open)
+	}
+}
+
+func TestQualityNoDataInMainWithoutPong(t *testing.T) {
+	g := mainGame(t)
+	g.q.open = true
+	g.stepQuality(1)
+	if want := []string{"no data"}; len(g.q.lines) != 1 || g.q.lines[0] != want[0] || g.q.grade != 0 {
+		t.Errorf("lines=%q grade=%d", g.q.lines, g.q.grade)
+	}
+}
+
+func TestSettingsOpenClosesQualityPanel(t *testing.T) {
+	g := mainGame(t)
+	g.q.open = true
+	g.toggleSettings()
+	if g.q.open {
+		t.Error("panel still open after settings opened")
 	}
 }
 

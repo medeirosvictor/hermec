@@ -191,6 +191,7 @@ func (g *game) toggleSettings() {
 		return
 	}
 	g.settingsOpen = true
+	g.q.open = false // do not leave the quality panel hidden behind settings
 	g.setRow = rowName
 	g.refreshDevices()
 }

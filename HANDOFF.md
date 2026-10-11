@@ -1,7 +1,7 @@
 # Hermec — Session Handoff
 
 > Living brief for picking up work in a fresh Claude session. Update at every milestone.
-> Last updated: 2026-10-07 (audio-quality plan implemented + reviewed; awaiting merge decision and Victor's listening test).
+> Last updated: 2026-10-11 (visual refresh Round A tasks 1-9 done on worktree-hermec-visual, tasks 11/12/10 remaining, Round B next; audio-quality plan still awaiting merge decision and Victor's listening test).
 
 ## Where things stand
 

@@ -361,7 +361,7 @@ func (g *game) drawStatus(screen *ebiten.Image, gm geometry) {
 	}
 	r := gm.statusR
 	textR := r.x1 - pad
-	if g.st.InCall == "" || g.barFrac() == 0 { // otherwise the bars live on the call bar
+	if !g.signalOnBar() { // otherwise the bars live on the call bar
 		textR -= signalW(gm.lh) + pad
 		sr := g.signalRect(gm)
 		g.drawSignal(screen, sr.x0, sr.y0, gm.lh, g.q.grade)

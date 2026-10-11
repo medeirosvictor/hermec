@@ -31,12 +31,16 @@ type quality struct {
 // signalW is the width of the four bars for bar height h.
 func signalW(h float64) float64 { return h * 1.1 }
 
+// signalOnBar reports whether the bars live on the call bar (else the status
+// line). Draw, hits and the panel anchor all use this one condition.
+func (g *game) signalOnBar() bool { return g.st.InCall != "" && g.barFrac() > 0 }
+
 // signalRect is where the bars sit: at the right end of the call bar while in
 // a call, otherwise at the right end of the status line.
 func (g *game) signalRect(gm geometry) rectF {
 	h := gm.lh
 	w := signalW(h)
-	if g.st.InCall != "" && g.barFrac() > 0 {
+	if g.signalOnBar() {
 		x1 := gm.barR.x1 - pad
 		return rectF{x1 - w, gm.barY, x1, gm.barY + h}
 	}
@@ -103,7 +107,7 @@ func (g *game) stepQuality(dt float64) {
 	full := float64(len(q.lines))*gm.lh + 2*pad
 	h := full * q.f
 	x1 := gm.statusR.x1
-	if g.st.InCall != "" && g.barFrac() > 0 {
+	if g.signalOnBar() {
 		q.rect = rectF{x1 - w, gm.barR.y0 - pad/2 - h, x1, gm.barR.y0 - pad/2}
 	} else {
 		q.rect = rectF{x1 - w, gm.statusR.y1 + pad/2, x1, gm.statusR.y1 + pad/2 + h}
@@ -123,7 +127,7 @@ func (g *game) rttOf() (time.Duration, bool) {
 func (g *game) addSignalHits(gm geometry) {
 	r := g.signalRect(gm)
 	y0, y1 := r.y0, r.y1
-	if g.st.InCall != "" {
+	if g.signalOnBar() { // while the bar slides, clip to the drawn strip
 		y0, y1 = math.Max(y0, gm.barR.y0), math.Min(y1, gm.barR.y1)
 	}
 	if y1 > y0 {
