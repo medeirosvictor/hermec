@@ -50,12 +50,19 @@ type sender struct {
 	out   []int16
 	last  time.Time
 	meter *Meter
+	hw    healthWindow // played/concealed slots; written by fill
+	jit   jitterEst    // written by touch (Write)
+	seen  bool         // an arrival was recorded (jit needs a prior one)
 }
 
 // touch marks the sender active at now and returns the previous mark.
 func (s *sender) touch(now time.Time) (prev time.Time) {
 	s.mu.Lock()
 	prev = s.last
+	if gap := now.Sub(prev); s.seen && gap >= 0 && gap <= jitterReset {
+		s.jit.update(gap)
+	}
+	s.seen = true
 	s.last = now
 	s.mu.Unlock()
 	return prev
@@ -177,18 +184,23 @@ func (m *mixer) Write(fp string, frame []byte) {
 // PLC decodes run here (bounded to plcBudget per outage, ~0.1ms each). The
 // decoder is shared with Write, so it is TryLocked: if a real frame is
 // mid-decode the slot is left silent rather than waiting.
-func (s *sender) fill(out []int16) int {
+func (s *sender) fill(out []int16, now time.Time) int {
 	pos := 0
 	for pos < len(out) {
 		if s.curAt >= s.curN {
 			switch s.js.Next() {
 			case actPlay:
+				s.hw.add(now, 1, 0)
 				copy(s.cur[:], s.ring[s.head*frameSize:(s.head+1)*frameSize])
 				s.head = (s.head + 1) % maxFrames
 				if dbg != nil {
 					dbg.played.Add(1)
 				}
 			case actPLC:
+				// actPLC only occurs while js.started, so a quiet sender (the
+				// silence default) is never counted as concealing. A TryLock
+				// miss below is a concealed slot too.
+				s.hw.add(now, 0, 1)
 				if !s.decMu.TryLock() {
 					if dbg != nil {
 						dbg.silence.Add(1)
@@ -247,7 +259,7 @@ func (m *mixer) Pull(dst []int16) {
 			s.out = make([]int16, len(dst))
 		}
 		out := s.out[:len(dst)]
-		if n := s.fill(out); n > 0 {
+		if n := s.fill(out, now); n > 0 {
 			clear(out[n:])
 			m.scratch = append(m.scratch, out)
 		}
