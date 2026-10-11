@@ -67,9 +67,28 @@ func newConnectForm(name, url string, local bool) connectForm {
 	}
 }
 
+// addHits registers the name/server rows (text cursor) and the discovered
+// rows. Positions come from connectFieldsTop and discTop, the same sources the
+// drawing uses; f.dy must already hold the banner shift.
+func (f *connectForm) addHits(h *state.Hits, lh, x0, x1 float64) {
+	top := connectFieldsTop(lh) + f.dy
+	for i := 0; i < 2; i++ {
+		y := top + float64(i)*lh
+		h.Add(state.Hit{X0: x0, Y0: y, X1: x1, Y1: y + lh, Kind: state.HitText, ID: i})
+	}
+	for i := range f.disc {
+		y := f.discTop(lh) + float64(i)*lh
+		h.Add(state.Hit{X0: x0, Y0: y, X1: x1, Y1: y + lh, Kind: state.HitDiscovered, ID: i})
+	}
+}
+
+func (g *game) addConnectHits() {
+	g.connect.addHits(&g.hits, g.lineH(), connectX+g.railW(), float64(g.w))
+}
+
 // update consumes keyboard input. It reports submit when Enter is pressed
-// and no dial is in flight.
-func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64, cursor func() (float64, float64)) (url, name string, submit bool) {
+// and no dial is in flight. at returns the click target under the mouse.
+func (f *connectForm) update(dialing bool, at func() (state.Hit, bool)) (url, name string, submit bool) {
 	f.refresh = false
 	if inpututil.IsKeyJustPressed(ebiten.KeyTab) {
 		f.sel = -1
@@ -92,9 +111,10 @@ func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64, 
 		f.refresh = true // plain R is a letter while a field has focus
 	}
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		cx, cy := cursor()
-		if state.InRect(float64(cx), float64(cy), connectX+ox, 0, float64(screenW), 1e9) {
-			if i := state.RowAt(float64(cy), f.discTop(lh), lh, len(f.disc)); i >= 0 {
+		if h, ok := at(); ok {
+			switch h.Kind {
+			case state.HitDiscovered:
+				i := h.ID
 				f.server.runes = []rune(f.disc[i].URL)
 				if n := f.name.String(); n != "" && !dialing {
 					f.sel = i
@@ -106,15 +126,16 @@ func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64, 
 					f.hintUntil = time.Now().Add(2 * time.Second)
 				}
 				return "", "", false
-			}
-			switch state.RowAt(float64(cy), connectFieldsTop(lh)+f.dy, lh, 2) {
-			case 0:
-				f.sel = -1 // back to typing
-				f.focus = 0
-			case 1:
-				f.sel = -1
-				if !f.local {
-					f.focus = 1
+			case state.HitText:
+				switch h.ID {
+				case 0:
+					f.sel = -1 // back to typing
+					f.focus = 0
+				case 1:
+					f.sel = -1
+					if !f.local {
+						f.focus = 1
+					}
 				}
 			}
 		}
@@ -200,10 +221,9 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 		y = f.discTop(lh) - lh // single layout source, shared with hit-testing
 		g.drawTextF(screen, g.faceS, "DISCOVERED", x, y, th.Dim)
 		y += lh
-		cx, cy := g.cursor()
 		hover := -1
-		if state.InRect(float64(cx), float64(cy), connectX+g.railW(), 0, float64(g.w), 1e9) {
-			hover = state.RowAt(float64(cy), y, lh, len(f.disc))
+		if h, ok := g.hitAt(); ok && h.Kind == state.HitDiscovered {
+			hover = h.ID
 		}
 		for i, r := range f.disc {
 			col, marker := th.FG, "  "

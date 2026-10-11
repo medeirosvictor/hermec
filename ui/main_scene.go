@@ -111,6 +111,27 @@ func (g *game) geom() geometry {
 	return gm
 }
 
+// addMainHits registers the channel/voice rows, the chat input and the call
+// bar buttons from the same geometry drawMain uses.
+func (g *game) addMainHits(gm geometry) {
+	// Only rows drawChannels actually draws are clickable.
+	y := gm.paneY0
+	for _, r := range g.st.Rows() {
+		if y+gm.lh > gm.chanY1 {
+			break
+		}
+		switch r.Kind {
+		case state.RowText:
+			g.hits.Add(state.Hit{X0: gm.chanR.x0, Y0: y, X1: gm.chanR.x1, Y1: y + gm.lh, Kind: state.HitChannel, ID: r.Index})
+		case state.RowVoice:
+			g.hits.Add(state.Hit{X0: gm.chanR.x0, Y0: y, X1: gm.chanR.x1, Y1: y + gm.lh, Kind: state.HitVoice, Key: r.Channel})
+		}
+		y += gm.lh
+	}
+	g.hits.Add(state.Hit{X0: gm.inputR.x0, Y0: gm.inputR.y0, X1: gm.inputR.x1, Y1: gm.inputR.y1, Kind: state.HitText})
+	g.addBarHits(gm)
+}
+
 // joinChannel joins ch in the background unless it is already joined/joining.
 func (g *game) joinChannel(ch string) {
 	if g.c == nil || g.ms.joined[ch] {
@@ -188,22 +209,12 @@ func (g *game) updateMain() {
 	}
 
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		cx, cy := g.cursor()
-		x, y := float64(cx), float64(cy)
-		if state.InRect(x, y, gm.chanR.x0, gm.chanR.y0, gm.chanR.x1, gm.chanR.y1) {
-			// Only rows drawChannels actually draws are clickable.
-			rows := g.st.Rows()
-			n := int((gm.chanY1 - gm.paneY0) / gm.lh)
-			if n > len(rows) {
-				n = len(rows)
-			}
-			if i := state.RowAt(y, gm.paneY0, gm.lh, n); i >= 0 {
-				switch r := rows[i]; r.Kind {
-				case state.RowText:
-					g.selectChannel(r.Index)
-				case state.RowVoice:
-					g.clickVoice(r.Channel)
-				}
+		if h, ok := g.hitAt(); ok {
+			switch h.Kind {
+			case state.HitChannel:
+				g.selectChannel(h.ID)
+			case state.HitVoice:
+				g.clickVoice(h.Key)
 			}
 		}
 	}

@@ -164,18 +164,35 @@ func (g *game) updateRail() {
 	if g.railW() == 0 || !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		return
 	}
-	cx, cy := g.cursor()
-	n := g.railTiles()
-	switch hit := state.RailHit(float64(cx), float64(cy), railWidth, pad, railTileH, n, float64(g.h)); {
-	case hit == state.RailSettings:
+	h, ok := g.hitAt()
+	if !ok {
+		return
+	}
+	switch h.Kind {
+	case state.HitGear:
 		g.toggleSettings()
-	case hit == state.RailAdd:
+	case state.HitRailAdd:
 		g.closeSettings()
 		g.addServer()
-	case hit >= 0:
+	case state.HitRailTile:
 		g.closeSettings()
-		g.switchServer(g.servers[hit])
+		g.switchServer(g.servers[h.ID])
 	}
+}
+
+// addRailHits registers the server tiles, "+" and gear. Added in that order so
+// the gear wins over "+" wins over tiles in a short window, like state.RailHit.
+func (g *game) addRailHits() {
+	if g.railW() == 0 {
+		return
+	}
+	for i := 0; i < g.railTiles(); i++ {
+		y := pad + float64(i)*railTileH
+		g.hits.Add(state.Hit{X0: 0, Y0: y, X1: railWidth, Y1: y + railTileH, Kind: state.HitRailTile, ID: i})
+	}
+	h := float64(g.h)
+	g.hits.Add(state.Hit{X0: 0, Y0: h - 2*railTileH, X1: railWidth, Y1: h - railTileH, Kind: state.HitRailAdd})
+	g.hits.Add(state.Hit{X0: 0, Y0: h - railTileH, X1: railWidth, Y1: h, Kind: state.HitGear})
 }
 
 func (g *game) drawRail(screen *ebiten.Image) {

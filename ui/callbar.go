@@ -283,15 +283,27 @@ func (g *game) updateBar(gm geometry) {
 	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		return
 	}
-	cx, cy := g.cursor()
-	x, y := float64(cx), float64(cy)
-	l := g.barLayout(gm)
-	switch {
-	case state.InRect(x, y, l.muteX0, l.y, l.muteX1, l.y+l.h):
+	h, ok := g.hitAt()
+	if !ok {
+		return
+	}
+	switch h.Kind {
+	case state.HitBarMute:
 		g.toggleMute()
-	case state.InRect(x, y, l.leaveX0, l.y, l.leaveX1, l.y+l.h):
+	case state.HitBarLeave:
 		g.leaveCall()
 	}
+}
+
+// addBarHits registers the call-bar buttons; they are live exactly when
+// updateBar would act on them.
+func (g *game) addBarHits(gm geometry) {
+	if g.vc.busy || g.st.InCall == "" {
+		return
+	}
+	l := g.barLayout(gm)
+	g.hits.Add(state.Hit{X0: l.muteX0, Y0: l.y, X1: l.muteX1, Y1: l.y + l.h, Kind: state.HitBarMute})
+	g.hits.Add(state.Hit{X0: l.leaveX0, Y0: l.y, X1: l.leaveX1, Y1: l.y + l.h, Kind: state.HitBarLeave})
 }
 
 func (g *game) drawBar(screen *ebiten.Image, gm geometry) {

@@ -243,6 +243,17 @@ func (g *game) cycleOutput() {
 	g.persistSettings()
 }
 
+// addSettingsHits registers one target per settings row, from the same origin
+// and row height drawSettings uses.
+func (g *game) addSettingsHits() {
+	lh := g.lineH()
+	x0 := connectX + g.railW()
+	for r := 0; r < settingsRows; r++ {
+		y := connectFieldsTop(lh) + float64(r)*lh
+		g.hits.Add(state.Hit{X0: x0, Y0: y, X1: float64(g.w), Y1: y + lh, Kind: state.HitSettingsRow, ID: r})
+	}
+}
+
 // updateSettings handles input for the settings scene. Every change saves.
 func (g *game) updateSettings() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
@@ -259,17 +270,14 @@ func (g *game) updateSettings() {
 	if g.setRow != prev {
 		g.flushName()
 	}
-	lh := g.lineH()
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		cx, cy := g.cursor()
-		if state.InRect(float64(cx), float64(cy), connectX+g.railW(), 0, float64(g.w), 1e9) {
-			if r := state.RowAt(float64(cy), connectFieldsTop(lh), lh, settingsRows); r >= 0 {
-				g.setRow = r
-				if r != rowName {
-					g.flushName()
-				}
-				g.activateSetting(r)
+		if h, ok := g.hitAt(); ok && h.Kind == state.HitSettingsRow {
+			r := h.ID
+			g.setRow = r
+			if r != rowName {
+				g.flushName()
 			}
+			g.activateSetting(r)
 		}
 	}
 	switch g.setRow {

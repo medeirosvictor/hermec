@@ -79,6 +79,8 @@ type game struct {
 	nextProbe  time.Time
 	discRows   []state.DiscoveredRow
 
+	hits    state.Hits // click targets, rebuilt each Update
+	shape   ebiten.CursorShapeType
 	connect connectForm
 	ms      mainScene
 	frame   int
@@ -360,6 +362,9 @@ func (g *game) Update() error {
 		g.updateKey()
 	}
 	g.updateVoice()
+	g.buildHits()
+	g.updateCursorShape()
+	g.updateBanner()
 	g.updateRail()
 	g.updateDiscovery()
 	if g.settingsOpen {
@@ -367,8 +372,7 @@ func (g *game) Update() error {
 		return nil
 	}
 	if g.st.Phase == state.PhaseConnect {
-		g.connect.dy = g.bannerH()
-		if url, name, submit := g.connect.update(g.dialing, g.lineH(), g.w, g.railW(), g.cursor); submit {
+		if url, name, submit := g.connect.update(g.dialing, g.hitAt); submit {
 			g.startDial(url, name)
 		}
 	}

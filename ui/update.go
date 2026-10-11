@@ -7,6 +7,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
+	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/update"
 	"github.com/medeirosvictor/hermec/version"
 )
@@ -53,9 +54,31 @@ func (g *game) updateKey() {
 		return
 	}
 	if ebiten.IsKeyPressed(ebiten.KeyControlLeft) || ebiten.IsKeyPressed(ebiten.KeyControlRight) {
-		g.logf("opening %s", g.update.URL)
-		openURL(g.update.URL) // URL is validated upstream by update.Check
+		g.openUpdate()
 	}
+}
+
+func (g *game) openUpdate() {
+	g.logf("opening %s", g.update.URL)
+	openURL(g.update.URL) // URL is validated upstream by update.Check
+}
+
+// updateBanner opens the release page when the banner is clicked.
+func (g *game) updateBanner() {
+	if g.update == nil || g.settingsOpen || !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		return
+	}
+	if h, ok := g.hitAt(); ok && h.Kind == state.HitBanner {
+		g.openUpdate()
+	}
+}
+
+// addBannerHit registers the banner line (same rect the text is drawn in).
+func (g *game) addBannerHit() {
+	if g.update == nil {
+		return
+	}
+	g.hits.Add(state.Hit{X0: g.railW(), Y0: 0, X1: float64(g.w), Y1: pad + g.lineH(), Kind: state.HitBanner})
 }
 
 // bannerH is the height the banner takes at the top of the connect and main
