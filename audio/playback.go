@@ -61,6 +61,14 @@ func (s *sender) touch(now time.Time) (prev time.Time) {
 	prev = s.last
 	if gap := now.Sub(prev); s.seen && gap >= 0 && gap <= jitterReset {
 		s.jit.update(gap)
+		// The client sends continuously while unmuted, so a gap here is
+		// loss. fill already counted up to plcBudget concealed slots for
+		// it; add the rest (gaps over jitterReset are pauses, not loss).
+		if gap > 2*frameGap {
+			if n := int((gap+frameGap/2)/frameGap) - 1 - plcBudget; n > 0 {
+				s.hw.add(now, 0, n)
+			}
+		}
 	}
 	s.seen = true
 	s.last = now
