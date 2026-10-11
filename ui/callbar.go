@@ -19,9 +19,6 @@ import (
 	"github.com/medeirosvictor/hermec/ui/state"
 )
 
-// speakingLevel is the output/mic RMS above which a member glows.
-const speakingLevel = 0.04
-
 // voiceResult is the outcome of a background join or leave.
 type voiceResult struct {
 	c       *client.Client
@@ -302,8 +299,13 @@ func (g *game) addBarHits(gm geometry) {
 		return
 	}
 	l := g.barLayout(gm)
-	g.hits.Add(state.Hit{X0: l.muteX0, Y0: l.y, X1: l.muteX1, Y1: l.y + l.h, Kind: state.HitBarMute})
-	g.hits.Add(state.Hit{X0: l.leaveX0, Y0: l.y, X1: l.leaveX1, Y1: l.y + l.h, Kind: state.HitBarLeave})
+	// While the bar slides, targets follow the drawn strip (clipped to it).
+	y0, y1 := math.Max(l.y, gm.barR.y0), math.Min(l.y+l.h, gm.barR.y1)
+	if y1 <= y0 {
+		return
+	}
+	g.hits.Add(state.Hit{X0: l.muteX0, Y0: y0, X1: l.muteX1, Y1: y1, Kind: state.HitBarMute})
+	g.hits.Add(state.Hit{X0: l.leaveX0, Y0: y0, X1: l.leaveX1, Y1: y1, Kind: state.HitBarLeave})
 }
 
 func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
@@ -312,8 +314,10 @@ func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
 	dst := clip(screen, gm.barR.x0, gm.barR.y0, gm.barR.x1, gm.barR.y1)
 
 	drawSpeaker(dst, float32(gm.barR.x0+pad), float32(l.y), float32(l.h), th.Bright)
-	if g.st.InCall == "" { // still joining
-		g.drawText(dst, "joining "+g.vc.joining+"...", l.nameX, l.y, th.Dim)
+	if g.st.InCall == "" { // still joining, or sliding out after a leave
+		if g.vc.joining != "" {
+			g.drawText(dst, "joining "+g.vc.joining+"...", l.nameX, l.y, th.Dim)
+		}
 		return
 	}
 	title := fmt.Sprintf("%s  %s", g.st.InCall, state.FormatElapsed(time.Since(g.vc.start)))

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"math"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -82,9 +81,11 @@ func (g *game) geom() geometry {
 	bottom := float64(g.h) - margin
 	// The call bar (when shown) is the full-width bottom panel; everything
 	// above it is content. The input panel sits under the right column only.
-	if g.barVisible() {
-		gm.barR = rectF{left, bottom - slim, right, bottom}
-		bottom = gm.barR.y0 - pad
+	// The bar slides in and out: f eases 0..1, and the content above gives up
+	// the space gradually. At rest f is exactly 0 or 1 (the settled layout).
+	if f := g.barFrac(); f > 0 {
+		gm.barR = rectF{left, bottom - slim*f, right, bottom}
+		bottom = gm.barR.y0 - pad*f
 	}
 	gm.chanR = rectF{left, top, left + channelPaneW, bottom}
 	chatX := gm.chanR.x1 + pad
@@ -319,7 +320,7 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	g.drawPanelR(screen, gm.chatR)
 	g.drawPanelR(screen, gm.inputR)
 	g.drawChannels(screen, gm)
-	if g.barVisible() {
+	if g.barFrac() > 0 {
 		g.drawPanelR(screen, gm.barR)
 		g.drawBar(screen, gm)
 	}
@@ -364,6 +365,7 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 		x := cx0 + pad
 		switch row.Kind {
 		case state.RowText:
+			g.drawRowHL(dst, textRowKey(row.Channel), cx0, y, gm)
 			ch := row.Channel
 			count := fmt.Sprintf("%d", len(g.st.Members[ch]))
 			name := ch
@@ -388,6 +390,7 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 			g.drawText(dst, label, x+side+gap, y, th.Dim)
 			fadeRule(dst, x+side+2*gap+lw, mid, side, th.Dim, false)
 		case state.RowVoice:
+			g.drawRowHL(dst, voiceRowKey(row.Channel), cx0, y, gm)
 			col := th.FG
 			if row.Channel == g.st.InCall {
 				col = th.Bright
@@ -401,16 +404,17 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 			g.drawText(dst, name, x+gm.lh+4, y, col)
 		case state.RowOccupant:
 			ox := x + gm.adv*2
-			lvl := g.speakLevel(row.FP)
 			col := th.FG
-			if lvl > speakingLevel && !row.Muted {
-				col = th.Bright
-				a := uint8(40 + 160*math.Min(1, math.Sqrt(lvl)))
-				glow := color.RGBA{th.Bright.R, th.Bright.G, th.Bright.B, a}
-				vector.FillRect(dst, float32(ox-2), float32(y), float32(channelPaneW-pad-(ox-cx0)+2), float32(gm.lh), premul(glow), false)
-				col = th.BG
-			} else if row.Muted {
+			if row.Muted {
 				col = th.Dim
+			} else if e := g.speakEnv[row.FP]; e != nil {
+				// Faint glow that fades with the envelope; the text keeps its
+				// normal colour (no inversion).
+				if a := glowAlpha(e.Value()); a*255 >= 1 {
+					glow := color.RGBA{th.Bright.R, th.Bright.G, th.Bright.B, uint8(a * 255)}
+					vector.FillRect(dst, float32(ox-2), float32(y), float32(channelPaneW-pad-(ox-cx0)+2), float32(gm.lh), premul(glow), false)
+					col = th.Bright
+				}
 			}
 			name := row.Name
 			room := gm.lcols - 2 - 3
@@ -424,6 +428,17 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 		}
 		y += gm.lh
 	}
+}
+
+// drawRowHL fills a channel row with its eased hover/active highlight.
+func (g *game) drawRowHL(dst *ebiten.Image, key string, cx0, y float64, gm geometry) {
+	v := g.rowHL[key]
+	if v*hoverAlpha*255 < 1 {
+		return
+	}
+	b := g.th.Bright
+	c := color.RGBA{b.R, b.G, b.B, uint8(v * hoverAlpha * 255)}
+	vector.FillRect(dst, float32(cx0+2), float32(y), float32(channelPaneW-4), float32(gm.lh), premul(c), false)
 }
 
 // ruleAlphas are the three alpha steps of a faded divider rule, outer to inner.
