@@ -21,13 +21,29 @@ func shapeAt(h *state.Hits, x, y float64) ebiten.CursorShapeType {
 }
 
 // hitAt is the click target under the (barrel-corrected) mouse.
-func (g *game) hitAt() (state.Hit, bool) { return g.hits.At(g.cursor()) }
+func (g *game) hitAt() (state.Hit, bool) { return g.hitFor(g.cursor()) }
 
-// updateCursorShape applies shapeAt to the mouse, calling Ebiten only when
-// the shape changes.
+// hitFor is the scene click target at a scene point. Title-bar zones (caption,
+// buttons, resize edges) win: while the mouse is over one, no scene target is
+// reachable.
+func (g *game) hitFor(x, y float64) (state.Hit, bool) {
+	if g.tzone != state.ZoneNone {
+		return state.Hit{}, false
+	}
+	return g.hits.At(x, y)
+}
+
+// updateCursorShape sets the shape for the title-bar zone under the mouse, or
+// else for the scene hit under it, calling Ebiten only when the shape changes.
 func (g *game) updateCursorShape() {
-	x, y := g.cursor()
-	if s := shapeAt(&g.hits, x, y); s != g.shape {
+	var s ebiten.CursorShapeType
+	if g.tzone != state.ZoneNone {
+		s = shapeForZone(g.tzone)
+	} else {
+		x, y := g.cursor()
+		s = shapeAt(&g.hits, x, y)
+	}
+	if s != g.shape {
 		g.shape = s
 		ebiten.SetCursorShape(s)
 	}

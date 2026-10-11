@@ -2,6 +2,7 @@ package ui
 
 import (
 	_ "embed"
+	"image"
 	"log"
 	"sync"
 
@@ -78,12 +79,21 @@ func (c *crt) post(w, h int) *ebiten.Image {
 	return c.tmp
 }
 
+// blit draws src at dst's own top-left corner. Drawing into a sub-image keeps
+// the parent's coordinates, so the offset is applied explicitly.
+func blit(dst, src *ebiten.Image) {
+	m := dst.Bounds().Min
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(float64(m.X), float64(m.Y))
+	dst.DrawImage(src, op)
+}
+
 // apply post-processes the offscreen scene onto screen. t is seconds since
 // start (drives the scan bar). Tunables come from th.
 func (c *crt) apply(screen *ebiten.Image, th theme.Theme, t float64) {
 	c.compile()
 	if c.shader == nil {
-		screen.DrawImage(c.off, nil)
+		blit(screen, c.off)
 		return
 	}
 	dst := screen
@@ -97,6 +107,13 @@ func (c *crt) apply(screen *ebiten.Image, th theme.Theme, t float64) {
 		bar = 1
 	}
 	op := &ebiten.DrawRectShaderOptions{}
+	// Drawing into a sub-image keeps the parent's coordinates, so move the
+	// rect to the sub-image's own top-left (zero for whole images).
+	m := screen.Bounds().Min
+	if dst != screen {
+		m = image.Point{} // the scratch is a whole image
+	}
+	op.GeoM.Translate(float64(m.X), float64(m.Y))
 	op.Images[0] = c.off
 	op.Uniforms = map[string]any{
 		"Curvature":        float32(th.Curvature),
@@ -112,9 +129,10 @@ func (c *crt) apply(screen *ebiten.Image, th theme.Theme, t float64) {
 	}
 	dst.DrawRectShader(c.w, c.h, c.shader, op)
 	if th.Glow > 0 {
-		screen.DrawImage(dst, nil)
+		sm := screen.Bounds().Min
+		blit(screen, dst)
 		glow := &ebiten.DrawImageOptions{Blend: ebiten.BlendLighter}
-		glow.GeoM.Translate(1, 0)
+		glow.GeoM.Translate(float64(sm.X)+1, float64(sm.Y))
 		glow.ColorScale.ScaleAlpha(float32(th.Glow))
 		screen.DrawImage(dst, glow)
 	}

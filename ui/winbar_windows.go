@@ -8,29 +8,46 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// darkTitleBar asks DWM for a dark title bar on the Hermec window.
-// Best-effort: every failure is ignored.
-func darkTitleBar() {
+// hasCustomBar reports whether Hermec draws its own title bar.
+func hasCustomBar() bool { return true }
+
+var (
+	user32          = windows.NewLazySystemDLL("user32.dll")
+	procFindWindow  = user32.NewProc("FindWindowW")
+	procRelCapture  = user32.NewProc("ReleaseCapture")
+	procPostMessage = user32.NewProc("PostMessageW")
+
+	hwndVal uintptr
+)
+
+// hermecHWND finds the Hermec window by its title; cached once found.
+func hermecHWND() uintptr {
+	if hwndVal != 0 {
+		return hwndVal
+	}
 	title, err := windows.UTF16PtrFromString("Hermec")
 	if err != nil {
+		return 0
+	}
+	hwndVal, _, _ = procFindWindow.Call(0, uintptr(unsafe.Pointer(title)))
+	return hwndVal
+}
+
+const wmNCLButtonDown = 0xA1
+
+// nativeDrag hands a left press to Windows as a non-client press with hit-test
+// code ht (HTCAPTION to move, HTLEFT.. to resize), so native drag, Aero snap
+// and edge resize run. Best-effort: every failure is ignored.
+func nativeDrag(ht uintptr) {
+	if ht == 0 {
 		return
 	}
-	fw := windows.NewLazySystemDLL("user32.dll").NewProc("FindWindowW")
-	hwnd, _, _ := fw.Call(0, uintptr(unsafe.Pointer(title)))
+	hwnd := hermecHWND()
 	if hwnd == 0 {
 		return
 	}
-	dwm := windows.NewLazySystemDLL("dwmapi.dll")
-	proc := dwm.NewProc("DwmSetWindowAttribute")
-	if proc.Find() != nil {
-		return
-	}
-	on := int32(1)
-	// 20 = DWMWA_USE_IMMERSIVE_DARK_MODE; 19 on pre-20H1 Windows 10 builds.
-	for _, attr := range []uintptr{20, 19} {
-		r, _, _ := proc.Call(hwnd, attr, uintptr(unsafe.Pointer(&on)), unsafe.Sizeof(on))
-		if r == 0 {
-			return
-		}
-	}
+	procRelCapture.Call()
+	// Posted, not sent: Update runs off the window's thread, and a
+	// SendMessageW from it deadlocks the window (observed: "not responding").
+	procPostMessage.Call(hwnd, wmNCLButtonDown, ht, 0)
 }

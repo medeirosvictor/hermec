@@ -37,7 +37,9 @@ func bilinear(s vec2) vec4 {
 }
 
 func Fragment(dst vec4, src vec2, color vec4) vec4 {
-	p := dst.xy
+	// dst is in texture space; remove the destination's origin (atlas slot or
+	// sub-image offset) to get pixel coordinates within the output.
+	p := dst.xy - imageDstOrigin()
 	u := 2.0*p/Size - vec2(1.0)
 	f := 1.0 + Curvature*dot(u, u)
 	s := (u*f + vec2(1.0)) * Size / 2.0

@@ -96,6 +96,7 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Click "+" tile**: Add a server
 - **Click the signal bars** (status line, or the call bar in a call): Show connection quality (ping, jitter, per-participant concealment); Esc or a second click closes it
 - **Click voice channel in the pane**: Join or leave voice call
+- **Title bar** (Windows): a Discord-style app bar replaces the default frame. Drag it to move the window (double-click to maximize or restore), use the buttons on the right to minimize, maximize and close, and drag the window edges and corners to resize.
 - **Click gear tile** or **F10**: Settings page (name, palette, scanlines, curvature, input/output audio device, update check; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it.
 
 ## Build

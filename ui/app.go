@@ -5,10 +5,10 @@ package ui
 import (
 	"context"
 	"fmt"
+	"image"
 	"log"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -102,7 +102,10 @@ type game struct {
 	autoName      string   // name in effect at startup; not persisted unless edited
 	nameDirty     bool     // settings name field edited, not yet saved
 
-	barOnce sync.Once // dark title bar, applied on the first tick
+	sw, sh int        // screen size; w, h above are the scene (screen minus title bar)
+	tzone  state.Zone // title-bar zone under the mouse, ZoneNone elsewhere
+	maxed  bool       // window is maximized (no resize edges)
+	dbl    dblClick   // caption double-click detector
 
 	dt       float64                    // seconds per tick, for eased values
 	barF     float64                    // call bar slide, 0 hidden .. 1 shown; valid once barInit
@@ -254,6 +257,7 @@ func Run(opts Options) error {
 	ebiten.SetWindowSize(960, 600)
 	ebiten.SetWindowTitle("Hermec")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
+	ebiten.SetWindowDecorated(!hasCustomBar())
 	err = ebiten.RunGame(g)
 	g.flushName()
 	if g.c != nil {
@@ -298,7 +302,9 @@ func (g *game) startDial(url, name string) {
 
 func (g *game) Update() error {
 	g.frame++
-	g.barOnce.Do(darkTitleBar)
+	if g.updateTitleBar() {
+		return ebiten.Termination
+	}
 	if g.dev != nil {
 		g.dev.poll(time.Now())
 	}
@@ -371,7 +377,7 @@ func (g *game) Update() error {
 	g.updateVoice()
 	g.updateDiscovery() // mutates connect.disc, which the hit targets depend on
 	g.dt = frameDT()
-	g.stepBar(g.dt) // before buildHits: hit rects follow the drawn bar
+	g.stepBar(g.dt)     // before buildHits: hit rects follow the drawn bar
 	g.stepQuality(g.dt) // after stepBar (geometry), before buildHits
 	g.buildHits()
 	g.stepHighlights(g.dt)
@@ -399,19 +405,33 @@ func (g *game) Update() error {
 }
 
 func (g *game) Draw(screen *ebiten.Image) {
-	if !g.crtOn {
+	bh := int(g.barH())
+	if !g.crtOn && bh == 0 {
 		g.drawScene(screen)
 		return
 	}
+	// The scene renders into an offscreen of the scene size (screen minus the
+	// title bar) and lands below the bar; the CRT and its corner mask apply to
+	// that area only. The bar is drawn flat on top afterwards.
 	b := screen.Bounds()
-	off := g.crt.target(b.Dx(), b.Dy())
-	g.drawScene(off)
-	if g.startAt.IsZero() {
-		g.startAt = time.Now()
+	sceneH := b.Dy() - bh
+	if sceneH < 1 {
+		sceneH = 1
 	}
-	th := g.th
-	th.Curvature = g.curvature()
-	g.crt.apply(screen, th, time.Since(g.startAt).Seconds())
+	off := g.crt.target(b.Dx(), sceneH)
+	g.drawScene(off)
+	area := screen.SubImage(image.Rect(b.Min.X, b.Min.Y+bh, b.Max.X, b.Max.Y)).(*ebiten.Image)
+	if g.crtOn {
+		if g.startAt.IsZero() {
+			g.startAt = time.Now()
+		}
+		th := g.th
+		th.Curvature = g.curvature()
+		g.crt.apply(area, th, time.Since(g.startAt).Seconds())
+	} else {
+		blit(area, off)
+	}
+	g.drawTitleBar(screen)
 }
 
 func (g *game) drawScene(screen *ebiten.Image) {
@@ -429,6 +449,10 @@ func (g *game) drawScene(screen *ebiten.Image) {
 }
 
 func (g *game) Layout(w, h int) (int, int) {
-	g.w, g.h = w, h
+	g.sw, g.sh = w, h
+	g.w, g.h = w, h-int(g.barH()) // the one choke point: scenes never see the bar
+	if g.h < 1 {
+		g.h = 1
+	}
 	return w, h
 }
