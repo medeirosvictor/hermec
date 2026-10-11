@@ -19,7 +19,6 @@ import (
 
 const (
 	channelPaneW  = 180 // fixed left pane width in px
-	pad           = 8
 	maxInputRunes = 1000
 	minCols       = 10
 
@@ -49,15 +48,20 @@ type mainScene struct {
 func newMainScene() mainScene { return mainScene{joined: map[string]bool{}} }
 
 // geometry is the pixel layout of the main scene for the current window.
+// The *R fields are panel surfaces; the other fields are text-area
+// coordinates inside them (a pad inside the panel edge).
 type geometry struct {
-	w, h                 int
-	ox                   float64 // left edge (rail width)
-	statusY              float64
-	paneY0, paneY1       float64 // scrollback (chat pane) vertical extent
-	chanY1               float64 // channel pane bottom; runs below the chat pane, beside the input line
-	inputY               float64 // chat input line: right column only, directly under the chat pane
-	barY                 float64 // call bar top; meaningful only while barVisible
-	rightX, rightW       float64
+	w, h                int
+	ox                  float64 // left edge (rail width)
+	statusR, chanR      rectF   // status line panel; channel pane (runs beside the input)
+	chatR, inputR, barR rectF   // chat pane; input line (right column); call bar (only while barVisible)
+	statusY             float64
+	paneY0, paneY1      float64 // scrollback (chat pane) text extent
+	chanY1              float64 // channel pane text bottom
+	inputY              float64 // chat input text top
+	barY                float64 // call bar text top; meaningful only while barVisible
+	rightX, rightW      float64 // chat text column
+
 	adv, lh              float64
 	cols, visible, lcols int
 }
@@ -69,19 +73,32 @@ func (g *game) geom() geometry {
 		adv = 1
 	}
 	gm := geometry{w: g.w, h: g.h, ox: g.railW(), adv: adv, lh: lh}
-	gm.statusY = pad + g.bannerH()
-	gm.paneY0 = gm.statusY + lh + pad
-	// The call bar (when shown) is the full-width bottom strip; everything
-	// above it is content. The input line sits under the right column only.
-	gm.chanY1 = float64(g.h) - pad
+	left, right := gm.ox+margin, float64(g.w)-margin
+	slim := lh + pad // one text line on a panel, pad/2 above and below
+
+	sy := margin + g.bannerH()
+	gm.statusR = rectF{left, sy, right, sy + slim}
+	top := gm.statusR.y1 + pad
+	bottom := float64(g.h) - margin
+	// The call bar (when shown) is the full-width bottom panel; everything
+	// above it is content. The input panel sits under the right column only.
 	if g.barVisible() {
-		gm.barY = float64(g.h) - pad - lh
-		gm.chanY1 = gm.barY - pad
+		gm.barR = rectF{left, bottom - slim, right, bottom}
+		bottom = gm.barR.y0 - pad
 	}
-	gm.inputY = gm.chanY1 - lh
-	gm.paneY1 = gm.inputY - pad
-	gm.rightX = gm.ox + channelPaneW + pad
-	gm.rightW = float64(g.w) - gm.rightX - pad
+	gm.chanR = rectF{left, top, left + channelPaneW, bottom}
+	chatX := gm.chanR.x1 + pad
+	gm.inputR = rectF{chatX, bottom - slim, right, bottom}
+	gm.chatR = rectF{chatX, top, right, gm.inputR.y0 - pad}
+
+	gm.statusY = gm.statusR.y0 + pad/2
+	gm.barY = gm.barR.y0 + pad/2
+	gm.inputY = gm.inputR.y0 + pad/2
+	gm.paneY0 = top + pad
+	gm.paneY1 = gm.chatR.y1 - pad
+	gm.chanY1 = bottom - pad
+	gm.rightX = chatX + pad
+	gm.rightW = right - pad - gm.rightX
 	gm.cols = int(gm.rightW / adv)
 	if gm.cols < minCols {
 		gm.cols = minCols
@@ -173,7 +190,7 @@ func (g *game) updateMain() {
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		cx, cy := g.cursor()
 		x, y := float64(cx), float64(cy)
-		if state.InRect(x, y, gm.ox, gm.paneY0, gm.ox+channelPaneW, gm.chanY1) {
+		if state.InRect(x, y, gm.chanR.x0, gm.chanR.y0, gm.chanR.x1, gm.chanR.y1) {
 			// Only rows drawChannels actually draws are clickable.
 			rows := g.st.Rows()
 			n := int((gm.chanY1 - gm.paneY0) / gm.lh)
@@ -237,7 +254,7 @@ func (g *game) updateMain() {
 	}
 	mx, my := g.cursor()
 	fx, fy := float64(mx), float64(my)
-	if _, wy := ebiten.Wheel(); wy != 0 && state.InRect(fx, fy, gm.rightX, gm.paneY0, float64(g.w), gm.paneY1) {
+	if _, wy := ebiten.Wheel(); wy != 0 && state.InRect(fx, fy, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1) {
 		var n int
 		n, g.ms.wheelCarry = state.WheelLines(g.ms.wheelCarry, wy, wheelLinesPerNotch)
 		g.ms.scroll += n
@@ -285,16 +302,14 @@ func (g *game) drawMain(screen *ebiten.Image) {
 		return
 	}
 
-	// Separators.
-	ox := float32(gm.ox)
-	vector.FillRect(screen, ox, float32(gm.paneY0-pad/2), float32(g.w)-ox, 1, th.Dim, false)
-	vector.FillRect(screen, ox+channelPaneW, float32(gm.paneY0-pad/2), 1, float32(gm.chanY1-gm.paneY0+pad/2), th.Dim, false)
-	vector.FillRect(screen, ox+channelPaneW, float32(gm.paneY1+pad/2), float32(g.w)-ox-channelPaneW, 1, th.Dim, false)
-
+	// Panels separate the areas; the gaps between them are the only dividers.
+	g.drawPanelR(screen, gm.chanR)
+	g.drawPanelR(screen, gm.chatR)
+	g.drawPanelR(screen, gm.inputR)
 	g.drawChannels(screen, gm)
 	if g.barVisible() {
+		g.drawPanelR(screen, gm.barR)
 		g.drawBar(screen, gm)
-		vector.FillRect(screen, ox, float32(gm.barY-pad/2), float32(g.w)-ox, 1, th.Dim, false)
 	}
 	g.drawScrollback(screen, gm)
 	g.drawInput(screen, gm)
@@ -321,18 +336,21 @@ func (g *game) drawStatus(screen *ebiten.Image, gm geometry) {
 	if g.st.Status != "" && g.st.Phase == state.PhaseMain {
 		line += "  |  " + g.st.Status
 	}
-	g.drawTextF(clip(screen, gm.ox, 0, float64(g.w), gm.paneY0-pad/2), g.faceS, line, gm.ox+pad, gm.statusY, g.th.Dim)
+	r := gm.statusR
+	g.drawPanelR(screen, r)
+	g.drawTextF(clip(screen, r.x0+pad, r.y0, r.x1-pad, r.y1), g.faceS, line, r.x0+pad, gm.statusY, g.th.Dim)
 }
 
 func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 	th := g.th
-	dst := clip(screen, gm.ox, gm.paneY0, gm.ox+channelPaneW, gm.chanY1)
+	cx0 := gm.chanR.x0
+	dst := clip(screen, cx0, gm.paneY0, gm.chanR.x1, gm.chanY1)
 	y := gm.paneY0
 	for _, row := range g.st.Rows() {
 		if y+gm.lh > gm.chanY1 {
 			break
 		}
-		x := gm.ox + pad
+		x := cx0 + pad
 		switch row.Kind {
 		case state.RowText:
 			ch := row.Channel
@@ -348,15 +366,16 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 			}
 			g.drawText(dst, marker+name, x, y, col)
 			cw := text.Advance(count, g.face)
-			g.drawText(dst, count, gm.ox+channelPaneW-pad-cw, y, col)
+			g.drawText(dst, count, cx0+channelPaneW-pad-cw, y, col)
 		case state.RowDivider:
 			label := "voice"
 			lw := text.Advance(label, g.face)
 			mid := y + gm.lh/2
-			side := (channelPaneW - 2*pad - lw - 2*pad) / 2
-			vector.FillRect(dst, float32(x), float32(mid), float32(side), 1, th.Dim, false)
-			g.drawText(dst, label, x+side+pad, y, th.Dim)
-			vector.FillRect(dst, float32(x+side+2*pad+lw), float32(mid), float32(side), 1, th.Dim, false)
+			gap := float64(pad) / 2
+			side := (channelPaneW - 2*pad - lw - 2*gap) / 2
+			fadeRule(dst, x, mid, side, th.Dim, true)
+			g.drawText(dst, label, x+side+gap, y, th.Dim)
+			fadeRule(dst, x+side+2*gap+lw, mid, side, th.Dim, false)
 		case state.RowVoice:
 			col := th.FG
 			if row.Channel == g.st.InCall {
@@ -377,7 +396,7 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 				col = th.Bright
 				a := uint8(40 + 160*math.Min(1, math.Sqrt(lvl)))
 				glow := color.RGBA{th.Bright.R, th.Bright.G, th.Bright.B, a}
-				vector.FillRect(dst, float32(ox-2), float32(y), float32(channelPaneW-pad-(ox-gm.ox)+2), float32(gm.lh), premul(glow), false)
+				vector.FillRect(dst, float32(ox-2), float32(y), float32(channelPaneW-pad-(ox-cx0)+2), float32(gm.lh), premul(glow), false)
 				col = th.BG
 			} else if row.Muted {
 				col = th.Dim
@@ -389,10 +408,28 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 			}
 			g.drawText(dst, name, ox, y, col)
 			if row.Muted {
-				drawMic(dst, float32(gm.ox+channelPaneW-pad-gm.lh), float32(y), float32(gm.lh), th.Dim, true)
+				drawMic(dst, float32(cx0+channelPaneW-pad-gm.lh), float32(y), float32(gm.lh), th.Dim, true)
 			}
 		}
 		y += gm.lh
+	}
+}
+
+// ruleAlphas are the three alpha steps of a faded divider rule, outer to inner.
+var ruleAlphas = [3]uint8{50, 100, 170}
+
+// fadeRule draws a 1px rule of width w at (x, y) in three alpha steps. With
+// towardEnd the rule is strongest at its right end, otherwise at its left, so
+// both rules around a label fade away from it.
+func fadeRule(dst *ebiten.Image, x, y, w float64, c color.RGBA, towardEnd bool) {
+	seg := w / 3
+	for i, a := range ruleAlphas {
+		pos := i
+		if !towardEnd {
+			pos = 2 - i
+		}
+		cc := color.RGBA{c.R, c.G, c.B, uint8(uint32(c.A) * uint32(a) / 255)}
+		vector.FillRect(dst, float32(x+float64(pos)*seg), float32(y), float32(seg), 1, premul(cc), false)
 	}
 }
 
@@ -424,15 +461,16 @@ type sbKey struct {
 	w, h       int
 	adv, lh    float64
 	fg, br, dm color.RGBA
+	panel      color.RGBA // not drawn into the cache today, but part of the key so a panel-aware render never goes stale
 }
 
 func (g *game) drawScrollback(screen *ebiten.Image, gm geometry) {
-	r := image.Rect(int(gm.rightX), int(gm.paneY0), g.w, int(gm.paneY1)).Intersect(screen.Bounds())
+	r := image.Rect(int(gm.rightX), int(gm.paneY0), int(gm.rightX+gm.rightW), int(gm.paneY1)).Intersect(screen.Bounds())
 	if r.Empty() {
 		return
 	}
 	ms := &g.ms
-	k := sbKey{ms.layoutGen, state.ClampScroll(len(ms.lines), gm.visible, ms.scroll), r.Dx(), r.Dy(), gm.adv, gm.lh, g.th.FG, g.th.Bright, g.th.Dim}
+	k := sbKey{ms.layoutGen, state.ClampScroll(len(ms.lines), gm.visible, ms.scroll), r.Dx(), r.Dy(), gm.adv, gm.lh, g.th.FG, g.th.Bright, g.th.Dim, g.th.Panel}
 	if ms.sbImg == nil || k != ms.sbKey {
 		if ms.sbImg == nil || ms.sbImg.Bounds().Dx() != k.w || ms.sbImg.Bounds().Dy() != k.h {
 			if ms.sbImg != nil {
@@ -479,13 +517,13 @@ func (g *game) renderScrollback(dst *ebiten.Image, gm geometry, ox, oy float64) 
 	}
 	if off > 0 {
 		ind := fmt.Sprintf("-- %d lines up (PgDn) --", off)
-		g.drawText(dst, ind, float64(g.w)-ox-pad-text.Advance(ind, g.face), gm.paneY1-gm.lh, th.Dim)
+		g.drawText(dst, ind, float64(dst.Bounds().Dx())-text.Advance(ind, g.face), gm.paneY1-gm.lh, th.Dim)
 	}
 }
 
 func (g *game) drawInput(screen *ebiten.Image, gm geometry) {
 	th := g.th
-	dst := clip(screen, gm.rightX, gm.inputY, float64(g.w), gm.inputY+gm.lh)
+	dst := clip(screen, gm.rightX, gm.inputR.y0, gm.rightX+gm.rightW, gm.inputR.y1)
 	in := []rune(g.st.Input.String())
 	room := int(gm.rightW/gm.adv) - 3 // prompt + cursor
 	if room < 1 {

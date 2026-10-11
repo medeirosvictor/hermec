@@ -1,0 +1,26 @@
+//kage:unit pixels
+
+package main
+
+// Soft rounded panel: a signed-distance rounded rectangle whose edge fades
+// into the background over Fade pixels, so areas read as surfaces rather than
+// boxes with hard outlines. Output is premultiplied for normal source-over.
+
+var Rect vec4 // x0, y0, x1, y1 of the panel body in destination pixels
+var Radius float
+var Fade float
+var Fill vec4 // straight RGB, alpha 1
+
+func Fragment(dst vec4, src vec2, color vec4) vec4 {
+	c := (Rect.xy + Rect.zw) / 2.0
+	h := (Rect.zw - Rect.xy) / 2.0
+	r := min(Radius, min(h.x, h.y))
+	// dst is in texture space; small images live in a shared atlas, so remove
+	// the image's origin to get image pixel coordinates.
+	p := dst.xy - imageDstOrigin()
+	q := abs(p-c) - (h - vec2(r))
+	d := length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r
+	// Opaque inside, easing to nothing Fade pixels outside the edge.
+	a := 1.0 - smoothstep(-1.0, max(Fade, 1.0), d)
+	return vec4(Fill.rgb*a, a)
+}

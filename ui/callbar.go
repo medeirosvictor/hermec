@@ -253,10 +253,10 @@ const (
 
 func (g *game) barLayout(gm geometry) barLayout {
 	l := barLayout{y: gm.barY, h: gm.lh}
-	x := gm.ox + pad
+	x := gm.barR.x0 + pad
 	l.nameX = x + gm.lh + 4 // after the speaker icon
 	// Right-aligned controls: [mic mute] [leave] meter.
-	right := float64(g.w) - pad
+	right := gm.barR.x1 - pad
 	l.meterW = meterWidth
 	l.meterX = right - l.meterW
 	right = l.meterX - pad*2
@@ -297,9 +297,9 @@ func (g *game) updateBar(gm geometry) {
 func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
 	th := g.th
 	l := g.barLayout(gm)
-	dst := clip(screen, gm.ox, l.y, float64(g.w), l.y+l.h)
+	dst := clip(screen, gm.barR.x0, gm.barR.y0, gm.barR.x1, gm.barR.y1)
 
-	drawSpeaker(dst, float32(gm.ox+pad), float32(l.y), float32(l.h), th.Bright)
+	drawSpeaker(dst, float32(gm.barR.x0+pad), float32(l.y), float32(l.h), th.Bright)
 	if g.st.InCall == "" { // still joining
 		g.drawText(dst, "joining "+g.vc.joining+"...", l.nameX, l.y, th.Dim)
 		return

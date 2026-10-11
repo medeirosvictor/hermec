@@ -184,15 +184,14 @@ func (g *game) drawRail(screen *ebiten.Image) {
 	}
 	th := g.th
 	vector.FillRect(screen, 0, 0, railWidth, float32(g.h), th.BG, false)
-	vector.FillRect(screen, railWidth-1, 0, 1, float32(g.h), th.Dim, false)
 	tile := func(label string, y float64, cur bool) {
-		box, txt, w := th.Dim, th.FG, float32(1)
-		if cur {
-			box, txt, w = th.Bright, th.Bright, 2
+		fill, txt := th.Panel, th.FG
+		if cur { // the active tile is a panel tinted toward the accent
+			fill, txt = mixRGBA(th.Panel, th.Bright, 0.22), th.Bright
 		}
-		vector.StrokeRect(screen, railInset, float32(y)+railInset, railWidth-2*railInset-1, railTileH-2*railInset, w, box, false)
+		g.drawPanelFade(screen, railInset, y+railInset, railWidth-railInset, y+railTileH-railInset, fill, 4)
 		tw := text.Advance(label, g.face)
-		g.drawText(screen, label, (railWidth-1-tw)/2, y+(railTileH-g.th.FontSize*1.2)/2, txt)
+		g.drawText(screen, label, (railWidth-tw)/2, y+(railTileH-g.th.FontSize*1.2)/2, txt)
 	}
 	for i := 0; i < g.railTiles(); i++ {
 		e := g.servers[i]

@@ -319,6 +319,7 @@ func (g *game) activateSetting(row int) {
 func (g *game) drawSettings(screen *ebiten.Image) {
 	th := g.th
 	lh := g.lineH()
+	g.drawContentPanel(screen, 0)
 	x, y := connectX+g.railW(), connectY
 
 	g.drawTextF(screen, g.faceT, "SETTINGS", x, y, th.Bright)

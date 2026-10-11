@@ -162,6 +162,7 @@ func (g *game) drawTextF(dst *ebiten.Image, f *text.GoTextFace, s string, x, y f
 func (g *game) drawConnect(screen *ebiten.Image) {
 	th, f := g.th, &g.connect
 	lh := g.lineH()
+	g.drawContentPanel(screen, g.bannerH())
 	x, y := connectX+g.railW(), connectY+g.bannerH()
 
 	g.drawTextF(screen, g.faceT, "HERMEC", x, y, th.Bright)
