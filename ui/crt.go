@@ -36,6 +36,24 @@ func (c *crt) compile() {
 	})
 }
 
+// setSource compiles src and, only on success, replaces the active shader (the
+// previous one is deallocated). On error the current shader is left untouched
+// and the compile error is returned. It also retires the lazy embedded compile
+// so a later apply cannot overwrite the swapped-in shader. Used by dev
+// live-reload; call from the game goroutine only.
+func (c *crt) setSource(src []byte) error {
+	s, err := ebiten.NewShader(src)
+	if err != nil {
+		return err
+	}
+	c.once.Do(func() {})
+	if c.shader != nil {
+		c.shader.Deallocate()
+	}
+	c.shader = s
+	return nil
+}
+
 // target returns the offscreen image sized w x h, recreating it only when the
 // size changed.
 func (c *crt) target(w, h int) *ebiten.Image {

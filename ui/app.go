@@ -103,7 +103,8 @@ type game struct {
 	barOnce sync.Once // dark title bar, applied on the first tick
 
 	crt   crt
-	crtOn bool // starts from the theme, toggled with F1
+	crtOn bool       // starts from the theme, toggled with F1
+	dev   *devReload // live reload of shaders/theme; nil unless HERMEC_DEV is set
 
 	update   *update.Available // non-nil: a newer release exists, banner shown
 	updateCh chan update.Available
@@ -237,6 +238,7 @@ func Run(opts Options) error {
 		}
 	}
 	g.connect = newConnectForm(opts.Name, url, opts.Local)
+	g.dev = devFromEnv(g)
 
 	ebiten.SetWindowSize(960, 600)
 	ebiten.SetWindowTitle("Hermec")
@@ -286,6 +288,9 @@ func (g *game) startDial(url, name string) {
 func (g *game) Update() error {
 	g.frame++
 	g.barOnce.Do(darkTitleBar)
+	if g.dev != nil {
+		g.dev.poll(time.Now())
+	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyF1) {
 		g.setScanlines(!g.crtOn)
 	}
