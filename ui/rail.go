@@ -164,7 +164,7 @@ func (g *game) updateRail() {
 	if g.railW() == 0 || !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		return
 	}
-	cx, cy := ebiten.CursorPosition()
+	cx, cy := g.cursor()
 	n := g.railTiles()
 	switch hit := state.RailHit(float64(cx), float64(cy), railWidth, pad, railTileH, n, float64(g.h)); {
 	case hit == state.RailSettings:

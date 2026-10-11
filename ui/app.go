@@ -103,6 +103,7 @@ type game struct {
 	barOnce sync.Once // dark title bar, applied on the first tick
 
 	crt   crt
+	startAt time.Time // first CRT frame; drives the scan bar
 	crtOn bool       // starts from the theme, toggled with F1
 	dev   *devReload // live reload of shaders/theme; nil unless HERMEC_DEV is set
 
@@ -363,7 +364,7 @@ func (g *game) Update() error {
 	}
 	if g.st.Phase == state.PhaseConnect {
 		g.connect.dy = g.bannerH()
-		if url, name, submit := g.connect.update(g.dialing, g.lineH(), g.w, g.railW()); submit {
+		if url, name, submit := g.connect.update(g.dialing, g.lineH(), g.w, g.railW(), g.cursor); submit {
 			g.startDial(url, name)
 		}
 	}
@@ -384,7 +385,10 @@ func (g *game) Draw(screen *ebiten.Image) {
 	b := screen.Bounds()
 	off := g.crt.target(b.Dx(), b.Dy())
 	g.drawScene(off)
-	g.crt.apply(screen)
+	if g.startAt.IsZero() {
+		g.startAt = time.Now()
+	}
+	g.crt.apply(screen, g.th, time.Since(g.startAt).Seconds())
 }
 
 func (g *game) drawScene(screen *ebiten.Image) {

@@ -252,7 +252,7 @@ func (g *game) updateSettings() {
 	}
 	lh := g.lineH()
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		cx, cy := ebiten.CursorPosition()
+		cx, cy := g.cursor()
 		if state.InRect(float64(cx), float64(cy), connectX+g.railW(), 0, float64(g.w), 1e9) {
 			if r := state.RowAt(float64(cy), connectFieldsTop(lh), lh, settingsRows); r >= 0 {
 				g.setRow = r

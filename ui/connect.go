@@ -69,7 +69,7 @@ func newConnectForm(name, url string, local bool) connectForm {
 
 // update consumes keyboard input. It reports submit when Enter is pressed
 // and no dial is in flight.
-func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64) (url, name string, submit bool) {
+func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64, cursor func() (float64, float64)) (url, name string, submit bool) {
 	f.refresh = false
 	if inpututil.IsKeyJustPressed(ebiten.KeyTab) {
 		f.sel = -1
@@ -92,7 +92,7 @@ func (f *connectForm) update(dialing bool, lh float64, screenW int, ox float64) 
 		f.refresh = true // plain R is a letter while a field has focus
 	}
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		cx, cy := ebiten.CursorPosition()
+		cx, cy := cursor()
 		if state.InRect(float64(cx), float64(cy), connectX+ox, 0, float64(screenW), 1e9) {
 			if i := state.RowAt(float64(cy), f.discTop(lh), lh, len(f.disc)); i >= 0 {
 				f.server.runes = []rune(f.disc[i].URL)
@@ -199,7 +199,7 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 		y = f.discTop(lh) - lh // single layout source, shared with hit-testing
 		g.drawTextF(screen, g.faceS, "DISCOVERED", x, y, th.Dim)
 		y += lh
-		cx, cy := ebiten.CursorPosition()
+		cx, cy := g.cursor()
 		hover := -1
 		if state.InRect(float64(cx), float64(cy), connectX+g.railW(), 0, float64(g.w), 1e9) {
 			hover = state.RowAt(float64(cy), y, lh, len(f.disc))

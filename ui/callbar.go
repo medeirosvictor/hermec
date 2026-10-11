@@ -283,7 +283,7 @@ func (g *game) updateBar(gm geometry) {
 	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		return
 	}
-	cx, cy := ebiten.CursorPosition()
+	cx, cy := g.cursor()
 	x, y := float64(cx), float64(cy)
 	l := g.barLayout(gm)
 	switch {

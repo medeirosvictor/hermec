@@ -6,18 +6,18 @@ import (
 	"sync"
 
 	"github.com/hajimehoshi/ebiten/v2"
+
+	"github.com/medeirosvictor/hermec/ui/theme"
 )
 
 //go:embed crt.kage
 var crtShaderSrc []byte
 
-// glowAlpha is the strength of the 1px-offset additive phosphor glow.
-const glowAlpha = 0.12
-
 // crt holds the post-process pipeline state: the offscreen scene target and
-// the lazily compiled scanline shader.
+// the lazily compiled CRT shader.
 type crt struct {
 	off    *ebiten.Image
+	tmp    *ebiten.Image // glow scratch
 	w, h   int
 	once   sync.Once
 	shader *ebiten.Shader
@@ -67,19 +67,54 @@ func (c *crt) target(w, h int) *ebiten.Image {
 	return c.off
 }
 
-// apply post-processes the offscreen scene onto screen.
-func (c *crt) apply(screen *ebiten.Image) {
+// post returns the scratch image used for the glow pass, sized w x h.
+func (c *crt) post(w, h int) *ebiten.Image {
+	if c.tmp == nil || c.tmp.Bounds().Dx() != w || c.tmp.Bounds().Dy() != h {
+		if c.tmp != nil {
+			c.tmp.Deallocate()
+		}
+		c.tmp = ebiten.NewImage(w, h)
+	}
+	return c.tmp
+}
+
+// apply post-processes the offscreen scene onto screen. t is seconds since
+// start (drives the scan bar). Tunables come from th.
+func (c *crt) apply(screen *ebiten.Image, th theme.Theme, t float64) {
 	c.compile()
 	if c.shader == nil {
 		screen.DrawImage(c.off, nil)
 		return
 	}
+	dst := screen
+	if th.Glow > 0 {
+		// Render the curved frame aside so the glow ghost follows the curve.
+		dst = c.post(c.w, c.h)
+		dst.Clear()
+	}
+	bar := 0.0
+	if th.ScanBar {
+		bar = 1
+	}
 	op := &ebiten.DrawRectShaderOptions{}
 	op.Images[0] = c.off
-	screen.DrawRectShader(c.w, c.h, c.shader, op)
-
-	glow := &ebiten.DrawImageOptions{Blend: ebiten.BlendLighter}
-	glow.GeoM.Translate(1, 0)
-	glow.ColorScale.ScaleAlpha(glowAlpha)
-	screen.DrawImage(c.off, glow)
+	op.Uniforms = map[string]any{
+		"Curvature":        float32(th.Curvature),
+		"Vignette":         float32(th.Vignette),
+		"ScanlineStrength": float32(th.ScanlineStrength),
+		"ScanBarStrength":  float32(th.ScanBarStrength),
+		"ScanBarPeriod":    float32(th.ScanBarPeriod),
+		"Time":             float32(t),
+		"ScanBar":          float32(bar),
+		"Size":             []float32{float32(c.w), float32(c.h)},
+		"BG":               []float32{float32(th.BG.R) / 255, float32(th.BG.G) / 255, float32(th.BG.B) / 255, 1},
+	}
+	dst.DrawRectShader(c.w, c.h, c.shader, op)
+	if th.Glow > 0 {
+		screen.DrawImage(dst, nil)
+		glow := &ebiten.DrawImageOptions{Blend: ebiten.BlendLighter}
+		glow.GeoM.Translate(1, 0)
+		glow.ColorScale.ScaleAlpha(float32(th.Glow))
+		screen.DrawImage(dst, glow)
+	}
 }

@@ -171,7 +171,7 @@ func (g *game) updateMain() {
 	}
 
 	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		cx, cy := ebiten.CursorPosition()
+		cx, cy := g.cursor()
 		x, y := float64(cx), float64(cy)
 		if state.InRect(x, y, gm.ox, gm.paneY0, gm.ox+channelPaneW, gm.chanY1) {
 			// Only rows drawChannels actually draws are clickable.
@@ -235,7 +235,7 @@ func (g *game) updateMain() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyPageDown) {
 		g.ms.scroll -= gm.visible - 1
 	}
-	mx, my := ebiten.CursorPosition()
+	mx, my := g.cursor()
 	fx, fy := float64(mx), float64(my)
 	if _, wy := ebiten.Wheel(); wy != 0 && state.InRect(fx, fy, gm.rightX, gm.paneY0, float64(g.w), gm.paneY1) {
 		var n int
