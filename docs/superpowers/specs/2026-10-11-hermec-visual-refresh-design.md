@@ -89,7 +89,7 @@ The existing `scanlines` key keeps working as the on/off switch for the whole CR
 **Audio health** (while in a call), per sender, in the mixer:
 - counters: frames played, frames concealed (PLC), underrun slots (silence after the stream had started while the sender is active);
 - inter-arrival jitter: smoothed |gap − 20ms|;
-- exposed as `Meters.Health(fp) Health{Concealed float64 /*0..1 over last ~5s*/, Jitter time.Duration}` and `Meters.Worst()`.
+- exposed as `Meters.Health(fp) Health{Concealed float64 /*0..1 over last ~5s*/, Jitter time.Duration}` and `Meters.Senders()`; the UI takes the worst sender.
 
 **Grade.** A pure function `state.Grade(rtt, concealed, jitter) int` returns 0–4 bars:
 4 = rtt < 80ms and concealed < 1%; 3 = rtt < 150ms and < 3%; 2 = rtt < 300ms and < 8%; 1 = worse; 0 = no data / disconnected. Table-tested.
