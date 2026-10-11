@@ -97,6 +97,23 @@ The existing `scanlines` key keeps working as the on/off switch for the whole CR
 
 **Display.** Four signal bars on the call bar while in a call, otherwise at the right end of the status line. Clicking opens a small panel: ping ms, jitter ms, concealed %, then one row per call participant with their concealed % and jitter. It reports what *you* receive: if everyone sees one person breaking up, that person's uplink is the problem. Click again or Esc to close.
 
+## 7a. Custom title bar and app icon (added 2026-10-11, approved by Victor)
+
+**Title bar (Windows).** The native frame is removed (`ebiten.SetWindowDecorated(false)`) and Hermec draws its own 32px bar across the top, Discord-style:
+- The bar is a flat dark panel in every theme, parchment included (it frames the screen like a device bezel). It sits **outside** the CRT pass: no curvature, no scanlines.
+- Fixed colours, independent of the theme: bg `#1E1F22`, text `#DBDEE1`, button hover `#2E3035`, close hover `#DA373C` with a white glyph.
+- Centre: the 16px app icon, then "HERMEC", then " — <server name>" while connected.
+- Right: minimize, maximize/restore and close as 1px line glyphs, each 46×32px.
+- Native behaviour is kept by handing presses to Windows. A left press on the empty bar area (not a button) → `ReleaseCapture` + `SendMessage(WM_NCLBUTTONDOWN, HTCAPTION)`. A press within 6px of a window edge or corner (outside the bar's buttons) → the matching `HTLEFT/HTRIGHT/HTTOP/HTBOTTOM/HTTOPLEFT/…`. Windows then performs the drag, Aero snap and resize. A double-click on the bar toggles maximize. Resize cursors show over the edge bands.
+- The scene renders into an offscreen of size w × (h − 32) and is blitted at y = 32. The CRT pass and all scene geometry see only that area; `g.cursor()` subtracts the bar height before curvature correction. Bar hit targets live in screen space.
+- **Linux/macOS:** native decorations stay and the bar height is 0 (no behaviour change). The existing DWM dark-title-bar call becomes moot on Windows and is removed.
+
+**App icon.** A white envelope with a small, symmetrical pair of angel wings on a dark rounded square, drawn in code by a pure `ui/icon` package (`golang.org/x/image/vector`), so it is crisp at 16, 32, 48 and 256px.
+- `ebiten.SetWindowIcon` gets all four sizes (window, taskbar, Alt-Tab).
+- A small `cmd/hermec-icon` writes `assets/icon-256.png` (committed, for review) and `assets/icon.ico` for later use.
+- A unit test asserts left-right mirror symmetry.
+- The Explorer/.exe resource icon is a follow-up, not in this round.
+
 ## 8. Testing
 
 - TDD for the pure logic: `Barrel`, `Grade`, `Approach`, `Envelope`, hit-registry lookup, preset TOML parsing (including parchment and derived `panel`), the dev-reload change detector (with an injected clock and stat function), RTT EWMA, per-sender health windows.

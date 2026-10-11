@@ -172,6 +172,46 @@
 - [ ] **Step 4:** Full suite + race → PASS. Manual: bars show 4 on localhost; the panel lists the second window's participant.
 - [ ] **Step 5:** Update HANDOFF.md (round A done pending Victor's eyeball checklist; Round B next). Commit `feat(ui): connection-quality signal bars and detail panel`.
 
+### Task 11: Custom title bar (Windows)
+
+> Execution order: Tasks 11 and 12 run after Task 9 and before Task 10, so the footprint check measures the final pipeline.
+
+**Files:**
+- Create: `ui/titlebar.go` (layout + drawing, all platforms), `ui/state/titlebar.go`, `ui/state/titlebar_test.go`
+- Modify: `ui/winbar_windows.go` (replace `darkTitleBar` with `nativeDrag(ht uintptr)` and `hasCustomBar() bool { return true }`), `ui/winbar_other.go` (`nativeDrag` no-op, `hasCustomBar` false), `ui/app.go` (`SetWindowDecorated(!hasCustomBar())` before `RunGame`; Draw renders the scene to an offscreen of `w × (h−barH)` and blits it at `y = barH`; Layout gives the scene `h − barH`), `ui/cursor.go` (subtract `barH` before Barrel), `README.md`
+
+**Interfaces:**
+- Consumes: `state.Hits` (Task 5), `g.cursor()` (Task 3), `theme.Face`.
+- Produces: `const titleBarH = 32`; `(g *game) barH() float64` (0 when `!hasCustomBar()`). Pure `state.TitleZone(x, y, w, h, barH, edge float64, maximized bool) Zone` with `Zone` constants `ZoneNone, ZoneCaption, ZoneMin, ZoneMax, ZoneClose, ZoneLeft, ZoneRight, ZoneTop, ZoneBottom, ZoneTopLeft, ZoneTopRight, ZoneBottomLeft, ZoneBottomRight`. Edge band 6px; buttons 46×32 at the right (close rightmost). No edge zones when maximized. Buttons win over the top edge band. `state.HTFor(Zone) uintptr` maps to Win32 HT codes (HTCAPTION 2, HTLEFT 10, HTRIGHT 11, HTTOP 12, HTTOPLEFT 13, HTTOPRIGHT 14, HTBOTTOM 15, HTBOTTOMLEFT 16, HTBOTTOMRIGHT 17; 0 for buttons/none).
+- Colours (fixed, not themed): bg `#1E1F22`, text `#DBDEE1`, hover `#2E3035`, close hover `#DA373C`. Title: icon (Task 12; until then a 16px placeholder square) + "HERMEC" + " — <server name>" when connected (server name = the label the rail tile already shows for the current server).
+- Behaviour: a left press in a caption/edge zone calls `nativeDrag(HTFor(zone))` (Windows: `ReleaseCapture` then `SendMessageW(hwnd, WM_NCLBUTTONDOWN=0xA1, ht, 0)`; hwnd found as `darkTitleBar` did). A double-click (two presses within 400ms in the caption zone) toggles `ebiten.MaximizeWindow` / `RestoreWindow`. Buttons call `MinimizeWindow`, maximize toggle, and close (`ebiten.Termination` from Update, so the existing shutdown path runs). Cursor shapes: `CursorShapeEWResize`, `NSResize`, `NWSEResize`, `NESWResize` over edges; pointer over buttons.
+
+- [ ] **Step 1: Failing tests:** `TestTitleZoneButtons` (at w=960: close spans x∈[914,960), max [868,914), min [822,868), all y<32); `TestTitleZoneCaption` (x=400,y=10 → Caption); `TestTitleZoneEdges` (each of the 8 edge/corner zones at 960×600 with the 6px band); `TestTitleZoneButtonBeatsTopEdge` (x=930,y=2 → Close); `TestTitleZoneMaximizedNoEdges`; `TestHTFor` (all mappings above); `TestCursorSubtractsBar` (with barH 32 and curvature off, screen (100,132) → scene (100.5,100.5)).
+- [ ] **Step 2:** `go test ./ui/state/ -run 'TitleZone|HTFor' -count=1` → FAIL.
+- [ ] **Step 3:** Implement. Keep every existing scene test green (scene geometry now uses the scene height). The CRT corner mask applies to the scene area only.
+- [ ] **Step 4:** Full suite + race → PASS. Manual (owner): drag by the bar, snap to the screen edges and Win+arrows, resize from all edges and corners, double-click maximize, the three buttons, and clicks inside the scene still accurate with the CRT on.
+- [ ] **Step 5:** If `WM_NCLBUTTONDOWN` resizing or snap doesn't work on the undecorated GLFW window, record exactly what fails in the report (DONE_WITH_CONCERNS) rather than subclassing the window procedure; the controller will rule. Commit `feat(ui): Discord-style custom title bar with native drag, snap and resize`.
+
+### Task 12: App icon
+
+**Files:**
+- Create: `ui/icon/icon.go`, `ui/icon/icon_test.go`, `cmd/hermec-icon/main.go`, `assets/icon-256.png`, `assets/icon.ico`
+- Modify: `ui/app.go` (`ebiten.SetWindowIcon` with 16/32/48/256), `ui/titlebar.go` (use the 16px icon), `go.mod` (`golang.org/x/image` becomes a direct dependency)
+
+**Interfaces:**
+- Produces: `icon.Render(size int) *image.RGBA`. Geometry in units of `s = size`:
+  - background: rounded square, full size, radius 0.22s, colour `#1E1F22`;
+  - envelope: white (`#FFFFFF`) stroke outline, centred, width 0.46s, height 0.32s, centre y 0.53s, stroke `max(1.5px, 0.055s)`, with the flap as two lines from the top corners to (0.5s, envelope top + 0.6·height);
+  - wings: three filled white feather lobes per side, attached at the envelope's side midpoints, fanning up and outward, outermost tip at x = 0.06s / 0.94s, lobes shrinking 100% / 75% / 55%, mirror images of each other;
+  - all geometry built for the left half and mirrored about x = 0.5s, so the shape is symmetric by construction.
+- `cmd/hermec-icon -out assets` writes `icon-256.png` and a multi-size `icon.ico` (16/32/48/256 PNG-in-ICO).
+
+- [ ] **Step 1: Failing tests:** `TestIconSizes` (16/32/48/256 give the right bounds); `TestIconSymmetric` (for 32 and 256, every pixel equals its mirror within ±2 per channel); `TestIconCornersTransparent` (pixel (0,0) alpha 0, rounded corner); `TestIconHasWhiteAndDark` (the centre column contains near-white and `#1E1F22` pixels).
+- [ ] **Step 2:** `go test ./ui/icon/ -count=1` → FAIL.
+- [ ] **Step 3:** Implement `Render`, the cmd, `SetWindowIcon`, and the title-bar icon; run `go run ./cmd/hermec-icon -out assets` and commit the outputs.
+- [ ] **Step 4:** Full suite → PASS. Include `assets/icon-256.png` in the report for the owner to eyeball.
+- [ ] **Step 5:** Commit `feat: envelope-with-wings app icon`.
+
 ### Task 10: Footprint check
 
 **Files:**
