@@ -25,15 +25,6 @@ const (
 	TitleEdge = 6.0
 )
 
-// TitleMetrics is the bar height and resize band in physical pixels at a DPI
-// scale (1.5 for 150%); a non-positive scale counts as 1.
-func TitleMetrics(scale float64) (bar, edge float64) {
-	if scale <= 0 {
-		scale = 1
-	}
-	return TitleBarH * scale, TitleEdge * scale
-}
-
 // TitleZonePhysical is TitleZone for a point and window size in physical
 // pixels (what the Win32 hit test sees) at the given DPI scale.
 func TitleZonePhysical(x, y, w, h, scale float64, maximized bool) Zone {
@@ -103,8 +94,9 @@ func buttonZone(x, y, w, barH float64) Zone {
 	}
 }
 
-// HTFor maps a zone to its Win32 hit-test code for WM_NCLBUTTONDOWN; 0 for
-// the buttons and for no zone.
+// HTFor maps a zone to its Win32 hit-test code (the WM_NCHITTEST result for
+// the caption and the resize edges); 0 for the buttons and for no zone, which
+// the caller answers with HTCLIENT.
 func HTFor(z Zone) uintptr {
 	switch z {
 	case ZoneCaption:

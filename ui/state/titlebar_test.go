@@ -66,16 +66,6 @@ func TestTitleZoneMaximizedNoEdges(t *testing.T) {
 	}
 }
 
-func TestTitleMetricsScale(t *testing.T) {
-	bar, edge := TitleMetrics(1.5)
-	if bar != 48 || edge != 9 {
-		t.Fatalf("150%%: bar %v edge %v, want 48 and 9", bar, edge)
-	}
-	if bar, edge = TitleMetrics(0); bar != 32 || edge != 6 {
-		t.Fatalf("bad scale falls back to 1: %v %v", bar, edge)
-	}
-}
-
 // Physical-pixel hit testing at 150%: bar 48px, edge 9px, buttons 69px wide.
 func TestTitleZonePhysical(t *testing.T) {
 	const w, h, s = 1440.0, 900.0, 1.5

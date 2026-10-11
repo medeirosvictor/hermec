@@ -57,7 +57,12 @@ func ncZone() (state.Zone, bool) {
 var (
 	user32          = windows.NewLazySystemDLL("user32.dll")
 	dwmapi          = windows.NewLazySystemDLL("dwmapi.dll")
-	procFindWindow  = user32.NewProc("FindWindowW")
+	procEnumWindows = user32.NewProc("EnumWindows")
+	procGetWinPID   = user32.NewProc("GetWindowThreadProcessId")
+	procGetClass    = user32.NewProc("GetClassNameW")
+	procGetCurPID   = windows.NewLazySystemDLL("kernel32.dll").NewProc("GetCurrentProcessId")
+	procWindowDpi   = user32.NewProc("GetDpiForWindow")
+	procMetricsDpi  = user32.NewProc("GetSystemMetricsForDpi")
 	procScreenToCl  = user32.NewProc("ScreenToClient")
 	procGetClientRc = user32.NewProc("GetClientRect")
 	procIsZoomed    = user32.NewProc("IsZoomed")
@@ -77,7 +82,9 @@ const (
 
 	htClient = 1
 
-	gwlpWndProc = ^uintptr(3) // GWLP_WNDPROC = -4
+	gwlpWndProc = ^uintptr(3)  // GWLP_WNDPROC = -4
+	gwlStyle    = ^uintptr(15) // GWL_STYLE = -16
+	wsCaption   = 0x00C00000   // WS_BORDER | WS_DLGFRAME
 
 	smCXFrame        = 32
 	smCYFrame        = 33
@@ -96,13 +103,71 @@ const (
 type winRect struct{ left, top, right, bottom int32 }
 type winPoint struct{ x, y int32 }
 
-func hermecHWND() uintptr {
-	title, err := windows.UTF16PtrFromString("Hermec")
-	if err != nil {
-		return 0
+// glfwClass is the window class GLFW registers (_GLFW_WNDCLASSNAME in
+// Ebiten's internal/glfw); its hidden helper window shares it.
+const glfwClass = "GLFW30"
+
+var enumCB = syscall.NewCallback(enumProc)
+
+// enumState is filled by enumProc; installBar runs once, on one goroutine.
+var enumState struct {
+	pid       uint32
+	byClass   uintptr // our process, class GLFW30, has a caption (decorated window)
+	byCaption uintptr // our process, any class, has a caption
+}
+
+func enumProc(hwnd, _ uintptr) uintptr {
+	var pid uint32
+	procGetWinPID.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+	if pid != enumState.pid {
+		return 1 // someone else's window: keep going
 	}
-	h, _, _ := procFindWindow.Call(0, uintptr(unsafe.Pointer(title)))
-	return h
+	// Neither GetWindowTextW (it SENDS WM_GETTEXT to own-process windows, which
+	// would deadlock against the window thread) nor any other sending call is
+	// used here: only the class name and the style word, which do not send.
+	style, _, _ := procGetLongPtr.Call(hwnd, gwlStyle)
+	if style&wsCaption != wsCaption {
+		return 1 // GLFW's hidden helper window has no caption
+	}
+	if enumState.byCaption == 0 {
+		enumState.byCaption = hwnd
+	}
+	var buf [64]uint16
+	n, _, _ := procGetClass.Call(hwnd, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	if windows.UTF16ToString(buf[:n]) == glfwClass && enumState.byClass == 0 {
+		enumState.byClass = hwnd
+	}
+	return 1
+}
+
+// findOwnWindow finds the Hermec window among this process's top-level
+// windows only (another program's window titled "hermec", e.g. an Explorer
+// folder, can never match, since the title is not used at all). It prefers the
+// GLFW class, then falls back to any captioned window of our own process.
+func findOwnWindow() (hwnd uintptr, method string) {
+	pid, _, _ := procGetCurPID.Call()
+	enumState.pid, enumState.byClass, enumState.byCaption = uint32(pid), 0, 0
+	procEnumWindows.Call(enumCB, 0)
+	switch {
+	case enumState.byClass != 0:
+		return enumState.byClass, "EnumWindows pid+class " + glfwClass
+	case enumState.byCaption != 0:
+		return enumState.byCaption, "EnumWindows pid+caption"
+	}
+	return 0, "EnumWindows found none"
+}
+
+// sysMetric is GetSystemMetrics for the window's DPI where the OS has
+// GetSystemMetricsForDpi (Windows 10 1607+), else the system-wide value.
+func sysMetric(idx, hwnd uintptr) int32 {
+	if procMetricsDpi.Find() == nil && procWindowDpi.Find() == nil {
+		if dpi, _, _ := procWindowDpi.Call(hwnd); dpi != 0 {
+			r, _, _ := procMetricsDpi.Call(idx, dpi)
+			return int32(r)
+		}
+	}
+	r, _, _ := procSysMetrics.Call(idx)
+	return int32(r)
 }
 
 // installBar subclasses the Hermec window and applies the frame change. On any
@@ -110,10 +175,10 @@ func hermecHWND() uintptr {
 // the user never gets a frameless window that cannot be moved. info is a short
 // diagnostic for the verbose log.
 func installBar() (ok bool, info string) {
-	hwnd := hermecHWND()
+	hwnd, method := findOwnWindow()
 	if hwnd == 0 {
 		customBar.Store(false)
-		return false, "window not found"
+		return false, method
 	}
 	// SetWindowSubclass only works from the window's own thread; Update runs
 	// elsewhere, so chain the window procedure directly (allowed within the
@@ -121,18 +186,18 @@ func installBar() (ok bool, info string) {
 	prev, _, _ := procGetLongPtr.Call(hwnd, gwlpWndProc)
 	if prev == 0 {
 		customBar.Store(false)
-		return false, "GetWindowLongPtrW failed"
+		return false, method + ": GetWindowLongPtrW failed"
 	}
 	prevProc.Store(prev) // before the swap: the callback may run at once
 	if old, _, _ := procSetLongPtr.Call(hwnd, gwlpWndProc, subclassCB); old == 0 {
 		customBar.Store(false)
-		return false, "SetWindowLongPtrW failed"
+		return false, method + ": SetWindowLongPtrW failed"
 	}
 	margins := [4]int32{0, 0, 1, 0} // keeps the drop shadow; best-effort
 	procDwmExtend.Call(hwnd, uintptr(unsafe.Pointer(&margins)))
-	procSetWindowPo.Call(hwnd, 0, 0, 0, 0, 0,
+	r, _, _ := procSetWindowPo.Call(hwnd, 0, 0, 0, 0, 0,
 		swpFrameChanged|swpNoMove|swpNoSize|swpNoZOrder|swpNoActivate|swpAsync)
-	return true, fmt.Sprintf("hwnd %#x subclassed, frame change posted", hwnd)
+	return true, fmt.Sprintf("hwnd %#x via %s; subclassed; SetWindowPos(FRAMECHANGED, async) = %d", hwnd, method, r)
 }
 
 // subclassProc is the window procedure hook. It runs on the window's thread
@@ -145,13 +210,13 @@ func subclassProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 				// Maximized windows overhang the screen by the frame width;
 				// inset so the content is not clipped off-screen.
 				p := (*winRect)(*(*unsafe.Pointer)(unsafe.Pointer(&lParam))) // lParam is a pointer to NCCALCSIZE_PARAMS; rgrc[0] is first
-				pad, _, _ := procSysMetrics.Call(smCXPaddedBorder)
-				fx, _, _ := procSysMetrics.Call(smCXFrame)
-				fy, _, _ := procSysMetrics.Call(smCYFrame)
-				p.left += int32(fx + pad)
-				p.right -= int32(fx + pad)
-				p.top += int32(fy + pad)
-				p.bottom -= int32(fy + pad)
+				pad := sysMetric(smCXPaddedBorder, hwnd)
+				fx := sysMetric(smCXFrame, hwnd) + pad
+				fy := sysMetric(smCYFrame, hwnd) + pad
+				p.left += fx
+				p.right -= fx
+				p.top += fy
+				p.bottom -= fy
 			}
 			return 0 // client area = whole window
 		}
