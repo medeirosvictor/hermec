@@ -67,20 +67,3 @@ func TestTitleZoneBlocksSceneHits(t *testing.T) {
 		t.Fatal("scene hit lost with no title zone")
 	}
 }
-
-func TestDoubleClick(t *testing.T) {
-	var d dblClick
-	var t0 = int64(1000)
-	if d.press(t0) {
-		t.Fatal("first press is not a double click")
-	}
-	if !d.press(t0 + 300) {
-		t.Fatal("second press within 400ms should double click")
-	}
-	if d.press(t0 + 400) {
-		t.Fatal("a double click must reset the sequence")
-	}
-	if d.press(t0 + 900) {
-		t.Fatal("press after >400ms is a fresh first press")
-	}
-}

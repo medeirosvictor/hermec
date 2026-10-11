@@ -102,10 +102,10 @@ type game struct {
 	autoName      string   // name in effect at startup; not persisted unless edited
 	nameDirty     bool     // settings name field edited, not yet saved
 
-	sw, sh int        // screen size; w, h above are the scene (screen minus title bar)
-	tzone  state.Zone // title-bar zone under the mouse, ZoneNone elsewhere
-	maxed  bool       // window is maximized (no resize edges)
-	dbl    dblClick   // caption double-click detector
+	sw, sh  int        // screen size; w, h above are the scene (screen minus title bar)
+	tzone   state.Zone // title-bar zone under the mouse, ZoneNone elsewhere
+	maxed   bool       // window is maximized (no resize edges)
+	barInst bool       // custom-frame install attempted (first tick)
 
 	dt       float64                    // seconds per tick, for eased values
 	barF     float64                    // call bar slide, 0 hidden .. 1 shown; valid once barInit
@@ -257,7 +257,6 @@ func Run(opts Options) error {
 	ebiten.SetWindowSize(960, 600)
 	ebiten.SetWindowTitle("Hermec")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
-	ebiten.SetWindowDecorated(!hasCustomBar())
 	err = ebiten.RunGame(g)
 	g.flushName()
 	if g.c != nil {
@@ -302,6 +301,14 @@ func (g *game) startDial(url, name string) {
 
 func (g *game) Update() error {
 	g.frame++
+	if !g.barInst { // once the window exists: take over the non-client area
+		g.barInst = true
+		ok, info := installBar()
+		g.logf("custom frame: ok=%v %s", ok, info)
+	}
+	if m := ebiten.Monitor(); m != nil {
+		setBarScale(m.DeviceScaleFactor())
+	}
 	if g.updateTitleBar() {
 		return ebiten.Termination
 	}

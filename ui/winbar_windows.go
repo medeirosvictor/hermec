@@ -3,51 +3,174 @@
 package ui
 
 import (
+	"fmt"
+	"math"
+	"sync/atomic"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/medeirosvictor/hermec/ui/state"
 )
 
-// hasCustomBar reports whether Hermec draws its own title bar.
-func hasCustomBar() bool { return true }
+// The window keeps its native overlapped style (caption, thick frame, min/max
+// boxes), so Aero snap, edge resize, maximize, Win+arrows and double-click
+// maximize stay native. A window subclass takes over only the non-client
+// area: WM_NCCALCSIZE makes the client cover the whole window, and
+// WM_NCHITTEST reports our title bar as the caption and our borders as the
+// resize edges. The callbacks touch only atomics and pure functions.
+
+var (
+	customBar atomic.Bool    // true while the custom frame is in effect
+	scaleBits atomic.Uint64  // DPI scale factor (float64 bits)
+	hitZone   atomic.Int32   // last zone reported by the hit test (state.Zone)
+	hitSeen   atomic.Bool    // the hit test has run at least once
+	prevProc  atomic.Uintptr // the window procedure we chain to
+)
+
+func init() {
+	customBar.Store(true) // optimistic until installBar fails
+	scaleBits.Store(math.Float64bits(1))
+}
+
+// hasCustomBar reports whether Hermec draws its own title bar. It is a
+// runtime flag: installBar clears it when the subclass cannot be installed,
+// leaving the native frame alone.
+func hasCustomBar() bool { return customBar.Load() }
+
+// setBarScale records the DPI scale for the hit test.
+func setBarScale(f float64) {
+	if f > 0 {
+		scaleBits.Store(math.Float64bits(f))
+	}
+}
+
+// ncZone is the zone the window's hit test last saw under the mouse.
+func ncZone() (state.Zone, bool) {
+	if !hitSeen.Load() {
+		return state.ZoneNone, false
+	}
+	return state.Zone(hitZone.Load()), true
+}
 
 var (
 	user32          = windows.NewLazySystemDLL("user32.dll")
+	dwmapi          = windows.NewLazySystemDLL("dwmapi.dll")
 	procFindWindow  = user32.NewProc("FindWindowW")
-	procRelCapture  = user32.NewProc("ReleaseCapture")
-	procPostMessage = user32.NewProc("PostMessageW")
+	procScreenToCl  = user32.NewProc("ScreenToClient")
+	procGetClientRc = user32.NewProc("GetClientRect")
+	procIsZoomed    = user32.NewProc("IsZoomed")
+	procSetWindowPo = user32.NewProc("SetWindowPos")
+	procSysMetrics  = user32.NewProc("GetSystemMetrics")
+	procGetLongPtr  = user32.NewProc("GetWindowLongPtrW")
+	procSetLongPtr  = user32.NewProc("SetWindowLongPtrW")
+	procCallWndProc = user32.NewProc("CallWindowProcW")
+	procDwmExtend   = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
 
-	hwndVal uintptr
+	subclassCB = syscall.NewCallback(subclassProc)
 )
 
-// hermecHWND finds the Hermec window by its title; cached once found.
+const (
+	wmNCCalcSize = 0x0083
+	wmNCHitTest  = 0x0084
+
+	htClient = 1
+
+	gwlpWndProc = ^uintptr(3) // GWLP_WNDPROC = -4
+
+	smCXFrame        = 32
+	smCYFrame        = 33
+	smCXPaddedBorder = 92
+
+	swpNoSize       = 0x0001
+	swpNoMove       = 0x0002
+	swpNoZOrder     = 0x0004
+	swpNoActivate   = 0x0010
+	swpFrameChanged = 0x0020
+	// Async: Update runs off the window's thread, and a synchronous
+	// SetWindowPos sends messages to it that deadlock against the frame sync.
+	swpAsync = 0x4000
+)
+
+type winRect struct{ left, top, right, bottom int32 }
+type winPoint struct{ x, y int32 }
+
 func hermecHWND() uintptr {
-	if hwndVal != 0 {
-		return hwndVal
-	}
 	title, err := windows.UTF16PtrFromString("Hermec")
 	if err != nil {
 		return 0
 	}
-	hwndVal, _, _ = procFindWindow.Call(0, uintptr(unsafe.Pointer(title)))
-	return hwndVal
+	h, _, _ := procFindWindow.Call(0, uintptr(unsafe.Pointer(title)))
+	return h
 }
 
-const wmNCLButtonDown = 0xA1
-
-// nativeDrag hands a left press to Windows as a non-client press with hit-test
-// code ht (HTCAPTION to move, HTLEFT.. to resize), so native drag, Aero snap
-// and edge resize run. Best-effort: every failure is ignored.
-func nativeDrag(ht uintptr) {
-	if ht == 0 {
-		return
-	}
+// installBar subclasses the Hermec window and applies the frame change. On any
+// failure it leaves the native frame alone and clears the custom-bar flag, so
+// the user never gets a frameless window that cannot be moved. info is a short
+// diagnostic for the verbose log.
+func installBar() (ok bool, info string) {
 	hwnd := hermecHWND()
 	if hwnd == 0 {
-		return
+		customBar.Store(false)
+		return false, "window not found"
 	}
-	procRelCapture.Call()
-	// Posted, not sent: Update runs off the window's thread, and a
-	// SendMessageW from it deadlocks the window (observed: "not responding").
-	procPostMessage.Call(hwnd, wmNCLButtonDown, ht, 0)
+	// SetWindowSubclass only works from the window's own thread; Update runs
+	// elsewhere, so chain the window procedure directly (allowed within the
+	// process from any thread). The callback then runs on the window's thread.
+	prev, _, _ := procGetLongPtr.Call(hwnd, gwlpWndProc)
+	if prev == 0 {
+		customBar.Store(false)
+		return false, "GetWindowLongPtrW failed"
+	}
+	prevProc.Store(prev) // before the swap: the callback may run at once
+	if old, _, _ := procSetLongPtr.Call(hwnd, gwlpWndProc, subclassCB); old == 0 {
+		customBar.Store(false)
+		return false, "SetWindowLongPtrW failed"
+	}
+	margins := [4]int32{0, 0, 1, 0} // keeps the drop shadow; best-effort
+	procDwmExtend.Call(hwnd, uintptr(unsafe.Pointer(&margins)))
+	procSetWindowPo.Call(hwnd, 0, 0, 0, 0, 0,
+		swpFrameChanged|swpNoMove|swpNoSize|swpNoZOrder|swpNoActivate|swpAsync)
+	return true, fmt.Sprintf("hwnd %#x subclassed, frame change posted", hwnd)
+}
+
+// subclassProc is the window procedure hook. It runs on the window's thread
+// and must not touch game state, Ebiten, or any lock the game holds.
+func subclassProc(hwnd, msg, wParam, lParam uintptr) uintptr {
+	switch msg {
+	case wmNCCalcSize:
+		if wParam != 0 {
+			if z, _, _ := procIsZoomed.Call(hwnd); z != 0 {
+				// Maximized windows overhang the screen by the frame width;
+				// inset so the content is not clipped off-screen.
+				p := (*winRect)(*(*unsafe.Pointer)(unsafe.Pointer(&lParam))) // lParam is a pointer to NCCALCSIZE_PARAMS; rgrc[0] is first
+				pad, _, _ := procSysMetrics.Call(smCXPaddedBorder)
+				fx, _, _ := procSysMetrics.Call(smCXFrame)
+				fy, _, _ := procSysMetrics.Call(smCYFrame)
+				p.left += int32(fx + pad)
+				p.right -= int32(fx + pad)
+				p.top += int32(fy + pad)
+				p.bottom -= int32(fy + pad)
+			}
+			return 0 // client area = whole window
+		}
+	case wmNCHitTest:
+		pt := winPoint{int32(int16(lParam & 0xFFFF)), int32(int16((lParam >> 16) & 0xFFFF))}
+		procScreenToCl.Call(hwnd, uintptr(unsafe.Pointer(&pt)))
+		var cl winRect
+		procGetClientRc.Call(hwnd, uintptr(unsafe.Pointer(&cl)))
+		zoomed, _, _ := procIsZoomed.Call(hwnd)
+		scale := math.Float64frombits(scaleBits.Load())
+		z := state.TitleZonePhysical(float64(pt.x), float64(pt.y),
+			float64(cl.right-cl.left), float64(cl.bottom-cl.top), scale, zoomed != 0)
+		hitZone.Store(int32(z))
+		hitSeen.Store(true)
+		if ht := state.HTFor(z); ht != 0 {
+			return ht
+		}
+		return htClient // buttons and the scene: Ebiten gets the clicks
+	}
+	r, _, _ := procCallWndProc.Call(prevProc.Load(), hwnd, msg, wParam, lParam)
+	return r
 }

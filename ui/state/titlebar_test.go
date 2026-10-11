@@ -66,6 +66,34 @@ func TestTitleZoneMaximizedNoEdges(t *testing.T) {
 	}
 }
 
+func TestTitleMetricsScale(t *testing.T) {
+	bar, edge := TitleMetrics(1.5)
+	if bar != 48 || edge != 9 {
+		t.Fatalf("150%%: bar %v edge %v, want 48 and 9", bar, edge)
+	}
+	if bar, edge = TitleMetrics(0); bar != 32 || edge != 6 {
+		t.Fatalf("bad scale falls back to 1: %v %v", bar, edge)
+	}
+}
+
+// Physical-pixel hit testing at 150%: bar 48px, edge 9px, buttons 69px wide.
+func TestTitleZonePhysical(t *testing.T) {
+	const w, h, s = 1440.0, 900.0, 1.5
+	cases := []struct {
+		x, y float64
+		want Zone
+	}{
+		{1439, 47, ZoneClose}, {1439, 48, ZoneRight}, {1371, 20, ZoneClose}, {1370, 20, ZoneMax},
+		{700, 47, ZoneCaption}, {700, 48, ZoneNone}, {8, 400, ZoneLeft}, {9, 400, ZoneNone},
+		{700, 8, ZoneTop}, {700, 9, ZoneCaption}, {5, 5, ZoneTopLeft},
+	}
+	for _, c := range cases {
+		if got := TitleZonePhysical(c.x, c.y, w, h, s, false); got != c.want {
+			t.Errorf("(%v,%v): got %v want %v", c.x, c.y, got, c.want)
+		}
+	}
+}
+
 func TestHTFor(t *testing.T) {
 	want := map[Zone]uintptr{
 		ZoneNone: 0, ZoneMin: 0, ZoneMax: 0, ZoneClose: 0, ZoneCaption: 2,

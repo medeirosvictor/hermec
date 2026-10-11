@@ -2,7 +2,6 @@ package ui
 
 import (
 	"image/color"
-	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -13,10 +12,9 @@ import (
 )
 
 const (
-	titleBarH   = 32.0 // height of the custom title bar
-	titleEdge   = 6.0  // resize band width
-	titleIcon   = 16.0 // icon square (placeholder until the app icon lands)
-	doubleClick = 400  // ms between presses that make a caption double-click
+	titleBarH = state.TitleBarH // height of the custom title bar
+	titleEdge = state.TitleEdge // resize band width
+	titleIcon = 16.0            // icon square (placeholder until the app icon lands)
 )
 
 // Fixed title-bar colours (not themed, like Discord's app bar).
@@ -33,23 +31,6 @@ func (g *game) barH() float64 {
 		return 0
 	}
 	return titleBarH
-}
-
-// dblClick detects two presses within doubleClick milliseconds.
-type dblClick struct {
-	last  int64
-	armed bool
-}
-
-// press records a press at time ms and reports whether it completes a double
-// click. A double click resets the sequence.
-func (d *dblClick) press(ms int64) bool {
-	if d.armed && ms-d.last <= doubleClick {
-		d.armed = false
-		return true
-	}
-	d.armed, d.last = true, ms
-	return false
 }
 
 // shapeForZone is the cursor shape over a title-bar zone.
@@ -75,34 +56,32 @@ func rawCursor() (float64, float64) {
 	return float64(x) + 0.5, float64(y) + 0.5
 }
 
-// updateTitleBar tracks the zone under the mouse and acts on a left press:
-// buttons run their action, caption and edges hand the press to Windows for
-// native drag, snap and resize. It reports true when the app should quit.
+// updateTitleBar tracks the zone under the mouse and acts on a left press on a
+// caption button. Caption drag, snap, resize and double-click maximize are
+// native: the window's WM_NCHITTEST (winbar_windows.go) answers HTCAPTION and
+// the edge codes, so those presses never reach Ebiten. It reports true when
+// the app should quit.
 func (g *game) updateTitleBar() (quit bool) {
 	if !hasCustomBar() {
 		return false
 	}
 	g.maxed = ebiten.IsWindowMaximized()
-	x, y := rawCursor()
-	g.tzone = state.TitleZone(x, y, float64(g.sw), float64(g.sh), g.barH(), titleEdge, g.maxed)
-	if g.tzone == state.ZoneNone || !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+	if z, ok := ncZone(); ok {
+		g.tzone = z // set by the hit test, which also sees non-client moves
+	} else {
+		x, y := rawCursor()
+		g.tzone = state.TitleZone(x, y, float64(g.sw), float64(g.sh), g.barH(), titleEdge, g.maxed)
+	}
+	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		return false
 	}
-	switch z := g.tzone; z {
+	switch g.tzone {
 	case state.ZoneClose:
 		return true
 	case state.ZoneMin:
 		ebiten.MinimizeWindow()
 	case state.ZoneMax:
 		g.toggleMaximize()
-	case state.ZoneCaption:
-		if g.dbl.press(time.Now().UnixMilli()) {
-			g.toggleMaximize()
-		} else {
-			nativeDrag(state.HTFor(z))
-		}
-	default:
-		nativeDrag(state.HTFor(z))
 	}
 	return false
 }
