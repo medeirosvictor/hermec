@@ -76,7 +76,7 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Tab** or **Ctrl+Up/Down**: Switch channel
 - **PgUp/PgDn** or **mouse wheel**: Scroll chat
 - **F1**: Toggle CRT effect
-- **F2**: Cycle color palettes
+- **F2**: Cycle color palettes (amber, green, blue, parchment light theme)
 - **Ctrl+M**: Mute or unmute voice
 - **Ctrl+R**: Refresh discovered servers (connect screen)
 - **Click rail tile**: Switch servers

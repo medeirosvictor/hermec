@@ -1,0 +1,6 @@
+# P1 green phosphor.
+bg = "#0A0F0A"
+fg = "#33FF33"
+dim = "#186A18"
+bright = "#99FF99"
+panel = "#0F160F"

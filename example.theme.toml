@@ -1,5 +1,7 @@
 # Theme configuration for Hermec GUI client.
 # All colors are hex format #RRGGBB. Missing keys use defaults; unknown keys are rejected.
+# The built-in presets (amber, green, blue, parchment) live in ui/theme/presets/
+# and make good starting points.
 
 # Background colour
 bg = "#0A0A08"
@@ -8,14 +10,37 @@ bg = "#0A0A08"
 fg = "#FFB000"
 
 # Dim colour (secondary text, disabled state)
-dim = "#7A5500"
+dim = "#694A01"
 
 # Bright colour (highlights, emphasis)
 bright = "#FFCF40"
 
-# Enable scanlines effect
+# Panel surface colour. Optional: when omitted it is bg mixed 6% toward fg.
+panel = "#15120C"
+
+# Enable the CRT effect (scanlines, curvature, vignette, glow, scan bar)
 scanlines = true
 
 # Font size for chat and body text (VT323 reads best larger). Status lines
 # render at 0.75x and the connect title at 1.5x of this.
 font_size = 18.0
+
+# Barrel distortion strength (0 = flat screen)
+curvature = 0.06
+
+# Edge darkening
+vignette = 0.35
+
+# Row darkening of the scanlines
+scanline_strength = 0.12
+
+# Rolling scan bar: on/off, brightness, and seconds per sweep
+scan_bar = true
+scan_bar_strength = 0.04
+scan_bar_period = 8.0
+
+# Additive phosphor glow (0 = off; looks bad on light backgrounds)
+glow = 0.12
+
+# Panel corner radius in pixels
+radius = 6.0

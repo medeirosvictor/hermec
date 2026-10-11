@@ -1,0 +1,6 @@
+# Amber phosphor (the default). Keep in sync with ../default.toml.
+bg = "#0A0A08"
+fg = "#FFB000"
+dim = "#694A01"
+bright = "#FFCF40"
+panel = "#15120C"

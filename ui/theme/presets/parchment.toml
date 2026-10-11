@@ -1,0 +1,9 @@
+# Light theme: warm paper, dark-brown ink, crimson highlights. Additive glow
+# washes out a light background, so it is off and the scanlines are faint.
+bg = "#EDE4D3"
+fg = "#3B2414"
+dim = "#8A7560"
+bright = "#7A1F1F"
+panel = "#E3D7C1"
+scanline_strength = 0.04
+glow = 0.0

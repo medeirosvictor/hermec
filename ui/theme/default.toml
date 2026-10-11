@@ -1,7 +1,17 @@
-# Default amber-phosphor palette.
+# Base values: every theme file starts from these, so any key a file omits
+# keeps the value below. This is also the amber preset (see presets/amber.toml).
 bg = "#0A0A08"
 fg = "#FFB000"
-dim = "#7A5500"
+dim = "#694A01"
 bright = "#FFCF40"
+panel = "#15120C"
 scanlines = true
 font_size = 18.0
+curvature = 0.06
+vignette = 0.35
+scanline_strength = 0.12
+scan_bar = true
+scan_bar_strength = 0.04
+scan_bar_period = 8.0
+glow = 0.12
+radius = 6.0

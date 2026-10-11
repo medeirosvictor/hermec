@@ -38,26 +38,16 @@ func DefaultSettingsPath() (string, error) {
 
 // presetByName finds a built-in palette by name.
 func presetByName(name string) (theme.Theme, bool) {
-	ps := theme.Presets()
-	for i, n := range theme.PresetNames() {
-		if n == name && i < len(ps) {
-			return ps[i], true
+	for _, p := range theme.Presets() {
+		if p.Name == name {
+			return p, true
 		}
 	}
 	return theme.Theme{}, false
 }
 
-// presetName is the name of the preset whose palette matches th, or "" for a
-// custom palette.
-func presetName(th theme.Theme) string {
-	ps := theme.Presets()
-	for i, n := range theme.PresetNames() {
-		if i < len(ps) && ps[i].BG == th.BG && ps[i].FG == th.FG && ps[i].Dim == th.Dim && ps[i].Bright == th.Bright {
-			return n
-		}
-	}
-	return ""
-}
+// presetName is the preset name of th, or "" for a custom theme file.
+func presetName(th theme.Theme) string { return th.Name }
 
 // startupTheme resolves the startup theme and scanline state. An explicit
 // -theme flag wins and ignores the saved palette; otherwise the saved theme

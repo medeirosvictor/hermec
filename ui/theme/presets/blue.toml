@@ -1,0 +1,6 @@
+# P4 blue phosphor.
+bg = "#0A0C10"
+fg = "#9FD3FF"
+dim = "#405D78"
+bright = "#E0F0FF"
+panel = "#10141B"

@@ -12,7 +12,7 @@ func TestDefaultPalette(t *testing.T) {
 	want := map[string][2]color.RGBA{
 		"bg":     {d.BG, {0x0A, 0x0A, 0x08, 0xFF}},
 		"fg":     {d.FG, {0xFF, 0xB0, 0x00, 0xFF}},
-		"dim":    {d.Dim, {0x7A, 0x55, 0x00, 0xFF}},
+		"dim":    {d.Dim, {0x69, 0x4A, 0x01, 0xFF}},
 		"bright": {d.Bright, {0xFF, 0xCF, 0x40, 0xFF}},
 	}
 	for k, v := range want {
@@ -40,7 +40,9 @@ func TestLoadPartialOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Default()
+	want.Name = ""
 	want.FG = color.RGBA{0, 0xFF, 0, 0xFF}
+	want.Panel = mix(want.BG, want.FG, 0.06) // derived from the file's own colours
 	if th != want {
 		t.Errorf("got %+v want %+v", th, want)
 	}
@@ -68,6 +70,7 @@ func TestLoadExampleFile(t *testing.T) {
 	}
 	// Verify that defaults are loaded properly
 	want := Default()
+	want.Name = ""
 	if th != want {
 		t.Errorf("example.theme.toml loaded incorrectly: got %+v, want %+v", th, want)
 	}
@@ -81,10 +84,10 @@ func TestPresets(t *testing.T) {
 		bg, fg, dim, bright color.RGBA
 	}{
 		{"amber", d.BG, d.FG, d.Dim, d.Bright},
-		{"green", rgb(0x0A, 0x0F, 0x0A), rgb(0x33, 0xFF, 0x33), rgb(0x1A, 0x7A, 0x1A), rgb(0x99, 0xFF, 0x99)},
-		{"blue", rgb(0x0A, 0x0C, 0x10), rgb(0x9F, 0xD3, 0xFF), rgb(0x4A, 0x6B, 0x8A), rgb(0xE0, 0xF0, 0xFF)},
+		{"green", rgb(0x0A, 0x0F, 0x0A), rgb(0x33, 0xFF, 0x33), rgb(0x18, 0x6A, 0x18), rgb(0x99, 0xFF, 0x99)},
+		{"blue", rgb(0x0A, 0x0C, 0x10), rgb(0x9F, 0xD3, 0xFF), rgb(0x40, 0x5D, 0x78), rgb(0xE0, 0xF0, 0xFF)},
 	}
-	got := Presets()
+	got := Presets()[:3]
 	if len(got) != len(want) {
 		t.Fatalf("got %d presets, want %d", len(got), len(want))
 	}
@@ -104,12 +107,13 @@ func TestPresets(t *testing.T) {
 
 func TestNextPreset(t *testing.T) {
 	ps := Presets()
-	if NextPreset(ps[0]) != ps[1] || NextPreset(ps[2]) != ps[0] {
+	if NextPreset(ps[0]) != ps[1] || NextPreset(ps[3]) != ps[0] {
 		t.Error("cycle order wrong")
 	}
 	// A custom theme starts the cycle at the first preset, keeping its
 	// scanlines and font size.
 	c := Default()
+	c.Name = ""
 	c.FG = color.RGBA{1, 2, 3, 0xFF}
 	c.FontSize = 20
 	n := NextPreset(c)
