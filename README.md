@@ -62,7 +62,9 @@ stays active. Without the variable nothing is polled.
 
 ```sh
 HERMEC_DEV=1 go run ./cmd/hermec -local
-``` In a multi-machine setup, run the server on one host:
+```
+
+In a multi-machine setup, run the server on one host:
 
 ```sh
 go run ./cmd/hermec-server
