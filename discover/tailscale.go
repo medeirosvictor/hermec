@@ -19,6 +19,7 @@ var (
 	lookPath  = exec.LookPath
 	runStatus = func(ctx context.Context, bin string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, bin, "status", "--json")
+		hideConsole(cmd)
 		cmd.WaitDelay = 500 * time.Millisecond
 		return cmd.Output()
 	}
