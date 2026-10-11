@@ -29,6 +29,10 @@ const (
 	envCY    = 0.53
 	flapFrac = 0.6
 	tipX     = 0.06 // outermost wing tip
+	wingGap  = 0.04 // clearance between wing root and envelope outline
+	// wingAttach is the wing root's height as a fraction of the envelope
+	// height below its top edge.
+	wingAttach = 0.15
 )
 
 // Render draws the icon at size x size pixels.
@@ -75,12 +79,14 @@ func leftShapes(s float64) [][]pt {
 	b := pt{mid, top + flapFrac*envH*s}
 	out = append(out, thickLine(a, b, sw))
 
-	// Wings: three feather lobes fanning from the side midpoint.
-	base := pt{left, envCY * s}
-	l1 := (base.x - tipX*s)
-	angles := []float64{14, 44, 74}
+	// Wings: three feathers sweeping up and outward from near the upper side
+	// corner, stepping down in length so the lower edge is scalloped. The top
+	// feather's leading edge rises ~30 degrees; each tip sits lower and nearer
+	// the envelope than the one above.
+	base := pt{left - wingGap*s, top + wingAttach*envH*s}
+	angles := []float64{32, 8, -16}
 	scales := []float64{1, 0.75, 0.55}
-	l1 /= math.Cos(angles[0] * math.Pi / 180)
+	l1 := (base.x - tipX*s) / math.Cos(angles[0]*math.Pi/180)
 	for i := range angles {
 		out = append(out, feather(base, angles[i], l1*scales[i]))
 	}
@@ -102,7 +108,7 @@ func feather(base pt, deg, length float64) []pt {
 	rad := deg * math.Pi / 180
 	ax, ay := -math.Cos(rad), -math.Sin(rad) // axis (up-left)
 	px, py := -ay, ax                        // perpendicular
-	halfW := 0.19 * length
+	halfW := 0.2 * length
 	var side1, side2 []pt
 	for i := 0; i <= n; i++ {
 		t := float64(i) / n

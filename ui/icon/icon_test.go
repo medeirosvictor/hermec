@@ -1,6 +1,81 @@
 package icon
 
-import "testing"
+import (
+	"image"
+	"image/color"
+	"testing"
+)
+
+func TestIconSymmetricSmall(t *testing.T) {
+	for _, s := range []int{16, 48} {
+		im := Render(s)
+		for y := 0; y < s; y++ {
+			for x := 0; x < s/2; x++ {
+				a, b := im.RGBAAt(x, y), im.RGBAAt(s-1-x, y)
+				if abs(int(a.R)-int(b.R)) > 2 || abs(int(a.A)-int(b.A)) > 2 {
+					t.Fatalf("size %d: (%d,%d)=%v vs mirror %v", s, x, y, a, b)
+				}
+			}
+		}
+	}
+}
+
+func isWhite(c color.RGBA) bool { return c.R > 200 && c.G > 200 && c.B > 200 && c.A > 200 }
+
+// wingRows returns the min and max y of white pixels left of the envelope.
+func wingRows(im *image.RGBA, s int) (minY, maxY int, ok bool) {
+	left := int(0.5*float64(s) - envW*float64(s)/2)
+	minY, maxY = s, -1
+	for y := 0; y < s; y++ {
+		for x := 0; x < left-1; x++ {
+			if isWhite(im.RGBAAt(x, y)) {
+				if y < minY {
+					minY = y
+				}
+				if y > maxY {
+					maxY = y
+				}
+				ok = true
+			}
+		}
+	}
+	return
+}
+
+func TestWingsUpswept(t *testing.T) {
+	s := 256
+	minY, maxY, ok := wingRows(Render(s), s)
+	if !ok {
+		t.Fatal("no wing pixels")
+	}
+	cy := int(envCY * float64(s))
+	top := int(envCY*float64(s) - envH*float64(s)/2)
+	if minY >= top {
+		t.Errorf("topmost wing pixel y=%d, want above envelope top %d", minY, top)
+	}
+	if maxY >= cy {
+		t.Errorf("lowest wing pixel y=%d, want above envelope centre %d", maxY, cy)
+	}
+}
+
+func TestWingsClearOfEnvelopeAndEdge(t *testing.T) {
+	s := 256
+	im := Render(s)
+	left := int(0.5*float64(s) - envW*float64(s)/2)
+	gap := int(0.03 * float64(s))
+	for y := 0; y < s; y++ {
+		for x := left - gap + 1; x < left; x++ {
+			if isWhite(im.RGBAAt(x, y)) {
+				t.Fatalf("wing within 0.03s of envelope at (%d,%d)", x, y)
+			}
+		}
+		for x := 0; x < int(0.06*float64(s))-1; x++ {
+			if isWhite(im.RGBAAt(x, y)) {
+				t.Fatalf("white pixel beyond tip limit at (%d,%d)", x, y)
+			}
+		}
+	}
+}
 
 func TestIconSizes(t *testing.T) {
 	for _, s := range []int{16, 32, 48, 256} {
