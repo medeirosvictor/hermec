@@ -35,6 +35,9 @@ func TestCRTApplyUniforms(t *testing.T) {
 // After warm-up, apply (glow off: the glow pass allocates inside ebiten, 8/frame) with unchanged inputs must not allocate (uniforms are
 // reused, only re-boxed when a value changes).
 func TestCRTApplyNoAlloc(t *testing.T) {
+	if raceBuild {
+		t.Skip("AllocsPerRun is unreliable under -race")
+	}
 	withGraphics(t, func() {
 		var c crt
 		th := theme.Default()
