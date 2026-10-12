@@ -62,26 +62,36 @@ func SaveServers(path string, entries []ServerEntry) error {
 	return err
 }
 
-// Touch upserts url (newest first, capped at MaxServers) and returns a new
-// slice. Empty label/channel keep the existing values on update.
-func Touch(entries []ServerEntry, url, label, channel string) []ServerEntry {
-	e := ServerEntry{URL: url, Label: label, LastChannel: channel, LastSeen: time.Now().UTC()}
-	out := make([]ServerEntry, 0, len(entries)+1)
-	out = append(out, e)
-	for _, old := range entries {
-		if old.URL == url {
-			if e.Label == "" {
-				out[0].Label = old.Label
-			}
-			if e.LastChannel == "" {
-				out[0].LastChannel = old.LastChannel
-			}
+// Touch upserts url and returns a new slice. An existing entry is updated in
+// place so the rail order stays stable; a new one goes first. Empty
+// label/channel keep the existing values on update. Over MaxServers, the last
+// entries whose URL is not live are dropped; live may be nil (nothing live).
+func Touch(entries []ServerEntry, url, label, channel string, live func(url string) bool) []ServerEntry {
+	out := append([]ServerEntry(nil), entries...)
+	found := false
+	for i := range out {
+		if out[i].URL != url {
 			continue
 		}
-		out = append(out, old)
+		found = true
+		if label != "" {
+			out[i].Label = label
+		}
+		if channel != "" {
+			out[i].LastChannel = channel
+		}
+		out[i].LastSeen = time.Now().UTC()
+		break
 	}
-	if len(out) > MaxServers {
-		out = out[:MaxServers]
+	if !found {
+		e := ServerEntry{URL: url, Label: label, LastChannel: channel, LastSeen: time.Now().UTC()}
+		out = append([]ServerEntry{e}, out...)
+	}
+	for i := len(out) - 1; i >= 0 && len(out) > MaxServers; i-- {
+		if live != nil && live(out[i].URL) {
+			continue
+		}
+		out = append(out[:i], out[i+1:]...)
 	}
 	return out
 }

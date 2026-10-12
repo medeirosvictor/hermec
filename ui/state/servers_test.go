@@ -47,23 +47,59 @@ func TestLoadServersCorrupt(t *testing.T) {
 
 func TestTouchUpsertOrder(t *testing.T) {
 	var e []ServerEntry
-	e = Touch(e, "ws://a/", "a", "x")
-	e = Touch(e, "ws://b/", "b", "y")
+	e = Touch(e, "ws://a/", "a", "x", nil)
+	e = Touch(e, "ws://b/", "b", "y", nil)
 	if e[0].URL != "ws://b/" || e[1].URL != "ws://a/" {
 		t.Fatalf("order %+v", e)
 	}
-	e = Touch(e, "ws://a/", "a2", "z")
-	if len(e) != 2 || e[0].URL != "ws://a/" || e[0].LastChannel != "z" || e[0].Label != "a2" {
+	e = Touch(e, "ws://a/", "a2", "z", nil)
+	if len(e) != 2 || e[0].URL != "ws://b/" || e[1].URL != "ws://a/" {
+		t.Fatalf("order must stay stable %+v", e)
+	}
+	if e[1].LastChannel != "z" || e[1].Label != "a2" {
 		t.Fatalf("upsert %+v", e)
 	}
-	if e[0].LastSeen.IsZero() {
+	if e[1].LastSeen.IsZero() {
 		t.Fatal("LastSeen unset")
 	}
 }
 
+func TestTouchNewGoesFirst(t *testing.T) {
+	e := Touch(nil, "ws://a/", "", "", nil)
+	e = Touch(e, "ws://b/", "", "", nil)
+	if e[0].URL != "ws://b/" {
+		t.Fatalf("%+v", e)
+	}
+}
+
+func TestTouchCapKeepsLive(t *testing.T) {
+	var e []ServerEntry
+	for i := 0; i < MaxServers-1; i++ {
+		e = append(e, ServerEntry{URL: "ws://h" + string(rune('a'+i)) + "/"})
+	}
+	e = append(e, ServerEntry{URL: "ws://live/"})
+	live := func(u string) bool { return u == "ws://live/" }
+	e = Touch(e, "ws://new/", "", "", live)
+	if len(e) != MaxServers || e[0].URL != "ws://new/" {
+		t.Fatalf("len %d first %s", len(e), e[0].URL)
+	}
+	hasLive, hasLastDropped := false, true
+	for _, x := range e {
+		if x.URL == "ws://live/" {
+			hasLive = true
+		}
+		if x.URL == "ws://h"+string(rune('a'+MaxServers-2))+"/" {
+			hasLastDropped = false
+		}
+	}
+	if !hasLive || !hasLastDropped {
+		t.Fatalf("live kept=%v last non-live dropped=%v", hasLive, hasLastDropped)
+	}
+}
+
 func TestTouchEmptyKeepsFields(t *testing.T) {
-	e := Touch(nil, "ws://a/", "a", "chan")
-	e = Touch(e, "ws://a/", "", "")
+	e := Touch(nil, "ws://a/", "a", "chan", nil)
+	e = Touch(e, "ws://a/", "", "", nil)
 	if e[0].Label != "a" || e[0].LastChannel != "chan" {
 		t.Fatalf("%+v", e)
 	}
@@ -72,7 +108,7 @@ func TestTouchEmptyKeepsFields(t *testing.T) {
 func TestTouchCap(t *testing.T) {
 	var e []ServerEntry
 	for i := 0; i < 25; i++ {
-		e = Touch(e, "ws://h"+string(rune('a'+i))+"/", "", "")
+		e = Touch(e, "ws://h"+string(rune('a'+i))+"/", "", "", nil)
 	}
 	if len(e) != MaxServers || e[0].URL != "ws://hy/" {
 		t.Fatalf("len %d first %s", len(e), e[0].URL)
@@ -81,7 +117,7 @@ func TestTouchCap(t *testing.T) {
 
 func TestTouchDoesNotAliasInput(t *testing.T) {
 	a := []ServerEntry{{URL: "ws://a/", LastChannel: "1"}}
-	_ = Touch(a, "ws://a/", "", "2")
+	_ = Touch(a, "ws://a/", "", "2", nil)
 	if a[0].LastChannel != "1" {
 		t.Fatal("input mutated")
 	}

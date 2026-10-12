@@ -89,7 +89,7 @@ func (g *game) saveServer(channel string) {
 	if g.curKey == localKey {
 		label = "local"
 	}
-	g.servers = state.Touch(g.servers, g.curKey, label, channel)
+	g.servers = state.Touch(g.servers, g.curKey, label, channel, nil)
 	if err := state.SaveServers(g.serversPath, g.servers); err != nil {
 		g.notice = fmt.Sprintf("save servers: %v", err)
 		g.st.Status = g.notice
