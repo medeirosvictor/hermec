@@ -76,14 +76,32 @@ func (g *game) addMenuHits() {
 	}
 }
 
-// escMenu closes the open menu on Esc and reports whether it took the key, so
-// callers can skip their own Esc handling for that press.
-func (g *game) escMenu() bool {
-	if g.menu.open && inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+// closeMenuOnEsc closes the open menu on an Esc press and marks the press
+// spent, so no other Esc handler acts on it this tick. Update calls it once,
+// before any scene handler runs.
+func (g *game) closeMenuOnEsc(pressed bool) {
+	if pressed && g.menu.open {
 		g.closeMenu()
-		return true
+		g.escSpent = true
 	}
-	return false
+}
+
+// escPressed reports an Esc press no handler has consumed yet this tick.
+func (g *game) escPressed() bool {
+	return !g.escSpent && inpututil.IsKeyJustPressed(ebiten.KeyEscape)
+}
+
+// menuPress handles a left press at (x, y) while the menu is open: an item runs
+// (and closes the menu), anywhere else just closes it. Either way the press is
+// spent: the hit registry is cleared so no later handler acts on it, like a
+// desktop context menu swallowing its dismissing click.
+func (g *game) menuPress(x, y float64) {
+	if h, ok := g.hitFor(x, y); ok && h.Kind == state.HitMenuItem && h.ID >= 0 && h.ID < len(g.menu.items) {
+		g.menu.items[h.ID].act() // closes the menu
+	} else {
+		g.closeMenu()
+	}
+	g.hits.Reset()
 }
 
 // updateMenu handles mouse input while the menu is open and reports whether a
@@ -99,11 +117,7 @@ func (g *game) updateMenu() bool {
 	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		return false
 	}
-	if h, ok := g.hitAt(); ok && h.Kind == state.HitMenuItem && h.ID >= 0 && h.ID < len(g.menu.items) {
-		g.menu.items[h.ID].act() // closes the menu
-	} else {
-		g.closeMenu()
-	}
+	g.menuPress(g.cursor())
 	return true
 }
 

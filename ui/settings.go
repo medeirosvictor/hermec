@@ -182,7 +182,10 @@ func (g *game) flushName() {
 
 func (g *game) closeSettings() {
 	g.flushName()
-	g.settingsOpen = false
+	if g.settingsOpen {
+		g.settingsOpen = false
+		g.cur().st.SetViewed(g.curKey != "") // reads the active channel again
+	}
 }
 
 func (g *game) toggleSettings() {
@@ -191,7 +194,8 @@ func (g *game) toggleSettings() {
 		return
 	}
 	g.settingsOpen = true
-	g.q.open = false // do not leave the quality panel hidden behind settings
+	g.cur().st.SetViewed(false) // Settings covers the chat: nothing is being read
+	g.q.open = false            // do not leave the quality panel hidden behind settings
 	g.setRow = rowName
 	g.refreshDevices()
 }
@@ -257,10 +261,8 @@ func (g *game) addSettingsHits() {
 
 // updateSettings handles input for the settings scene. Every change saves.
 func (g *game) updateSettings() {
-	if g.escMenu() {
-		return
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+	if g.escPressed() {
+		g.escSpent = true
 		g.closeSettings()
 		return
 	}

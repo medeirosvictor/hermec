@@ -59,3 +59,49 @@ func TestMenuHitsWinOverRail(t *testing.T) {
 		t.Fatalf("closed menu: hit = %+v ok=%v, want rail tile", h, ok)
 	}
 }
+
+func TestEscClosesMenuAndKeepsDraft(t *testing.T) {
+	g := menuGame(t, true)
+	s := g.sess["k"]
+	g.view("k")
+	s.st.Input.AppendRunes([]rune("half-typed"))
+	g.openTileMenu("k", 10, 70)
+
+	g.escSpent = false
+	g.closeMenuOnEsc(true) // what Update does first each tick
+	g.mainEsc(s, true)     // then the main scene sees the same press
+
+	if g.menu.open {
+		t.Fatal("menu still open after Esc")
+	}
+	if got := s.st.Input.String(); got != "half-typed" {
+		t.Fatalf("draft = %q, want it untouched", got)
+	}
+	// With no menu open the same press still submits (clears) the draft.
+	g.escSpent = false
+	g.closeMenuOnEsc(true)
+	g.mainEsc(s, true)
+	if got := s.st.Input.String(); got != "" {
+		t.Fatalf("draft = %q, want cleared by a plain Esc", got)
+	}
+}
+
+func TestMenuDismissClickIsSwallowed(t *testing.T) {
+	g := menuGame(t, true)
+	g.openTileMenu("k", 10, 70)
+	g.buildHits()
+	g.hits.Add(state.Hit{X0: 400, Y0: 200, X1: 600, Y1: 230, Kind: state.HitVoice, Key: "voice"})
+	if _, ok := g.hits.At(500, 215); !ok {
+		t.Fatal("setup: voice row not hit")
+	}
+	g.menuPress(500, 215)
+	if g.menu.open {
+		t.Fatal("menu still open after an outside click")
+	}
+	if h, ok := g.hits.At(500, 215); ok {
+		t.Fatalf("hit %+v survives the dismissing press; later handlers would act on it", h)
+	}
+	if g.vc.busy {
+		t.Fatal("a voice join started from the dismissing click")
+	}
+}

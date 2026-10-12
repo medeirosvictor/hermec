@@ -799,3 +799,43 @@ func TestLeaveCallActsOnCallSession(t *testing.T) {
 		t.Fatalf("A Status %q, B Status %q", a.st.Status, b.st.Status)
 	}
 }
+
+func TestBackgroundDialFailureDoesNotTouchConnectScene(t *testing.T) {
+	g := newTestGame(t)
+	_, urlA := startServer(t, "127.0.0.1:0")
+	a := g.openSession(urlA, "me")
+	g.view(a.key)
+	pumpUntil(t, g, connected(a))
+	b := g.openSession("ws://127.0.0.1:1/", "me") // not viewed
+	g.noneSession().st.ConnectErr = "typed-by-user"
+	pumpUntil(t, g, func() bool { return !b.dialing })
+	if _, ok := g.sess[b.key]; ok {
+		t.Fatal("failed first dial left a session")
+	}
+	if g.curKey != a.key {
+		t.Fatalf("curKey = %q, want A still viewed", g.curKey)
+	}
+	if got := g.none.st.ConnectErr; got != "typed-by-user" {
+		t.Fatalf("connect scene error = %q, want it untouched", got)
+	}
+}
+
+func TestSettingsCountsAsNotViewed(t *testing.T) {
+	g := newTestGame(t)
+	s := newSession("k", "k", "me")
+	s.st.Channels = []string{"general"}
+	g.sess["k"] = s
+	g.view("k")
+	if !s.st.Viewed {
+		t.Fatal("setup: not viewed")
+	}
+	g.toggleSettings()
+	if s.st.Viewed {
+		t.Fatal("viewed session still counts as viewed under Settings")
+	}
+	s.st.Unread["general"] = true // arrived while Settings covered the chat
+	g.toggleSettings()
+	if !s.st.Viewed || s.st.Unread["general"] {
+		t.Fatalf("after close: viewed=%v unread=%v, want viewed and read", s.st.Viewed, s.st.Unread)
+	}
+}

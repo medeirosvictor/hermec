@@ -238,15 +238,7 @@ func (g *game) updateMain() {
 	} else if d := inpututil.KeyPressDuration(ebiten.KeyBackspace); d > 30 && d%3 == 0 {
 		s.st.Input.Backspace()
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-		if g.escMenu() {
-			// the menu took this Esc
-		} else if g.q.open { // Esc closes the quality panel first
-			g.q.open = false
-		} else {
-			s.st.Input.Submit()
-		}
-	}
+	g.mainEsc(s, g.escPressed())
 	if enterPressed() {
 		g.sendChat()
 	}
@@ -609,4 +601,18 @@ func (g *game) drawInput(screen *ebiten.Image, gm geometry) {
 		cx := gm.rightX + float64(len([]rune(s)))*gm.adv
 		vector.FillRect(dst, float32(cx), float32(gm.inputY+2), float32(gm.adv), float32(g.th.FontSize), th.Bright, false)
 	}
+}
+
+// mainEsc handles an Esc press in the main scene: it closes the quality panel,
+// else submits (clears) the draft. A press the menu already took is spent.
+func (g *game) mainEsc(s *session, pressed bool) {
+	if !pressed || g.escSpent {
+		return
+	}
+	g.escSpent = true
+	if g.q.open {
+		g.q.open = false
+		return
+	}
+	s.st.Input.Submit()
 }

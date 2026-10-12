@@ -248,8 +248,8 @@ func (g *game) applyDial(r dialResult) {
 			delete(g.sess, s.key)
 			if g.curKey == s.key {
 				g.view("")
-			}
-			g.noneSession().st.ConnectErr = r.err.Error()
+				g.noneSession().st.ConnectErr = r.err.Error()
+			} // else: not on screen, the error would land on another server's form; drop it
 			return
 		}
 		s.st.ConnectErr = r.err.Error() // stays PhaseDisconnected
