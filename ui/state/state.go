@@ -42,7 +42,12 @@ type State struct {
 	Voice map[string][]proto.VoiceMember
 	// InCall is the voice channel this client is in, maintained from its own
 	// actions (SetInCall), never from events.
-	InCall      string
+	InCall string
+	// Unread marks text channels with messages not yet seen. SetConnected
+	// never clears it, so unread survives a reconnect.
+	Unread map[string]bool
+	// Viewed is whether this state's server is the one on screen.
+	Viewed      bool
 	Input       InputBuffer
 	fingerprint string
 }
@@ -53,6 +58,7 @@ func New() *State {
 		Messages: map[string][]Message{},
 		Members:  map[string][]proto.Member{},
 		Voice:    map[string][]proto.VoiceMember{},
+		Unread:   map[string]bool{},
 	}
 }
 
@@ -94,6 +100,10 @@ func (s *State) Apply(ev client.Event, open bool) {
 			ms = append([]Message(nil), ms[len(ms)-MaxMessages:]...)
 		}
 		s.Messages[c.Channel] = ms
+		onScreen := s.Viewed && s.Active >= 0 && s.Active < len(s.Channels) && s.Channels[s.Active] == c.Channel
+		if !onScreen && c.From.Fingerprint != s.fingerprint {
+			s.Unread[c.Channel] = true
+		}
 	case ev.Presence != nil:
 		s.Members[ev.Presence.Channel] = append([]proto.Member(nil), ev.Presence.Members...)
 	case ev.Voice != nil:
@@ -109,6 +119,21 @@ func (s *State) Apply(ev client.Event, open bool) {
 
 // SetInCall records the voice channel this client is in ("" = none).
 func (s *State) SetInCall(ch string) { s.InCall = ch }
+
+// SetViewed records whether this server is on screen. Becoming viewed reads
+// the active channel.
+func (s *State) SetViewed(v bool) {
+	s.Viewed = v
+	if v && s.Active >= 0 && s.Active < len(s.Channels) {
+		s.MarkRead(s.Channels[s.Active])
+	}
+}
+
+// MarkRead clears the unread flag of one channel.
+func (s *State) MarkRead(ch string) { delete(s.Unread, ch) }
+
+// AnyUnread reports whether any channel is unread.
+func (s *State) AnyUnread() bool { return len(s.Unread) > 0 }
 
 func (s *State) NextChannel() {
 	if n := len(s.Channels); n > 0 {
