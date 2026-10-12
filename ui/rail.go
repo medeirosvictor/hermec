@@ -2,8 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
+	"math"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -196,28 +199,71 @@ func (g *game) addRailHits() {
 	g.hits.Add(state.Hit{X0: 0, Y0: h - railTileH, X1: railWidth, Y1: h, Kind: state.HitGear})
 }
 
+// railEpoch is the monotonic origin for the reconnecting pulse.
+var railEpoch = time.Now()
+
+// tileFacts gathers what decides how a saved server's rail tile looks.
+func (g *game) tileFacts(e state.ServerEntry) state.TileFacts {
+	f := state.TileFacts{Viewed: e.URL == g.curKey}
+	s, ok := g.sess[e.URL]
+	if !ok {
+		return f
+	}
+	f.HasSession = true
+	f.Reconnecting = s.everUp && s.c == nil
+	f.InCall = g.callKey != "" && g.callKey == e.URL
+	f.Unread = s.st.AnyUnread()
+	return f
+}
+
+// drawBust draws a "you are here" head-and-shoulders glyph in a size-px box.
+func drawBust(dst *ebiten.Image, x, y, size float32, c color.RGBA) {
+	u := size / 12
+	vector.FillCircle(dst, x+6*u, y+3.5*u, 2.5*u, c, true)
+	var p vector.Path
+	p.MoveTo(x+1.5*u, y+11.5*u)
+	p.QuadTo(x+6*u, y+3.5*u, x+10.5*u, y+11.5*u)
+	vector.StrokePath(dst, &p, &vector.StrokeOptions{Width: 1.5 * u}, &vector.DrawPathOptions{ColorScale: scaleOf(c), AntiAlias: true})
+}
+
 func (g *game) drawRail(screen *ebiten.Image) {
 	if g.railW() == 0 {
 		return
 	}
 	th := g.th
 	vector.FillRect(screen, 0, 0, railWidth, float32(g.h), th.BG, false)
-	tile := func(label string, y float64, cur bool) {
+	tile := func(label string, y float64, ts state.TileState) {
 		fill, txt := th.Panel, th.FG
-		if cur { // the active tile is a panel tinted toward the accent
+		if ts.Accent { // the active tile is a panel tinted toward the accent
 			fill, txt = mixRGBA(th.Panel, th.Bright, 0.22), th.Bright
+		}
+		if ts.Dim {
+			txt = th.Dim
 		}
 		g.drawPanelFade(screen, railInset, y+railInset, railWidth-railInset, y+railTileH-railInset, fill, 4)
 		tw := text.Advance(label, g.face)
 		g.drawText(screen, label, (railWidth-tw)/2, y+(railTileH-g.th.FontSize*1.2)/2, txt)
+		l, r, t, b := float32(railInset+4), float32(railWidth-railInset-4), float32(y+railInset+4), float32(y+railTileH-railInset-4)
+		if ts.Dot {
+			vector.FillCircle(screen, r-1, t+1, 3, th.Bright, true)
+		}
+		if ts.Bust {
+			drawBust(screen, r-12, b-12, 12, th.Bright)
+		}
+		if ts.Pulse {
+			a := 0.5 + 0.5*math.Sin(2*math.Pi*time.Since(railEpoch).Seconds()/1.2)
+			c := th.Bright
+			c = color.RGBA{uint8(float64(c.R) * a), uint8(float64(c.G) * a), uint8(float64(c.B) * a), uint8(255 * a)}
+			vector.FillCircle(screen, l+2, b-2, 2.5, c, true)
+		}
 	}
 	for i := 0; i < g.railTiles(); i++ {
 		e := g.servers[i]
-		tile(state.Initials(e), pad+float64(i)*railTileH, e.URL == g.curKey)
+		tile(state.Initials(e), pad+float64(i)*railTileH, state.Tile(g.tileFacts(e)))
 	}
-	tile("+", float64(g.h)-2*railTileH, false)
+	tile("+", float64(g.h)-2*railTileH, state.TileState{})
 	gy := float64(g.h) - railTileH
-	tile("", gy, g.settingsOpen)
+	tile("", gy, state.TileState{Accent: g.settingsOpen})
 	gc := th.FG
 	if g.settingsOpen {
 		gc = th.Bright

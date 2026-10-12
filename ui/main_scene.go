@@ -410,6 +410,9 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 			count := fmt.Sprintf("%d", len(st.Members[ch]))
 			name := ch
 			marker, col := "  ", th.FG
+			if st.Unread[ch] {
+				col = th.Bright
+			}
 			if row.Index == st.Active {
 				marker, col = "> ", th.Bright
 			}
