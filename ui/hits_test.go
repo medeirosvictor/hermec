@@ -43,6 +43,14 @@ func TestCursorShapeMainScene(t *testing.T) {
 	}
 }
 
+func TestCursorShapeMenuItemIsPointer(t *testing.T) {
+	var h state.Hits
+	h.Add(state.Hit{X0: 0, Y0: 0, X1: 10, Y1: 10, Kind: state.HitMenuItem, ID: 1})
+	if got := shapeAt(&h, 5, 5); got != ebiten.CursorShapePointer {
+		t.Fatalf("menu item shape %v, want pointer", got)
+	}
+}
+
 func TestHitsRegisterSameAsClickHandlers(t *testing.T) {
 	g := mainGame(t)
 	gm := g.geom()

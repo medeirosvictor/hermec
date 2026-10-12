@@ -16,6 +16,7 @@ const (
 	HitSignal                     // connection-quality bars
 	HitText                       // text input area (text cursor); ID is the field
 	HitDiscovered                 // discovered-server row on the connect page; ID is the row
+	HitMenuItem                   // context-menu item; ID is the item index
 )
 
 // Hit is one click target: the half-open rect [X0,X1) x [Y0,Y1).
