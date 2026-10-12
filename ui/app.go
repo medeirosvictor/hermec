@@ -15,6 +15,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
+	"github.com/medeirosvictor/hermec/client"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/server"
@@ -64,6 +65,8 @@ type game struct {
 	joinCh  chan joinResult
 	sendCh  chan sendResult
 	voiceCh chan voiceResult
+
+	closeStale func(*client.Client) // test seam: closes stale dial results; nil = Close
 
 	muteCh     chan muteReq
 	muteFailCh chan muteFail
@@ -309,6 +312,7 @@ func (g *game) Update() error {
 		g.toggleSettings()
 	}
 	g.pumpSessions()
+	g.tickReconnect(time.Now())
 
 	g.pollUpdate()
 	if !g.settingsOpen {

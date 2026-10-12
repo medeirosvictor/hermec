@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -286,11 +287,26 @@ func (g *game) updateMain() {
 	s.ms.visible = gm.visible
 }
 
-// updateDisconnected re-dials the viewed session on Enter.
+// updateDisconnected retries the viewed session now on Enter.
 func (g *game) updateDisconnected() {
-	if s := g.cur(); !s.dialing && enterPressed() && s.url != "" {
-		g.dial(s)
+	if enterPressed() {
+		g.retryNow(g.curKey)
 	}
+}
+
+// lostText is the disconnected-screen headline for s at now.
+func lostText(s *session, now time.Time) string {
+	if s.dialing {
+		return "reconnecting..."
+	}
+	n := 0
+	if !s.retryAt.IsZero() {
+		n = int(math.Ceil(s.retryAt.Sub(now).Seconds()))
+	}
+	if n < 0 {
+		n = 0
+	}
+	return fmt.Sprintf("CONNECTION LOST — reconnecting in %ds, Enter to retry now", n)
 }
 
 func (g *game) connStatus() string {
@@ -312,12 +328,9 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	g.drawStatus(screen, gm)
 
 	if s := g.cur(); s.st.Phase == state.PhaseDisconnected {
-		msg := "CONNECTION LOST — press Enter to reconnect"
+		msg := lostText(s, time.Now())
 		sub := ""
-		switch {
-		case s.dialing:
-			msg = "reconnecting..."
-		case s.st.ConnectErr != "":
+		if !s.dialing && s.st.ConnectErr != "" {
 			sub = "error: " + s.st.ConnectErr
 		}
 		g.drawCentered(screen, msg, float64(g.h)/2-gm.lh, th.Bright)

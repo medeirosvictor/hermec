@@ -28,8 +28,12 @@ func newSession(key, url, name string) *session {
 	return &session{key: key, url: url, name: name, st: state.New(), ms: newMainScene()}
 }
 
+// dialResult is the outcome of a background dial. s identifies the session
+// instance that started it: a result is only adopted if g.sess[key] is still
+// that instance, so a disconnect+reopen of the same key cannot adopt it.
 type dialResult struct {
 	key string
+	s   *session
 	c   *client.Client
 	err error
 }
@@ -87,6 +91,8 @@ func (g *game) openSession(url, name string) *session {
 	}
 	if s.c == nil && !s.dialing {
 		s.name = name
+		g.flushName()
+		g.rememberName(name)
 		g.dial(s)
 	}
 	return s
@@ -104,15 +110,81 @@ func (g *game) noneSession() *session {
 func (g *game) dial(s *session) {
 	s.dialing = true
 	s.st.ConnectErr = ""
-	g.flushName()
-	g.rememberName(s.name)
 	g.logf("dialing %s as %q", s.url, s.name)
-	go func(key, url, name string) {
+	go func(s *session, key, url, name string) { // reads no session field
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		c, err := client.Dial(ctx, url, g.id, name, "")
-		g.dialCh <- dialResult{key, c, err}
-	}(s.key, s.url, s.name)
+		g.dialCh <- dialResult{key: key, s: s, c: c, err: err}
+	}(s, s.key, s.url, s.name)
+}
+
+// closeClient closes a client no session owns (a stale dial result).
+func (g *game) closeClient(c *client.Client) {
+	if g.closeStale != nil {
+		g.closeStale(c)
+		return
+	}
+	_ = c.Close()
+}
+
+// scheduleRetry arms the next background reconnect of s.
+func (s *session) scheduleRetry(now time.Time) {
+	s.retryAt = now.Add(state.NextBackoff(s.attempt))
+	s.attempt++
+}
+
+// tickReconnect dials every disconnected session whose retry time has come.
+func (g *game) tickReconnect(now time.Time) {
+	for _, k := range g.sessionKeys() {
+		s := g.sess[k]
+		if !s.dialing && s.c == nil && !s.retryAt.IsZero() && !now.Before(s.retryAt) {
+			g.dial(s)
+		}
+	}
+}
+
+// retryNow redials the disconnected session at key immediately and resets
+// its backoff.
+func (g *game) retryNow(key string) {
+	s := g.sess[key]
+	if s == nil || s.dialing || s.c != nil || s.url == "" {
+		return
+	}
+	s.attempt = 0
+	g.dial(s)
+}
+
+// disconnect closes and forgets the session at key. If it was viewed, the
+// view falls back to the top-most rail server that still has a session, or
+// the connect scene.
+func (g *game) disconnect(key string) {
+	s := g.sess[key]
+	if s == nil {
+		return
+	}
+	viewed := g.curKey == key
+	if viewed {
+		g.dropVoice() // Task 6 makes this "leave if the call session is key"
+	}
+	if s.c != nil {
+		_ = s.c.Close()
+		s.c = nil
+	}
+	s.st.SetViewed(false)
+	delete(g.sess, key) // a pending dial result no longer matches any session
+	if !viewed {
+		return
+	}
+	next := ""
+	for _, e := range g.servers {
+		if _, ok := g.sess[e.URL]; ok {
+			next = e.URL
+			break
+		}
+	}
+	g.curKey = ""
+	g.view(next)
 }
 
 // view shows the session at key; "" (or a key with no session) shows the
@@ -165,9 +237,9 @@ func (g *game) pumpSessions() {
 
 func (g *game) applyDial(r dialResult) {
 	s := g.sess[r.key]
-	if s == nil || !s.dialing || s.c != nil { // stale: the session is gone or moved on
+	if s == nil || s != r.s || !s.dialing || s.c != nil { // stale: the session is gone, replaced or moved on
 		if r.c != nil {
-			_ = r.c.Close()
+			g.closeClient(r.c)
 		}
 		return
 	}
@@ -183,6 +255,7 @@ func (g *game) applyDial(r dialResult) {
 			return
 		}
 		s.st.ConnectErr = r.err.Error() // stays PhaseDisconnected
+		s.scheduleRetry(time.Now())
 		return
 	}
 	g.logf("connected to %s, channels %v", s.url, r.c.Channels())
@@ -191,6 +264,7 @@ func (g *game) applyDial(r dialResult) {
 	s.ms = newMainScene()
 	s.everUp = true
 	s.attempt = 0
+	s.retryAt = time.Time{}
 	g.onConnected(s)
 }
 
@@ -223,6 +297,7 @@ func (g *game) drainEvents(s *session) {
 					g.dropVoice() // Task 6 makes this "the call session"
 				}
 				s.c = nil
+				s.scheduleRetry(time.Now())
 				return
 			}
 			s.st.Apply(ev, true)
