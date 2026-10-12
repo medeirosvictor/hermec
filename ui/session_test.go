@@ -2,10 +2,13 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/medeirosvictor/hermec/audio"
 	"github.com/medeirosvictor/hermec/client"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/roles"
@@ -24,6 +27,8 @@ func startServer(t *testing.T, addr string) (*server.Server, string) {
 		Channels:      []string{"general", "random"},
 		VoiceChannels: []string{"voice"},
 		Roles:         roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
+
+		AllowLoopbackICE: true, // in-process voice calls (TestJoinElsewhereLeavesOldCall)
 	})
 	if err := srv.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
@@ -472,5 +477,325 @@ func TestBackgroundFailureNoStatusNoise(t *testing.T) {
 	}
 	if a.st.Status != "quiet" || g.none.st.ConnectErr != "" {
 		t.Fatalf("viewed status %q, none.ConnectErr %q: background failure leaked", a.st.Status, g.none.st.ConnectErr)
+	}
+}
+
+// --- Voice across sessions (Task 6) ---
+
+// fakeCloser stands in for an audio device; Close may run on any goroutine.
+type fakeCloser struct{ closed atomic.Bool }
+
+func (f *fakeCloser) Close() error { f.closed.Store(true); return nil }
+
+// waitClosed fails unless every closer is closed within 5s (dropVoice closes
+// devices on a goroutine).
+func waitClosed(t *testing.T, cs ...*fakeCloser) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for _, c := range cs {
+		for !c.closed.Load() {
+			if time.Now().After(deadline) {
+				t.Fatal("device not closed within 5s")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// callOn makes s the call session in ch, with fake devices.
+func callOn(g *game, s *session, ch string) (src, sink *fakeCloser) {
+	src, sink = &fakeCloser{}, &fakeCloser{}
+	g.vc = voiceCall{start: time.Now(), src: src, sink: sink}
+	g.callKey = s.key
+	s.st.SetInCall(ch)
+	return src, sink
+}
+
+// twoSessions connects A and B (each to its own server) and views B.
+func twoSessions(t *testing.T, g *game) (srvA *server.Server, a, b *session) {
+	t.Helper()
+	srvA, urlA := startServer(t, "127.0.0.1:0")
+	_, urlB := startServer(t, "127.0.0.1:0")
+	a = g.openSession(urlA, "me")
+	b = g.openSession(urlB, "me")
+	pumpUntil(t, g, joinedAll(a))
+	pumpUntil(t, g, joinedAll(b))
+	g.view(b.key)
+	return srvA, a, b
+}
+
+// withLayout gives g a theme and font so geometry and hits can be built.
+func withLayout(t *testing.T, g *game) {
+	t.Helper()
+	tg := testGame(t)
+	g.th, g.face, g.w, g.h = tg.th, tg.face, tg.w, tg.h
+}
+
+func TestCallSessionDropFreesDevices(t *testing.T) {
+	for _, viewConnect := range []bool{false, true} {
+		t.Run(map[bool]string{false: "B viewed", true: "connect scene viewed"}[viewConnect], func(t *testing.T) {
+			g := newTestGame(t)
+			srvA, a, b := twoSessions(t, g)
+			src, sink := callOn(g, a, "voice")
+			b.st.Status = "quiet"
+			if viewConnect {
+				g.view("")
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := srvA.Shutdown(ctx); err != nil {
+				t.Fatal(err)
+			}
+			pumpUntil(t, g, sessionLost(a))
+			waitClosed(t, src, sink)
+			if g.callKey != "" || a.st.InCall != "" {
+				t.Fatalf("callKey %q, A InCall %q: call not ended", g.callKey, a.st.InCall)
+			}
+			if b.c == nil || b.st.Phase != state.PhaseMain || b.st.InCall != "" || b.st.Status != "quiet" {
+				t.Fatalf("B touched: c=%v phase=%v InCall=%q Status=%q", b.c != nil, b.st.Phase, b.st.InCall, b.st.Status)
+			}
+		})
+	}
+}
+
+func TestDisconnectCallSessionEndsCall(t *testing.T) {
+	for _, viewed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "not viewed", true: "viewed"}[viewed], func(t *testing.T) {
+			g := newTestGame(t)
+			_, a, b := twoSessions(t, g)
+			src, sink := callOn(g, a, "voice")
+			if viewed {
+				g.view(a.key)
+			}
+			g.disconnect(a.key)
+			waitClosed(t, src, sink)
+			if g.callKey != "" || g.callSess() != nil || g.barVisible() {
+				t.Fatalf("callKey %q: call not ended", g.callKey)
+			}
+			if g.cur() != b {
+				t.Fatalf("view = %q, want B", g.curKey)
+			}
+		})
+	}
+}
+
+func TestDisconnectOtherSessionKeepsCall(t *testing.T) {
+	g := newTestGame(t)
+	_, a, b := twoSessions(t, g)
+	src, sink := callOn(g, a, "voice")
+	g.disconnect(b.key)
+	if g.callKey != a.key || a.st.InCall != "voice" || src.closed.Load() || sink.closed.Load() {
+		t.Fatalf("call on A disturbed: callKey %q InCall %q", g.callKey, a.st.InCall)
+	}
+}
+
+func TestStaleVoiceResultDiscarded(t *testing.T) {
+	g := newTestGame(t)
+	_, a, b := twoSessions(t, g)
+	src, sink := callOn(g, a, "voice")
+	rs, rk := &fakeCloser{}, &fakeCloser{}
+	g.vc.busy = true
+	// Claims to be for A, but carries B's client: not A's connection.
+	g.applyVoice(voiceResult{key: a.key, s: a, c: b.c, channel: "random-voice", src: rs, sink: rk})
+	waitClosed(t, rs, rk)
+	if g.callKey != a.key || a.st.InCall != "voice" || g.vc.src != src || g.vc.sink != sink {
+		t.Fatalf("stale result applied: callKey %q InCall %q", g.callKey, a.st.InCall)
+	}
+	if src.closed.Load() || sink.closed.Load() || b.st.InCall != "" || a.st.Status != "" || b.st.Status != "" {
+		t.Fatal("stale result touched the live call or a status")
+	}
+}
+
+// A join in flight for A when A is disconnected: the late result is for a
+// session that no longer exists, so its devices are closed and nothing
+// changes (spec section 4).
+func TestJoinResultAfterDisconnectDiscarded(t *testing.T) {
+	g := newTestGame(t)
+	_, a, b := twoSessions(t, g)
+	g.vc = voiceCall{busy: true, joining: "voice", opKey: a.key}
+	ca := a.c
+	g.disconnect(a.key)
+	if g.barVisible() {
+		t.Fatal("bar still shows a join for a disconnected session")
+	}
+	rs, rk := &fakeCloser{}, &fakeCloser{}
+	g.applyVoice(voiceResult{key: a.key, s: a, c: ca, channel: "voice", src: rs, sink: rk})
+	waitClosed(t, rs, rk)
+	if g.callKey != "" || g.vc.busy || g.vc.src != nil || b.st.InCall != "" {
+		t.Fatalf("late join adopted: callKey %q", g.callKey)
+	}
+}
+
+// Gap 5: the view moved to B while A's join was in flight; the result still
+// lands on A.
+func TestJoinResultAppliesToStartedSession(t *testing.T) {
+	g := newTestGame(t)
+	_, a, b := twoSessions(t, g)
+	g.view(a.key)
+	g.vc = voiceCall{busy: true, joining: "voice", opKey: a.key}
+	g.view(b.key)
+	rs, rk := &fakeCloser{}, &fakeCloser{}
+	g.applyVoice(voiceResult{key: a.key, s: a, c: a.c, channel: "voice", src: rs, sink: rk, notice: "using defaults"})
+	if g.callKey != a.key || g.callSess() != a || a.st.InCall != "voice" || g.vc.src != rs || g.vc.sink != rk {
+		t.Fatalf("join not applied to A: callKey %q A InCall %q", g.callKey, a.st.InCall)
+	}
+	if b.st.InCall != "" || b.st.Status != "" || a.st.Status != "using defaults" {
+		t.Fatalf("B InCall %q Status %q, A Status %q", b.st.InCall, b.st.Status, a.st.Status)
+	}
+	if rs.closed.Load() || rk.closed.Load() {
+		t.Fatal("adopted devices closed")
+	}
+}
+
+// failAudio is an openAudio seam that opens nothing and fails, so tests
+// never touch real devices.
+func failAudio(string, string) (client.AudioSource, *audio.Meter, client.AudioSink, *audio.Meters, error) {
+	return nil, nil, nil, nil, errors.New("microphone unavailable: test")
+}
+
+// Gap 5 through joinCall itself: the op records the session it started on,
+// so a failure reported after a view switch goes to that session.
+func TestJoinCallFailureGoesToStartedSession(t *testing.T) {
+	g := newTestGame(t)
+	_, a, b := twoSessions(t, g)
+	g.openAudio = failAudio
+	g.view(a.key)
+	g.clickVoice("voice")
+	g.view(b.key)
+	if !g.barVisible() {
+		t.Fatal("bar hidden while A's join is in flight and B is viewed")
+	}
+	pumpVoiceUntil(t, g, func() bool { return !g.vc.busy })
+	if a.st.Status == "" || b.st.Status != "" || g.callKey != "" {
+		t.Fatalf("A Status %q, B Status %q, callKey %q", a.st.Status, b.st.Status, g.callKey)
+	}
+}
+
+// pumpVoiceUntil runs the session pump and the voice update until cond holds.
+func pumpVoiceUntil(t *testing.T, g *game, cond func() bool) {
+	t.Helper()
+	pumpUntil(t, g, func() bool { g.updateVoice(); return cond() })
+}
+
+// nopSource paces silent Opus frames like a real capture source.
+type nopSource struct{}
+
+func (nopSource) ReadOpusFrame() ([]byte, error) {
+	time.Sleep(20 * time.Millisecond)
+	return []byte{0xF8, 0xFF, 0xFE}, nil
+}
+
+type nopSink struct{}
+
+func (nopSink) WriteOpusFrame(string, []byte) {}
+
+// Gap 3: joining voice on B while in a call on A leaves A's call on A's
+// client (not only its devices) before joining on B.
+func TestJoinElsewhereLeavesOldCall(t *testing.T) {
+	g := newTestGame(t)
+	_, a, b := twoSessions(t, g)
+	a.c.SetLoopbackICE(true)
+	done := make(chan error, 1)
+	go func(c *client.Client) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		done <- c.JoinVoice(ctx, "voice", nopSource{}, nopSink{})
+	}(a.c)
+	var joinErr error
+	pumpUntil(t, g, func() bool {
+		select {
+		case joinErr = <-done:
+			return true
+		default:
+			return false
+		}
+	})
+	if joinErr != nil {
+		t.Fatalf("A JoinVoice: %v", joinErr)
+	}
+	pumpUntil(t, g, func() bool { return a.c.VoiceChannel() == "voice" })
+	src, sink := callOn(g, a, "voice")
+
+	// B's devices "fail" so the test opens no real audio; A's leave has
+	// already happened by then.
+	g.openAudio = failAudio
+	g.clickVoice("voice") // B is viewed
+	if a.st.InCall != "" || g.callKey != "" {
+		t.Fatalf("A still marked in call: InCall %q callKey %q", a.st.InCall, g.callKey)
+	}
+	pumpVoiceUntil(t, g, func() bool { return !g.vc.busy })
+	waitClosed(t, src, sink)
+	if v := a.c.VoiceChannel(); v != "" {
+		t.Fatalf("A's client still in voice %q: LeaveVoice not called on A", v)
+	}
+	if b.st.Status == "" {
+		t.Fatal("B's join failure not reported on B")
+	}
+}
+
+// Gaps 1 and 2: with the call on A, the bar shows A's call, and mute, leave
+// and the dead-call poll act on A, whether B or the connect scene is viewed.
+func TestCallControlsFollowCallSession(t *testing.T) {
+	for _, viewConnect := range []bool{false, true} {
+		t.Run(map[bool]string{false: "B viewed", true: "connect scene viewed"}[viewConnect], func(t *testing.T) {
+			g := newTestGame(t)
+			withLayout(t, g)
+			g.muteCh = make(chan muteReq, 1)
+			_, a, b := twoSessions(t, g)
+			g.servers = []state.ServerEntry{{URL: a.key, Label: "primos"}, {URL: b.key, Label: "other"}}
+			callOn(g, a, "voice")
+			if viewConnect {
+				g.view("")
+			}
+			if !g.barVisible() {
+				t.Fatal("bar hidden")
+			}
+			if got := g.callTitle(); got != "voice @ primos" {
+				t.Fatalf("title %q, want %q", got, "voice @ primos")
+			}
+			g.buildHits()
+			l := g.barLayout(g.geom())
+			if h, ok := g.hits.At(l.muteX0+1, l.y+1); !ok || h.Kind != state.HitBarMute {
+				t.Fatalf("mute hit = %+v %v", h, ok)
+			}
+			if h, ok := g.hits.At(l.leaveX0+1, l.y+1); !ok || h.Kind != state.HitBarLeave {
+				t.Fatalf("leave hit = %+v %v", h, ok)
+			}
+
+			g.toggleMute() // Ctrl+M and the bar's mute button
+			select {
+			case r := <-g.muteCh:
+				if r.c != a.c || !r.muted {
+					t.Fatalf("mute went to the wrong client (A=%v) or value %v", r.c == a.c, r.muted)
+				}
+			default:
+				t.Fatal("toggleMute queued nothing")
+			}
+
+			// Dead-call poll: A's client is not really in voice, so the poll
+			// must notice it although A is not viewed.
+			g.updateVoice()
+			if g.callKey != "" || a.st.InCall != "" || g.barVisible() {
+				t.Fatalf("poll did not end A's dead call: callKey %q", g.callKey)
+			}
+			if a.st.Status != "voice call ended" || b.st.Status != "" {
+				t.Fatalf("A Status %q, B Status %q", a.st.Status, b.st.Status)
+			}
+		})
+	}
+}
+
+func TestLeaveCallActsOnCallSession(t *testing.T) {
+	g := newTestGame(t)
+	_, a, b := twoSessions(t, g)
+	src, sink := callOn(g, a, "voice")
+	g.leaveCall() // the bar's leave button, B viewed
+	if g.callKey != "" || a.st.InCall != "" || !g.vc.busy {
+		t.Fatalf("leave not started on A: callKey %q InCall %q busy %v", g.callKey, a.st.InCall, g.vc.busy)
+	}
+	pumpVoiceUntil(t, g, func() bool { return !g.vc.busy })
+	waitClosed(t, src, sink)
+	if a.st.Status != "" || b.st.Status != "" {
+		t.Fatalf("A Status %q, B Status %q", a.st.Status, b.st.Status)
 	}
 }

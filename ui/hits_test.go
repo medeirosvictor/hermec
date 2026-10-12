@@ -96,7 +96,7 @@ func TestSignalHitsAndPanelSwallow(t *testing.T) {
 // status line, so the hit target must be there too.
 func TestSignalHitFollowsDrawnPlaceBarHidden(t *testing.T) {
 	g := mainGame(t)
-	g.cur().st.SetInCall("lounge")
+	setCall(g, "lounge")
 	g.barF, g.barInit = 0, true
 	g.buildHits()
 	gm := g.geom()
@@ -118,7 +118,7 @@ func TestSignalHitFollowsDrawnPlaceBarHidden(t *testing.T) {
 
 func TestQualityDisconnectWhileOpenInCall(t *testing.T) {
 	g := mainGame(t)
-	g.cur().st.SetInCall("lounge")
+	setCall(g, "lounge")
 	g.q.open = true
 	g.stepQuality(1)
 	if g.q.open != true || len(g.q.lines) == 0 {
@@ -159,7 +159,7 @@ func TestHitsBarOnlyInCall(t *testing.T) {
 			t.Fatalf("kind %v registered outside a call", k)
 		}
 	}
-	g.cur().st.SetInCall("lounge")
+	setCall(g, "lounge")
 	g.buildHits()
 	gm := g.geom()
 	l := g.barLayout(gm)

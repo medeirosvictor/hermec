@@ -227,7 +227,6 @@ func (g *game) updateMain() {
 			}
 		}
 	}
-	g.updateBar(gm)
 
 	for _, r := range ebiten.AppendInputChars(nil) {
 		if r >= ' ' && r != 0x7f && len([]rune(s.st.Input.String())) < maxInputRunes {
@@ -337,6 +336,7 @@ func (g *game) drawMain(screen *ebiten.Image) {
 		if sub != "" {
 			g.drawCentered(screen, sub, float64(g.h)/2, th.Dim)
 		}
+		g.drawCallBar(screen, gm) // a call on another server keeps its bar
 		return
 	}
 
@@ -345,13 +345,19 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	g.drawPanelR(screen, gm.chatR)
 	g.drawPanelR(screen, gm.inputR)
 	g.drawChannels(screen, gm)
+	g.drawCallBar(screen, gm)
+	g.drawScrollback(screen, gm)
+	g.drawInput(screen, gm)
+	g.drawQualityPanel(screen, gm)
+}
+
+// drawCallBar draws the call bar panel while it is (sliding) in. The bar is the
+// bottom strip of geom(), so every scene but settings can show it.
+func (g *game) drawCallBar(screen *ebiten.Image, gm geometry) {
 	if g.barFrac() > 0 {
 		g.drawPanelR(screen, gm.barR)
 		g.drawBar(screen, gm)
 	}
-	g.drawScrollback(screen, gm)
-	g.drawInput(screen, gm)
-	g.drawQualityPanel(screen, gm)
 }
 
 // clip returns a sub-image so text cannot bleed outside its pane.

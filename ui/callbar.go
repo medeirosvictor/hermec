@@ -19,8 +19,12 @@ import (
 	"github.com/medeirosvictor/hermec/ui/state"
 )
 
-// voiceResult is the outcome of a background join or leave.
+// voiceResult is the outcome of a background join or leave. key, s and c
+// identify the session (instance and client) the op was started for: the
+// result applies only if g.sess[key] is still s and still has client c.
 type voiceResult struct {
+	key     string
+	s       *session
 	c       *client.Client
 	leave   bool // true: the op was a leave (or a leave-then-failed-join)
 	channel string
@@ -33,10 +37,12 @@ type voiceResult struct {
 }
 
 // voiceCall is the GUI's side of the current call (the protocol side lives in
-// the client). Only touched on the Ebiten update goroutine.
+// the client). Only touched on the Ebiten update goroutine. The call belongs
+// to the session g.callKey; an op in flight belongs to opKey.
 type voiceCall struct {
 	busy    bool   // a join/leave goroutine is in flight
 	joining string // channel being joined while busy
+	opKey   string // session key the in-flight op was started for
 	start   time.Time
 	muted   bool
 	src     io.Closer
@@ -45,8 +51,45 @@ type voiceCall struct {
 	spk     *audio.Meters
 }
 
-// barVisible reports whether the call bar is shown.
-func (g *game) barVisible() bool { return g.cur().st.InCall != "" || g.vc.joining != "" }
+// audioOpener opens the capture and playback devices for a call. g.openAudio
+// is a test seam; nil means openAudio (the real devices).
+type audioOpener func(in, out string) (client.AudioSource, *audio.Meter, client.AudioSink, *audio.Meters, error)
+
+// openAudio opens the real devices; on failure nothing stays open.
+func openAudio(in, out string) (client.AudioSource, *audio.Meter, client.AudioSink, *audio.Meters, error) {
+	src, mic, err := audio.Capture(in)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("microphone unavailable: %w", err)
+	}
+	sink, spk, err := audio.Playback(out)
+	if err != nil {
+		closeAll(asCloser(src))
+		return nil, nil, nil, nil, fmt.Errorf("audio output unavailable: %w", err)
+	}
+	return src, mic, sink, spk, nil
+}
+
+// callSess is the session holding the call, or nil with no call (also while
+// a join is still in flight).
+func (g *game) callSess() *session {
+	if g.callKey == "" {
+		return nil
+	}
+	return g.sess[g.callKey]
+}
+
+// barVisible reports whether the call bar is shown: a call exists or is being
+// joined, whatever server (or the connect scene) is viewed.
+func (g *game) barVisible() bool { return g.callSess() != nil || g.vc.joining != "" }
+
+// callTitle is the bar title of the current call ("" with none).
+func (g *game) callTitle() string {
+	s := g.callSess()
+	if s == nil {
+		return ""
+	}
+	return state.CallTitle(s.st.InCall, serverTitle(g.servers, g.callKey), g.callKey != g.curKey)
+}
 
 func closeAll(cs ...io.Closer) {
 	for _, c := range cs {
@@ -56,7 +99,8 @@ func closeAll(cs ...io.Closer) {
 	}
 }
 
-// clickVoice toggles the call: join ch, or leave if it is the current one.
+// clickVoice toggles the call on the viewed session: join ch, or leave if it
+// is the current call.
 func (g *game) clickVoice(ch string) {
 	if g.cur().c == nil || g.vc.busy {
 		return
@@ -68,36 +112,39 @@ func (g *game) clickVoice(ch string) {
 	g.joinCall(ch)
 }
 
-// joinCall leaves any current call, then opens the devices and joins ch, all
-// in one goroutine; the result arrives on voiceCh.
+// joinCall leaves the current call (on whichever session holds it), then
+// opens the devices and joins ch on the viewed session, all in one goroutine;
+// the result arrives on voiceCh.
 func (g *game) joinCall(ch string) {
 	s := g.cur()
 	c := s.c
+	var oldC *client.Client // the call to leave first, if any
+	if old := g.callSess(); old != nil {
+		oldC = old.c
+		old.st.SetInCall("")
+	}
 	oldSrc, oldSink := g.vc.src, g.vc.sink
 	savedIn, savedOut := g.set.InputDevice, g.set.OutputDevice // read here: g.set belongs to the update goroutine
-	g.vc = voiceCall{busy: true, joining: ch}
+	open := g.openAudio
+	if open == nil {
+		open = openAudio
+	}
+	g.vc = voiceCall{busy: true, joining: ch, opKey: s.key}
+	g.callKey = ""
 	s.st.SetInCall("")
 	s.st.Status = ""
-	g.logf("joining voice %s", ch)
-	go func() {
-		res := voiceResult{c: c, channel: ch}
-		if c.VoiceChannel() != "" || oldSrc != nil || oldSink != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = c.LeaveVoice(ctx)
-			cancel()
-			closeAll(oldSrc, oldSink)
+	g.logf("joining voice %s on %s", ch, s.url)
+	go func(key string, s *session) { // reads no session field
+		res := voiceResult{key: key, s: s, c: c, channel: ch}
+		if oldC != nil && oldC != c {
+			leaveVoice(oldC)
 		}
+		leaveVoice(c) // no-op unless c holds a call
+		closeAll(oldSrc, oldSink)
 		inDev, outDev, notice := resolveDevices(savedIn, savedOut)
-		src, mic, err := audio.Capture(inDev)
+		src, mic, sink, spk, err := open(inDev, outDev)
 		if err != nil {
-			res.err = fmt.Errorf("microphone unavailable: %w", err)
-			g.voiceCh <- res
-			return
-		}
-		sink, spk, err := audio.Playback(outDev)
-		if err != nil {
-			closeAll(asCloser(src))
-			res.err = fmt.Errorf("audio output unavailable: %w", err)
+			res.err = err
 			g.voiceCh <- res
 			return
 		}
@@ -112,7 +159,14 @@ func (g *game) joinCall(ch string) {
 		res.src, res.sink, res.mic, res.spk = asCloser(src), asCloser(sink), mic, spk
 		res.notice = notice
 		g.voiceCh <- res
-	}()
+	}(s.key, s)
+}
+
+// leaveVoice leaves c's call, bounded so a dead connection cannot stall a join.
+func leaveVoice(c *client.Client) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = c.LeaveVoice(ctx)
 }
 
 func asCloser(v any) io.Closer {
@@ -120,31 +174,61 @@ func asCloser(v any) io.Closer {
 	return c
 }
 
-// leaveCall leaves the current call in the background and frees the devices.
+// leaveCall leaves the call in the background, on the session that holds it,
+// and frees the devices.
 func (g *game) leaveCall() {
-	c := g.cur().c
+	s := g.callSess()
+	if s == nil {
+		return
+	}
+	if s.c == nil { // no connection to tell
+		g.dropVoice()
+		return
+	}
+	c := s.c
 	src, sink := g.vc.src, g.vc.sink
-	g.vc = voiceCall{busy: true}
-	g.cur().st.SetInCall("")
-	g.logf("leaving voice")
-	go func() {
+	g.vc = voiceCall{busy: true, opKey: s.key}
+	g.callKey = ""
+	s.st.SetInCall("")
+	g.logf("leaving voice on %s", s.url)
+	go func(key string, s *session) { // reads no session field
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		err := c.LeaveVoice(ctx)
 		closeAll(src, sink)
-		g.voiceCh <- voiceResult{c: c, leave: true, err: err}
-	}()
+		g.voiceCh <- voiceResult{key: key, s: s, c: c, leave: true, err: err}
+	}(s.key, s)
 }
 
-// dropVoice releases the call's devices without talking to the server (the
-// connection is gone or the call already died). Safe with no call.
+// dropVoice ends the call without talking to the server (the connection is
+// gone or the call already died): it frees the devices, clears the call
+// session's InCall and callKey. An op in flight is left to report on voiceCh.
+// Safe with no call.
 func (g *game) dropVoice() {
 	src, sink := g.vc.src, g.vc.sink
-	busy := g.vc.busy
-	g.vc = voiceCall{busy: busy} // an in-flight op still reports on voiceCh
-	g.cur().st.SetInCall("")
+	if s := g.callSess(); s != nil {
+		s.st.SetInCall("")
+	}
+	g.callKey = ""
+	g.vc = voiceCall{busy: g.vc.busy, joining: g.vc.joining, opKey: g.vc.opKey}
 	if src != nil || sink != nil {
 		go closeAll(src, sink)
+	}
+}
+
+// endVoiceFor ends whatever voice the session at key has: its call (devices
+// freed) and the bar's "joining" for an op in flight on it, whose result will
+// arrive stale (its client is gone) and be discarded. Other sessions' voice is
+// untouched.
+func (g *game) endVoiceFor(key string) {
+	if key == "" {
+		return
+	}
+	if g.callKey == key {
+		g.dropVoice()
+	}
+	if g.vc.busy && g.vc.opKey == key {
+		g.vc.joining = ""
 	}
 }
 
@@ -153,39 +237,50 @@ func (g *game) updateVoice() {
 	g.applyMuteFail()
 	select {
 	case r := <-g.voiceCh:
-		g.vc.busy = false
-		g.vc.joining = ""
-		switch {
-		case r.c != g.cur().c: // connection changed underneath: discard
-			closeAll(r.src, r.sink)
-		case r.leave:
-			if r.err != nil {
-				g.cur().st.Status = fmt.Sprintf("voice leave failed: %v", r.err)
-			}
-		case r.err != nil:
-			g.logf("voice join failed: %v", r.err)
-			g.cur().st.Status = state.VoiceJoinNotice(r.err)
-		default:
-			g.logf("joined voice %s", r.channel)
-			g.vc = voiceCall{start: time.Now(), src: r.src, sink: r.sink, mic: r.mic, spk: r.spk}
-			g.cur().st.SetInCall(r.channel)
-			if r.notice != "" {
-				g.cur().st.Status = r.notice
-			}
-		}
+		g.applyVoice(r)
 	default:
 	}
 	// Poll: the client reports a dead call as VoiceChannel() == "".
-	if s := g.cur(); s.c != nil && !g.vc.busy && s.st.InCall != "" && s.c.VoiceChannel() == "" {
-		g.logf("voice call ended")
+	if s := g.callSess(); s != nil && s.c != nil && !g.vc.busy && s.st.InCall != "" && s.c.VoiceChannel() == "" {
+		g.logf("voice call on %s ended", s.url)
 		g.dropVoice()
-		g.cur().st.Status = "voice call ended"
+		s.st.Status = "voice call ended"
 	}
 }
 
-// toggleMute flips own mute (Ctrl+M or the bar's mute button).
+// applyVoice applies a finished join or leave to the session it was started
+// for, whatever is viewed now.
+func (g *game) applyVoice(r voiceResult) {
+	g.vc.busy = false
+	g.vc.joining = ""
+	g.vc.opKey = ""
+	s := g.sess[r.key]
+	switch {
+	case s == nil || s != r.s || s.c != r.c: // session gone, replaced or reconnected underneath: discard
+		closeAll(r.src, r.sink)
+	case r.leave:
+		if r.err != nil {
+			s.st.Status = fmt.Sprintf("voice leave failed: %v", r.err)
+		}
+	case r.err != nil:
+		g.logf("voice join failed on %s: %v", s.url, r.err)
+		s.st.Status = state.VoiceJoinNotice(r.err)
+	default:
+		g.logf("joined voice %s on %s", r.channel, s.url)
+		g.vc = voiceCall{start: time.Now(), src: r.src, sink: r.sink, mic: r.mic, spk: r.spk}
+		g.callKey = s.key
+		s.st.SetInCall(r.channel)
+		if r.notice != "" {
+			s.st.Status = r.notice
+		}
+	}
+}
+
+// toggleMute flips own mute (Ctrl+M or the bar's mute button) on the call,
+// wherever it is.
 func (g *game) toggleMute() {
-	if g.cur().c == nil || g.vc.busy || g.cur().st.InCall == "" {
+	s := g.callSess()
+	if s == nil || s.c == nil || g.vc.busy || s.st.InCall == "" {
 		return
 	}
 	g.vc.muted = !g.vc.muted
@@ -195,7 +290,7 @@ func (g *game) toggleMute() {
 	case <-g.muteCh:
 	default:
 	}
-	g.muteCh <- muteReq{c: g.cur().c, muted: g.vc.muted}
+	g.muteCh <- muteReq{c: s.c, muted: g.vc.muted}
 }
 
 // muteReq is the desired mute state for one client.
@@ -229,7 +324,11 @@ func (g *game) applyMuteFail() {
 		if g.vc.muted == f.muted {
 			g.vc.muted = !f.muted
 		}
-		g.cur().st.Status = fmt.Sprintf("mute failed: %v", f.err)
+		s := g.callSess()
+		if s == nil {
+			s = g.cur()
+		}
+		s.st.Status = fmt.Sprintf("mute failed: %v", f.err)
 	default:
 	}
 }
@@ -270,8 +369,16 @@ func (g *game) barLayout(gm geometry) barLayout {
 	return l
 }
 
+// inCall reports whether a settled call exists (bar controls are live).
+func (g *game) inCall() bool {
+	s := g.callSess()
+	return s != nil && !g.vc.busy && s.st.InCall != ""
+}
+
+// updateBar handles Ctrl+M and the bar's buttons; they act on the call
+// session from any scene but settings.
 func (g *game) updateBar(gm geometry) {
-	if g.vc.busy || g.cur().st.InCall == "" {
+	if !g.inCall() {
 		return
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyM) &&
@@ -296,7 +403,7 @@ func (g *game) updateBar(gm geometry) {
 // addBarHits registers the call-bar buttons; they are live exactly when
 // updateBar would act on them.
 func (g *game) addBarHits(gm geometry) {
-	if g.vc.busy || g.cur().st.InCall == "" {
+	if !g.inCall() {
 		return
 	}
 	l := g.barLayout(gm)
@@ -315,13 +422,14 @@ func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
 	dst := clip(screen, gm.barR.x0, gm.barR.y0, gm.barR.x1, gm.barR.y1)
 
 	drawSpeaker(dst, float32(gm.barR.x0+pad), float32(l.y), float32(l.h), th.Bright)
-	if g.cur().st.InCall == "" { // still joining, or sliding out after a leave
+	if cs := g.callSess(); cs == nil || cs.st.InCall == "" { // still joining, or sliding out after a leave
 		if g.vc.joining != "" {
-			g.drawText(dst, "joining "+g.vc.joining+"...", l.nameX, l.y, th.Dim)
+			what := state.CallTitle(g.vc.joining, serverTitle(g.servers, g.vc.opKey), g.vc.opKey != g.curKey)
+			g.drawText(dst, "joining "+what+"...", l.nameX, l.y, th.Dim)
 		}
 		return
 	}
-	title := fmt.Sprintf("%s  %s", g.cur().st.InCall, state.FormatElapsed(time.Since(g.vc.start)))
+	title := fmt.Sprintf("%s  %s", g.callTitle(), state.FormatElapsed(time.Since(g.vc.start)))
 	g.drawText(dst, title, l.nameX, l.y, th.Bright)
 
 	col, label := th.FG, muteLabel

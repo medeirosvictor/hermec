@@ -33,7 +33,10 @@ func signalW(h float64) float64 { return h * 1.1 }
 
 // signalOnBar reports whether the bars live on the call bar (else the status
 // line). Draw, hits and the panel anchor all use this one condition.
-func (g *game) signalOnBar() bool { return g.cur().st.InCall != "" && g.barFrac() > 0 }
+func (g *game) signalOnBar() bool {
+	s := g.callSess()
+	return s != nil && s.st.InCall != "" && g.barFrac() > 0
+}
 
 // signalRect is where the bars sit: at the right end of the call bar while in
 // a call, otherwise at the right end of the status line.
@@ -67,9 +70,9 @@ func (g *game) stepQuality(dt float64) {
 	q := &g.q
 	rtt, rttOK := g.rttOf()
 	q.parts = q.parts[:0]
-	if g.vc.spk != nil && g.cur().st.InCall != "" {
+	if cs := g.callSess(); g.vc.spk != nil && cs != nil && cs.st.InCall != "" {
 		if fps := g.vc.spk.Senders(); len(fps) > 0 { // allocates: once per frame
-			rows := g.cur().st.Rows()
+			rows := cs.st.Rows() // names from the call's server, whatever is viewed
 			for _, fp := range fps {
 				h := g.vc.spk.Health(fp)
 				q.parts = append(q.parts, state.Participant{
@@ -114,9 +117,13 @@ func (g *game) stepQuality(dt float64) {
 	}
 }
 
-// rttOf reads the client's smoothed RTT; not ok with no connection.
+// rttOf reads the smoothed RTT of the call session's client while a call
+// exists, else of the viewed session's; not ok with no connection.
 func (g *game) rttOf() (time.Duration, bool) {
 	c := g.cur().c
+	if s := g.callSess(); s != nil {
+		c = s.c
+	}
 	if c == nil {
 		return 0, false
 	}

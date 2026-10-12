@@ -62,8 +62,11 @@ func (g *game) buildHits() {
 	case g.cur().st.Phase == state.PhaseConnect:
 		g.connect.dy = g.bannerH()
 		g.addConnectHits()
+		g.addBarHits(g.geom()) // the call bar of a call on any server
 	case g.cur().st.Phase == state.PhaseMain:
 		g.addMainHits(g.geom())
+	default: // disconnected view
+		g.addBarHits(g.geom())
 	}
 	g.addBannerHit()
 }

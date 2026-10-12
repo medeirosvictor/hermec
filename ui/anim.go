@@ -86,6 +86,12 @@ func (g *game) stepHighlights(dt float64) {
 			hoverKey = voiceRowKey(h.Key)
 		}
 	}
+	// Speaking levels come from our call, so they only light rows of the call's
+	// channel, and only on the call's server.
+	callCh := ""
+	if cs := g.callSess(); cs != nil && cs == g.cur() {
+		callCh = cs.st.InCall
+	}
 	for _, r := range rows {
 		switch r.Kind {
 		case state.RowOccupant:
@@ -95,7 +101,7 @@ func (g *game) stepHighlights(dt float64) {
 				g.speakEnv[r.FP] = e
 			}
 			lvl := 0.0
-			if !r.Muted {
+			if !r.Muted && callCh != "" && r.Channel == callCh {
 				lvl = g.speakLevel(r.FP)
 			}
 			e.Step(lvl, dt)

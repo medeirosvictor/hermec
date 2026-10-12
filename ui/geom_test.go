@@ -21,6 +21,28 @@ func testGame(t *testing.T) *game {
 	return &game{th: th, face: face, w: 960, h: 600}
 }
 
+// setCall puts the viewed session in a call on ch ("" ends it), making it the
+// call session; on the connect scene it first adds and views a session.
+func setCall(g *game, ch string) {
+	if ch == "" {
+		if s := g.callSess(); s != nil {
+			s.st.SetInCall("")
+		}
+		g.callKey = ""
+		return
+	}
+	if g.curKey == "" {
+		s := newSession("call", "ws://call/", "me")
+		if g.sess == nil {
+			g.sess = map[string]*session{}
+		}
+		g.sess[s.key] = s
+		g.view(s.key)
+	}
+	g.cur().st.SetInCall(ch)
+	g.callKey = g.curKey
+}
+
 // The chat input sits directly under the chat pane in the right column, the
 // channel pane runs beside it, and the call bar (when shown) is the bottom
 // strip. All of it comes from geom(), which draw and hit-testing share.
@@ -34,7 +56,7 @@ func TestGeomInputUnderChatPane(t *testing.T) {
 		t.Fatalf("channel pane should end level with the input panel: %v vs %v", gm.chanR.y1, gm.inputR.y1)
 	}
 	noBar := gm
-	g.cur().st.SetInCall("voice")
+	setCall(g, "voice")
 	gm = g.geom()
 	if gm.barR.y1 != float64(g.h)-margin || gm.chanR.y1 != gm.barR.y0-pad {
 		t.Fatalf("bar not the bottom strip: %+v", gm)
@@ -56,7 +78,7 @@ func TestGeomMargins(t *testing.T) {
 	g := testGame(t)
 	for _, call := range []bool{false, true} {
 		if call {
-			g.cur().st.SetInCall("voice")
+			setCall(g, "voice")
 		}
 		gm := g.geom()
 		for name, r := range panelRects(gm, call) {
@@ -71,7 +93,7 @@ func TestGeomPanelsDontOverlap(t *testing.T) {
 	g := testGame(t)
 	for _, call := range []bool{false, true} {
 		if call {
-			g.cur().st.SetInCall("voice")
+			setCall(g, "voice")
 		}
 		rs := panelRects(g.geom(), call)
 		for a, ra := range rs {

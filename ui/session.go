@@ -155,18 +155,16 @@ func (g *game) retryNow(key string) {
 	g.dial(s)
 }
 
-// disconnect closes and forgets the session at key. If it was viewed, the
-// view falls back to the top-most rail server that still has a session, or
-// the connect scene.
+// disconnect closes and forgets the session at key, ending its call whether
+// or not it is viewed. If it was viewed, the view falls back to the top-most
+// rail server that still has a session, or the connect scene.
 func (g *game) disconnect(key string) {
 	s := g.sess[key]
 	if s == nil {
 		return
 	}
 	viewed := g.curKey == key
-	if viewed {
-		g.dropVoice() // Task 6 makes this "leave if the call session is key"
-	}
+	g.endVoiceFor(key) // closing the client ends its call server-side
 	if s.c != nil {
 		_ = s.c.Close()
 		s.c = nil
@@ -293,9 +291,7 @@ func (g *game) drainEvents(s *session) {
 			if !ok {
 				g.logf("connection to %s lost", s.url)
 				s.st.Apply(ev, false)
-				if g.cur() == s {
-					g.dropVoice() // Task 6 makes this "the call session"
-				}
+				g.endVoiceFor(s.key) // only s's call; other sessions' voice is untouched
 				s.c = nil
 				s.scheduleRetry(time.Now())
 				return

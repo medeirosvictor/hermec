@@ -3,7 +3,9 @@ package ui
 import (
 	"math"
 	"testing"
+	"time"
 
+	"github.com/medeirosvictor/hermec/audio"
 	"github.com/medeirosvictor/hermec/core/proto"
 )
 
@@ -39,7 +41,7 @@ func TestGlowAlphaFaintAndMonotonic(t *testing.T) {
 func TestBarSlideGeometry(t *testing.T) {
 	g := testGame(t)
 	settledOff := g.geom()
-	g.cur().st.SetInCall("voice")
+	setCall(g, "voice")
 	settledOn := g.geom()
 
 	g.barInit, g.barF = true, 0 // sliding in from hidden
@@ -61,12 +63,46 @@ func TestBarSlideGeometry(t *testing.T) {
 	if got := g.geom(); got != settledOn {
 		t.Fatalf("settled-in geometry differs:\n%+v\n%+v", got, settledOn)
 	}
-	g.cur().st.SetInCall("")
+	setCall(g, "")
 	for i := 0; i < 600; i++ {
 		g.stepBar(1.0 / 60)
 	}
 	if got := g.geom(); got != settledOff {
 		t.Fatalf("settled-out geometry differs:\n%+v\n%+v", got, settledOff)
+	}
+}
+
+// The speaking glow comes from our call's levels, so it lights only rows of
+// the call's channel on the call's server, not the same fingerprint (our own
+// identity) in a voice channel of another server.
+func TestSpeakGlowOnlyOnCallSession(t *testing.T) {
+	g := testGame(t)
+	g.fp = "me"
+	g.sess = map[string]*session{}
+	for _, k := range []string{"A", "B"} {
+		s := newSession(k, "ws://"+k+"/", "me")
+		s.st.SetConnected([]proto.ChannelInfo{{Name: "general"}, {Name: "voice", Type: "voice"}, {Name: "other", Type: "voice"}}, "me")
+		g.sess[k] = s
+	}
+	a, b := g.sess["A"], g.sess["B"]
+	a.st.Voice = map[string][]proto.VoiceMember{"voice": {{Name: "me", Fingerprint: "me"}}, "other": {{Name: "x", Fingerprint: "fpX"}}}
+	b.st.Voice = map[string][]proto.VoiceMember{"voice": {{Name: "me", Fingerprint: "me"}}}
+	g.view("B")
+	g.callKey, a.st.InCall = "A", "voice"
+	g.vc.mic = &audio.Meter{}
+	g.vc.mic.Observe(0.5, time.Now())
+
+	g.stepHighlights(1.0 / 60)
+	if v := g.speakEnv["me"].Value(); v != 0 {
+		t.Fatalf("own row glows on B (not the call's server): %v", v)
+	}
+	g.view("A")
+	g.stepHighlights(1.0 / 60)
+	if v := g.speakEnv["me"].Value(); v <= 0 {
+		t.Fatalf("own row in the call channel does not glow: %v", v)
+	}
+	if v := g.speakEnv["fpX"].Value(); v != 0 {
+		t.Fatalf("row outside the call channel glows: %v", v)
 	}
 }
 

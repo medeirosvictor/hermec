@@ -71,6 +71,8 @@ type game struct {
 	muteCh     chan muteReq
 	muteFailCh chan muteFail
 	vc         voiceCall
+	callKey    string      // session holding the call; "" = no call (or a join in flight)
+	openAudio  audioOpener // test seam: opens call devices; nil = the real devices
 
 	probeCh    chan []state.DiscoveredIn
 	probing    bool // a discovery probe is in flight
@@ -262,7 +264,8 @@ func Run(opts Options) error {
 	err = ebiten.RunGame(g)
 	g.flushName()
 	if g.vc.src != nil || g.vc.sink != nil {
-		if c := g.cur().c; c != nil { // Task 6: the call session's client
+		if s := g.callSess(); s != nil && s.c != nil {
+			c := s.c
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			_ = c.LeaveVoice(ctx)
 			cancel()
@@ -347,6 +350,7 @@ func (g *game) Update() error {
 	case state.PhaseDisconnected:
 		g.updateDisconnected()
 	}
+	g.updateBar(g.geom()) // the call may be on another server: any scene but settings
 	return nil
 }
 
@@ -386,6 +390,7 @@ func (g *game) drawScene(screen *ebiten.Image) {
 		g.drawSettings(screen)
 	} else if g.cur().st.Phase == state.PhaseConnect {
 		g.drawConnect(screen)
+		g.drawCallBar(screen, g.geom()) // a call on a server keeps its bar while "+" is open
 		g.drawBanner(screen)
 	} else {
 		g.drawMain(screen)
