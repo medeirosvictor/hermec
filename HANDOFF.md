@@ -1,7 +1,7 @@
 # Hermec — Session Handoff
 
 > Living brief for picking up work in a fresh Claude session. Update at every milestone.
-> Last updated: 2026-10-11 (Round B started: decomposed into B.1/B.2/B.3; **B.1 spec written, awaiting Victor's review** at `docs/superpowers/specs/2026-10-11-hermec-concurrent-sessions-design.md`; next step after approval = writing-plans, then subagent-driven execution. Round A merged at a162ac1; audio round still awaiting Victor's listening test).
+> Last updated: 2026-10-11 (Round B started: decomposed into B.1/B.2/B.3; B.1 spec approved (`docs/superpowers/specs/2026-10-11-hermec-concurrent-sessions-design.md`); **B.1 plan written, awaiting Victor's review** at `docs/superpowers/plans/2026-10-11-hermec-concurrent-sessions.md` (8 tasks); after approval = subagent-driven execution in a worktree. Round A merged at a162ac1; audio round still awaiting Victor's listening test).
 >
 > **Round B decomposition (agreed 2026-10-11):** B.1 sessions = items (a)+(b) below; B.2 server identity/management = (d), (e), then (c) roster; B.3 = (f) icon editor. B.1 decisions: every server opened this session stays connected (no startup auto-dial), right-click tile → Disconnect, unread = rail dot + bright channels, one `session` struct per server. README gained a plain-language "how people reach each other" section (4ec31a6).
 
