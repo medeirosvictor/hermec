@@ -2,22 +2,22 @@ package ui
 
 import (
 	"testing"
-
-	"github.com/medeirosvictor/hermec/ui/state"
 )
 
 // A saved local entry in a non-local run must report an error without
-// leaving the game stuck in the dialing state.
+// leaving a session behind or the game stuck in a dialing state.
 func TestStartDialLocalNotRunningDoesNotWedge(t *testing.T) {
-	g := &game{st: state.New()}
-	g.startDial(localKey, "me")
-	if g.dialing {
-		t.Fatal("dialing stuck true after local-not-running")
+	g := newTestGame(t)
+	if s := g.openSession(localKey, "me"); s != nil {
+		t.Fatalf("openSession = %+v, want nil", s)
 	}
-	if g.st.ConnectErr == "" {
+	if len(g.sess) != 0 {
+		t.Fatalf("sessions = %d, want 0", len(g.sess))
+	}
+	if g.none.st.ConnectErr == "" {
 		t.Fatal("want ConnectErr")
 	}
-	g.addServer() // would bail if dialing were stuck
+	g.addServer()
 	if g.curKey != "" || g.connect.focus != 1 {
 		t.Fatal("addServer did not run")
 	}

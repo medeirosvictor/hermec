@@ -11,7 +11,6 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 
-	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/ui/theme"
 )
 
@@ -133,7 +132,7 @@ func TestDevReloadPresetEditApplies(t *testing.T) {
 	files := map[string]string{path: string(src)}
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	mt := map[string]time.Time{path: t0}
-	g := &game{th: theme.Default(), st: state.New()}
+	g := &game{th: theme.Default()}
 	d := newTestDev(g, files, mt)
 	d.poll(t0) // baselines
 
@@ -144,7 +143,7 @@ func TestDevReloadPresetEditApplies(t *testing.T) {
 	d.poll(t0.Add(2 * time.Second))
 
 	if g.th.FontSize != theme.Default().FontSize+4 {
-		t.Fatalf("font_size = %v, edit not applied (status %q)", g.th.FontSize, g.st.Status)
+		t.Fatalf("font_size = %v, edit not applied (status %q)", g.th.FontSize, g.cur().st.Status)
 	}
 	if g.th.Name != "amber" {
 		t.Fatalf("name = %q", g.th.Name)
@@ -159,7 +158,7 @@ func TestDevReloadBadThemeKeepsOldAndReportsStatus(t *testing.T) {
 	files := map[string]string{path: "bg = [not valid"}
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	mt := map[string]time.Time{path: t0}
-	g := &game{th: theme.Default(), st: state.New()}
+	g := &game{th: theme.Default()}
 	before := g.th
 	d := newTestDev(g, files, mt)
 	d.poll(t0)
@@ -168,18 +167,18 @@ func TestDevReloadBadThemeKeepsOldAndReportsStatus(t *testing.T) {
 	if g.th != before {
 		t.Fatal("theme changed on parse error")
 	}
-	if !strings.HasPrefix(g.st.Status, "dev reload "+path+": ") {
-		t.Fatalf("status = %q", g.st.Status)
+	if !strings.HasPrefix(g.cur().st.Status, "dev reload "+path+": ") {
+		t.Fatalf("status = %q", g.cur().st.Status)
 	}
 }
 
 func TestDevReloadMissingPanelShaderHarmless(t *testing.T) {
-	g := &game{th: theme.Default(), st: state.New()}
+	g := &game{th: theme.Default()}
 	d := newTestDev(g, map[string]string{}, map[string]time.Time{})
 	d.register("ui/panel.kage", func([]byte) error { return errors.New("must not run") })
 	d.poll(time.Now())
 	d.poll(time.Now().Add(2 * time.Second))
-	if g.st.Status != "" {
-		t.Fatalf("status = %q", g.st.Status)
+	if g.cur().st.Status != "" {
+		t.Fatalf("status = %q", g.cur().st.Status)
 	}
 }

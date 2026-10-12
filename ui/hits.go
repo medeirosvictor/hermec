@@ -59,10 +59,10 @@ func (g *game) buildHits() {
 	case g.settingsOpen:
 		g.addSettingsHits()
 		return
-	case g.st.Phase == state.PhaseConnect:
+	case g.cur().st.Phase == state.PhaseConnect:
 		g.connect.dy = g.bannerH()
 		g.addConnectHits()
-	case g.st.Phase == state.PhaseMain:
+	case g.cur().st.Phase == state.PhaseMain:
 		g.addMainHits(g.geom())
 	}
 	g.addBannerHit()

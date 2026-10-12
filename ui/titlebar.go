@@ -113,7 +113,7 @@ func serverTitle(servers []state.ServerEntry, key string) string {
 // barTitle is the caption text: the app name, plus the server when connected.
 func (g *game) barTitle() string {
 	s := "HERMEC"
-	if g.st.Phase == state.PhaseMain {
+	if g.cur().st.Phase == state.PhaseMain {
 		if n := serverTitle(g.servers, g.curKey); n != "" {
 			s += " — " + n
 		}

@@ -211,7 +211,7 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 			col = th.Dim
 		}
 		val := fl.String()
-		if active && !g.dialing {
+		if active && !g.cur().dialing {
 			val += cursor
 		}
 		marker := "  "
@@ -260,10 +260,10 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 		g.drawTextF(screen, g.faceS, g.notice, x, float64(g.h)-lh, th.Bright)
 	}
 	switch {
-	case g.dialing:
+	case g.cur().dialing:
 		g.drawText(screen, "connecting...", x, y, th.FG)
-	case g.st.ConnectErr != "":
-		g.drawText(screen, "error: "+g.st.ConnectErr, x, y, th.Bright)
+	case g.cur().st.ConnectErr != "":
+		g.drawText(screen, "error: "+g.cur().st.ConnectErr, x, y, th.Bright)
 		y += lh
 		g.drawText(screen, "Enter to retry", x, y, th.Dim)
 	default:

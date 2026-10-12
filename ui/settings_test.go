@@ -44,7 +44,7 @@ func TestFlagNameDoesNotOverwriteSavedName(t *testing.T) {
 	if err := state.SaveSettings(p, state.Settings{Name: "zoe"}); err != nil {
 		t.Fatal(err)
 	}
-	g := &game{st: state.New(), th: theme.Default(), settingsPath: p, autoName: "bob", set: state.Settings{Name: "zoe"}}
+	g := &game{th: theme.Default(), settingsPath: p, autoName: "bob", set: state.Settings{Name: "zoe"}}
 	g.rememberName("bob") // connecting with the unedited -name flag value
 	if s, _ := state.LoadSettings(p); s.Name != "zoe" {
 		t.Fatalf("flag name stuck: %+v", s)
@@ -53,7 +53,7 @@ func TestFlagNameDoesNotOverwriteSavedName(t *testing.T) {
 
 func TestNameFlushOnCommit(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.toml")
-	g := &game{st: state.New(), th: theme.Default(), settingsPath: p, set: state.Settings{Name: "zoe"}, settingsOpen: true}
+	g := &game{th: theme.Default(), settingsPath: p, set: state.Settings{Name: "zoe"}, settingsOpen: true}
 	g.connect = newConnectForm("zo", "ws://", false)
 	g.nameDirty = true // typing marks dirty without writing
 	if s, _ := state.LoadSettings(p); s.Name != "" {
@@ -81,7 +81,7 @@ func TestStartupThemeBadThemeFallsBackToPalette(t *testing.T) {
 
 func TestUpdateCheckRowTogglesAndPersists(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.toml")
-	g := &game{st: state.New(), th: theme.Default(), settingsPath: p}
+	g := &game{th: theme.Default(), settingsPath: p}
 	g.activateSetting(rowUpdateCheck) // default on -> off
 	s, err := state.LoadSettings(p)
 	if err != nil || s.UpdateCheck == nil || *s.UpdateCheck {
@@ -95,7 +95,7 @@ func TestUpdateCheckRowTogglesAndPersists(t *testing.T) {
 
 func TestCurvatureRowTogglesAndPersists(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.toml")
-	g := &game{st: state.New(), th: theme.Default(), settingsPath: p, crtOn: true, w: 960, h: 600}
+	g := &game{th: theme.Default(), settingsPath: p, crtOn: true, w: 960, h: 600}
 	if g.curvature() != g.th.Curvature || g.curvature() <= 0 {
 		t.Fatalf("default curvature = %v", g.curvature())
 	}
@@ -115,7 +115,7 @@ func TestCurvatureRowTogglesAndPersists(t *testing.T) {
 
 func TestSettingsPersistFromEvents(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.toml")
-	g := &game{st: state.New(), th: theme.Default(), settingsPath: p, autoName: "anon-1"}
+	g := &game{th: theme.Default(), settingsPath: p, autoName: "anon-1"}
 	g.setScanlines(false)
 	g.cyclePalette()
 	g.rememberName("anon-1") // unedited startup name: not persisted
@@ -131,7 +131,7 @@ func TestSettingsPersistFromEvents(t *testing.T) {
 
 func TestDeviceRowsCycleAndPersist(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.toml")
-	g := &game{st: state.New(), th: theme.Default(), settingsPath: p,
+	g := &game{th: theme.Default(), settingsPath: p,
 		devIn: []string{"Micrófono 日本", "B"}, devOut: []string{"Altavoz"}}
 	g.activateSetting(rowInput)
 	g.activateSetting(rowOutput)

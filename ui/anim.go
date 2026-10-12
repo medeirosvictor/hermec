@@ -69,7 +69,8 @@ func (g *game) stepBar(dt float64) {
 // stepHighlights advances the per-occupant speaking envelopes and the row
 // hover/active highlights, and prunes entries for rows that are gone.
 func (g *game) stepHighlights(dt float64) {
-	rows := g.st.Rows()
+	st := g.cur().st
+	rows := st.Rows()
 	if g.speakEnv == nil {
 		g.speakEnv = map[string]*state.Envelope{}
 		g.rowHL = map[string]float64{}
@@ -78,8 +79,8 @@ func (g *game) stepHighlights(dt float64) {
 	if h, ok := g.hitAt(); ok {
 		switch h.Kind {
 		case state.HitChannel:
-			if h.ID >= 0 && h.ID < len(g.st.Channels) {
-				hoverKey = textRowKey(g.st.Channels[h.ID])
+			if h.ID >= 0 && h.ID < len(st.Channels) {
+				hoverKey = textRowKey(st.Channels[h.ID])
 			}
 		case state.HitVoice:
 			hoverKey = voiceRowKey(h.Key)
@@ -99,9 +100,9 @@ func (g *game) stepHighlights(dt float64) {
 			}
 			e.Step(lvl, dt)
 		case state.RowText, state.RowVoice:
-			k, active := textRowKey(r.Channel), r.Index == g.st.Active
+			k, active := textRowKey(r.Channel), r.Index == st.Active
 			if r.Kind == state.RowVoice {
-				k, active = voiceRowKey(r.Channel), r.Channel == g.st.InCall
+				k, active = voiceRowKey(r.Channel), r.Channel == st.InCall
 			}
 			target := 0.0
 			switch {

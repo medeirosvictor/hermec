@@ -85,7 +85,7 @@ func (d *devReload) poll(now time.Time) {
 			err = d.handlers[path](src)
 		}
 		if err != nil {
-			d.g.st.Status = fmt.Sprintf("dev reload %s: %v", path, err)
+			d.g.cur().st.Status = fmt.Sprintf("dev reload %s: %v", path, err)
 			continue
 		}
 		d.g.logf("dev reload %s", path)

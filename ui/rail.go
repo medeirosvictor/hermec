@@ -79,31 +79,34 @@ func (g *game) loadServers(path string) {
 	g.servers = es
 }
 
-// saveServer records the current server and its active channel. Failures go
-// to the status line.
-func (g *game) saveServer(channel string) {
-	if g.curKey == "" || g.c == nil || g.serversPath == "" {
+// saveServer records s and its active channel in the saved list. Servers
+// with a session are never evicted by the cap. Failures go to the status line.
+func (g *game) saveServer(s *session, channel string) {
+	if s == nil || s.key == "" || s.c == nil || g.serversPath == "" {
 		return
 	}
-	label := state.HostPort(g.lastURL)
-	if g.curKey == localKey {
+	label := state.HostPort(s.url)
+	if s.key == localKey {
 		label = "local"
 	}
-	g.servers = state.Touch(g.servers, g.curKey, label, channel, nil)
+	live := func(u string) bool { _, ok := g.sess[u]; return ok }
+	g.servers = state.Touch(g.servers, s.key, label, channel, live)
 	if err := state.SaveServers(g.serversPath, g.servers); err != nil {
 		g.notice = fmt.Sprintf("save servers: %v", err)
-		g.st.Status = g.notice
+		s.st.Status = g.notice
 	} else {
 		g.notice = ""
 	}
 }
 
-// onConnected runs after a successful dial: it picks the channel to open
-// (the remembered one if the server still has it) and persists the server.
-func (g *game) onConnected(chs []string) {
+// onConnected runs after a successful dial of s: it joins every text channel
+// (so chat for all of them arrives and can count as unread), shows the
+// remembered one if the server still has it, and persists the server.
+func (g *game) onConnected(s *session) {
+	chs := s.st.Channels
 	idx := 0
 	for _, e := range g.servers {
-		if e.URL != g.curKey {
+		if e.URL != s.key {
 			continue
 		}
 		for i, ch := range chs {
@@ -114,48 +117,46 @@ func (g *game) onConnected(chs []string) {
 	}
 	ch := ""
 	if len(chs) > 0 {
-		g.st.Active = idx
+		s.st.Active = idx
 		ch = chs[idx]
-		g.joinChannel(ch)
+		if s.st.Viewed {
+			s.st.MarkRead(ch)
+		}
+		g.joinChannel(s, ch) // the shown channel first
+		for _, c := range chs {
+			g.joinChannel(s, c)
+		}
 	}
-	g.saveServer(ch)
+	g.saveServer(s, ch)
 }
 
-// leaveServer tears down the current client and returns to a fresh connect
-// scene state.
-func (g *game) leaveServer() {
-	g.dropVoice()
-	if g.c != nil {
-		_ = g.c.Close()
-		g.c = nil
-	}
-	g.st = state.New()
-	g.ms = newMainScene()
-}
-
+// switchServer views the tile's session, creating and dialing it if there
+// is none. It never closes another session.
 func (g *game) switchServer(e state.ServerEntry) {
-	if g.dialing || (e.URL == g.curKey && g.st.Phase == state.PhaseMain) {
+	if _, ok := g.sess[e.URL]; ok {
+		g.view(e.URL)
 		return
 	}
 	name := g.connect.name.String()
 	if name == "" {
 		name = g.opts.Name
 	}
-	g.leaveServer()
 	g.connect = newConnectForm(name, g.realURL(e.URL), e.URL == localKey && g.localURL != "")
-	g.startDial(e.URL, name)
+	key := ""
+	if s := g.openSession(e.URL, name); s != nil {
+		key = s.key
+	}
+	g.view(key)
 }
 
+// addServer shows a fresh connect form; every session keeps running.
 func (g *game) addServer() {
-	if g.dialing {
-		return
-	}
 	name := g.connect.name.String()
 	if name == "" {
 		name = g.opts.Name
 	}
-	g.leaveServer()
-	g.curKey = ""
+	g.view("")
+	g.noneSession().st.ConnectErr = ""
 	g.connect = newConnectForm(name, "ws://", false)
 	g.connect.focus = 1
 }

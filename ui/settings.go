@@ -120,7 +120,7 @@ func (g *game) persistSettings() {
 	}
 	if err := state.SaveSettings(g.settingsPath, g.set); err != nil {
 		g.notice = fmt.Sprintf("save settings: %v", err)
-		g.st.Status = g.notice
+		g.cur().st.Status = g.notice
 	}
 }
 

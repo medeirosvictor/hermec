@@ -14,7 +14,10 @@ import (
 func mainGame(t *testing.T) *game {
 	t.Helper()
 	g := testGame(t)
-	g.st.SetConnected([]proto.ChannelInfo{{Name: "general"}, {Name: "random"}, {Name: "lounge", Type: "voice"}}, "fp")
+	s := newSession("test", "ws://test/", "me")
+	g.sess = map[string]*session{s.key: s}
+	g.view(s.key)
+	g.cur().st.SetConnected([]proto.ChannelInfo{{Name: "general"}, {Name: "random"}, {Name: "lounge", Type: "voice"}}, "fp")
 	g.buildHits()
 	return g
 }
@@ -93,7 +96,7 @@ func TestSignalHitsAndPanelSwallow(t *testing.T) {
 // status line, so the hit target must be there too.
 func TestSignalHitFollowsDrawnPlaceBarHidden(t *testing.T) {
 	g := mainGame(t)
-	g.st.SetInCall("lounge")
+	g.cur().st.SetInCall("lounge")
 	g.barF, g.barInit = 0, true
 	g.buildHits()
 	gm := g.geom()
@@ -115,16 +118,16 @@ func TestSignalHitFollowsDrawnPlaceBarHidden(t *testing.T) {
 
 func TestQualityDisconnectWhileOpenInCall(t *testing.T) {
 	g := mainGame(t)
-	g.st.SetInCall("lounge")
+	g.cur().st.SetInCall("lounge")
 	g.q.open = true
 	g.stepQuality(1)
 	if g.q.open != true || len(g.q.lines) == 0 {
 		t.Fatalf("panel not open before disconnect: %+v", g.q)
 	}
 	// What Update does when the events channel closes.
-	g.st.Apply(client.Event{}, false)
+	g.cur().st.Apply(client.Event{}, false)
 	g.dropVoice()
-	g.c = nil
+	g.cur().c = nil
 	g.stepQuality(1)
 	if g.q.grade != 0 || g.q.open {
 		t.Errorf("after disconnect grade=%d open=%v, want 0 and closed", g.q.grade, g.q.open)
@@ -156,7 +159,7 @@ func TestHitsBarOnlyInCall(t *testing.T) {
 			t.Fatalf("kind %v registered outside a call", k)
 		}
 	}
-	g.st.SetInCall("lounge")
+	g.cur().st.SetInCall("lounge")
 	g.buildHits()
 	gm := g.geom()
 	l := g.barLayout(gm)

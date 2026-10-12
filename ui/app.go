@@ -15,7 +15,6 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
-	"github.com/medeirosvictor/hermec/client"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/server"
@@ -47,14 +46,8 @@ const (
 // maxEventsPerTick bounds how many client events one Update drains.
 const maxEventsPerTick = 64
 
-type dialResult struct {
-	c   *client.Client
-	err error
-}
-
 type game struct {
 	opts  Options
-	st    *state.State
 	th    theme.Theme
 	face  *text.GoTextFace // body/chat size (Theme.FontSize)
 	faceS *text.GoTextFace // status and hint lines, 0.75x
@@ -65,16 +58,16 @@ type game struct {
 	fp      string
 	keyAt   string
 
-	c       *client.Client
+	sess    map[string]*session // one per server, by saved-list key
+	none    *session            // connect-scene placeholder returned by cur()
 	dialCh  chan dialResult
 	joinCh  chan joinResult
-	sendCh  chan error
+	sendCh  chan sendResult
 	voiceCh chan voiceResult
 
 	muteCh     chan muteReq
 	muteFailCh chan muteFail
 	vc         voiceCall
-	dialing    bool
 
 	probeCh    chan []state.DiscoveredIn
 	probing    bool // a discovery probe is in flight
@@ -85,16 +78,13 @@ type game struct {
 	hits    state.Hits // click targets, rebuilt each Update
 	shape   ebiten.CursorShapeType
 	connect connectForm
-	ms      mainScene
 	frame   int
 	w, h    int
-
-	lastURL, lastName string // for reconnect
 
 	serversPath string
 	servers     []state.ServerEntry
 	localURL    string // URL of the in-process server; empty without -local
-	curKey      string // saved-list key of the current server; empty = none
+	curKey      string // key of the viewed session; empty = connect scene
 	notice      string // persistent load/save error, shown on the connect scene
 
 	settingsPath  string
@@ -212,8 +202,9 @@ func Run(opts Options) error {
 	}
 
 	g := &game{
-		opts: opts, st: state.New(), th: th, face: face, faceS: faceS, faceT: faceT, id: id, fp: fp, keyAt: opts.KeyPath,
-		dialCh: make(chan dialResult, 1), probeCh: make(chan []state.DiscoveredIn, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan error, 8), voiceCh: make(chan voiceResult, 4), ms: newMainScene(), w: 960, h: 600, crtOn: crtOn,
+		opts: opts, th: th, face: face, faceS: faceS, faceT: faceT, id: id, fp: fp, keyAt: opts.KeyPath,
+		sess: map[string]*session{}, none: newSession("", "", ""),
+		dialCh: make(chan dialResult, 8), probeCh: make(chan []state.DiscoveredIn, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan sendResult, 8), voiceCh: make(chan voiceResult, 4), w: 960, h: 600, crtOn: crtOn,
 		settingsPath: boot.settingsPath, set: boot.set, notice: boot.notice, autoName: opts.Name,
 	}
 	g.updateCh = make(chan update.Available, 1)
@@ -267,14 +258,18 @@ func Run(opts Options) error {
 	ebiten.SetWindowIcon(icons)
 	err = ebiten.RunGame(g)
 	g.flushName()
-	if g.c != nil {
-		if g.vc.src != nil || g.vc.sink != nil {
+	if g.vc.src != nil || g.vc.sink != nil {
+		if c := g.cur().c; c != nil { // Task 6: the call session's client
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = g.c.LeaveVoice(ctx)
+			_ = c.LeaveVoice(ctx)
 			cancel()
-			closeAll(g.vc.src, g.vc.sink)
 		}
-		_ = g.c.Close()
+		closeAll(g.vc.src, g.vc.sink)
+	}
+	for _, k := range g.sessionKeys() {
+		if c := g.sess[k].c; c != nil {
+			_ = c.Close()
+		}
 	}
 	return err
 }
@@ -283,28 +278,6 @@ func (g *game) logf(format string, args ...any) {
 	if g.opts.Verbose {
 		log.Printf(format, args...)
 	}
-}
-
-// startDial dials in a goroutine; the result arrives on dialCh.
-func (g *game) startDial(url, name string) {
-	g.st.ConnectErr = ""
-	url = g.realURL(url)
-	if url == localKey {
-		g.st.ConnectErr = "local server not running (start with -local)"
-		return // no dial goroutine: must not set g.dialing
-	}
-	g.dialing = true
-	g.lastURL, g.lastName = url, name
-	g.flushName()
-	g.rememberName(name)
-	g.curKey = g.keyFor(url)
-	g.logf("dialing %s as %q", url, name)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		c, err := client.Dial(ctx, url, g.id, name, "")
-		g.dialCh <- dialResult{c, err}
-	}()
 }
 
 func (g *game) Update() error {
@@ -335,55 +308,7 @@ func (g *game) Update() error {
 	if inpututil.IsKeyJustPressed(ebiten.KeyF10) {
 		g.toggleSettings()
 	}
-	select {
-	case r := <-g.dialCh:
-		g.dialing = false
-		if r.err != nil {
-			g.logf("dial failed: %v", r.err)
-			g.st.ConnectErr = r.err.Error()
-		} else {
-			g.logf("connected, channels %v", r.c.Channels())
-			g.c = r.c
-			g.st.SetConnected(r.c.Channels(), r.c.Fingerprint())
-			g.ms = newMainScene()
-			g.onConnected(g.st.Channels)
-		}
-	default:
-	}
-	select {
-	case r := <-g.joinCh:
-		if r.err != nil {
-			delete(g.ms.joined, r.channel) // allow retry on next switch
-			g.st.Status = fmt.Sprintf("join %s failed: %v", r.channel, r.err)
-		} else {
-			g.logf("joined %s", r.channel)
-		}
-	default:
-	}
-	select {
-	case err := <-g.sendCh:
-		if err != nil {
-			g.st.Status = fmt.Sprintf("send failed: %v", err)
-		}
-	default:
-	}
-
-	if g.c != nil {
-	drain:
-		for i := 0; i < maxEventsPerTick; i++ {
-			select {
-			case ev, ok := <-g.c.Events():
-				g.st.Apply(ev, ok)
-				if !ok {
-					g.dropVoice()
-					g.c = nil
-					break drain
-				}
-			default:
-				break drain
-			}
-		}
-	}
+	g.pumpSessions()
 
 	g.pollUpdate()
 	if !g.settingsOpen {
@@ -404,13 +329,15 @@ func (g *game) Update() error {
 		g.updateSettings()
 		return nil
 	}
-	if g.st.Phase == state.PhaseConnect {
+	if g.cur().st.Phase == state.PhaseConnect {
 		g.connect.dy = g.bannerH() // updateRail may have replaced the form
-		if url, name, submit := g.connect.update(g.dialing, g.hitAt); submit {
-			g.startDial(url, name)
+		if url, name, submit := g.connect.update(g.cur().dialing, g.hitAt); submit {
+			if s := g.openSession(url, name); s != nil {
+				g.view(s.key)
+			}
 		}
 	}
-	switch g.st.Phase {
+	switch g.cur().st.Phase {
 	case state.PhaseMain:
 		g.updateMain()
 	case state.PhaseDisconnected:
@@ -453,7 +380,7 @@ func (g *game) drawScene(screen *ebiten.Image) {
 	screen.Fill(g.th.BG)
 	if g.settingsOpen {
 		g.drawSettings(screen)
-	} else if g.st.Phase == state.PhaseConnect {
+	} else if g.cur().st.Phase == state.PhaseConnect {
 		g.drawConnect(screen)
 		g.drawBanner(screen)
 	} else {

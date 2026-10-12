@@ -72,7 +72,7 @@ func (g *game) updateDiscovery() {
 	default:
 	}
 	g.connect.disc = g.discRows // the form is rebuilt on rail switches
-	active := g.st.Phase == state.PhaseConnect && !g.settingsOpen
+	active := g.cur().st.Phase == state.PhaseConnect && !g.settingsOpen
 	if !active {
 		g.discActive = false
 		return

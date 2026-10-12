@@ -39,7 +39,7 @@ func TestGlowAlphaFaintAndMonotonic(t *testing.T) {
 func TestBarSlideGeometry(t *testing.T) {
 	g := testGame(t)
 	settledOff := g.geom()
-	g.st.SetInCall("voice")
+	g.cur().st.SetInCall("voice")
 	settledOn := g.geom()
 
 	g.barInit, g.barF = true, 0 // sliding in from hidden
@@ -61,7 +61,7 @@ func TestBarSlideGeometry(t *testing.T) {
 	if got := g.geom(); got != settledOn {
 		t.Fatalf("settled-in geometry differs:\n%+v\n%+v", got, settledOn)
 	}
-	g.st.SetInCall("")
+	g.cur().st.SetInCall("")
 	for i := 0; i < 600; i++ {
 		g.stepBar(1.0 / 60)
 	}
@@ -73,14 +73,14 @@ func TestBarSlideGeometry(t *testing.T) {
 // Speaking envelopes follow the level and are pruned when the occupant leaves.
 func TestEnvelopePrunedWithOccupant(t *testing.T) {
 	g := testGame(t)
-	g.st.Channels = []string{"general"}
-	g.st.VoiceChannels = []string{"voice"}
-	g.st.Voice = map[string][]proto.VoiceMember{"voice": {{Name: "a", Fingerprint: "fpA"}, {Name: "b", Fingerprint: "fpB"}}}
+	g.cur().st.Channels = []string{"general"}
+	g.cur().st.VoiceChannels = []string{"voice"}
+	g.cur().st.Voice = map[string][]proto.VoiceMember{"voice": {{Name: "a", Fingerprint: "fpA"}, {Name: "b", Fingerprint: "fpB"}}}
 	g.stepHighlights(1.0 / 60)
 	if len(g.speakEnv) != 2 {
 		t.Fatalf("want 2 envelopes, got %d", len(g.speakEnv))
 	}
-	g.st.Voice = map[string][]proto.VoiceMember{"voice": {{Name: "a", Fingerprint: "fpA"}}}
+	g.cur().st.Voice = map[string][]proto.VoiceMember{"voice": {{Name: "a", Fingerprint: "fpA"}}}
 	g.stepHighlights(1.0 / 60)
 	if _, ok := g.speakEnv["fpB"]; ok || len(g.speakEnv) != 1 {
 		t.Fatalf("fpB not pruned: %v", g.speakEnv)

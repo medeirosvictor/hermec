@@ -8,7 +8,6 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 
-	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/ui/theme"
 )
 
@@ -19,7 +18,7 @@ func testGame(t *testing.T) *game {
 	if err != nil {
 		t.Skip(err)
 	}
-	return &game{st: state.New(), th: th, face: face, w: 960, h: 600}
+	return &game{th: th, face: face, w: 960, h: 600}
 }
 
 // The chat input sits directly under the chat pane in the right column, the
@@ -35,7 +34,7 @@ func TestGeomInputUnderChatPane(t *testing.T) {
 		t.Fatalf("channel pane should end level with the input panel: %v vs %v", gm.chanR.y1, gm.inputR.y1)
 	}
 	noBar := gm
-	g.st.SetInCall("voice")
+	g.cur().st.SetInCall("voice")
 	gm = g.geom()
 	if gm.barR.y1 != float64(g.h)-margin || gm.chanR.y1 != gm.barR.y0-pad {
 		t.Fatalf("bar not the bottom strip: %+v", gm)
@@ -57,7 +56,7 @@ func TestGeomMargins(t *testing.T) {
 	g := testGame(t)
 	for _, call := range []bool{false, true} {
 		if call {
-			g.st.SetInCall("voice")
+			g.cur().st.SetInCall("voice")
 		}
 		gm := g.geom()
 		for name, r := range panelRects(gm, call) {
@@ -72,7 +71,7 @@ func TestGeomPanelsDontOverlap(t *testing.T) {
 	g := testGame(t)
 	for _, call := range []bool{false, true} {
 		if call {
-			g.st.SetInCall("voice")
+			g.cur().st.SetInCall("voice")
 		}
 		rs := panelRects(g.geom(), call)
 		for a, ra := range rs {

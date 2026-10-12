@@ -24,12 +24,6 @@ const (
 	wheelLinesPerNotch = 3
 )
 
-// joinResult is the outcome of a background Join.
-type joinResult struct {
-	channel string
-	err     error
-}
-
 // mainScene is the per-connection view state of the chat scene.
 type mainScene struct {
 	joined     map[string]bool
@@ -117,7 +111,7 @@ func (g *game) geom() geometry {
 func (g *game) addMainHits(gm geometry) {
 	// Only rows drawChannels actually draws are clickable.
 	y := gm.paneY0
-	for _, r := range g.st.Rows() {
+	for _, r := range g.cur().st.Rows() {
 		if y+gm.lh > gm.chanY1 {
 			break
 		}
@@ -134,28 +128,30 @@ func (g *game) addMainHits(gm geometry) {
 	g.addSignalHits(gm) // last: the open panel wins over anything under it
 }
 
-// joinChannel joins ch in the background unless it is already joined/joining.
-func (g *game) joinChannel(ch string) {
-	if g.c == nil || g.ms.joined[ch] {
+// joinChannel joins ch on s in the background unless it is already
+// joined/joining.
+func (g *game) joinChannel(s *session, ch string) {
+	if s.c == nil || s.ms.joined[ch] {
 		return
 	}
-	g.ms.joined[ch] = true
-	g.logf("joining %s", ch)
-	go func(c *client.Client) {
+	s.ms.joined[ch] = true
+	g.logf("joining %s on %s", ch, s.url)
+	go func(key string, c *client.Client) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		g.joinCh <- joinResult{ch, c.Join(ctx, ch)}
-	}(g.c)
+		g.joinCh <- joinResult{key, ch, c.Join(ctx, ch)}
+	}(s.key, s.c)
 }
 
 func (g *game) switchChannel(next bool) {
-	if len(g.st.Channels) < 2 {
+	st := g.cur().st
+	if len(st.Channels) < 2 {
 		return
 	}
 	if next {
-		g.st.NextChannel()
+		st.NextChannel()
 	} else {
-		g.st.PrevChannel()
+		st.PrevChannel()
 	}
 	g.afterChannelChange()
 }
@@ -163,31 +159,36 @@ func (g *game) switchChannel(next bool) {
 // selectChannel activates channel index i (mouse click), sharing the
 // keyboard path's reset-and-join behaviour.
 func (g *game) selectChannel(i int) {
-	if i < 0 || i >= len(g.st.Channels) || i == g.st.Active {
+	st := g.cur().st
+	if i < 0 || i >= len(st.Channels) || i == st.Active {
 		return
 	}
-	g.st.Active = i
+	st.Active = i
 	g.afterChannelChange()
 }
 
 func (g *game) afterChannelChange() {
-	g.ms.scroll, g.ms.prevTotal, g.ms.wheelCarry = 0, 0, 0
-	g.joinChannel(g.st.Channels[g.st.Active])
-	g.saveServer(g.st.Channels[g.st.Active])
+	s := g.cur()
+	s.ms.scroll, s.ms.prevTotal, s.ms.wheelCarry = 0, 0, 0
+	ch := s.st.Channels[s.st.Active]
+	s.st.MarkRead(ch)
+	g.joinChannel(s, ch)
+	g.saveServer(s, ch)
 }
 
 func (g *game) sendChat() {
-	txt := g.st.Input.Submit()
-	g.ms.scroll = 0
-	if txt == "" || g.c == nil || len(g.st.Channels) == 0 {
+	s := g.cur()
+	txt := s.st.Input.Submit()
+	s.ms.scroll = 0
+	if txt == "" || s.c == nil || len(s.st.Channels) == 0 {
 		return
 	}
-	ch := g.st.Channels[g.st.Active]
-	go func(c *client.Client) {
+	ch := s.st.Channels[s.st.Active]
+	go func(key string, c *client.Client) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		g.sendCh <- c.SendChat(ctx, ch, txt)
-	}(g.c)
+		g.sendCh <- sendResult{key, c.SendChat(ctx, ch, txt)}
+	}(s.key, s.c)
 }
 
 func enterPressed() bool {
@@ -198,6 +199,7 @@ func enterPressed() bool {
 // cached scrollback layout.
 func (g *game) updateMain() {
 	gm := g.geom()
+	s := g.cur() // fixed for this tick: nothing below changes the view
 	ctrl := ebiten.IsKeyPressed(ebiten.KeyControlLeft) || ebiten.IsKeyPressed(ebiten.KeyControlRight)
 	shift := ebiten.IsKeyPressed(ebiten.KeyShiftLeft) || ebiten.IsKeyPressed(ebiten.KeyShiftRight)
 
@@ -227,20 +229,20 @@ func (g *game) updateMain() {
 	g.updateBar(gm)
 
 	for _, r := range ebiten.AppendInputChars(nil) {
-		if r >= ' ' && r != 0x7f && len([]rune(g.st.Input.String())) < maxInputRunes {
-			g.st.Input.AppendRunes([]rune{r})
+		if r >= ' ' && r != 0x7f && len([]rune(s.st.Input.String())) < maxInputRunes {
+			s.st.Input.AppendRunes([]rune{r})
 		}
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) {
-		g.st.Input.Backspace()
+		s.st.Input.Backspace()
 	} else if d := inpututil.KeyPressDuration(ebiten.KeyBackspace); d > 30 && d%3 == 0 {
-		g.st.Input.Backspace()
+		s.st.Input.Backspace()
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		if g.q.open { // Esc closes the quality panel first
 			g.q.open = false
 		} else {
-			g.st.Input.Submit()
+			s.st.Input.Submit()
 		}
 	}
 	if enterPressed() {
@@ -249,53 +251,54 @@ func (g *game) updateMain() {
 
 	// Layout the active channel and apply scroll input.
 	var msgs []state.Message
-	if len(g.st.Channels) > 0 {
-		msgs = g.st.Messages[g.st.Channels[g.st.Active]]
+	if len(s.st.Channels) > 0 {
+		msgs = s.st.Messages[s.st.Channels[s.st.Active]]
 	}
 	ch := ""
-	if len(g.st.Channels) > 0 {
-		ch = g.st.Channels[g.st.Active]
+	if len(s.st.Channels) > 0 {
+		ch = s.st.Channels[s.st.Active]
 	}
 	// Re-wrap only when the layout key changes; colours are applied at draw.
 	var relaid bool
-	g.ms.lines, relaid = g.ms.layout.Lines(ch, msgs, gm.cols, g.th.FontSize)
+	s.ms.lines, relaid = s.ms.layout.Lines(ch, msgs, gm.cols, g.th.FontSize)
 	if relaid {
-		g.ms.layoutGen++
+		s.ms.layoutGen++
 	}
-	total := len(g.ms.lines)
-	if g.ms.scroll > 0 && total > g.ms.prevTotal {
-		g.ms.scroll += total - g.ms.prevTotal // keep the view stable while scrolled up
+	total := len(s.ms.lines)
+	if s.ms.scroll > 0 && total > s.ms.prevTotal {
+		s.ms.scroll += total - s.ms.prevTotal // keep the view stable while scrolled up
 	}
-	g.ms.prevTotal = total
+	s.ms.prevTotal = total
 	if inpututil.IsKeyJustPressed(ebiten.KeyPageUp) {
-		g.ms.scroll += gm.visible - 1
+		s.ms.scroll += gm.visible - 1
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyPageDown) {
-		g.ms.scroll -= gm.visible - 1
+		s.ms.scroll -= gm.visible - 1
 	}
 	mx, my := g.cursor()
 	fx, fy := float64(mx), float64(my)
 	if _, wy := ebiten.Wheel(); wy != 0 && state.InRect(fx, fy, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1) {
 		var n int
-		n, g.ms.wheelCarry = state.WheelLines(g.ms.wheelCarry, wy, wheelLinesPerNotch)
-		g.ms.scroll += n
+		n, s.ms.wheelCarry = state.WheelLines(s.ms.wheelCarry, wy, wheelLinesPerNotch)
+		s.ms.scroll += n
 	}
-	g.ms.scroll = state.ClampScroll(total, gm.visible, g.ms.scroll)
-	g.ms.visible = gm.visible
+	s.ms.scroll = state.ClampScroll(total, gm.visible, s.ms.scroll)
+	s.ms.visible = gm.visible
 }
 
-// updateDisconnected reconnects on Enter.
+// updateDisconnected re-dials the viewed session on Enter.
 func (g *game) updateDisconnected() {
-	if !g.dialing && enterPressed() && g.lastURL != "" {
-		g.startDial(g.lastURL, g.lastName)
+	if s := g.cur(); !s.dialing && enterPressed() && s.url != "" {
+		g.dial(s)
 	}
 }
 
 func (g *game) connStatus() string {
+	s := g.cur()
 	switch {
-	case g.dialing:
+	case s.dialing:
 		return "reconnecting..."
-	case g.st.Phase == state.PhaseDisconnected:
+	case s.st.Phase == state.PhaseDisconnected:
 		return "disconnected"
 	default:
 		return "connected"
@@ -308,14 +311,14 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	g.drawPanelR(screen, gm.statusR)
 	g.drawStatus(screen, gm)
 
-	if g.st.Phase == state.PhaseDisconnected {
+	if s := g.cur(); s.st.Phase == state.PhaseDisconnected {
 		msg := "CONNECTION LOST — press Enter to reconnect"
 		sub := ""
 		switch {
-		case g.dialing:
+		case s.dialing:
 			msg = "reconnecting..."
-		case g.st.ConnectErr != "":
-			sub = "error: " + g.st.ConnectErr
+		case s.st.ConnectErr != "":
+			sub = "error: " + s.st.ConnectErr
 		}
 		g.drawCentered(screen, msg, float64(g.h)/2-gm.lh, th.Bright)
 		if sub != "" {
@@ -355,9 +358,10 @@ func (g *game) drawStatus(screen *ebiten.Image, gm geometry) {
 	if len(fp) > 16 {
 		fp = fp[:16]
 	}
-	line := fmt.Sprintf("%s  |  %s (%s)  |  %s", g.lastURL, g.lastName, fp, g.connStatus())
-	if g.st.Status != "" && g.st.Phase == state.PhaseMain {
-		line += "  |  " + g.st.Status
+	s := g.cur()
+	line := fmt.Sprintf("%s  |  %s (%s)  |  %s", s.url, s.name, fp, g.connStatus())
+	if s.st.Status != "" && s.st.Phase == state.PhaseMain {
+		line += "  |  " + s.st.Status
 	}
 	r := gm.statusR
 	textR := r.x1 - pad
@@ -374,7 +378,8 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 	cx0 := gm.chanR.x0
 	dst := clip(screen, cx0, gm.paneY0, gm.chanR.x1, gm.chanY1)
 	y := gm.paneY0
-	for _, row := range g.st.Rows() {
+	st := g.cur().st
+	for _, row := range st.Rows() {
 		if y+gm.lh > gm.chanY1 {
 			break
 		}
@@ -383,10 +388,10 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 		case state.RowText:
 			g.drawRowHL(dst, textRowKey(row.Channel), cx0, y, gm)
 			ch := row.Channel
-			count := fmt.Sprintf("%d", len(g.st.Members[ch]))
+			count := fmt.Sprintf("%d", len(st.Members[ch]))
 			name := ch
 			marker, col := "  ", th.FG
-			if row.Index == g.st.Active {
+			if row.Index == st.Active {
 				marker, col = "> ", th.Bright
 			}
 			room := gm.lcols - len(marker) - len(count) - 1
@@ -408,7 +413,7 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 		case state.RowVoice:
 			g.drawRowHL(dst, voiceRowKey(row.Channel), cx0, y, gm)
 			col := th.FG
-			if row.Channel == g.st.InCall {
+			if row.Channel == st.InCall {
 				col = th.Bright
 			}
 			drawSpeaker(dst, float32(x), float32(y), float32(gm.lh), col)
@@ -510,7 +515,7 @@ func (g *game) drawScrollback(screen *ebiten.Image, gm geometry) {
 	if r.Empty() {
 		return
 	}
-	ms := &g.ms
+	ms := &g.cur().ms
 	k := sbKey{ms.layoutGen, state.ClampScroll(len(ms.lines), gm.visible, ms.scroll), r.Dx(), r.Dy(), gm.adv, gm.lh, g.th.FG, g.th.Bright, g.th.Dim}
 	if ms.sbImg == nil || k != ms.sbKey {
 		if ms.sbImg == nil || ms.sbImg.Bounds().Dx() != k.w || ms.sbImg.Bounds().Dy() != k.h {
@@ -536,9 +541,10 @@ func (g *game) renderScrollback(dst *ebiten.Image, gm geometry, ox, oy float64) 
 	gm.rightX -= ox
 	gm.paneY0 -= oy
 	gm.paneY1 -= oy
-	lines := g.ms.lines
+	ms := &g.cur().ms
+	lines := ms.lines
 	total := len(lines)
-	off := state.ClampScroll(total, gm.visible, g.ms.scroll)
+	off := state.ClampScroll(total, gm.visible, ms.scroll)
 	end := total - off
 	start := end - gm.visible
 	if start < 0 {
@@ -565,7 +571,7 @@ func (g *game) renderScrollback(dst *ebiten.Image, gm geometry, ox, oy float64) 
 func (g *game) drawInput(screen *ebiten.Image, gm geometry) {
 	th := g.th
 	dst := clip(screen, gm.rightX, gm.inputR.y0, gm.rightX+gm.rightW, gm.inputR.y1)
-	in := []rune(g.st.Input.String())
+	in := []rune(g.cur().st.Input.String())
 	room := int(gm.rightW/gm.adv) - 3 // prompt + cursor
 	if room < 1 {
 		room = 1

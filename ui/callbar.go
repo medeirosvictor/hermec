@@ -46,7 +46,7 @@ type voiceCall struct {
 }
 
 // barVisible reports whether the call bar is shown.
-func (g *game) barVisible() bool { return g.st.InCall != "" || g.vc.joining != "" }
+func (g *game) barVisible() bool { return g.cur().st.InCall != "" || g.vc.joining != "" }
 
 func closeAll(cs ...io.Closer) {
 	for _, c := range cs {
@@ -58,10 +58,10 @@ func closeAll(cs ...io.Closer) {
 
 // clickVoice toggles the call: join ch, or leave if it is the current one.
 func (g *game) clickVoice(ch string) {
-	if g.c == nil || g.vc.busy {
+	if g.cur().c == nil || g.vc.busy {
 		return
 	}
-	if g.st.VoiceClickAction(ch) == "leave" {
+	if g.cur().st.VoiceClickAction(ch) == "leave" {
 		g.leaveCall()
 		return
 	}
@@ -71,12 +71,13 @@ func (g *game) clickVoice(ch string) {
 // joinCall leaves any current call, then opens the devices and joins ch, all
 // in one goroutine; the result arrives on voiceCh.
 func (g *game) joinCall(ch string) {
-	c := g.c
+	s := g.cur()
+	c := s.c
 	oldSrc, oldSink := g.vc.src, g.vc.sink
 	savedIn, savedOut := g.set.InputDevice, g.set.OutputDevice // read here: g.set belongs to the update goroutine
 	g.vc = voiceCall{busy: true, joining: ch}
-	g.st.SetInCall("")
-	g.st.Status = ""
+	s.st.SetInCall("")
+	s.st.Status = ""
 	g.logf("joining voice %s", ch)
 	go func() {
 		res := voiceResult{c: c, channel: ch}
@@ -121,10 +122,10 @@ func asCloser(v any) io.Closer {
 
 // leaveCall leaves the current call in the background and frees the devices.
 func (g *game) leaveCall() {
-	c := g.c
+	c := g.cur().c
 	src, sink := g.vc.src, g.vc.sink
 	g.vc = voiceCall{busy: true}
-	g.st.SetInCall("")
+	g.cur().st.SetInCall("")
 	g.logf("leaving voice")
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -141,7 +142,7 @@ func (g *game) dropVoice() {
 	src, sink := g.vc.src, g.vc.sink
 	busy := g.vc.busy
 	g.vc = voiceCall{busy: busy} // an in-flight op still reports on voiceCh
-	g.st.SetInCall("")
+	g.cur().st.SetInCall("")
 	if src != nil || sink != nil {
 		go closeAll(src, sink)
 	}
@@ -155,36 +156,36 @@ func (g *game) updateVoice() {
 		g.vc.busy = false
 		g.vc.joining = ""
 		switch {
-		case r.c != g.c: // connection changed underneath: discard
+		case r.c != g.cur().c: // connection changed underneath: discard
 			closeAll(r.src, r.sink)
 		case r.leave:
 			if r.err != nil {
-				g.st.Status = fmt.Sprintf("voice leave failed: %v", r.err)
+				g.cur().st.Status = fmt.Sprintf("voice leave failed: %v", r.err)
 			}
 		case r.err != nil:
 			g.logf("voice join failed: %v", r.err)
-			g.st.Status = state.VoiceJoinNotice(r.err)
+			g.cur().st.Status = state.VoiceJoinNotice(r.err)
 		default:
 			g.logf("joined voice %s", r.channel)
 			g.vc = voiceCall{start: time.Now(), src: r.src, sink: r.sink, mic: r.mic, spk: r.spk}
-			g.st.SetInCall(r.channel)
+			g.cur().st.SetInCall(r.channel)
 			if r.notice != "" {
-				g.st.Status = r.notice
+				g.cur().st.Status = r.notice
 			}
 		}
 	default:
 	}
 	// Poll: the client reports a dead call as VoiceChannel() == "".
-	if g.c != nil && !g.vc.busy && g.st.InCall != "" && g.c.VoiceChannel() == "" {
+	if s := g.cur(); s.c != nil && !g.vc.busy && s.st.InCall != "" && s.c.VoiceChannel() == "" {
 		g.logf("voice call ended")
 		g.dropVoice()
-		g.st.Status = "voice call ended"
+		g.cur().st.Status = "voice call ended"
 	}
 }
 
 // toggleMute flips own mute (Ctrl+M or the bar's mute button).
 func (g *game) toggleMute() {
-	if g.c == nil || g.vc.busy || g.st.InCall == "" {
+	if g.cur().c == nil || g.vc.busy || g.cur().st.InCall == "" {
 		return
 	}
 	g.vc.muted = !g.vc.muted
@@ -194,7 +195,7 @@ func (g *game) toggleMute() {
 	case <-g.muteCh:
 	default:
 	}
-	g.muteCh <- muteReq{c: g.c, muted: g.vc.muted}
+	g.muteCh <- muteReq{c: g.cur().c, muted: g.vc.muted}
 }
 
 // muteReq is the desired mute state for one client.
@@ -228,7 +229,7 @@ func (g *game) applyMuteFail() {
 		if g.vc.muted == f.muted {
 			g.vc.muted = !f.muted
 		}
-		g.st.Status = fmt.Sprintf("mute failed: %v", f.err)
+		g.cur().st.Status = fmt.Sprintf("mute failed: %v", f.err)
 	default:
 	}
 }
@@ -270,7 +271,7 @@ func (g *game) barLayout(gm geometry) barLayout {
 }
 
 func (g *game) updateBar(gm geometry) {
-	if g.vc.busy || g.st.InCall == "" {
+	if g.vc.busy || g.cur().st.InCall == "" {
 		return
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyM) &&
@@ -295,7 +296,7 @@ func (g *game) updateBar(gm geometry) {
 // addBarHits registers the call-bar buttons; they are live exactly when
 // updateBar would act on them.
 func (g *game) addBarHits(gm geometry) {
-	if g.vc.busy || g.st.InCall == "" {
+	if g.vc.busy || g.cur().st.InCall == "" {
 		return
 	}
 	l := g.barLayout(gm)
@@ -314,13 +315,13 @@ func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
 	dst := clip(screen, gm.barR.x0, gm.barR.y0, gm.barR.x1, gm.barR.y1)
 
 	drawSpeaker(dst, float32(gm.barR.x0+pad), float32(l.y), float32(l.h), th.Bright)
-	if g.st.InCall == "" { // still joining, or sliding out after a leave
+	if g.cur().st.InCall == "" { // still joining, or sliding out after a leave
 		if g.vc.joining != "" {
 			g.drawText(dst, "joining "+g.vc.joining+"...", l.nameX, l.y, th.Dim)
 		}
 		return
 	}
-	title := fmt.Sprintf("%s  %s", g.st.InCall, state.FormatElapsed(time.Since(g.vc.start)))
+	title := fmt.Sprintf("%s  %s", g.cur().st.InCall, state.FormatElapsed(time.Since(g.vc.start)))
 	g.drawText(dst, title, l.nameX, l.y, th.Bright)
 
 	col, label := th.FG, muteLabel
