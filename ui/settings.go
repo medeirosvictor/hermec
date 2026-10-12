@@ -257,6 +257,9 @@ func (g *game) addSettingsHits() {
 
 // updateSettings handles input for the settings scene. Every change saves.
 func (g *game) updateSettings() {
+	if g.escMenu() {
+		return
+	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		g.closeSettings()
 		return

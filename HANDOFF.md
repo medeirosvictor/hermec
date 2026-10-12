@@ -1,7 +1,7 @@
 # Hermec — Session Handoff
 
 > Living brief for picking up work in a fresh Claude session. Update at every milestone.
-> Last updated: 2026-10-11 (Round B started: decomposed into B.1/B.2/B.3; B.1 spec approved (`docs/superpowers/specs/2026-10-11-hermec-concurrent-sessions-design.md`); **B.1 plan written, awaiting Victor's review** at `docs/superpowers/plans/2026-10-11-hermec-concurrent-sessions.md` (8 tasks); after approval = subagent-driven execution in a worktree. Round A merged at a162ac1; audio round still awaiting Victor's listening test).
+> Last updated: 2026-10-12 (**B.1 implemented on branch `round-b1-sessions`, not yet merged**: spec `docs/superpowers/specs/2026-10-11-hermec-concurrent-sessions-design.md`, plan `docs/superpowers/plans/2026-10-11-hermec-concurrent-sessions.md`, all 8 tasks done; Victor's real-mouse checklist (spec section 5) is queued below, **B.2 is next**. Before that: Round B started 2026-10-11, decomposed into B.1/B.2/B.3. Round A merged at a162ac1; audio round still awaiting Victor's listening test).
 >
 > **Round B decomposition (agreed 2026-10-11):** B.1 sessions = items (a)+(b) below; B.2 server identity/management = (d), (e), then (c) roster; B.3 = (f) icon editor. B.1 decisions: every server opened this session stays connected (no startup auto-dial), right-click tile → Disconnect, unread = rail dot + bright channels, one `session` struct per server. README gained a plain-language "how people reach each other" section (4ec31a6).
 
@@ -33,6 +33,8 @@
 ## Next-session pipeline (Victor's queue, in his priority order — reordered 2026-10-07: screenshare before the trust plans)
 
 (Standing gate: the audio round closes only on Victor's listening test, see above.)
+
+0. **B.1 real-mouse checklist (branch `round-b1-sessions`, merge after it):** spec section 5 (call on A, click B, chat on B, back to A with the call uninterrupted; right-click tile, Disconnect on the call server ends the call; unread dot and bright channel; bust placement; kill a server and watch the tile go reconnecting and back), plus: Ctrl+M while viewing another server, the call bar look on the connect scene, rail marks at 100% and 150% DPI, viewed + reconnecting tile look. Then **B.2** (server names, rename/remove via the right-click menu in `ui/menu.go`, roster).
 
 1. **Owner real-mouse checklist for the title bar:** drag, snap, Win+arrows, edge/corner resize, double-click maximize, buttons, maximized layout, 150% DPI. Also the Round A eyeball checks (four presets, glow strength, curvature subtlety).
 2. **Round B brainstorm (one spec, decompose as needed):**

@@ -239,7 +239,9 @@ func (g *game) updateMain() {
 		s.st.Input.Backspace()
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-		if g.q.open { // Esc closes the quality panel first
+		if g.escMenu() {
+			// the menu took this Esc
+		} else if g.q.open { // Esc closes the quality panel first
 			g.q.open = false
 		} else {
 			s.st.Input.Submit()

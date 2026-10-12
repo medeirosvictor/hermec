@@ -54,6 +54,7 @@ func (g *game) updateCursorShape() {
 // same geometry the drawing code uses.
 func (g *game) buildHits() {
 	g.hits.Reset()
+	defer g.addMenuHits() // last: the open menu wins over everything under it
 	g.addRailHits()
 	switch {
 	case g.settingsOpen:

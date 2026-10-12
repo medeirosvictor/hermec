@@ -108,7 +108,8 @@ type game struct {
 	dt       float64                    // seconds per tick, for eased values
 	barF     float64                    // call bar slide, 0 hidden .. 1 shown; valid once barInit
 	barInit  bool                       // barF has been seeded by the first animation step
-	q        quality                    // signal bars and their detail panel
+	menu     ctxMenu                    // right-click menu on a rail tile
+	q        quality                   // signal bars and their detail panel
 	speakEnv map[string]*state.Envelope // per-occupant speaking envelope, by fingerprint
 	rowHL    map[string]float64         // eased hover/active highlight per channel row
 
@@ -320,6 +321,7 @@ func (g *game) Update() error {
 	g.pollUpdate()
 	if !g.settingsOpen {
 		g.updateKey()
+		g.escMenu() // the connect scene has no Esc of its own; main's was handled in updateKey
 	}
 	g.updateVoice()
 	g.updateDiscovery() // mutates connect.disc, which the hit targets depend on
@@ -330,7 +332,9 @@ func (g *game) Update() error {
 	g.stepHighlights(g.dt)
 	g.updateCursorShape()
 	g.updateBanner()
-	g.updateRail()
+	if !g.updateMenu() { // a click spent on the menu is not also a rail click
+		g.updateRail()
+	}
 	g.connect.disc = g.discRows // updateRail may have replaced the form
 	if g.settingsOpen {
 		g.updateSettings()
@@ -397,6 +401,7 @@ func (g *game) drawScene(screen *ebiten.Image) {
 		g.drawBanner(screen)
 	}
 	g.drawRail(screen)
+	g.drawMenu(screen)
 }
 
 func (g *game) Layout(w, h int) (int, int) {

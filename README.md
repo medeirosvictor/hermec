@@ -128,7 +128,8 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **F2**: Cycle color palettes (amber, green, blue, parchment light theme)
 - **Ctrl+M**: Mute or unmute voice
 - **Ctrl+R**: Refresh discovered servers (connect screen)
-- **Click rail tile**: Switch servers
+- **Click rail tile**: Switch servers; every server you have opened stays connected, and switching keeps you in your voice call
+- **Right-click a rail tile**: Menu with Disconnect, which ends the connection to that server (and your call, if it is the call's server); Esc or a click elsewhere closes the menu
 - **Click "+" tile**: Add a server
 - **Click the signal bars** (status line, or the call bar in a call): Show connection quality (ping, jitter, per-participant concealment); Esc or a second click closes it
 - **Click voice channel in the pane**: Join or leave voice call

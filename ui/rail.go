@@ -165,7 +165,17 @@ func (g *game) addServer() {
 }
 
 func (g *game) updateRail() {
-	if g.railW() == 0 || !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+	if g.railW() == 0 {
+		return
+	}
+	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
+		if h, ok := g.hitAt(); ok && h.Kind == state.HitRailTile && h.ID >= 0 && h.ID < len(g.servers) {
+			x, y := g.cursor()
+			g.openTileMenu(g.servers[h.ID].URL, x, y)
+		}
+		return
+	}
+	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		return
 	}
 	h, ok := g.hitAt()
