@@ -5,11 +5,13 @@ import (
 	"sort"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
+	"github.com/medeirosvictor/hermec/discover"
 )
 
 const (
@@ -83,7 +85,9 @@ func sortMembers(members []proto.Member) {
 func (s *Server) rosterLocked() []byte {
 	members := make([]proto.Member, 0, len(s.authed))
 	for m := range s.authed {
-		members = append(members, m.member())
+		mem := m.member()
+		mem.Name = capRunes(mem.Name, discover.MaxNameRunes) // copy; c.name is untouched
+		members = append(members, mem)
 	}
 	sortMembers(members)
 	r := proto.Roster{Members: members, Total: len(members)}
@@ -97,6 +101,14 @@ func (s *Server) rosterLocked() []byte {
 		}
 		r.Members = r.Members[:len(r.Members)-1]
 	}
+}
+
+// capRunes returns s cut to at most n runes (not bytes).
+func capRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }
 
 // dropSlow closes connections that fell behind. Their read loops then exit

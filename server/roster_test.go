@@ -5,14 +5,17 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/discover"
 )
 
 // authNamed authenticates id under name and returns the connection after
@@ -202,8 +205,8 @@ func TestRosterStaysUnderMaxMessageSize(t *testing.T) {
 		}
 	}
 	r := rosters[len(rosters)-1]
-	if len(r.Members) == 0 || len(r.Members) >= 4 {
-		t.Fatalf("len(Members) = %d, want 1..3", len(r.Members))
+	if len(r.Members) != 4 {
+		t.Fatalf("len(Members) = %d, want 4", len(r.Members))
 	}
 	names := make([]string, len(r.Members))
 	for i, m := range r.Members {
@@ -214,6 +217,24 @@ func TestRosterStaysUnderMaxMessageSize(t *testing.T) {
 	}
 	if !sort.StringsAreSorted(names) {
 		t.Error("members not sorted")
+	}
+}
+
+func TestRosterCapsLongNames(t *testing.T) {
+	url := startServer(t, chatCfg())
+	long := "!" + strings.Repeat("x", 24999)
+	authNamed(t, url, mustID(t), long)
+	authNamed(t, url, mustID(t), "bob")
+	c := authNamed(t, url, mustID(t), "carol")
+	r := readRoster(t, c)
+	if len(r.Members) != 3 || r.Total != 3 {
+		t.Fatalf("roster = %d members, total %d; want 3 and 3", len(r.Members), r.Total)
+	}
+	if n := utf8.RuneCountInString(r.Members[0].Name); n != discover.MaxNameRunes || r.Members[0].Name[0] != '!' {
+		t.Errorf("first name has %d runes (starts %q), want %d starting '!'", n, r.Members[0].Name[0], discover.MaxNameRunes)
+	}
+	if r.Members[1].Name != "bob" || r.Members[2].Name != "carol" {
+		t.Errorf("other names = %q, %q", r.Members[1].Name, r.Members[2].Name)
 	}
 }
 

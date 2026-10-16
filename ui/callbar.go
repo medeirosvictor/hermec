@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -89,6 +90,16 @@ func (g *game) callTitle() string {
 		return ""
 	}
 	return state.CallTitle(s.st.InCall, serverTitle(g.servers, g.callKey), g.callKey != g.curKey)
+}
+
+// fitCallTitle joins name and elapsed within cols runes, ellipsizing the
+// name so the elapsed time always stays visible.
+func fitCallTitle(name, elapsed string, cols int) string {
+	room := cols - utf8.RuneCountInString(elapsed) - 2
+	if room < 1 {
+		return elapsed
+	}
+	return state.Ellipsize(name, room) + "  " + elapsed
 }
 
 func closeAll(cs ...io.Closer) {
@@ -429,7 +440,7 @@ func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
 		}
 		return
 	}
-	title := fmt.Sprintf("%s  %s", g.callTitle(), state.FormatElapsed(time.Since(g.vc.start)))
+	title := fitCallTitle(g.callTitle(), state.FormatElapsed(time.Since(g.vc.start)), int((l.muteX0-pad-l.nameX)/gm.adv))
 	g.drawText(dst, title, l.nameX, l.y, th.Bright)
 
 	col, label := th.FG, muteLabel

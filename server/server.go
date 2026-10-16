@@ -42,8 +42,9 @@ type Config struct {
 	// UDPPortMin and UDPPortMax, when both non-zero, restrict the UDP ports
 	// used for voice media (for firewalls). Min must be <= Max.
 	UDPPortMin, UDPPortMax uint16
-	// AllowLoopbackICE adds loopback ICE candidates. For tests only; not
-	// exposed in the TOML file.
+	// AllowLoopbackICE restricts ICE to loopback (no LAN candidates, no mDNS).
+	// This breaks remote peers, so it is for tests only; not exposed in the
+	// TOML file.
 	AllowLoopbackICE bool
 	// MsgRate and MsgBurst are the post-auth inbound websocket message
 	// limit per connection (messages/sec sustained, bucket size). Either

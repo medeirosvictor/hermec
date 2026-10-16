@@ -193,7 +193,8 @@ func loopbackIP(ip net.IP) bool { return ip.IsLoopback() }
 
 // loopbackOnly confines ICE to loopback and turns off mDNS, so test runs
 // never bind a LAN interface or multicast (the Windows Firewall prompts for
-// both). Duplicated from client: server must not import client.
+// both). This breaks remote peers, so it is for tests only. Duplicated from
+// client: server must not import client.
 func loopbackOnly(se *webrtc.SettingEngine) {
 	se.SetIncludeLoopbackCandidate(true)
 	se.SetIPFilter(loopbackIP)

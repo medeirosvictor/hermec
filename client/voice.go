@@ -126,17 +126,18 @@ func (c *Client) newAPI() *webrtc.API {
 // loopbackIP is the ICE address filter for loopback mode.
 func loopbackIP(ip net.IP) bool { return ip.IsLoopback() }
 
-// loopbackOnly confines ICE to loopback and turns off mDNS, so same-host and
-// test calls never bind a LAN interface or multicast (the Windows Firewall
-// prompts for both).
+// loopbackOnly confines ICE to loopback and turns off mDNS, so test calls
+// never bind a LAN interface or multicast (the Windows Firewall prompts for
+// both). Remote peers cannot connect in this mode.
 func loopbackOnly(se *webrtc.SettingEngine) {
 	se.SetIncludeLoopbackCandidate(true)
 	se.SetIPFilter(loopbackIP)
 	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
 }
 
-// SetLoopbackICE makes future voice calls gather loopback ICE candidates.
-// For tests and same-host setups; call before JoinVoice.
+// SetLoopbackICE restricts future voice calls to loopback ICE (no LAN
+// candidates, no mDNS). This breaks remote peers, so it is for tests only;
+// call before JoinVoice.
 func (c *Client) SetLoopbackICE(on bool) { c.loopbackICE.Store(on) }
 
 // VoiceChannel returns the voice channel of the active call, or "".
