@@ -118,7 +118,8 @@ func (g *game) geom() geometry {
 		gm.cols = minCols
 	}
 	tw := text.Advance("members", g.face) + pad
-	gm.toggleR = rectF{right - tw, gm.headY, right, gm.headY + lh}
+	// Never reaches back over the channel pane (and its header) in a tiny window.
+	gm.toggleR = rectF{math.Max(right-tw, gm.chanR.x1+pad), gm.headY, right, gm.headY + lh}
 	gm.lcols = int((channelPaneW - 2*pad) / adv)
 	gm.visible = int((gm.paneY1 - gm.paneY0) / lh)
 	if gm.visible < 1 {
@@ -244,7 +245,7 @@ func (g *game) updateMain() {
 			case state.HitVoice:
 				g.clickVoice(h.Key)
 			case state.HitMembersToggle:
-				g.toggleMembers()
+				g.clickMembersToggle(h)
 			case state.HitSignal:
 				if h.ID == signalBars {
 					g.toggleQuality()
@@ -298,12 +299,7 @@ func (g *game) updateMain() {
 	}
 	mx, my := g.cursor()
 	fx, fy := float64(mx), float64(my)
-	if _, wy := ebiten.Wheel(); in && wy != 0 && gm.showMembers && state.InRect(fx, fy, gm.membersR.x0, gm.membersR.y0, gm.membersR.x1, gm.membersR.y1) {
-		var n int
-		n, s.ms.wheelCarry = state.WheelLines(s.ms.wheelCarry, wy, wheelLinesPerNotch)
-		rows, _ := g.memberRows()
-		s.ms.rosterScroll = state.ClampScroll(len(rows), g.rosterVisible(gm), s.ms.rosterScroll-n)
-	} else if in && wy != 0 && state.InRect(fx, fy, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1) {
+	if _, wy := ebiten.Wheel(); in && wy != 0 && !g.wheelMembers(s, gm, fx, fy, wy) && state.InRect(fx, fy, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1) {
 		var n int
 		n, s.ms.wheelCarry = state.WheelLines(s.ms.wheelCarry, wy, wheelLinesPerNotch)
 		s.ms.scroll += n

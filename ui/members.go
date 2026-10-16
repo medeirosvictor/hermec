@@ -70,5 +70,30 @@ func (g *game) drawMembersToggle(screen *ebiten.Image, gm geometry) {
 		c = g.th.Bright
 	}
 	const label = "members"
-	g.drawText(screen, label, gm.toggleR.x1-text.Advance(label, g.face)-pad/2, gm.toggleR.y0, c)
+	t := gm.toggleR
+	g.drawText(clip(screen, t.x0, t.y0, t.x1, t.y1), label, gm.toggleR.x1-text.Advance(label, g.face)-pad/2, gm.toggleR.y0, c)
+}
+
+// wheelMembers applies a wheel turn wy at (fx, fy) to the member list. It
+// reports whether it consumed the wheel: the list is drawn and the cursor is
+// over it. Wheel up scrolls toward the top, like the chat.
+func (g *game) wheelMembers(s *session, gm geometry, fx, fy, wy float64) bool {
+	r := gm.membersR
+	if !gm.showMembers || !state.InRect(fx, fy, r.x0, r.y0, r.x1, r.y1) {
+		return false
+	}
+	var n int
+	n, s.ms.wheelCarry = state.WheelLines(s.ms.wheelCarry, wy, wheelLinesPerNotch)
+	rows, _ := g.memberRows()
+	s.ms.rosterScroll = state.ClampScroll(len(rows), g.rosterVisible(gm), s.ms.rosterScroll-n)
+	return true
+}
+
+// clickMembersToggle handles a click on h; it reports whether it was the toggle.
+func (g *game) clickMembersToggle(h state.Hit) bool {
+	if h.Kind != state.HitMembersToggle {
+		return false
+	}
+	g.toggleMembers()
+	return true
 }

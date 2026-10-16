@@ -8,6 +8,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
+	"github.com/medeirosvictor/hermec/ui/theme"
 )
 
 func boolp(b bool) *bool { return &b }
@@ -87,6 +88,9 @@ func TestMembersToggleHit(t *testing.T) {
 		g.w = w
 		g.buildHits()
 		gm := g.geom()
+		if gm.showMembers != (w == 960) {
+			t.Errorf("w=%d showMembers=%v", w, gm.showMembers)
+		}
 		cx, cy := center(gm.toggleR)
 		if h, ok := g.hits.At(cx, cy); !ok || h.Kind != state.HitMembersToggle {
 			t.Errorf("w=%d centre: %v %v", w, h, ok)
@@ -131,38 +135,110 @@ func TestMembersPanelRows(t *testing.T) {
 	}
 }
 
-func TestMembersScrollClamped(t *testing.T) {
+func rosterGame(t *testing.T, n int) (*game, geometry) {
 	g := mainGame(t)
-	gm := g.geom()
 	st := g.cur().st
-	for i := 0; i < 80; i++ {
+	for i := 0; i < n; i++ {
 		st.Roster = append(st.Roster, proto.Member{Name: "m", Fingerprint: string(rune('a' + i))})
 	}
-	st.RosterTotal, st.HasRoster = 80, true
+	st.RosterTotal, st.HasRoster = n, true
+	return g, g.geom()
+}
+
+func TestMembersWheel(t *testing.T) {
+	g, gm := rosterGame(t, 80)
+	s := g.cur()
 	rows, _ := g.memberRows()
-	vis := g.rosterVisible(gm)
-	if len(rows) <= vis {
-		t.Fatalf("need more rows than %d", vis)
+	max := state.ClampScroll(len(rows), g.rosterVisible(gm), 1<<20)
+	if max == 0 {
+		t.Fatal("list fits; need overflow")
 	}
-	ms := &g.cur().ms
-	max := state.ClampScroll(len(rows), vis, 1<<20)
-	for _, n := range []int{-1 << 20, 5, 1 << 20} {
-		ms.rosterScroll = state.ClampScroll(len(rows), vis, ms.rosterScroll-n)
-		if ms.rosterScroll < 0 || ms.rosterScroll > max {
-			t.Errorf("scroll %d outside 0..%d", ms.rosterScroll, max)
-		}
+	cx, cy := center(gm.membersR)
+	if !g.wheelMembers(s, gm, cx, cy, -2) || s.ms.rosterScroll != 6 {
+		t.Fatalf("wheel down: scroll %d", s.ms.rosterScroll)
 	}
-	st.Roster, st.RosterTotal = st.Roster[:2], 2
-	rows, _ = g.memberRows()
-	if got := state.ClampScroll(len(rows), vis, 9); got != 0 {
-		t.Errorf("short list scroll %d", got)
+	g.wheelMembers(s, gm, cx, cy, 1)
+	if s.ms.rosterScroll != 3 {
+		t.Errorf("wheel up: scroll %d, want 3", s.ms.rosterScroll)
 	}
+	g.wheelMembers(s, gm, cx, cy, -1e6)
+	if s.ms.rosterScroll != max {
+		t.Errorf("huge down: %d, want %d", s.ms.rosterScroll, max)
+	}
+	g.wheelMembers(s, gm, cx, cy, 1e6)
+	if s.ms.rosterScroll != 0 {
+		t.Errorf("huge up: %d, want 0", s.ms.rosterScroll)
+	}
+}
+
+func TestMembersWheelNotConsumed(t *testing.T) {
+	g, gm := rosterGame(t, 80)
+	s := g.cur()
+	s.ms.scroll = 7
+	if g.wheelMembers(s, gm, gm.chatR.x0+pad, gm.chatR.y0+gm.lh, -3) {
+		t.Error("consumed over the chat")
+	}
+	if s.ms.rosterScroll != 0 || s.ms.scroll != 7 {
+		t.Errorf("scrolls moved: %d %d", s.ms.rosterScroll, s.ms.scroll)
+	}
+	cx, cy := center(gm.membersR)
+	g.set.Members = boolp(false)
+	off := g.geom()
+	if g.wheelMembers(s, off, cx, cy, -3) || s.ms.rosterScroll != 0 {
+		t.Error("consumed with the setting off")
+	}
+	g.set.Members = nil
+	g.w = 500
+	narrow := g.geom()
+	if narrow.showMembers || g.wheelMembers(s, narrow, cx, cy, -3) || s.ms.rosterScroll != 0 {
+		t.Error("consumed while auto-hidden")
+	}
+}
+
+func TestMembersScrollPerSession(t *testing.T) {
+	g, _ := rosterGame(t, 5)
+	g.cur().ms.rosterScroll = 4
 	other := newSession("o", "ws://o/", "me")
 	g.sess[other.key] = other
-	ms.rosterScroll = 4
 	g.view(other.key)
 	if g.cur().ms.rosterScroll != 0 {
 		t.Error("scroll leaked across sessions")
+	}
+}
+
+func TestClickMembersToggle(t *testing.T) {
+	g := mainGame(t)
+	if g.clickMembersToggle(state.Hit{Kind: state.HitChannel}) || !g.set.MembersShown() {
+		t.Fatal("other hit changed the setting")
+	}
+	if !g.clickMembersToggle(state.Hit{Kind: state.HitMembersToggle}) || g.set.MembersShown() {
+		t.Fatal("toggle hit did not hide the list")
+	}
+}
+
+func TestMembersToggleNoOverlap(t *testing.T) {
+	g := mainGame(t)
+	for _, fs := range []float64{g.th.FontSize, g.th.FontSize * 1.5} {
+		g.th.FontSize = fs
+		face, err := theme.Face(fs)
+		if err != nil {
+			t.Skip(err)
+		}
+		g.face = face
+		for w := 1200; w >= 300; w -= 7 {
+			g.w = w
+			gm := g.geom()
+			tr, sr := gm.toggleR, g.signalRect(gm)
+			if tr.y0 < sr.y1 && sr.y0 < tr.y1 && tr.x0 < sr.x1 && sr.x0 < tr.x1 {
+				t.Fatalf("fs=%v w=%d toggle overlaps signal bars", fs, w)
+			}
+			if tr.x0 < gm.chanR.x1 {
+				t.Fatalf("fs=%v w=%d toggle over the channel pane/header", fs, w)
+			}
+			if tr.x1 != float64(w)-margin {
+				t.Fatalf("fs=%v w=%d toggle right edge moved", fs, w)
+			}
+		}
 	}
 }
 
