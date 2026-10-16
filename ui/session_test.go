@@ -20,10 +20,16 @@ import (
 // it with its ws:// URL. It is shut down when the test ends.
 func startServer(t *testing.T, addr string) (*server.Server, string) {
 	t.Helper()
+	return startServerNamed(t, addr, "test")
+}
+
+// startServerNamed is startServer with the given server display name.
+func startServerNamed(t *testing.T, addr, name string) (*server.Server, string) {
+	t.Helper()
 	srv := server.New(server.Config{
 		Addr:          addr,
 		Discoverable:  false,
-		ServerName:    "test",
+		ServerName:    name,
 		Channels:      []string{"general", "random"},
 		VoiceChannels: []string{"voice"},
 		Roles:         roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},

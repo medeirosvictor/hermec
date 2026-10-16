@@ -13,6 +13,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
+	"github.com/medeirosvictor/hermec/client"
 	"github.com/medeirosvictor/hermec/ui/state"
 )
 
@@ -82,6 +83,12 @@ func (g *game) loadServers(path string) {
 	g.servers = es
 }
 
+// serverNameOf is the name c's server announced, cleaned for display: the
+// server is untrusted, so control and format runes go and the length is capped.
+func serverNameOf(c *client.Client) string {
+	return state.CleanName(c.ServerName(), state.MaxServerNameRunes)
+}
+
 // saveServer records s and its active channel in the saved list. Servers
 // with a session are never evicted by the cap. Failures go to the status line.
 func (g *game) saveServer(s *session, channel string) {
@@ -93,7 +100,7 @@ func (g *game) saveServer(s *session, channel string) {
 		label = "local"
 	}
 	live := func(u string) bool { _, ok := g.sess[u]; return ok }
-	g.servers = state.Touch(g.servers, s.key, label, "", channel, live)
+	g.servers = state.Touch(g.servers, s.key, label, serverNameOf(s.c), channel, live)
 	if err := state.SaveServers(g.serversPath, g.servers); err != nil {
 		g.notice = fmt.Sprintf("save servers: %v", err)
 		s.st.Status = g.notice
@@ -207,6 +214,46 @@ func (g *game) addRailHits() {
 	h := float64(g.h)
 	g.hits.Add(state.Hit{X0: 0, Y0: h - 2*railTileH, X1: railWidth, Y1: h - railTileH, Kind: state.HitRailAdd})
 	g.hits.Add(state.Hit{X0: 0, Y0: h - railTileH, X1: railWidth, Y1: h, Kind: state.HitGear})
+}
+
+// tooltipState is the rail tooltip: the tile it is for and whether it shows.
+type tooltipState struct {
+	idx  int
+	show bool
+}
+
+// stepTooltip advances the hover timer for the hit under the pointer. Only
+// rail tiles get a tooltip, and none shows over the menu or a dialog.
+func (g *game) stepTooltip(h state.Hit, ok bool, now time.Time) {
+	id := -1
+	if ok && h.Kind == state.HitRailTile {
+		id = h.ID
+	}
+	held := g.hover.Step(id, now)
+	g.tip = tooltipState{idx: id, show: held && !g.menu.open && g.dlg.mode == dlgNone}
+}
+
+// tooltipText is the text of the visible tooltip. It re-checks the index
+// because the saved list can shrink while a tooltip is up.
+func (g *game) tooltipText() (string, bool) {
+	if !g.tip.show || g.tip.idx < 0 || g.tip.idx >= len(g.servers) {
+		return "", false
+	}
+	return state.DisplayName(g.servers[g.tip.idx]), true
+}
+
+// drawTooltip draws the hovered tile's server name beside the rail.
+func (g *game) drawTooltip(screen *ebiten.Image) {
+	s, ok := g.tooltipText()
+	if !ok {
+		return
+	}
+	lh := g.lineH()
+	w, h := text.Advance(s, g.face)+pad, lh+pad/2
+	y0 := pad + float64(g.tip.idx)*railTileH
+	x, y := state.TooltipOrigin(railWidth, y0, y0+railTileH, w, h, float64(g.w), float64(g.h))
+	g.drawPanelFade(screen, x, y, x+w, y+h, g.th.Panel, 4)
+	g.drawText(screen, s, x+pad/2, y+pad/4, g.th.Bright)
 }
 
 // railEpoch is the monotonic origin for the reconnecting pulse.

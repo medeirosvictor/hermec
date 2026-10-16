@@ -109,6 +109,9 @@ type game struct {
 	barF     float64                    // call bar slide, 0 hidden .. 1 shown; valid once barInit
 	barInit  bool                       // barF has been seeded by the first animation step
 	menu     ctxMenu                    // right-click menu on a rail tile
+	dlg      dialog                     // open modal dialog, if any
+	hover    state.Hover                // rail tile hover timer
+	tip      tooltipState               // rail tooltip
 	escSpent bool                       // this tick's Esc press was already consumed
 	q        quality                    // signal bars and their detail panel
 	speakEnv map[string]*state.Envelope // per-occupant speaking envelope, by fingerprint
@@ -333,6 +336,8 @@ func (g *game) Update() error {
 	g.buildHits()
 	g.stepHighlights(g.dt)
 	g.updateCursorShape()
+	hit, hitOK := g.hitAt()
+	g.stepTooltip(hit, hitOK, time.Now())
 	if !g.updateMenu() { // a click spent on the menu is not also a rail click
 		g.updateBanner()
 		g.updateRail()
@@ -403,6 +408,7 @@ func (g *game) drawScene(screen *ebiten.Image) {
 		g.drawBanner(screen)
 	}
 	g.drawRail(screen)
+	g.drawTooltip(screen)
 	g.drawMenu(screen)
 }
 

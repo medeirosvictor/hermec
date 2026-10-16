@@ -8,8 +8,38 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 
+	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/ui/theme"
 )
+
+// The one-line header sits above the channel list and the chat text.
+func TestGeomHeaderRow(t *testing.T) {
+	g := testGame(t)
+	s := newSession("ws://a/", "ws://a/", "me")
+	s.st.Phase = state.PhaseMain
+	s.st.Channels = []string{"general"}
+	g.sess = map[string]*session{s.key: s}
+	g.view(s.key)
+	gm := g.geom()
+	if gm.paneY0 != gm.headY+gm.lh {
+		t.Errorf("paneY0 %v != headY %v + lh %v", gm.paneY0, gm.headY, gm.lh)
+	}
+	if gm.headY != gm.chanR.y0+pad {
+		t.Errorf("headY %v != chanR.y0 %v + pad", gm.headY, gm.chanR.y0)
+	}
+	if gm.headY+gm.lh > gm.chanR.y1 {
+		t.Errorf("header row overflows the channel pane: %+v", gm)
+	}
+	g.hits.Reset()
+	g.addMainHits(gm)
+	h, ok := g.hits.At(gm.chanR.x0+1, gm.paneY0+1)
+	if !ok || h.Kind != state.HitChannel || h.Y0 != gm.paneY0 {
+		t.Errorf("first channel hit = %+v, %v; want a row starting at paneY0 %v", h, ok, gm.paneY0)
+	}
+	if h, ok := g.hits.At(gm.chanR.x0+1, gm.headY+1); ok && h.Kind == state.HitChannel {
+		t.Errorf("header row is clickable as a channel: %+v", h)
+	}
+}
 
 func testGame(t *testing.T) *game {
 	t.Helper()

@@ -97,14 +97,12 @@ func (g *game) toggleMaximize() {
 }
 
 // serverTitle is the label the rail tile shows for the server saved under
-// key (its label, else its host), or "" when there is none.
+// key (its nick, else the name it announced, else label or host), or "" when
+// there is none.
 func serverTitle(servers []state.ServerEntry, key string) string {
 	for _, e := range servers {
 		if e.URL == key {
-			if e.Label != "" {
-				return e.Label
-			}
-			return state.HostPort(e.URL)
+			return state.DisplayName(e)
 		}
 	}
 	return ""

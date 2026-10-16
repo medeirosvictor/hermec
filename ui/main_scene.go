@@ -50,7 +50,8 @@ type geometry struct {
 	statusR, chanR      rectF   // status line panel; channel pane (runs beside the input)
 	chatR, inputR, barR rectF   // chat pane; input line (right column); call bar (only while barVisible)
 	statusY             float64
-	paneY0, paneY1      float64 // scrollback (chat pane) text extent
+	headY               float64 // header row text top: one line above the channel list and chat text
+	paneY0, paneY1      float64 // first text row (below the header) and chat pane text bottom
 	chanY1              float64 // channel pane text bottom
 	inputY              float64 // chat input text top
 	barY                float64 // call bar text top; meaningful only while barVisible
@@ -90,7 +91,8 @@ func (g *game) geom() geometry {
 	gm.statusY = gm.statusR.y0 + pad/2
 	gm.barY = gm.barR.y0 + pad/2
 	gm.inputY = gm.inputR.y0 + pad/2
-	gm.paneY0 = top + pad
+	gm.headY = top + pad
+	gm.paneY0 = gm.headY + lh
 	gm.paneY1 = gm.chatR.y1 - pad
 	gm.chanY1 = bottom - pad
 	gm.rightX = chatX + pad
@@ -338,6 +340,7 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	g.drawPanelR(screen, gm.chanR)
 	g.drawPanelR(screen, gm.chatR)
 	g.drawPanelR(screen, gm.inputR)
+	g.drawHeader(screen, gm)
 	g.drawChannels(screen, gm)
 	g.drawCallBar(screen, gm)
 	g.drawScrollback(screen, gm)
@@ -384,6 +387,16 @@ func (g *game) drawStatus(screen *ebiten.Image, gm geometry) {
 		g.drawSignal(screen, sr.x0, sr.y0, gm.lh, g.q.grade)
 	}
 	g.drawTextF(clip(screen, r.x0+pad, r.y0, textR, r.y1), g.faceS, line, r.x0+pad, gm.statusY, g.th.Dim)
+}
+
+// drawHeader draws the server's name above the channel list, cut to the pane.
+func (g *game) drawHeader(screen *ebiten.Image, gm geometry) {
+	title := serverTitle(g.servers, g.curKey)
+	if title == "" {
+		title = state.HostPort(g.cur().url)
+	}
+	dst := clip(screen, gm.chanR.x0, gm.chanR.y0, gm.chanR.x1, gm.chanR.y1)
+	g.drawText(dst, state.Ellipsize(title, gm.lcols), gm.chanR.x0+pad, gm.headY, g.th.Bright)
 }
 
 func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
