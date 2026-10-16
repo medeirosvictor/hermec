@@ -61,14 +61,42 @@ func (s *Server) presenceLocked(ch string) []byte {
 	for m := range s.chans[ch] {
 		members = append(members, m.member())
 	}
+	sortMembers(members)
+	raw, _ := proto.Encode(proto.TypePresence, proto.Presence{Channel: ch, Members: members})
+	return raw
+}
+
+// sortMembers orders members by name, then fingerprint.
+func sortMembers(members []proto.Member) {
 	sort.Slice(members, func(i, j int) bool {
 		if members[i].Name != members[j].Name {
 			return members[i].Name < members[j].Name
 		}
 		return members[i].Fingerprint < members[j].Fingerprint
 	})
-	raw, _ := proto.Encode(proto.TypePresence, proto.Presence{Channel: ch, Members: members})
-	return raw
+}
+
+// rosterLocked encodes every authenticated connection as a proto.Roster.
+// Members are cut to MaxRosterMembers and then trimmed from the end until the
+// frame fits MaxMessageSize; Total always counts every connection. Caller
+// holds chMu.
+func (s *Server) rosterLocked() []byte {
+	members := make([]proto.Member, 0, len(s.authed))
+	for m := range s.authed {
+		members = append(members, m.member())
+	}
+	sortMembers(members)
+	r := proto.Roster{Members: members, Total: len(members)}
+	if len(r.Members) > proto.MaxRosterMembers {
+		r.Members = r.Members[:proto.MaxRosterMembers]
+	}
+	for {
+		raw, err := proto.Encode(proto.TypeRoster, r)
+		if err == nil && len(raw) <= proto.MaxMessageSize || len(r.Members) == 0 {
+			return raw
+		}
+		r.Members = r.Members[:len(r.Members)-1]
+	}
 }
 
 // dropSlow closes connections that fell behind. Their read loops then exit
@@ -120,7 +148,10 @@ func (s *Server) leaveAll(c *conn) {
 		delete(set, c)
 		dead = append(dead, s.broadcastLocked(ch, s.presenceLocked(ch))...)
 	}
-	delete(s.authed, c)
+	if _, was := s.authed[c]; was {
+		delete(s.authed, c)
+		dead = append(dead, s.broadcastAuthedLocked(s.rosterLocked())...)
+	}
 	if vch := s.removeVoiceLocked(c); vch != "" {
 		dead = append(dead, s.broadcastVoiceLocked(vch)...)
 	}

@@ -118,3 +118,50 @@ func TestAuthOKTypedChannels(t *testing.T) {
 		t.Errorf("got %+v, want %+v", out, in)
 	}
 }
+
+func TestRosterRoundTrip(t *testing.T) {
+	in := Roster{Members: []Member{{Fingerprint: "fp", Name: "a", Roles: []string{"admin"}}}, Total: 3}
+	raw, err := Encode(TypeRoster, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Type != TypeRoster {
+		t.Errorf("Type = %q", env.Type)
+	}
+	var out Roster
+	if err := json.Unmarshal(env.Data, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(in, out) {
+		t.Errorf("got %+v, want %+v", out, in)
+	}
+}
+
+func TestAuthOKServerName(t *testing.T) {
+	raw, err := Encode(TypeAuthOK, AuthOK{Fingerprint: "fp", ServerName: "Primos"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out AuthOK
+	if err := json.Unmarshal(env.Data, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ServerName != "Primos" {
+		t.Errorf("ServerName = %q", out.ServerName)
+	}
+	raw, err = Encode(TypeAuthOK, AuthOK{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "server_name") {
+		t.Errorf("empty ServerName not omitted: %s", raw)
+	}
+}

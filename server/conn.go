@@ -213,6 +213,7 @@ func (c *conn) authenticate() error {
 		Fingerprint: fp,
 		Roles:       c.srv.cfg.Roles.RolesFor(fp),
 		Channels:    c.srv.channelInfos(),
+		ServerName:  c.srv.cfg.ServerName,
 	})
 	// Registered after auth_ok is queued so voice_state never precedes it.
 	c.srv.markAuthed(c)

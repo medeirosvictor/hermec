@@ -18,6 +18,7 @@ func FuzzDecode(f *testing.F) {
 		TypeRTCAnswer:    RTCAnswer{SDP: "v=0"},
 		TypeRTCCandidate: RTCCandidate{Candidate: "{}"},
 		TypeAuthOK:       AuthOK{Fingerprint: "fp", Channels: []ChannelInfo{{Name: "g", Type: "text"}}},
+		TypeRoster:       Roster{Members: []Member{{Fingerprint: "fp", Name: "a", Roles: []string{"user"}}}, Total: 1},
 	} {
 		if b, err := Encode(typ, payload); err == nil {
 			f.Add(b)

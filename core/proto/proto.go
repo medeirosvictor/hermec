@@ -14,6 +14,8 @@ const (
 	Version = 1
 	// MaxMessageSize is the largest accepted raw message, in bytes.
 	MaxMessageSize = 64 * 1024
+	// MaxRosterMembers caps the members listed in one Roster frame.
+	MaxRosterMembers = 200
 )
 
 // Message types.
@@ -28,6 +30,7 @@ const (
 	TypeChatSend    = "chat_send"
 	TypeChatMessage = "chat_message"
 	TypeChannelList = "channel_list"
+	TypeRoster      = "roster"
 
 	TypeVoiceJoin    = "voice_join"
 	TypeVoiceLeave   = "voice_leave"
@@ -75,6 +78,8 @@ type AuthOK struct {
 	Fingerprint string        `json:"fingerprint"`
 	Roles       []string      `json:"roles"`
 	Channels    []ChannelInfo `json:"channels"`
+	// ServerName is the server's configured display name; empty if unset.
+	ServerName string `json:"server_name,omitempty"`
 }
 
 // VoiceJoin requests joining a voice channel.
@@ -146,6 +151,15 @@ type Member struct {
 type Presence struct {
 	Channel string   `json:"channel"`
 	Members []Member `json:"members"`
+}
+
+// Roster lists the connected members server-wide, sorted by name then
+// fingerprint. Members may be a prefix of the full list (at most
+// MaxRosterMembers, and small enough to fit MaxMessageSize); Total is the
+// real number of connections.
+type Roster struct {
+	Members []Member `json:"members"`
+	Total   int      `json:"total"`
 }
 
 // ChatSend is a client's outgoing chat message.

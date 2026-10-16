@@ -26,12 +26,17 @@ func authed(t *testing.T, url string) (*websocket.Conn, *identity.Identity) {
 	if env.Type != proto.TypeAuthOK {
 		t.Fatalf("auth type = %q", env.Type)
 	}
+	// Drain the roster the server sends right after auth_ok. Frames broadcast
+	// later (other conns coming and going) are skipped by the readers.
+	if r := readEnv(t, c); r.Type != proto.TypeRoster {
+		t.Fatalf("after auth_ok: type = %q, want roster", r.Type)
+	}
 	return c, id
 }
 
 func readPresence(t *testing.T, c *websocket.Conn) proto.Presence {
 	t.Helper()
-	env := readEnv(t, c)
+	env := readEnvSkipRoster(t, c)
 	if env.Type != proto.TypePresence {
 		t.Fatalf("type = %q, want presence", env.Type)
 	}
@@ -45,7 +50,14 @@ func readPresence(t *testing.T, c *websocket.Conn) proto.Presence {
 func requireNothing(t *testing.T, c *websocket.Conn) {
 	t.Helper()
 	_ = c.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-	if _, raw, err := c.ReadMessage(); err == nil {
+	for {
+		_, raw, err := c.ReadMessage()
+		if err != nil {
+			break
+		}
+		if env, derr := proto.Decode(raw); derr == nil && env.Type == proto.TypeRoster {
+			continue
+		}
 		t.Fatalf("unexpected message: %s", raw)
 	}
 	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -53,7 +65,7 @@ func requireNothing(t *testing.T, c *websocket.Conn) {
 
 func requireErrCode(t *testing.T, c *websocket.Conn, code string) {
 	t.Helper()
-	env := readEnv(t, c)
+	env := readEnvSkipRoster(t, c)
 	if env.Type != proto.TypeError {
 		t.Fatalf("type = %q, want error", env.Type)
 	}
@@ -95,7 +107,7 @@ func TestChatRoundTrip(t *testing.T) {
 
 	sendEnv(t, a, proto.TypeChatSend, proto.ChatSend{Channel: "general", Text: "hi"})
 	for _, c := range []*websocket.Conn{a, b} {
-		env := readEnv(t, c)
+		env := readEnvSkipRoster(t, c)
 		if env.Type != proto.TypeChatMessage {
 			t.Fatalf("type = %q", env.Type)
 		}

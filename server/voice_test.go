@@ -20,7 +20,7 @@ func voiceCfg() Config {
 
 func readVoiceState(t *testing.T, c *websocket.Conn) proto.VoiceState {
 	t.Helper()
-	env := readEnv(t, c)
+	env := readEnvSkipRoster(t, c)
 	if env.Type != proto.TypeVoiceState {
 		t.Fatalf("type = %q, want voice_state", env.Type)
 	}
@@ -173,7 +173,11 @@ func TestVoiceSnapshotToLateJoiner(t *testing.T) {
 	sendEnv(t, a, proto.TypeVoiceJoin, proto.VoiceJoin{Channel: "lounge"})
 	readVoiceState(t, a)
 	// B authenticates after the call began; no membership change happens.
-	b, _ := authed(t, url)
+	// authAs (not authed) so the snapshot is not consumed with the roster.
+	b, env := authAs(t, url, mustID(t), "")
+	if env.Type != proto.TypeAuthOK {
+		t.Fatalf("auth type = %q", env.Type)
+	}
 	v := readVoiceState(t, b)
 	if v.Channel != "lounge" || len(v.Members) != 1 {
 		t.Fatalf("snapshot = %+v", v)

@@ -64,10 +64,14 @@ func (s *Server) markAuthed(c *conn) {
 			break
 		}
 	}
-	s.chMu.Unlock()
+	var dead []*conn
 	if slow {
-		dropSlow([]*conn{c})
+		dead = append(dead, c)
 	}
+	// The roster goes to everyone, c included, after c's voice snapshot.
+	dead = append(dead, s.broadcastAuthedLocked(s.rosterLocked())...)
+	s.chMu.Unlock()
+	dropSlow(dead)
 }
 
 // voiceStateLocked encodes the current participants of ch. Caller holds chMu.
@@ -89,7 +93,12 @@ func (s *Server) voiceStateLocked(ch string) []byte {
 // broadcastVoiceLocked sends ch's state to every authenticated connection.
 // Caller holds chMu. Returns the conns that could not accept it.
 func (s *Server) broadcastVoiceLocked(ch string) []*conn {
-	raw := s.voiceStateLocked(ch)
+	return s.broadcastAuthedLocked(s.voiceStateLocked(ch))
+}
+
+// broadcastAuthedLocked sends raw to every authenticated connection. Caller
+// holds chMu. Returns the conns that could not accept it.
+func (s *Server) broadcastAuthedLocked(raw []byte) []*conn {
 	var dead []*conn
 	for m := range s.authed {
 		if !m.enqueue(raw) {

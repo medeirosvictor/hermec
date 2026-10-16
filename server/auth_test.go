@@ -55,6 +55,17 @@ func readEnv(t *testing.T, c *websocket.Conn) proto.Envelope {
 	return env
 }
 
+// readEnvSkipRoster is readEnv that ignores roster frames, which the server
+// broadcasts on every connect and disconnect.
+func readEnvSkipRoster(t *testing.T, c *websocket.Conn) proto.Envelope {
+	t.Helper()
+	for {
+		if env := readEnv(t, c); env.Type != proto.TypeRoster {
+			return env
+		}
+	}
+}
+
 func readChallenge(t *testing.T, c *websocket.Conn) []byte {
 	t.Helper()
 	env := readEnv(t, c)
