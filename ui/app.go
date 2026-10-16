@@ -110,6 +110,7 @@ type game struct {
 	barInit  bool                       // barF has been seeded by the first animation step
 	menu     ctxMenu                    // right-click menu on a rail tile
 	dlg      dialog                     // open modal dialog, if any
+	modal    bool                       // a dialog was open at the start of this tick: input handlers stand down
 	hover    state.Hover                // rail tile hover timer
 	tip      tooltipState               // rail tooltip
 	escSpent bool                       // this tick's Esc press was already consumed
@@ -307,25 +308,27 @@ func (g *game) Update() error {
 	if g.dev != nil {
 		g.dev.poll(time.Now())
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyF1) {
-		g.setScanlines(!g.crtOn)
+	// A dialog blocks input only: everything per-tick (sessions, reconnects,
+	// voice and update results, discovery, animation) runs regardless.
+	g.modal = g.dialogOpen()
+	if !g.modal {
+		if inpututil.IsKeyJustPressed(ebiten.KeyF1) {
+			g.setScanlines(!g.crtOn)
+		}
+		if inpututil.IsKeyJustPressed(ebiten.KeyF3) {
+			g.toggleCurvature()
+		}
+		if inpututil.IsKeyJustPressed(ebiten.KeyF2) {
+			g.cyclePalette()
+		}
+		if inpututil.IsKeyJustPressed(ebiten.KeyF10) {
+			g.toggleSettings()
+		}
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyF3) {
-		g.toggleCurvature()
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyF2) {
-		g.cyclePalette()
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyF10) {
-		g.toggleSettings()
-	}
-	g.pumpSessions()
-	g.tickReconnect(time.Now())
-
-	g.pollUpdate()
+	g.tickBackground(time.Now())
 	g.escSpent = false
 	g.closeMenuOnEsc(inpututil.IsKeyJustPressed(ebiten.KeyEscape)) // first taker of Esc
-	if !g.settingsOpen {
+	if !g.settingsOpen && !g.modal {
 		g.updateKey()
 	}
 	g.updateVoice()
@@ -338,16 +341,20 @@ func (g *game) Update() error {
 	g.updateCursorShape()
 	hit, hitOK := g.hitAt()
 	g.stepTooltip(hit, hitOK, time.Now())
-	if !g.updateMenu() { // a click spent on the menu is not also a rail click
+	if g.modal {
+		g.updateDialog() // buttons, Esc, Enter and typing; nothing under it acts
+	} else if !g.updateMenu() { // a click spent on the menu is not also a rail click
 		g.updateBanner()
 		g.updateRail()
 	}
 	g.connect.disc = g.discRows // updateRail may have replaced the form
 	if g.settingsOpen {
-		g.updateSettings()
+		if !g.modal {
+			g.updateSettings()
+		}
 		return nil
 	}
-	if g.cur().st.Phase == state.PhaseConnect {
+	if g.cur().st.Phase == state.PhaseConnect && !g.modal {
 		g.connect.dy = g.bannerH() // updateRail may have replaced the form
 		if url, name, submit := g.connect.update(g.cur().dialing, g.hitAt); submit {
 			if s := g.openSession(url, name); s != nil {
@@ -359,10 +366,22 @@ func (g *game) Update() error {
 	case state.PhaseMain:
 		g.updateMain()
 	case state.PhaseDisconnected:
-		g.updateDisconnected()
+		if !g.modal {
+			g.updateDisconnected()
+		}
 	}
-	g.updateBar(g.geom()) // the call may be on another server: any scene but settings
+	if !g.modal {
+		g.updateBar(g.geom()) // the call may be on another server: any scene but settings
+	}
 	return nil
+}
+
+// tickBackground is the per-tick work that is not input: network results,
+// reconnect timers and the update check. It never depends on what is open.
+func (g *game) tickBackground(now time.Time) {
+	g.pumpSessions()
+	g.tickReconnect(now)
+	g.pollUpdate()
 }
 
 func (g *game) Draw(screen *ebiten.Image) {
@@ -410,6 +429,7 @@ func (g *game) drawScene(screen *ebiten.Image) {
 	g.drawRail(screen)
 	g.drawTooltip(screen)
 	g.drawMenu(screen)
+	g.drawDialog(screen)
 }
 
 func (g *game) Layout(w, h int) (int, int) {

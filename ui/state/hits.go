@@ -4,19 +4,21 @@ package state
 type HitKind int
 
 const (
-	HitChannel     HitKind = iota // text channel row; ID is the channel index
-	HitVoice                      // voice channel row; Key is the channel name
-	HitRailTile                   // server tile in the rail; ID is the server index
-	HitRailAdd                    // the "+" rail tile
-	HitGear                       // the settings (gear) rail tile
-	HitSettingsRow                // a row on the settings page; ID is the row
-	HitBarMute                    // call-bar mute button
-	HitBarLeave                   // call-bar leave button
-	HitBanner                     // the update banner
-	HitSignal                     // connection-quality bars
-	HitText                       // text input area (text cursor); ID is the field
-	HitDiscovered                 // discovered-server row on the connect page; ID is the row
-	HitMenuItem                   // context-menu item; ID is the item index
+	HitChannel       HitKind = iota // text channel row; ID is the channel index
+	HitVoice                        // voice channel row; Key is the channel name
+	HitRailTile                     // server tile in the rail; ID is the server index
+	HitRailAdd                      // the "+" rail tile
+	HitGear                         // the settings (gear) rail tile
+	HitSettingsRow                  // a row on the settings page; ID is the row
+	HitBarMute                      // call-bar mute button
+	HitBarLeave                     // call-bar leave button
+	HitBanner                       // the update banner
+	HitSignal                       // connection-quality bars
+	HitText                         // text input area (text cursor); ID is the field
+	HitDiscovered                   // discovered-server row on the connect page; ID is the row
+	HitMenuItem                     // context-menu item; ID is the item index
+	HitMembersToggle                // members panel toggle in the channel header
+	HitDialogBtn                    // dialog button; ID 0 = primary (Save / Leave), 1 = Cancel
 )
 
 // Hit is one click target: the half-open rect [X0,X1) x [Y0,Y1).

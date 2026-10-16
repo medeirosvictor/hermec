@@ -206,7 +206,9 @@ func (g *game) updateMain() {
 	ctrl := ebiten.IsKeyPressed(ebiten.KeyControlLeft) || ebiten.IsKeyPressed(ebiten.KeyControlRight)
 	shift := ebiten.IsKeyPressed(ebiten.KeyShiftLeft) || ebiten.IsKeyPressed(ebiten.KeyShiftRight)
 
+	in := !g.modal // a dialog is open: keys and clicks are not for the scene
 	switch {
+	case !in:
 	case inpututil.IsKeyJustPressed(ebiten.KeyTab):
 		g.switchChannel(!shift)
 	case ctrl && inpututil.IsKeyJustPressed(ebiten.KeyArrowDown):
@@ -215,7 +217,7 @@ func (g *game) updateMain() {
 		g.switchChannel(false)
 	}
 
-	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+	if in && inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		if h, ok := g.hitAt(); ok {
 			switch h.Kind {
 			case state.HitChannel:
@@ -230,19 +232,21 @@ func (g *game) updateMain() {
 		}
 	}
 
-	for _, r := range ebiten.AppendInputChars(nil) {
-		if r >= ' ' && r != 0x7f && len([]rune(s.st.Input.String())) < maxInputRunes {
-			s.st.Input.AppendRunes([]rune{r})
+	if in {
+		for _, r := range ebiten.AppendInputChars(nil) {
+			if r >= ' ' && r != 0x7f && len([]rune(s.st.Input.String())) < maxInputRunes {
+				s.st.Input.AppendRunes([]rune{r})
+			}
 		}
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) {
-		s.st.Input.Backspace()
-	} else if d := inpututil.KeyPressDuration(ebiten.KeyBackspace); d > 30 && d%3 == 0 {
-		s.st.Input.Backspace()
-	}
-	g.mainEsc(s, g.escPressed())
-	if enterPressed() {
-		g.sendChat()
+		if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) {
+			s.st.Input.Backspace()
+		} else if d := inpututil.KeyPressDuration(ebiten.KeyBackspace); d > 30 && d%3 == 0 {
+			s.st.Input.Backspace()
+		}
+		g.mainEsc(s, g.escPressed())
+		if enterPressed() {
+			g.sendChat()
+		}
 	}
 
 	// Layout the active channel and apply scroll input.
@@ -265,15 +269,15 @@ func (g *game) updateMain() {
 		s.ms.scroll += total - s.ms.prevTotal // keep the view stable while scrolled up
 	}
 	s.ms.prevTotal = total
-	if inpututil.IsKeyJustPressed(ebiten.KeyPageUp) {
+	if in && inpututil.IsKeyJustPressed(ebiten.KeyPageUp) {
 		s.ms.scroll += gm.visible - 1
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyPageDown) {
+	if in && inpututil.IsKeyJustPressed(ebiten.KeyPageDown) {
 		s.ms.scroll -= gm.visible - 1
 	}
 	mx, my := g.cursor()
 	fx, fy := float64(mx), float64(my)
-	if _, wy := ebiten.Wheel(); wy != 0 && state.InRect(fx, fy, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1) {
+	if _, wy := ebiten.Wheel(); in && wy != 0 && state.InRect(fx, fy, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1) {
 		var n int
 		n, s.ms.wheelCarry = state.WheelLines(s.ms.wheelCarry, wy, wheelLinesPerNotch)
 		s.ms.scroll += n

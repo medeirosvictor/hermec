@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/medeirosvictor/hermec/ui/state"
@@ -19,23 +20,64 @@ func menuGame(t *testing.T, withSession bool) *game {
 	return g
 }
 
-func TestTileMenuOnlyWithSession(t *testing.T) {
-	g := menuGame(t, false)
-	g.openTileMenu("k", 10, 70)
-	if g.menu.open {
-		t.Fatal("menu opened for a tile without a session")
+func menuLabels(g *game) []string {
+	var out []string
+	for _, it := range g.menu.items {
+		out = append(out, it.label)
 	}
-	g = menuGame(t, true)
+	return out
+}
+
+func TestTileMenuItems(t *testing.T) {
+	for _, tc := range []struct {
+		withSession bool
+		want        []string
+	}{
+		{false, []string{"Rename", "Leave Server"}},
+		{true, []string{"Rename", "Disconnect", "Leave Server"}},
+	} {
+		g := menuGame(t, tc.withSession)
+		g.openTileMenu("k", 10, 70)
+		if !g.menu.open || !reflect.DeepEqual(menuLabels(g), tc.want) {
+			t.Fatalf("session=%v: items = %v (open %v), want %v", tc.withSession, menuLabels(g), g.menu.open, tc.want)
+		}
+		last := len(g.menu.items) - 1
+		for i, it := range g.menu.items {
+			if want := i == last; it.sep != want || it.warn != want {
+				t.Fatalf("item %d %q: sep=%v warn=%v, want both %v", i, it.label, it.sep, it.warn, want)
+			}
+		}
+	}
+}
+
+func TestMenuItemRectsNoOverlap(t *testing.T) {
+	g := menuGame(t, true)
 	g.openTileMenu("k", 10, 70)
-	if !g.menu.open || len(g.menu.items) != 1 || g.menu.items[0].label != "Disconnect" {
-		t.Fatalf("menu = %+v, want one Disconnect item", g.menu)
+	w, h := g.menuSize(g.menu.items)
+	m := g.menu
+	for i := range m.items {
+		r := g.menuItemRect(i)
+		if r.x0 < m.x || r.y0 < m.y || r.x1 > m.x+w || r.y1 > m.y+h {
+			t.Fatalf("item %d %+v outside menu box %v,%v %vx%v", i, r, m.x, m.y, w, h)
+		}
+		if i > 0 && r.y0 < g.menuItemRect(i-1).y1 {
+			t.Fatalf("item %d overlaps item %d", i, i-1)
+		}
+	}
+	// the separator takes room above the Leave row
+	if gap := g.menuItemRect(2).y0 - g.menuItemRect(1).y1; gap != sepH {
+		t.Fatalf("separator gap = %v, want %v", gap, sepH)
 	}
 }
 
 func TestMenuDisconnectItem(t *testing.T) {
 	g := menuGame(t, true)
 	g.openTileMenu("k", 10, 70)
-	g.menu.items[0].act()
+	for _, it := range g.menu.items {
+		if it.label == "Disconnect" {
+			it.act()
+		}
+	}
 	if _, ok := g.sess["k"]; ok {
 		t.Fatal("session still present after Disconnect")
 	}

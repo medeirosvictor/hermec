@@ -16,7 +16,12 @@ import (
 type menuItem struct {
 	label string
 	act   func()
+	sep   bool // a thin separator is drawn above this row
+	warn  bool // draw in th.Bright (a destructive action)
 }
+
+// sepH is the height of the separator gap above a sep row.
+const sepH = 5
 
 // ctxMenu is the small generic context menu. key is what it was opened for
 // (a saved-list key); items are whatever the opener put there, so later rounds
@@ -28,14 +33,15 @@ type ctxMenu struct {
 	items []menuItem
 }
 
-// openTileMenu opens the menu for a rail tile at (ax, ay). A tile without a
-// session has nothing to offer, so no menu opens.
+// openTileMenu opens the menu for a rail tile at (ax, ay): Rename, Disconnect
+// while a session exists, and Leave Server.
 func (g *game) openTileMenu(key string, ax, ay float64) {
 	g.closeMenu()
-	if _, ok := g.sess[key]; !ok {
-		return
+	items := []menuItem{{label: "Rename", act: func() { g.openRenameDialog(key) }}}
+	if _, ok := g.sess[key]; ok {
+		items = append(items, menuItem{label: "Disconnect", act: func() { g.disconnect(key) }})
 	}
-	items := []menuItem{{label: "Disconnect", act: func() { g.disconnect(key) }}}
+	items = append(items, menuItem{label: "Leave Server", sep: true, warn: true, act: func() { g.openLeaveDialog(key) }})
 	for i := range items { // picking any item closes the menu first
 		act := items[i].act
 		items[i].act = func() { g.closeMenu(); act() }
@@ -49,18 +55,27 @@ func (g *game) closeMenu() { g.menu = ctxMenu{} }
 
 func (g *game) menuRowH() float64 { return g.lineH() + pad }
 
-// menuSize is the box that holds items: widest label plus padding, one row each.
+// menuSize is the box that holds items: widest label plus padding, one row
+// each, plus the gap above every separated row.
 func (g *game) menuSize(items []menuItem) (w, h float64) {
 	for _, it := range items {
 		w = max(w, text.Advance(it.label, g.face))
+		if it.sep {
+			h += sepH
+		}
 	}
-	return w + 2*pad, float64(len(items)) * g.menuRowH()
+	return w + 2*pad, h + float64(len(items))*g.menuRowH()
 }
 
 // menuItemRect is the rect of item i of the open menu.
 func (g *game) menuItemRect(i int) rectF {
 	w, _ := g.menuSize(g.menu.items)
 	y := g.menu.y + float64(i)*g.menuRowH()
+	for _, it := range g.menu.items[:i+1] {
+		if it.sep {
+			y += sepH
+		}
+	}
 	return rectF{g.menu.x, y, g.menu.x + w, y + g.menuRowH()}
 }
 
@@ -136,6 +151,12 @@ func (g *game) drawMenu(screen *ebiten.Image) {
 	for i, it := range g.menu.items {
 		r := g.menuItemRect(i)
 		txt := th.FG
+		if it.warn {
+			txt = th.Bright
+		}
+		if it.sep {
+			vector.FillRect(screen, float32(r.x0+pad/2), float32(r.y0-sepH/2), float32(r.x1-r.x0-pad), 1, th.Dim, false)
+		}
 		if i == hover {
 			b, a := th.Bright, hoverAlpha*255
 			vector.FillRect(screen, float32(r.x0+2), float32(r.y0), float32(r.x1-r.x0-4), float32(r.y1-r.y0),
