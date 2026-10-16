@@ -119,6 +119,7 @@ Direction: C is client to server, S is server to client.
 | `fingerprint` | string        | The authenticated key's fingerprint. |
 | `roles`       | string[]      | Roles assigned to this fingerprint.  |
 | `channels`    | ChannelInfo[] | All channels on the server.          |
+| `server_name` | string        | Optional. The host's configured `server_name`; omitted when the host set none. Untrusted: clients strip control and format characters and cap the length before display. A server that omits it (older servers) means "no name". |
 
 Changed in the voice release (breaking, protocol version stays 1):
 `channels` was previously an array of channel-name strings and is now an array
@@ -288,6 +289,30 @@ closes the connection.
 **No echo cancellation.** Hermec does not perform acoustic echo cancellation.
 Using speakers will feed other participants' audio back into your microphone;
 headsets are strongly recommended.
+
+### 4.14 `roster` (S)
+
+Server-wide list of every authenticated connection, for the member list. It is
+independent of channels: it covers everyone on the server, not only the members
+of one channel.
+
+| Field     | Type     | Description                                                        |
+|-----------|----------|--------------------------------------------------------------------|
+| `members` | Member[] | Members, sorted by name then fingerprint. `Member` as in section 4.7. |
+| `total`   | int      | Number of authenticated connections, including those not listed.  |
+
+Semantics:
+
+- The list is complete, not a delta. Each `roster` replaces the previous one.
+- Sent to every authenticated connection right after `auth_ok` and after any
+  `voice_state` snapshots, and again whenever a connection authenticates or an
+  authenticated connection drops.
+- `members` is capped at 200 entries and trimmed further if needed so the frame
+  fits the 64 KiB message limit. `total` still counts everyone, so a client can
+  show "and N more" when `total` exceeds the number of listed members.
+- v1 clients that predate this message ignore it (unknown message types are
+  dropped). They also ignore `auth_ok` `server_name`, since receivers ignore
+  unknown fields (section 7).
 
 ## 5. Errors
 

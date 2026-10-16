@@ -1,7 +1,7 @@
 # Hermec — Session Handoff
 
 > Living brief for picking up work in a fresh Claude session. Update at every milestone.
-> Last updated: 2026-10-12 (**B.1 merged to main at 338cc40 (2026-10-12, not pushed)**: spec `docs/superpowers/specs/2026-10-11-hermec-concurrent-sessions-design.md`, plan `docs/superpowers/plans/2026-10-11-hermec-concurrent-sessions.md`, all 8 tasks done; Victor's real-mouse checklist (spec section 5) is queued below, **B.2 is next**. Before that: Round B started 2026-10-11, decomposed into B.1/B.2/B.3. Round A merged at a162ac1; audio round still awaiting Victor's listening test).
+> Last updated: 2026-10-16 (**B.2 implemented on branch `worktree-hermec-b2`, not merged (merge is Victor's call)**: spec `docs/superpowers/specs/2026-10-16-hermec-server-names-roster-design.md`, plan `docs/superpowers/plans/2026-10-16-hermec-server-names-roster.md`; Victor's B.2 real-mouse checklist (spec section 5) is queued below next to B.1's, **B.3 (icon editor) and the v0.2.0 release steps (spec section 6) are next**. **B.1 merged to main at 338cc40 (2026-10-12, not pushed)**: spec `docs/superpowers/specs/2026-10-11-hermec-concurrent-sessions-design.md`, plan `docs/superpowers/plans/2026-10-11-hermec-concurrent-sessions.md`, all 8 tasks done. Before that: Round B started 2026-10-11, decomposed into B.1/B.2/B.3. Round A merged at a162ac1; audio round still awaiting Victor's listening test).
 >
 > **Round B decomposition (agreed 2026-10-11):** B.1 sessions = items (a)+(b) below; B.2 server identity/management = (d), (e), then (c) roster; B.3 = (f) icon editor. B.1 decisions: every server opened this session stays connected (no startup auto-dial), right-click tile → Disconnect, unread = rail dot + bright channels, one `session` struct per server. README gained a plain-language "how people reach each other" section (4ec31a6).
 
@@ -34,7 +34,7 @@
 
 (Standing gate: the audio round closes only on Victor's listening test, see above.)
 
-0. **B.1 real-mouse checklist (merged to main; run `go run ./cmd/hermec -local` plus a second server):** spec section 5 (call on A, click B, chat on B, back to A with the call uninterrupted; right-click tile, Disconnect on the call server ends the call; unread dot and bright channel; bust placement; kill a server and watch the tile go reconnecting and back), plus: Ctrl+M while viewing another server, the call bar look on the connect scene, rail marks at 100% and 150% DPI, viewed + reconnecting tile look. Then **B.2** (server names, rename/remove via the right-click menu in `ui/menu.go`, roster).
+0. **B.1 real-mouse checklist (merged to main; run `go run ./cmd/hermec -local` plus a second server):** spec section 5 (call on A, click B, chat on B, back to A with the call uninterrupted; right-click tile, Disconnect on the call server ends the call; unread dot and bright channel; bust placement; kill a server and watch the tile go reconnecting and back), plus: Ctrl+M while viewing another server, the call bar look on the connect scene, rail marks at 100% and 150% DPI, viewed + reconnecting tile look. Then the **B.2 checklist** (spec section 5, last bullet; B.2 lives on branch `worktree-hermec-b2`, not merged).
 
 1. **Owner real-mouse checklist for the title bar:** drag, snap, Win+arrows, edge/corner resize, double-click maximize, buttons, maximized layout, 150% DPI. Also the Round A eyeball checks (four presets, glow strength, curvature subtlety).
 2. **Round B brainstorm (one spec, decompose as needed):**
@@ -44,7 +44,7 @@
    - (d) server names: the server sends its configured `server_name` on connect, and creating/adding a server asks for a name. This fixes the "two lo tiles" confusion (hermec://local "local" + a stale ws://localhost:7697/, both initials "lo");
    - (e) remove/rename saved servers (right-click menu, from the old UI/UX batch);
    - (f) in-app pixel-art editor for a server icon.
-3. **Remaining old UI/UX batch items:** resizable panels, "user X is typing…". (The generic right-click context menu now exists on rail tiles, with Disconnect only; Rename/Remove come in B.2.)
+3. **Remaining old UI/UX batch items:** resizable panels, "user X is typing…". (The right-click menu on rail tiles now has Rename, Disconnect and Leave Server, from B.2 on branch `worktree-hermec-b2`.)
 4. **Idle CPU:** redraw-on-demand / idle frame cap is the CPU lever (the profile shows ~93% in Present, i.e. vsync-bound; drawing only when something changed, or capping idle frames, is what cuts it).
 5. **Screen sharing + webcam** (Victor-prioritized, unchanged phasing), then Plans A/B/C (unchanged, below).
    Screenshare detail: Phasing agreed in summary form: (i) SFU video support — codec-agnostic RTP fanout mostly exists; the NEW work is keyframe handling (relay RTCP PLI from new subscribers to the publisher) + bandwidth accounting; integration-testable with synthetic frames. (ii) Windows capture (DXGI duplication) + VP8 encode via libvpx (second cgo dep — MSYS2 + CI packages + the DLL walk handles distribution) with v1 caps ~15fps/~2Mbps (host relay cost is ~60× voice — the kbps log matters). (iii) Receive: VP8 decode → Ebiten texture in the GUI's reserved video pane, click-to-enlarge, CRT shader applies free. (iv) Webcam = same pipeline, camera source, call-bar toggle; macOS/Linux capture are follow-ups. Risks: libvpx plumbing (same dance as opus), sharer-side encode CPU (measure + cap), PLI = the SFU's first codec-aware logic.
@@ -70,4 +70,5 @@
 - Two clients on ONE machine with the same key silence each other by design (self-echo filter keys on fingerprint) — second client needs `-key <other file>`.
 - No AEC: headphones mandatory in calls.
 - **Measurement runs must use a separate config dir.** The Task 10 agent's runs touched the owner's real `%APPDATA%\hermec` (`servers.toml` last_seen), and its cleanup closed the owner's running instance. Add a `-config-dir`-style flag or an env var before the next automated GUI run (backlog item).
+- **Firewall prompt:** test runs keep WebRTC ICE on loopback (Task 7b, commit ec5a0fb), so `go test` never triggers the Windows Firewall prompt. `go run` still builds a new exe each time, so to run the app itself build to a stable path (`go build -o bin\hermec.exe ./cmd/hermec`) and allow the firewall once.
 - **Release exe is console-subsystem**, so double-clicking shows a terminal window behind the app. Consider `-H windowsgui` plus file logging (backlog item).

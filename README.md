@@ -129,7 +129,8 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Ctrl+M**: Mute or unmute voice
 - **Ctrl+R**: Refresh discovered servers (connect screen)
 - **Click rail tile**: Switch servers; every server you have opened stays connected, and switching keeps you in your voice call
-- **Right-click a rail tile**: Menu with Disconnect, which ends the connection to that server (and your call, if it is the call's server); Esc or a click elsewhere closes the menu
+- **Right-click a rail tile**: Rename (a nickname only you see; empty resets to the server's name), Disconnect (when you have a session to that server; ends your call too if it is the call's server), Leave Server (asks first; removes the tile and ends a call on it). Esc or a click elsewhere closes the menu. Hover a tile to see its full name.
+- **Members button** (top right of the chat): Show or hide the member list of everyone on the server. The list hides itself in narrow windows; your choice is saved in `settings.toml`
 - **Click "+" tile**: Add a server
 - **Click the signal bars** (status line, or the call bar in a call): Show connection quality (ping, jitter, per-participant concealment); Esc or a second click closes it
 - **Click voice channel in the pane**: Join or leave voice call
