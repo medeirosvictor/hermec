@@ -5,10 +5,12 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pion/ice/v4"
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 
@@ -178,12 +180,24 @@ func (s *Server) newRTCAPI() *webrtc.API {
 		_ = se.SetEphemeralUDPPortRange(s.cfg.UDPPortMin, s.cfg.UDPPortMax)
 	}
 	if s.cfg.AllowLoopbackICE {
-		se.SetIncludeLoopbackCandidate(true)
+		loopbackOnly(&se)
 	}
 	if s.cfg.PublicIP != "" {
 		se.SetNAT1To1IPs([]string{s.cfg.PublicIP}, webrtc.ICECandidateTypeHost)
 	}
 	return webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithInterceptorRegistry(ir), webrtc.WithSettingEngine(se))
+}
+
+// loopbackIP is the ICE address filter for loopback mode.
+func loopbackIP(ip net.IP) bool { return ip.IsLoopback() }
+
+// loopbackOnly confines ICE to loopback and turns off mDNS, so test runs
+// never bind a LAN interface or multicast (the Windows Firewall prompts for
+// both). Duplicated from client: server must not import client.
+func loopbackOnly(se *webrtc.SettingEngine) {
+	se.SetIncludeLoopbackCandidate(true)
+	se.SetIPFilter(loopbackIP)
+	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
 }
 
 // post queues fn for the actor. Never blocks; dropped after stop().

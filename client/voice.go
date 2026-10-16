@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pion/ice/v4"
 	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
@@ -116,9 +118,21 @@ func (c *Client) newAPI() *webrtc.API {
 	_ = webrtc.RegisterDefaultInterceptors(me, ir)
 	se := webrtc.SettingEngine{}
 	if c.loopbackICE.Load() {
-		se.SetIncludeLoopbackCandidate(true)
+		loopbackOnly(&se)
 	}
 	return webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithInterceptorRegistry(ir), webrtc.WithSettingEngine(se))
+}
+
+// loopbackIP is the ICE address filter for loopback mode.
+func loopbackIP(ip net.IP) bool { return ip.IsLoopback() }
+
+// loopbackOnly confines ICE to loopback and turns off mDNS, so same-host and
+// test calls never bind a LAN interface or multicast (the Windows Firewall
+// prompts for both).
+func loopbackOnly(se *webrtc.SettingEngine) {
+	se.SetIncludeLoopbackCandidate(true)
+	se.SetIPFilter(loopbackIP)
+	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
 }
 
 // SetLoopbackICE makes future voice calls gather loopback ICE candidates.

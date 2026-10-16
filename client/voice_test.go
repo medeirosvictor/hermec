@@ -125,7 +125,7 @@ func (s *stubServer) answerOffer(env proto.Envelope, send func(string, any)) {
 	var m proto.RTCOffer
 	_ = json.Unmarshal(env.Data, &m)
 	se := webrtc.SettingEngine{}
-	se.SetIncludeLoopbackCandidate(true)
+	loopbackOnly(&se)
 	me := &webrtc.MediaEngine{}
 	_ = me.RegisterDefaultCodecs()
 	pc, err := webrtc.NewAPI(webrtc.WithSettingEngine(se), webrtc.WithMediaEngine(me)).NewPeerConnection(webrtc.Configuration{})
