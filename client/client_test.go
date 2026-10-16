@@ -87,13 +87,23 @@ func TestCloseIdempotentAndClosesEvents(t *testing.T) {
 	}
 	_ = c.Close()
 	_ = c.Close()
-	select {
-	case _, ok := <-c.Events():
-		if ok {
-			t.Fatal("unexpected event")
+	// The server pushes a roster right after auth_ok, so it may already be
+	// queued before Close. Tolerate server events, but a deliberate Close
+	// must not surface an Err event, and the channel must end up closed.
+	timeout := time.After(5 * time.Second)
+drain:
+	for {
+		select {
+		case ev, ok := <-c.Events():
+			if !ok {
+				break drain
+			}
+			if ev.Err != nil {
+				t.Fatalf("unexpected error event after deliberate Close: %v", ev.Err)
+			}
+		case <-timeout:
+			t.Fatal("Events not closed after Close")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Events not closed after Close")
 	}
 	if err := c.Join(testCtx(t), "general"); err == nil {
 		t.Fatal("Join after Close should fail")
