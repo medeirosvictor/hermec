@@ -3,6 +3,7 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -110,5 +111,39 @@ func TestRailHitSettingsAndAdd(t *testing.T) {
 	}
 	if got := RailHit(100, 380, 56, 8, 50, 2, 400); got != RailNone {
 		t.Fatalf("outside: %d", got)
+	}
+}
+
+func TestMembersShownDefaultsOn(t *testing.T) {
+	if !(Settings{}).MembersShown() {
+		t.Fatal("zero Settings must show members")
+	}
+	off := false
+	if (Settings{Members: &off}).MembersShown() {
+		t.Fatal("Members=false must hide")
+	}
+}
+
+func TestMembersRoundTrip(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	off := false
+	if err := SaveSettings(p, Settings{Members: &off}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := LoadSettings(p)
+	if err != nil || out.Members == nil || *out.Members || out.MembersShown() {
+		t.Fatalf("false: %+v %v", out, err)
+	}
+	if err := SaveSettings(p, Settings{Name: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(p); strings.Contains(string(b), "members") {
+		t.Fatalf("nil wrote members key:\n%s", b)
+	}
+	if err := os.WriteFile(p, []byte("name = \"old\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err = LoadSettings(p); err != nil || !out.MembersShown() {
+		t.Fatalf("old file: %+v %v", out, err)
 	}
 }

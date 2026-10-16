@@ -5,7 +5,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 )
@@ -13,12 +15,21 @@ import (
 // MaxServers caps the saved server list.
 const MaxServers = 20
 
+// MaxServerNameRunes caps a server-announced name; MaxNickRunes caps the
+// user's own nickname for a server.
+const (
+	MaxServerNameRunes = 64
+	MaxNickRunes       = 32
+)
+
 // ServerEntry is one remembered server.
 type ServerEntry struct {
 	URL         string    `toml:"url"`
 	Label       string    `toml:"label"`
 	LastChannel string    `toml:"last_channel"`
 	LastSeen    time.Time `toml:"last_seen"`
+	Name        string    `toml:"name,omitempty"` // announced by the server
+	Nick        string    `toml:"nick,omitempty"` // the user's own name for it
 }
 
 type serversFile struct {
@@ -64,9 +75,9 @@ func SaveServers(path string, entries []ServerEntry) error {
 
 // Touch upserts url and returns a new slice. An existing entry is updated in
 // place so the rail order stays stable; a new one goes first. Empty
-// label/channel keep the existing values on update. Over MaxServers, the last
-// entries whose URL is not live are dropped; live may be nil (nothing live).
-func Touch(entries []ServerEntry, url, label, channel string, live func(url string) bool) []ServerEntry {
+// label/name/channel keep the existing values on update; Nick is never
+// touched. Over MaxServers, the last entries whose URL is not live are dropped; live may be nil (nothing live).
+func Touch(entries []ServerEntry, url, label, name, channel string, live func(url string) bool) []ServerEntry {
 	out := append([]ServerEntry(nil), entries...)
 	found := false
 	for i := range out {
@@ -77,6 +88,9 @@ func Touch(entries []ServerEntry, url, label, channel string, live func(url stri
 		if label != "" {
 			out[i].Label = label
 		}
+		if name != "" {
+			out[i].Name = name
+		}
 		if channel != "" {
 			out[i].LastChannel = channel
 		}
@@ -84,7 +98,7 @@ func Touch(entries []ServerEntry, url, label, channel string, live func(url stri
 		break
 	}
 	if !found {
-		e := ServerEntry{URL: url, Label: label, LastChannel: channel, LastSeen: time.Now().UTC()}
+		e := ServerEntry{URL: url, Label: label, Name: name, LastChannel: channel, LastSeen: time.Now().UTC()}
 		out = append([]ServerEntry{e}, out...)
 	}
 	for i := len(out) - 1; i >= 0 && len(out) > MaxServers; i-- {
@@ -105,13 +119,64 @@ func HostPort(raw string) string {
 	return u.Host
 }
 
-// Initials is the first two runes of the label, or of the host.
-func Initials(e ServerEntry) string {
-	s := e.Label
-	if s == "" {
-		s = HostPort(e.URL)
+// DisplayName is what the UI calls a server: the user's nick, else the name
+// the server announced, else the saved label, else the host:port.
+func DisplayName(e ServerEntry) string {
+	switch {
+	case e.Nick != "":
+		return e.Nick
+	case e.Name != "":
+		return e.Name
+	case e.Label != "":
+		return e.Label
 	}
-	r := []rune(s)
+	return HostPort(e.URL)
+}
+
+// CleanName strips control, format (bidi overrides and the like) and line or
+// paragraph separator runes from s, trims spaces and caps the result at max
+// runes.
+func CleanName(s string, max int) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
+			return -1
+		}
+		return r
+	}, s)
+	r := []rune(strings.TrimSpace(s))
+	if len(r) > max {
+		r = r[:max]
+	}
+	return string(r)
+}
+
+// SetNick returns a copy of entries with the nick of url set to the cleaned
+// nick (empty clears it). An unknown url yields an unchanged copy.
+func SetNick(entries []ServerEntry, url, nick string) []ServerEntry {
+	out := append([]ServerEntry(nil), entries...)
+	nick = CleanName(nick, MaxNickRunes)
+	for i := range out {
+		if out[i].URL == url {
+			out[i].Nick = nick
+		}
+	}
+	return out
+}
+
+// Remove returns a copy of entries without url.
+func Remove(entries []ServerEntry, url string) []ServerEntry {
+	out := make([]ServerEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.URL != url {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// Initials is the first two runes of the display name.
+func Initials(e ServerEntry) string {
+	r := []rune(DisplayName(e))
 	if len(r) > 2 {
 		r = r[:2]
 	}

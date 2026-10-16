@@ -19,6 +19,8 @@ type Settings struct {
 
 	Curvature *bool `toml:"curvature,omitempty"` // nil = unset (on)
 
+	Members *bool `toml:"members,omitempty"` // nil = unset (shown)
+
 	InputDevice  string `toml:"input_device,omitempty"`  // "" = system default
 	OutputDevice string `toml:"output_device,omitempty"` // "" = system default
 }
@@ -32,6 +34,11 @@ func (s Settings) UpdateCheckEnabled() bool {
 // CurvatureEnabled reports whether the CRT curvature is on; unset means on.
 func (s Settings) CurvatureEnabled() bool {
 	return s.Curvature == nil || *s.Curvature
+}
+
+// MembersShown reports whether the member roster is visible; unset means shown.
+func (s Settings) MembersShown() bool {
+	return s.Members == nil || *s.Members
 }
 
 // LoadSettings reads path. A missing file yields zero Settings and no error.
