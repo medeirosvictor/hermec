@@ -8,9 +8,9 @@
 ## Start here (fresh session)
 
 1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and the memory note `hermec-project`.
-2. Repo state: `main` = `origin/main`, clean apart from untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`), which are never committed. The four `.claude/worktrees/agent-*` worktrees are old, from earlier rounds, and left alone.
+2. Repo state: `main` was pushed at 554bf3f; the B.2 spec/plan commits (72d6c0e, 7fc6eba) are local on `main` only (not pushed). Clean apart from untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`), which are never committed. The four `.claude/worktrees/agent-*` worktrees are old, from earlier rounds, and left alone.
 3. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload: `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In the owner's real settings, **CRT and curvature are currently off**: F1 toggles CRT, F3 toggles curvature, F2 cycles themes.
-4. The first thing to do is pipeline item 1 below (Victor's real-mouse checklist), then **brainstorm Round B** with `superpowers:brainstorming` on the architectural path, which needs a written spec. Round B is one brainstorm; decompose it there.
+4. Order of work: Victor's B.1 + B.2 real-mouse checklists (pipeline item 0), then the merge decision for `worktree-hermec-b2` (Victor's call), then the v0.2.0 release plus the old-build banner test (B.2 spec section 6), then B.3 (icon editor) or screen share, per Victor.
 5. Never run the GUI from an agent against `%APPDATA%\hermec` (see Gotchas). Build the separate-config-dir flag first if automated GUI runs are needed.
 
 ## Where things stand
@@ -34,16 +34,16 @@
 
 (Standing gate: the audio round closes only on Victor's listening test, see above.)
 
-0. **B.1 real-mouse checklist (merged to main; run `go run ./cmd/hermec -local` plus a second server):** spec section 5 (call on A, click B, chat on B, back to A with the call uninterrupted; right-click tile, Disconnect on the call server ends the call; unread dot and bright channel; bust placement; kill a server and watch the tile go reconnecting and back), plus: Ctrl+M while viewing another server, the call bar look on the connect scene, rail marks at 100% and 150% DPI, viewed + reconnecting tile look. Then the **B.2 checklist** (spec section 5, last bullet; B.2 lives on branch `worktree-hermec-b2`, not merged).
+0. **B.1 real-mouse checklist (merged to main; run `go run ./cmd/hermec -local` plus a second server):** spec section 5 (call on A, click B, chat on B, back to A with the call uninterrupted; right-click tile, Disconnect on the call server ends the call; unread dot and bright channel; bust placement; kill a server and watch the tile go reconnecting and back), plus: Ctrl+M while viewing another server, the call bar look on the connect scene, rail marks at 100% and 150% DPI, viewed + reconnecting tile look. Then the **B.2 checklist** (spec section 5, last bullet; B.2 lives on branch `worktree-hermec-b2`, not merged). Also on the B.2 checklist: clicking the dim members toggle in a narrow window turns the saved setting off — decide whether that click should do nothing.
 
 1. **Owner real-mouse checklist for the title bar:** drag, snap, Win+arrows, edge/corner resize, double-click maximize, buttons, maximized layout, 150% DPI. Also the Round A eyeball checks (four presets, glow strength, curvature subtlety).
-2. **Round B brainstorm (one spec, decompose as needed):**
-   - (a) stay connected across servers (concurrent sessions; switching servers keeps the current call);
-   - (b) rail "you are here" bust (top half of a stick figure) on the server where you're in voice;
-   - (c) right-side member roster of everyone on the server (needs server-wide presence; protocol change);
-   - (d) server names: the server sends its configured `server_name` on connect, and creating/adding a server asks for a name. This fixes the "two lo tiles" confusion (hermec://local "local" + a stale ws://localhost:7697/, both initials "lo");
-   - (e) remove/rename saved servers (right-click menu, from the old UI/UX batch);
-   - (f) in-app pixel-art editor for a server icon.
+2. **Round B (decomposed into B.1/B.2/B.3; status per item):**
+   - (a) DONE in B.1 (merged to main): stay connected across servers (concurrent sessions; switching servers keeps the current call);
+   - (b) DONE in B.1 (merged to main): rail "you are here" bust (top half of a stick figure) on the server where you're in voice;
+   - (c) DONE in B.2 (branch `worktree-hermec-b2`, not merged): right-side member roster of everyone on the server (needs server-wide presence; protocol change);
+   - (d) DONE in B.2 (branch `worktree-hermec-b2`, not merged): server names: the server sends its configured `server_name` on connect, and creating/adding a server asks for a name. This fixes the "two lo tiles" confusion (hermec://local "local" + a stale ws://localhost:7697/, both initials "lo");
+   - (e) DONE in B.2 (branch `worktree-hermec-b2`, not merged): remove/rename saved servers (right-click menu, from the old UI/UX batch);
+   - (f) = B.3, still open: in-app pixel-art editor for a server icon.
 3. **Remaining old UI/UX batch items:** resizable panels, "user X is typingâ€¦". (The right-click menu on rail tiles now has Rename, Disconnect and Leave Server, from B.2 on branch `worktree-hermec-b2`.)
 4. **Idle CPU:** redraw-on-demand / idle frame cap is the CPU lever (the profile shows ~93% in Present, i.e. vsync-bound; drawing only when something changed, or capping idle frames, is what cuts it).
 5. **Screen sharing + webcam** (Victor-prioritized, unchanged phasing), then Plans A/B/C (unchanged, below).

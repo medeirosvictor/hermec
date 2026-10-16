@@ -119,7 +119,7 @@ Direction: C is client to server, S is server to client.
 | `fingerprint` | string        | The authenticated key's fingerprint. |
 | `roles`       | string[]      | Roles assigned to this fingerprint.  |
 | `channels`    | ChannelInfo[] | All channels on the server.          |
-| `server_name` | string        | Optional. The host's configured `server_name`; omitted when the host set none. Untrusted: clients strip control and format characters and cap the length before display. A server that omits it (older servers) means "no name". |
+| `server_name` | string        | Optional. The host's configured `server_name`; omitted when the host set none. Untrusted: clients strip control and format characters and cap it at 64 runes before display. A server that omits it (older servers) means "no name". |
 
 Changed in the voice release (breaking, protocol version stays 1):
 `channels` was previously an array of channel-name strings and is now an array
@@ -151,9 +151,9 @@ Unknown channels yield `error` `bad_request`.
 
 ### 4.6 `leave` (C)
 
-| Field     | Type   | Description          |
-|-----------|--------|----------------------|
-| `channel` | string | Channel to leave.    |
+| Field     | Type   | Description         |
+|-----------|--------|---------------------|
+| `channel` | string | Channel to leave.   |
 
 On success the remaining members receive `presence`; the leaver does not.
 If the client was not in the channel the server replies `error` `not_joined`.
@@ -310,6 +310,8 @@ Semantics:
 - `members` is capped at 200 entries and trimmed further if needed so the frame
   fits the 64 KiB message limit. `total` still counts everyone, so a client can
   show "and N more" when `total` exceeds the number of listed members.
+- Names in `roster` are capped at 64 runes (by runes, not bytes) so one long
+  name cannot crowd the others out; `presence` and chat carry names unchanged.
 - v1 clients that predate this message ignore it (unknown message types are
   dropped). They also ignore `auth_ok` `server_name`, since receivers ignore
   unknown fields (section 7).
@@ -359,6 +361,10 @@ The voice release added new message types (section 4.12) and changed the
 `auth_ok` `channels` shape (a breaking change) without bumping the version,
 because the protocol is pre-release; future incompatible changes require a new
 version number.
+
+The following were added later and are purely additive, so v1 clients ignore
+them: the `auth_ok` `server_name` field (section 4.3) and the `roster` message
+(section 4.14).
 
 ## 8. Discovery
 
