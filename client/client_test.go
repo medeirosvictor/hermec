@@ -2,9 +2,13 @@ package client
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
@@ -93,5 +97,102 @@ func TestCloseIdempotentAndClosesEvents(t *testing.T) {
 	}
 	if err := c.Join(testCtx(t), "general"); err == nil {
 		t.Fatal("Join after Close should fail")
+	}
+}
+
+func waitRoster(t *testing.T, c *Client) *proto.Roster {
+	t.Helper()
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case ev, ok := <-c.Events():
+			if !ok {
+				t.Fatal("events closed before roster")
+			}
+			if ev.Roster != nil {
+				return ev.Roster
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for roster event")
+		}
+	}
+}
+
+func TestServerName(t *testing.T) {
+	for _, want := range []string{"Primos", ""} {
+		url := startServer(t, server.Config{ServerName: want})
+		id, _ := identity.Generate()
+		c, err := Dial(testCtx(t), url, id, "alice", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := c.ServerName(); got != want {
+			t.Errorf("ServerName = %q, want %q", got, want)
+		}
+		c.Close()
+	}
+}
+
+func TestRosterEvent(t *testing.T) {
+	url := startServer(t, server.Config{})
+	id1, _ := identity.Generate()
+	c1, err := Dial(testCtx(t), url, id1, "alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c1.Close()
+	r := waitRoster(t, c1)
+	if r.Total != 1 || len(r.Members) != 1 || r.Members[0].Name != "alice" {
+		t.Fatalf("first roster = %+v", r)
+	}
+	id2, _ := identity.Generate()
+	c2, err := Dial(testCtx(t), url, id2, "bob", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	if r := waitRoster(t, c1); r.Total != 2 {
+		t.Fatalf("second roster Total = %d, want 2", r.Total)
+	}
+}
+
+func TestBadRosterBecomesErrEvent(t *testing.T) {
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.Close()
+		send := func(typ string, v any) {
+			raw, _ := proto.Encode(typ, v)
+			_ = ws.WriteMessage(websocket.TextMessage, raw)
+		}
+		send(proto.TypeChallenge, proto.Challenge{Nonce: []byte("nonce-nonce-nonce")})
+		if _, _, err := ws.ReadMessage(); err != nil {
+			return
+		}
+		send(proto.TypeAuthOK, proto.AuthOK{})
+		_ = ws.WriteMessage(websocket.TextMessage, []byte(`{"v":1,"type":"roster","data":"nope"}`))
+		send(proto.TypeRoster, proto.Roster{Total: 7})
+		_, _, _ = ws.ReadMessage() // hold open until the client closes
+	}))
+	defer srv.Close()
+	id, _ := identity.Generate()
+	c, err := Dial(testCtx(t), "ws"+strings.TrimPrefix(srv.URL, "http"), id, "alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	select {
+	case ev := <-c.Events():
+		if ev.Err == nil || !strings.Contains(ev.Err.Error(), "roster") {
+			t.Fatalf("event = %+v, want roster Err", ev)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no err event")
+	}
+	if r := waitRoster(t, c); r.Total != 7 {
+		t.Fatalf("follow-up roster = %+v", r)
 	}
 }

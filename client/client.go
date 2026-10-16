@@ -34,6 +34,7 @@ type Event struct {
 	Chat     *proto.ChatMessage
 	Presence *proto.Presence
 	Voice    *proto.VoiceState
+	Roster   *proto.Roster // full member list, re-sent on every connect/disconnect
 	Err      error
 }
 
@@ -56,6 +57,7 @@ type Client struct {
 	fingerprint string
 	roles       []string
 	channels    []proto.ChannelInfo
+	serverName  string // from auth_ok; immutable after Dial
 
 	writeMu sync.Mutex // gorilla permits a single concurrent writer
 
@@ -121,7 +123,8 @@ func Dial(ctx context.Context, url string, id *identity.Identity, name, password
 		fingerprint: ok.Fingerprint,
 		roles:       ok.Roles,
 		channels:    ok.Channels,
-		events:      make(chan Event, eventBuffer),
+		serverName:  ok.ServerName,
+		events:     make(chan Event, eventBuffer),
 		done:        make(chan struct{}),
 		loopDone:    make(chan struct{}),
 		pingDone:    make(chan struct{}),
@@ -197,6 +200,10 @@ func (c *Client) Roles() []string { return append([]string(nil), c.roles...) }
 func (c *Client) Channels() []proto.ChannelInfo {
 	return append([]proto.ChannelInfo(nil), c.channels...)
 }
+
+// ServerName returns the display name the server announced in auth_ok, or ""
+// if it has none.
+func (c *Client) ServerName() string { return c.serverName }
 
 // Events returns the event stream. It is closed when the connection dies.
 // Consumers must drain it: a full buffer applies backpressure to the read
@@ -376,6 +383,13 @@ func (c *Client) readLoop() {
 			}
 			c.onVoiceState(st)
 			c.emit(Event{Voice: &st})
+		case proto.TypeRoster:
+			var r proto.Roster
+			if err := json.Unmarshal(env.Data, &r); err != nil {
+				c.emit(Event{Err: fmt.Errorf("client: bad roster: %w", err)})
+				continue
+			}
+			c.emit(Event{Roster: &r})
 		case proto.TypeRTCOffer, proto.TypeRTCAnswer, proto.TypeRTCCandidate:
 			c.onRTC(env)
 		case proto.TypeError:
