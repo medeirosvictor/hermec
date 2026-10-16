@@ -21,6 +21,8 @@ const (
 	channelPaneW  = 180 // fixed left pane width in px
 	maxInputRunes = 1000
 	minCols       = 10
+	membersPaneW  = 180 // members list width in px, like channelPaneW
+	minChatCols   = 40  // the list auto-hides when the chat would get fewer columns
 
 	wheelLinesPerNotch = 3
 )
@@ -37,6 +39,8 @@ type mainScene struct {
 	sbImg      *ebiten.Image // cached render of the scrollback pane
 	sbKey      sbKey
 	visible    int
+
+	rosterScroll int // member list rows scrolled down from the top
 }
 
 func newMainScene() mainScene { return mainScene{joined: map[string]bool{}} }
@@ -55,6 +59,8 @@ type geometry struct {
 	chanY1              float64 // channel pane text bottom
 	inputY              float64 // chat input text top
 	barY                float64 // call bar text top; meaningful only while barVisible
+	membersR, toggleR   rectF   // member list panel (zero when not drawn); "members" button in the header row
+	showMembers         bool    // membersR is drawn: setting on and the chat keeps minChatCols
 	rightX, rightW      float64 // chat text column
 
 	adv, lh              float64
@@ -87,6 +93,16 @@ func (g *game) geom() geometry {
 	chatX := gm.chanR.x1 + pad
 	gm.inputR = rectF{chatX, bottom - slim, right, bottom}
 	gm.chatR = rectF{chatX, top, right, gm.inputR.y0 - pad}
+	// The member list takes the right column when it is wanted and the chat
+	// keeps at least minChatCols; otherwise the chat runs to the edge.
+	if g.set.MembersShown() {
+		cr := right - membersPaneW - pad
+		if int((cr-pad-(chatX+pad))/adv) >= minChatCols {
+			gm.showMembers = true
+			gm.membersR = rectF{cr + pad, top, right, bottom}
+			gm.chatR.x1, gm.inputR.x1 = cr, cr
+		}
+	}
 
 	gm.statusY = gm.statusR.y0 + pad/2
 	gm.barY = gm.barR.y0 + pad/2
@@ -96,11 +112,13 @@ func (g *game) geom() geometry {
 	gm.paneY1 = gm.chatR.y1 - pad
 	gm.chanY1 = bottom - pad
 	gm.rightX = chatX + pad
-	gm.rightW = right - pad - gm.rightX
+	gm.rightW = gm.chatR.x1 - pad - gm.rightX
 	gm.cols = int(gm.rightW / adv)
 	if gm.cols < minCols {
 		gm.cols = minCols
 	}
+	tw := text.Advance("members", g.face) + pad
+	gm.toggleR = rectF{right - tw, gm.headY, right, gm.headY + lh}
 	gm.lcols = int((channelPaneW - 2*pad) / adv)
 	gm.visible = int((gm.paneY1 - gm.paneY0) / lh)
 	if gm.visible < 1 {
@@ -127,6 +145,7 @@ func (g *game) addMainHits(gm geometry) {
 		y += gm.lh
 	}
 	g.hits.Add(state.Hit{X0: gm.inputR.x0, Y0: gm.inputR.y0, X1: gm.inputR.x1, Y1: gm.inputR.y1, Kind: state.HitText})
+	g.hits.Add(state.Hit{X0: gm.toggleR.x0, Y0: gm.toggleR.y0, X1: gm.toggleR.x1, Y1: gm.toggleR.y1, Kind: state.HitMembersToggle})
 	g.addBarHits(gm)
 	g.addSignalHits(gm) // last: the open panel wins over anything under it
 }
@@ -224,6 +243,8 @@ func (g *game) updateMain() {
 				g.selectChannel(h.ID)
 			case state.HitVoice:
 				g.clickVoice(h.Key)
+			case state.HitMembersToggle:
+				g.toggleMembers()
 			case state.HitSignal:
 				if h.ID == signalBars {
 					g.toggleQuality()
@@ -277,12 +298,21 @@ func (g *game) updateMain() {
 	}
 	mx, my := g.cursor()
 	fx, fy := float64(mx), float64(my)
-	if _, wy := ebiten.Wheel(); in && wy != 0 && state.InRect(fx, fy, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1) {
+	if _, wy := ebiten.Wheel(); in && wy != 0 && gm.showMembers && state.InRect(fx, fy, gm.membersR.x0, gm.membersR.y0, gm.membersR.x1, gm.membersR.y1) {
+		var n int
+		n, s.ms.wheelCarry = state.WheelLines(s.ms.wheelCarry, wy, wheelLinesPerNotch)
+		rows, _ := g.memberRows()
+		s.ms.rosterScroll = state.ClampScroll(len(rows), g.rosterVisible(gm), s.ms.rosterScroll-n)
+	} else if in && wy != 0 && state.InRect(fx, fy, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1) {
 		var n int
 		n, s.ms.wheelCarry = state.WheelLines(s.ms.wheelCarry, wy, wheelLinesPerNotch)
 		s.ms.scroll += n
 	}
 	s.ms.scroll = state.ClampScroll(total, gm.visible, s.ms.scroll)
+	if gm.showMembers { // a hidden list keeps its scroll for when it returns
+		rows, _ := g.memberRows()
+		s.ms.rosterScroll = state.ClampScroll(len(rows), g.rosterVisible(gm), s.ms.rosterScroll)
+	}
 	s.ms.visible = gm.visible
 }
 
@@ -344,6 +374,11 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	g.drawPanelR(screen, gm.chanR)
 	g.drawPanelR(screen, gm.chatR)
 	g.drawPanelR(screen, gm.inputR)
+	if gm.showMembers {
+		g.drawPanelR(screen, gm.membersR)
+		g.drawMembers(screen, gm)
+	}
+	g.drawMembersToggle(screen, gm)
 	g.drawHeader(screen, gm)
 	g.drawChannels(screen, gm)
 	g.drawCallBar(screen, gm)

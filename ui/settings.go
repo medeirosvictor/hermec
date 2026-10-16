@@ -140,6 +140,13 @@ func (g *game) toggleCurvature() {
 	g.persistSettings()
 }
 
+// toggleMembers flips and persists whether the member list is shown.
+func (g *game) toggleMembers() {
+	on := !g.set.MembersShown()
+	g.set.Members = &on
+	g.persistSettings()
+}
+
 // setUpdateCheck persists the update-check opt-in/out.
 func (g *game) setUpdateCheck(on bool) {
 	g.set.UpdateCheck = &on
