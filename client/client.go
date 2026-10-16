@@ -124,7 +124,7 @@ func Dial(ctx context.Context, url string, id *identity.Identity, name, password
 		roles:       ok.Roles,
 		channels:    ok.Channels,
 		serverName:  ok.ServerName,
-		events:     make(chan Event, eventBuffer),
+		events:      make(chan Event, eventBuffer),
 		done:        make(chan struct{}),
 		loopDone:    make(chan struct{}),
 		pingDone:    make(chan struct{}),
