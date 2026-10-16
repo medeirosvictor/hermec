@@ -46,6 +46,11 @@ type State struct {
 	// Unread marks text channels with messages not yet seen. SetConnected
 	// never clears it, so unread survives a reconnect.
 	Unread map[string]bool
+	// Roster is the server-wide member list (possibly truncated); RosterTotal
+	// is the full member count. HasRoster is false until one arrives.
+	Roster      []proto.Member
+	RosterTotal int
+	HasRoster   bool
 	// Viewed is whether this state's server is the one on screen.
 	Viewed      bool
 	Input       InputBuffer
@@ -69,6 +74,7 @@ func (s *State) SetConnected(channels []proto.ChannelInfo, fingerprint string) {
 	s.VoiceChannels = nil
 	s.Voice = map[string][]proto.VoiceMember{}
 	s.InCall = ""
+	s.Roster, s.RosterTotal, s.HasRoster = nil, 0, false
 	for _, ch := range channels {
 		if ch.Type == "voice" {
 			s.VoiceChannels = append(s.VoiceChannels, ch.Name)
@@ -106,6 +112,10 @@ func (s *State) Apply(ev client.Event, open bool) {
 		}
 	case ev.Presence != nil:
 		s.Members[ev.Presence.Channel] = append([]proto.Member(nil), ev.Presence.Members...)
+	case ev.Roster != nil:
+		s.Roster = append([]proto.Member(nil), ev.Roster.Members...)
+		s.RosterTotal = ev.Roster.Total
+		s.HasRoster = true
 	case ev.Voice != nil:
 		if len(ev.Voice.Members) == 0 {
 			delete(s.Voice, ev.Voice.Channel)
