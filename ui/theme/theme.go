@@ -27,7 +27,7 @@ type Theme struct {
 	BG, FG, Dim, Bright color.RGBA
 	Panel               color.RGBA // panel surface
 	Warn                color.RGBA // failure / warning marks
-	Scanlines           bool      // switch for the whole CRT pass
+	Scanlines           bool       // switch for the whole CRT pass
 	FontSize            float64
 	Curvature           float64 // barrel strength, 0 = flat
 	Vignette            float64 // edge darkening
