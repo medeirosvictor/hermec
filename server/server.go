@@ -123,7 +123,7 @@ func (s *Server) Start() error {
 	}
 	var err error
 	for i := 0; i < attempts; i++ {
-		if err = s.start(); !errors.Is(err, errDiscoveryBind) {
+		if err = s.start(); !errors.Is(err, ErrDiscoveryBind) {
 			return err
 		}
 	}
@@ -155,7 +155,7 @@ func (s *Server) start() error {
 			if err := s.startDiscovery(discoveryBindHost(tcp.IP), tcp.Port); err != nil {
 				ln.Close()
 				s.ln = nil
-				return fmt.Errorf("server: discovery listen: %w: %w", errDiscoveryBind, err)
+				return fmt.Errorf("server: discovery listen: %w: %w", ErrDiscoveryBind, err)
 			}
 		}
 	}

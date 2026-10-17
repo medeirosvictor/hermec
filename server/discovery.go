@@ -24,8 +24,8 @@ const (
 // listenUDP binds the discovery socket; tests replace it to inject failures.
 var listenUDP = net.ListenPacket
 
-// errDiscoveryBind marks a failure to bind the UDP discovery socket.
-var errDiscoveryBind = errors.New("udp bind failed")
+// ErrDiscoveryBind marks a failure to bind the UDP discovery socket.
+var ErrDiscoveryBind = errors.New("udp bind failed")
 
 type discoverSource struct {
 	b    *bucket

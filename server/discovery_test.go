@@ -208,8 +208,8 @@ func TestStartExplicitPortUDPCollision(t *testing.T) {
 		s.Shutdown(context.Background())
 		t.Fatal("Start succeeded despite UDP port in use")
 	}
-	if !errors.Is(err, errDiscoveryBind) {
-		t.Fatalf("err = %v, want errDiscoveryBind", err)
+	if !errors.Is(err, ErrDiscoveryBind) {
+		t.Fatalf("err = %v, want ErrDiscoveryBind", err)
 	}
 	// No TCP listener leaked.
 	ln, err := net.Listen("tcp", addr.String())

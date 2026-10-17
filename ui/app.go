@@ -177,6 +177,15 @@ func DefaultServersPath() (string, error) {
 	return filepath.Join(dir, "hermec", "servers.toml"), nil
 }
 
+// DefaultHostedPath returns <user config dir>/hermec/hosted.toml.
+func DefaultHostedPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "hermec", "hosted.toml"), nil
+}
+
 // Run opens the window and blocks until it closes.
 func Run(opts Options) error {
 	if opts.KeyPath == "" {
