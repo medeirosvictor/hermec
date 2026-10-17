@@ -92,7 +92,10 @@ func (g *game) helpBack() {
 // scrollHelp moves the view by delta lines (positive is down), clamped to the
 // text.
 func (g *game) scrollHelp(delta int) {
-	g.helpScroll = min(max(g.helpScroll+delta, 0), g.helpMax())
+	// Re-clamp first: the text may have shrunk since the last scroll (resize,
+	// size change), and the delta must apply from a valid position.
+	m := g.helpMax()
+	g.helpScroll = min(max(min(max(g.helpScroll, 0), m)+delta, 0), m)
 }
 
 // heldKey is true on the press and then repeats while the key is held.

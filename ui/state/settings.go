@@ -30,12 +30,6 @@ type Settings struct {
 	OutputDevice string `toml:"output_device,omitempty"` // "" = system default
 }
 
-// UpdateCheckEnabled reports whether the startup update check is on; unset
-// means on.
-func (s Settings) UpdateCheckEnabled() bool {
-	return s.UpdateCheck == nil || *s.UpdateCheck
-}
-
 // CurvatureEnabled reports whether the CRT curvature is on; unset means on.
 func (s Settings) CurvatureEnabled() bool {
 	return s.Curvature == nil || *s.Curvature
@@ -120,12 +114,15 @@ func SaveSettings(path string, s Settings) error {
 // FontScales are the selectable text sizes in percent, in cycle order.
 var FontScales = []int{80, 90, 100, 110, 125, 150}
 
-// FontScalePct is the text size in percent; unset (or nonsense) means 100.
+// FontScalePct is the text size in percent; unset, or any value that is not a
+// step in FontScales, means 100.
 func (s Settings) FontScalePct() int {
-	if s.FontScale <= 0 {
-		return 100
+	for _, v := range FontScales {
+		if v == s.FontScale {
+			return v
+		}
 	}
-	return s.FontScale
+	return 100
 }
 
 // NextFontScale is the step after cur, wrapping around. 0 counts as 100, and

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -28,5 +29,23 @@ func TestFontScale(t *testing.T) {
 	}
 	if s, err := LoadSettings(p); err != nil || s.FontScale != 125 {
 		t.Fatalf("round trip %+v %v", s, err)
+	}
+}
+
+func TestFontScaleBounds(t *testing.T) {
+	for _, in := range []int{1, 5000, 95, 79, 151} {
+		if got := (Settings{FontScale: in}).FontScalePct(); got != 100 {
+			t.Errorf("FontScalePct(%d) = %d, want 100", in, got)
+		}
+	}
+}
+
+func TestOldUpdateCheckKeyStillLoads(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	if err := os.WriteFile(p, []byte("name = \"a\"\nupdate_check = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := LoadSettings(p); err != nil || s.Name != "a" {
+		t.Fatalf("%+v %v", s, err)
 	}
 }

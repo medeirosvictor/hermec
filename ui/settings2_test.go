@@ -187,21 +187,6 @@ func TestPollUpdateStates(t *testing.T) {
 	}
 }
 
-func TestUpdateRowIsNotTheOldToggle(t *testing.T) {
-	// The setting is kept so old files load, but nothing reads it.
-	p := filepath.Join(t.TempDir(), "settings.toml")
-	off := false
-	g := testGame(t)
-	g.settingsPath = p
-	g.set.UpdateCheck = &off
-	g.ver = "dev"
-	g.updateCh = make(chan updateResult, 1)
-	g.startUpdateCheck()
-	if g.updStatus != updUpToDate {
-		t.Fatalf("dev build status = %v", g.updStatus)
-	}
-}
-
 // ---- fingerprint tooltip ----
 
 func TestFingerprintTooltip(t *testing.T) {
@@ -368,5 +353,36 @@ func TestHelpScrollClamps(t *testing.T) {
 func TestHelpRowIsLast(t *testing.T) {
 	if rowHelp != settingsRows-1 {
 		t.Fatalf("rowHelp=%d settingsRows=%d", rowHelp, settingsRows)
+	}
+}
+
+func TestUpdateCheckIgnoresOldSetting(t *testing.T) {
+	// update_check = false is kept so old files load, but the check still runs.
+	off := false
+	g := testGame(t)
+	g.set.UpdateCheck = &off
+	g.ver = "v1.0.0"
+	g.updateCh = make(chan updateResult, 1)
+	called := make(chan struct{}, 1)
+	g.checkFn = func(context.Context, string) (update.Available, bool, error) {
+		called <- struct{}{}
+		return update.Available{}, false, nil
+	}
+	g.startUpdateCheck()
+	select {
+	case <-called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("check did not run with update_check = false")
+	}
+}
+
+func TestHelpScrollReclampsBeforeDelta(t *testing.T) {
+	g := testGame(t)
+	g.openHelp()
+	max := g.helpMax()
+	g.helpScroll = max + 15 // content shrank (resize or scale change)
+	g.scrollHelp(-1)
+	if g.helpScroll != max-1 {
+		t.Fatalf("scroll = %d, want %d", g.helpScroll, max-1)
 	}
 }
