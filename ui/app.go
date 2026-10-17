@@ -36,6 +36,7 @@ type Options struct {
 
 	ServersPath  string // empty: <user config dir>/hermec/servers.toml
 	SettingsPath string // empty: <user config dir>/hermec/settings.toml
+	HostedPath   string // empty: <user config dir>/hermec/hosted.toml
 }
 
 // Size hierarchy relative to Theme.FontSize.
@@ -88,9 +89,16 @@ type game struct {
 
 	serversPath string
 	servers     []state.ServerEntry
-	localURL    string // URL of the in-process server; empty without -local
-	curKey      string // key of the viewed session; empty = connect scene
-	notice      string // persistent load/save error, shown on the connect scene
+	localURL    string        // URL of the in-process server; empty without -local
+	hosted      *hostedServer // the server hosted from the app; nil = no hosted.toml
+	hostedPath  string        // hosted.toml location in effect
+	// createFn creates the hosted server (the Add a Server page's action);
+	// nil = g.createHosted. selfAddrs finds this machine's addresses;
+	// nil = discover.SelfAddrs. Both are test seams.
+	createFn  func(name, pass string, port int) error
+	selfAddrs func(ctx context.Context) (ts, lan string)
+	curKey    string // key of the viewed session; empty = connect scene
+	notice    string // persistent load/save error, shown on the connect scene
 
 	settingsPath  string
 	set           state.Settings
@@ -259,9 +267,11 @@ func Run(opts Options) error {
 		g.logf("local server on %s", url)
 	}
 	g.loadServers(opts.ServersPath)
+	g.bootHosted(opts.HostedPath)
+	defer g.stopHosted()
 	if !opts.Local {
 		for _, e := range g.servers { // one Enter reconnects the most recent dialable
-			if e.URL != localKey {
+			if e.URL != localKey && e.URL != hostedKey {
 				url = e.URL
 				break
 			}

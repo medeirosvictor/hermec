@@ -99,7 +99,7 @@ func SavedHosts(saved []ServerEntry, extra ...string) []string {
 		}
 	}
 	for _, e := range saved {
-		if e.URL == "hermec://local" {
+		if e.URL == "hermec://local" || e.URL == "hermec://hosted" { // placeholders, not hosts
 			continue
 		}
 		add(HostPort(e.URL))

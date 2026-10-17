@@ -84,6 +84,10 @@ func (g *game) openSession(url, name string) *session {
 		return nil
 	}
 	key := g.keyFor(real)
+	if key == hostedKey && g.hosted == nil {
+		none.st.ConnectErr = "not hosting a server"
+		return nil
+	}
 	if g.sess == nil {
 		g.sess = map[string]*session{}
 	}
@@ -98,14 +102,14 @@ func (g *game) openSession(url, name string) *session {
 	s := newSession(key, real, name)
 	g.sess[key] = s
 	if _, ok := g.entryFor(key); !ok { // the tile shows now; the file waits for a first success
-		label := state.HostPort(real)
-		if key == localKey {
-			label = "local"
-		}
-		g.servers = append([]state.ServerEntry{{URL: key, Label: label, Pending: true}}, g.servers...)
+		g.servers = append([]state.ServerEntry{{URL: key, Label: g.labelFor(key, real), Pending: true}}, g.servers...)
 	}
 	g.flushName()
 	g.rememberName(name)
+	if key == hostedKey && g.hosted.srv == nil { // not running: failed from the start, nothing to dial
+		s.failed, s.lastErr = true, g.hosted.err
+		return s
+	}
 	g.dial(s)
 	return s
 }
@@ -162,6 +166,14 @@ func (g *game) retryNow(key string) {
 	s := g.sess[key]
 	if s == nil || s.dialing || s.c != nil || s.url == "" {
 		return
+	}
+	if key == hostedKey && g.hosted != nil && g.hosted.srv == nil { // stopped: start it first
+		if g.startHosted() != nil {
+			s.failed, s.lastErr = true, g.hosted.err
+			return
+		}
+		s.url = g.hosted.url
+		s.lastErr = ""
 	}
 	s.attempt = 0
 	s.failed = false

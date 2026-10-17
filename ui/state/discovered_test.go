@@ -78,7 +78,7 @@ func TestReselect(t *testing.T) {
 
 func TestSavedHosts(t *testing.T) {
 	saved := []ServerEntry{
-		{URL: "ws://a.example:7697/"}, {URL: "hermec://local"},
+		{URL: "ws://a.example:7697/"}, {URL: "hermec://local"}, {URL: "hermec://hosted"},
 		{URL: "ws://a.example:7697/"}, {URL: "wss://b.example/"},
 	}
 	got := SavedHosts(saved, "127.0.0.1:5")

@@ -40,7 +40,42 @@ func selfTailscaleIP(parent context.Context) string {
 	return ""
 }
 
+// dialUDP is the default-route probe seam; a UDP "dial" sends no packets.
+var dialUDP = func() (net.Addr, error) {
+	c, err := net.Dial("udp4", "8.8.8.8:80")
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	return c.LocalAddr(), nil
+}
+
+// routeLANIP is the source address of the default route when it is a private
+// non-Tailscale IPv4; adapters like WSL, Hyper-V or Docker never win this way.
+func routeLANIP() string {
+	a, err := dialUDP()
+	if err != nil {
+		return ""
+	}
+	ua, ok := a.(*net.UDPAddr)
+	if !ok {
+		return ""
+	}
+	ip, ok := netip.AddrFromSlice(ua.IP)
+	if !ok {
+		return ""
+	}
+	ip = ip.Unmap()
+	if ip.Is4() && ip.IsPrivate() && !cgnat.Contains(ip) {
+		return ip.String()
+	}
+	return ""
+}
+
 func selfLANIP() string {
+	if ip := routeLANIP(); ip != "" {
+		return ip
+	}
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return ""

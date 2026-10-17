@@ -6,6 +6,7 @@ require github.com/gorilla/websocket v1.5.3
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/atotto/clipboard v0.1.4
 	github.com/gen2brain/malgo v0.11.26
 	github.com/hajimehoshi/ebiten/v2 v2.10.4
 	github.com/hraban/opus v0.0.0-20260708213942-bde8e4304501

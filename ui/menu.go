@@ -42,6 +42,15 @@ func (g *game) openTileMenu(key string, ax, ay float64) {
 	if s := g.sess[key]; s != nil && s.failed {
 		items = append(items, menuItem{label: "Retry", act: func() { g.retryNow(key) }})
 	}
+	if h := g.hosted; key == hostedKey && h != nil {
+		if h.srv != nil {
+			items = append(items,
+				menuItem{label: "Copy invite address", act: g.copyInvite},
+				menuItem{label: "Stop hosting", act: g.stopHosted})
+		} else {
+			items = append(items, menuItem{label: "Start hosting", act: g.startHostedNow})
+		}
+	}
 	items = append(items, menuItem{label: "Rename", act: func() { g.openRenameDialog(key) }})
 	if _, ok := g.sess[key]; ok {
 		items = append(items, menuItem{label: "Disconnect", act: func() { g.disconnect(key) }})

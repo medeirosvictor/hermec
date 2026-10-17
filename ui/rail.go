@@ -53,6 +53,9 @@ func (g *game) realURL(u string) string {
 	if u == localKey && g.localURL != "" {
 		return g.localURL
 	}
+	if u == hostedKey && g.hosted != nil && g.hosted.url != "" {
+		return g.hosted.url
+	}
 	return u
 }
 
@@ -61,7 +64,21 @@ func (g *game) keyFor(u string) string {
 	if g.localURL != "" && u == g.localURL {
 		return localKey
 	}
+	if g.hosted != nil && g.hosted.url != "" && u == g.hosted.url {
+		return hostedKey
+	}
 	return u
+}
+
+// labelFor is the rail label of a new entry for key, whose dial URL is real.
+func (g *game) labelFor(key, real string) string {
+	switch {
+	case key == localKey:
+		return "local"
+	case key == hostedKey && g.hosted != nil:
+		return g.hosted.cfg.ServerName
+	}
+	return state.HostPort(real)
 }
 
 func (g *game) loadServers(path string) {
@@ -96,10 +113,7 @@ func (g *game) saveServer(s *session, channel string) {
 	if s == nil || s.key == "" || s.c == nil || g.serversPath == "" {
 		return
 	}
-	label := state.HostPort(s.url)
-	if s.key == localKey {
-		label = "local"
-	}
+	label := g.labelFor(s.key, s.url)
 	live := func(u string) bool { _, ok := g.sess[u]; return ok }
 	g.servers = state.Touch(g.servers, s.key, label, serverNameOf(s.c), channel, live)
 	if err := state.SaveServers(g.serversPath, g.servers); err != nil {

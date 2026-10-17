@@ -42,6 +42,14 @@ func (d dialog) title(e state.ServerEntry) string {
 	return "Leave Server"
 }
 
+// leaveSuffixFor is the small print under the leave question for key.
+func (g *game) leaveSuffixFor(key string) string {
+	if key == hostedKey {
+		return "This stops hosting and deletes this server's settings."
+	}
+	return leaveSuffix
+}
+
 func (g *game) dialogOpen() bool { return g.dlg.mode != dlgNone }
 
 // entryFor is the saved entry with key, if any.
@@ -95,6 +103,9 @@ func (g *game) dialogConfirm() {
 		g.servers = state.SetNick(g.servers, d.key, d.nick.String())
 		g.persistServers()
 	case dlgLeave:
+		if d.key == hostedKey {
+			g.leaveHosted()
+		}
 		if g.sess[d.key] != nil {
 			g.disconnect(d.key)
 		}
@@ -252,7 +263,7 @@ func (g *game) drawDialog(screen *ebiten.Image) {
 		y += lh + pad
 		g.drawText(screen, state.Ellipsize("Leave "+state.DisplayName(e)+"?", cols), x, y, th.FG)
 		y += lh
-		g.drawTextF(screen, g.faceS, state.Ellipsize(leaveSuffix, int(float64(cols)/smallScale)), x, y, th.Dim)
+		g.drawTextF(screen, g.faceS, state.Ellipsize(g.leaveSuffixFor(g.dlg.key), int(float64(cols)/smallScale)), x, y, th.Dim)
 	}
 	hover := -1
 	if h, ok := g.hitAt(); ok && h.Kind == state.HitDialogBtn {
