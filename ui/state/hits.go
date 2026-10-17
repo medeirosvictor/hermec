@@ -22,6 +22,9 @@ const (
 	HitFingerprint                  // the user's fingerprint line (hover tooltip only)
 	HitHelpBack                     // the back row of the settings help view
 	HitRailRetry                    // retry on a failed rail tile; ID is the tile index
+	HitAddChoice                    // Add a Server choice; ID 0 = Create my own, 1 = Join a server
+	HitCreateField                  // create-form field (text cursor); ID 0 name, 1 password, 2 port
+	HitCreateBtn                    // the Create button
 )
 
 // Hit is one click target: the half-open rect [X0,X1) x [Y0,Y1).

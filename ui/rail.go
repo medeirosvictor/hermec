@@ -180,10 +180,14 @@ func (g *game) addServer() {
 	if name == "" {
 		name = g.opts.Name
 	}
+	if g.curKey != "" {
+		g.addPrev = g.curKey // Esc on the choices returns here
+	}
 	g.view("")
 	g.noneSession().st.ConnectErr = ""
 	g.connect = newConnectForm(name, "ws://", false)
 	g.connect.focus = 1
+	g.add = addChoose
 }
 
 func (g *game) updateRail() {

@@ -9,6 +9,7 @@ Each icon on the left is a server. Right-click an icon to rename it (only on you
 
 # Reaching your friends
 Your friends need a way to reach the computer running the server. The easiest is Tailscale: everyone installs it and joins the same tailnet, and the server's tailnet address works from anywhere. On the same home network, servers also show up by themselves under DISCOVERED.
+Windows will ask to allow HERMEC on your network — choose Allow so friends can connect.
 
 # Voice
 Click a voice channel to join the call. The bars next to the server show your connection quality; click them for details.

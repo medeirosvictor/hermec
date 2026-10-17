@@ -13,7 +13,7 @@ func shapeAt(h *state.Hits, x, y float64) ebiten.CursorShapeType {
 	switch {
 	case !ok:
 		return ebiten.CursorShapeDefault
-	case t.Kind == state.HitText:
+	case t.Kind == state.HitText, t.Kind == state.HitCreateField:
 		return ebiten.CursorShapeText
 	default:
 		return ebiten.CursorShapePointer
@@ -65,7 +65,7 @@ func (g *game) buildHits() {
 		g.addBarHits(g.geom()) // no form to click; the rail badge retries
 	case g.cur().st.Phase == state.PhaseConnect:
 		g.connect.dy = g.bannerH()
-		g.addConnectHits()
+		g.addAddHits()         // choice, create or connect page
 		g.addBarHits(g.geom()) // the call bar of a call on any server
 	case g.cur().st.Phase == state.PhaseMain:
 		g.addMainHits(g.geom())

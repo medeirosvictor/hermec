@@ -14,7 +14,7 @@ import (
 // update.go, state/roster.go) and U+2026 ellipsis (state/tooltip.go
 // Ellipsis), U+203A › and U+2039 ‹ (settings rows: update.go, help.go, settings.go). U+00B2, U+00B7 (state/barrel.go) and U+2500 (state/voice.go) occur
 // only in comments, so they are not required.
-var uiRunes = []rune{'…', '—', '›', '‹'}
+var uiRunes = []rune{'…', '—', '›', '‹', '•'}
 
 func fontBytes(t *testing.T, id string) []byte {
 	t.Helper()

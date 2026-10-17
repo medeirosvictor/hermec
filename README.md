@@ -219,6 +219,14 @@ else just runs the app. The easiest private setup is Tailscale, with no router
 changes and no public IP exposed. See the step-by-step
 [friends quickstart](docs/quickstart-friends.md).
 
+You can also host from the app itself: click the **+** tile, choose
+**Create my own**, and give the server a name, an optional password and a port
+(7697 by default). The app starts the server on your computer, opens it as a
+tile, and shows an invite address (your Tailscale address if you have one,
+otherwise your LAN address) that friends paste into **Join a server**. Windows
+asks once to allow HERMEC on your network; choose Allow so friends can connect.
+The server runs while the app is open.
+
 ## Use as a library
 
 ```go

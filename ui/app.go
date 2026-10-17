@@ -100,7 +100,15 @@ type game struct {
 	createFn  func(name, pass string, port int) error
 	selfAddrs func(ctx context.Context) (ts, lan string)
 	curKey    string // key of the viewed session; empty = connect scene
-	notice    string // persistent load/save error, shown on the connect scene
+
+	add           addMode           // which step of the Add a Server page shows
+	addPrev       string            // view key Esc on the choices returns to
+	addSel        int               // keyboard-selected choice
+	cf            createForm        // the create page's fields
+	addInvCh      chan inviteResult // address lookup started on entering addCreate
+	addTS, addLAN string
+	addInviteDone bool
+	notice        string // persistent load/save error, shown on the connect scene
 
 	settingsPath  string
 	set           state.Settings
@@ -383,7 +391,12 @@ func (g *game) Update() error {
 		}
 	} else if g.cur().st.Phase == state.PhaseConnect && !g.modal {
 		g.connect.dy = g.bannerH() // updateRail may have replaced the form
-		if url, name, submit := g.connect.update(g.cur().dialing, g.hitAt); submit {
+		if g.curKey == "" {
+			g.addEsc(inpututil.IsKeyJustPressed(ebiten.KeyEscape))
+		}
+		if g.addPageShown() {
+			g.updateAdd()
+		} else if url, name, submit := g.connect.update(g.cur().dialing, g.hitAt); submit {
 			if s := g.openSession(url, name); s != nil {
 				g.view(s.key)
 			}
@@ -410,6 +423,7 @@ func (g *game) tickBackground(now time.Time) {
 	g.tickReconnect(now)
 	g.pollUpdate()
 	g.pumpInvite()
+	g.pumpAddInvite()
 }
 
 func (g *game) Draw(screen *ebiten.Image) {
@@ -451,7 +465,11 @@ func (g *game) drawScene(screen *ebiten.Image) {
 		g.drawCallBar(screen, g.geom())
 		g.drawBanner(screen)
 	} else if g.cur().st.Phase == state.PhaseConnect {
-		g.drawConnect(screen)
+		if g.addPageShown() {
+			g.drawAddPage(screen)
+		} else {
+			g.drawConnect(screen)
+		}
 		g.drawCallBar(screen, g.geom()) // a call on a server keeps its bar while "+" is open
 		g.drawBanner(screen)
 	} else {

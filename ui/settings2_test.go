@@ -231,6 +231,7 @@ func TestFingerprintTooltip(t *testing.T) {
 
 func TestFingerprintHitOnConnectScene(t *testing.T) {
 	g := testGame(t)
+	g.add = addJoin // the connect form, not the choices
 	g.fp = "abcd1234"
 	g.buildHits()
 	lh := g.lineH()

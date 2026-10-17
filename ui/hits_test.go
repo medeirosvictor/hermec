@@ -206,6 +206,7 @@ func TestHitsSettingsRows(t *testing.T) {
 // must not index past the new list.
 func TestConnectClickStaleDiscoveredRow(t *testing.T) {
 	g := testGame(t)
+	g.add = addJoin // the connect form, not the choices
 	f := &g.connect
 	f.disc = make([]state.DiscoveredRow, 3)
 	f.name.runes = []rune("me")

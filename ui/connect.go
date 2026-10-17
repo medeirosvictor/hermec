@@ -134,6 +134,15 @@ func (f *connectForm) click(h state.Hit, dialing bool) (url, name string, submit
 	return "", "", false, false
 }
 
+// moveSel moves the discovered selection by d; landing on a row fills the
+// server field with its address.
+func (f *connectForm) moveSel(d int) {
+	f.sel = state.MoveSel(f.sel, d, len(f.disc))
+	if f.sel >= 0 && f.sel < len(f.disc) {
+		f.server.runes = []rune(f.disc[f.sel].URL)
+	}
+}
+
 // update consumes keyboard input. It reports submit when Enter is pressed
 // and no dial is in flight. at returns the click target under the mouse.
 func (f *connectForm) update(dialing bool, at func() (state.Hit, bool)) (url, name string, submit bool) {
@@ -146,10 +155,10 @@ func (f *connectForm) update(dialing bool, at func() (state.Hit, bool)) (url, na
 	}
 	if len(f.disc) > 0 {
 		if inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) {
-			f.sel = state.MoveSel(f.sel, 1, len(f.disc))
+			f.moveSel(1)
 		}
 		if inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) {
-			f.sel = state.MoveSel(f.sel, -1, len(f.disc))
+			f.moveSel(-1)
 		}
 	} else {
 		f.sel = -1

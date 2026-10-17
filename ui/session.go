@@ -227,6 +227,9 @@ func (g *game) view(key string) {
 		key = ""
 	}
 	g.curKey = key
+	if key != "" {
+		g.add = addChoose // the next visit to the connect scene starts at the choices
+	}
 	g.cur().st.SetViewed(key != "")
 }
 
