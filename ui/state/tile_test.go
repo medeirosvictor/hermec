@@ -21,3 +21,18 @@ func TestTile(t *testing.T) {
 		}
 	}
 }
+
+func TestTileFailed(t *testing.T) {
+	s := Tile(TileFacts{HasSession: true, Failed: true})
+	if !(s.FailX && s.Retry && s.Dim && !s.Pulse) {
+		t.Errorf("failed: %+v", s)
+	}
+	s = Tile(TileFacts{HasSession: true})
+	if s.FailX || s.Retry {
+		t.Errorf("not failed: %+v", s)
+	}
+	s = Tile(TileFacts{HasSession: true, Reconnecting: true, Failed: true})
+	if !(s.FailX && s.Retry && s.Pulse) {
+		t.Errorf("failed+reconnecting: %+v", s)
+	}
+}

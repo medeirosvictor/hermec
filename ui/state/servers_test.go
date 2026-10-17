@@ -306,3 +306,24 @@ func TestServersFileOldFormatLoads(t *testing.T) {
 		t.Fatalf("round trip: %+v, %v", out, err)
 	}
 }
+
+func TestSaveServersSkipsPending(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "servers.toml")
+	if err := SaveServers(p, []ServerEntry{{URL: "a"}, {URL: "b", Pending: true}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadServers(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].URL != "a" {
+		t.Errorf("got %+v, want only a", got)
+	}
+}
+
+func TestTouchClearsPending(t *testing.T) {
+	got := Touch([]ServerEntry{{URL: "b", Pending: true}}, "b", "", "", "", nil)
+	if len(got) != 1 || got[0].Pending {
+		t.Errorf("got %+v, want Pending false", got)
+	}
+}

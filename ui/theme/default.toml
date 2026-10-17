@@ -16,3 +16,4 @@ scan_bar_period = 8.0
 glow = 0.12
 radius = 6.0
 corner_radius = 18.0
+warn = "#E5534B"

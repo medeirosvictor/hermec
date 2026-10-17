@@ -21,6 +21,7 @@ const (
 	HitDialogBtn                    // dialog button; ID 0 = primary (Save / Leave), 1 = Cancel
 	HitFingerprint                  // the user's fingerprint line (hover tooltip only)
 	HitHelpBack                     // the back row of the settings help view
+	HitRailRetry                    // retry on a failed rail tile; ID is the tile index
 )
 
 // Hit is one click target: the half-open rect [X0,X1) x [Y0,Y1).

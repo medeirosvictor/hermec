@@ -30,6 +30,9 @@ type ServerEntry struct {
 	LastSeen    time.Time `toml:"last_seen"`
 	Name        string    `toml:"name,omitempty"` // announced by the server
 	Nick        string    `toml:"nick,omitempty"` // the user's own name for it
+
+	// Pending marks an entry not yet connected; it is never saved.
+	Pending bool `toml:"-"`
 }
 
 type serversFile struct {
@@ -60,7 +63,13 @@ func SaveServers(path string, entries []ServerEntry) error {
 		return err
 	}
 	name := tmp.Name()
-	err = toml.NewEncoder(tmp).Encode(serversFile{Servers: entries})
+	var keep []ServerEntry
+	for _, e := range entries {
+		if !e.Pending {
+			keep = append(keep, e)
+		}
+	}
+	err = toml.NewEncoder(tmp).Encode(serversFile{Servers: keep})
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
@@ -95,6 +104,7 @@ func Touch(entries []ServerEntry, url, label, name, channel string, live func(ur
 			out[i].LastChannel = channel
 		}
 		out[i].LastSeen = time.Now().UTC()
+		out[i].Pending = false
 		break
 	}
 	if !found {

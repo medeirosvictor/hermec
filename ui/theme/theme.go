@@ -26,7 +26,8 @@ type Theme struct {
 	Name                string
 	BG, FG, Dim, Bright color.RGBA
 	Panel               color.RGBA // panel surface
-	Scanlines           bool       // switch for the whole CRT pass
+	Warn                color.RGBA // failure / warning marks
+	Scanlines          bool       // switch for the whole CRT pass
 	FontSize            float64
 	Curvature           float64 // barrel strength, 0 = flat
 	Vignette            float64 // edge darkening
@@ -46,6 +47,7 @@ type file struct {
 	Dim              string  `toml:"dim"`
 	Bright           string  `toml:"bright"`
 	Panel            string  `toml:"panel"`
+	Warn             string  `toml:"warn"`
 	Scanlines        bool    `toml:"scanlines"`
 	FontSize         float64 `toml:"font_size"`
 	Curvature        float64 `toml:"curvature"`
@@ -189,7 +191,7 @@ func build(f file) (Theme, error) {
 		name string
 		in   string
 		out  *color.RGBA
-	}{{"bg", f.BG, &t.BG}, {"fg", f.FG, &t.FG}, {"dim", f.Dim, &t.Dim}, {"bright", f.Bright, &t.Bright}} {
+	}{{"bg", f.BG, &t.BG}, {"fg", f.FG, &t.FG}, {"dim", f.Dim, &t.Dim}, {"bright", f.Bright, &t.Bright}, {"warn", f.Warn, &t.Warn}} {
 		if *c.out, err = parseHex(c.in); err != nil {
 			return Theme{}, fmt.Errorf("theme: %s: %w", c.name, err)
 		}

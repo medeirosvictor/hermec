@@ -123,3 +123,18 @@ func TestNextPreset(t *testing.T) {
 		t.Errorf("custom -> %+v", n)
 	}
 }
+
+func TestWarnColour(t *testing.T) {
+	if got, want := Default().Warn, (color.RGBA{0xE5, 0x53, 0x4B, 0xFF}); got != want {
+		t.Errorf("default warn = %v, want %v", got, want)
+	}
+	for _, p := range Presets() { // every preset loads (Presets panics otherwise)
+		want := color.RGBA{0xE5, 0x53, 0x4B, 0xFF}
+		if p.Name == "parchment" {
+			want = color.RGBA{0xB3, 0x26, 0x1E, 0xFF}
+		}
+		if p.Warn != want {
+			t.Errorf("%s warn = %v, want %v", p.Name, p.Warn, want)
+		}
+	}
+}

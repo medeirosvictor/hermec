@@ -7,3 +7,4 @@ bright = "#7A1F1F"
 panel = "#E3D7C1"
 scanline_strength = 0.04
 glow = 0.0
+warn = "#B3261E"

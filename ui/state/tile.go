@@ -7,6 +7,7 @@ type TileFacts struct {
 	Reconnecting bool
 	InCall       bool
 	Unread       bool
+	Failed       bool // the connection attempt failed
 }
 
 // TileState is the resulting look of a rail tile.
@@ -16,15 +17,19 @@ type TileState struct {
 	Pulse  bool // animate while reconnecting
 	Dot    bool // unread marker
 	Bust   bool // in-call marker
+	FailX  bool // failure cross overlay
+	Retry  bool // clicking the tile retries
 }
 
 // Tile maps facts to a tile look.
 func Tile(f TileFacts) TileState {
 	return TileState{
 		Accent: f.Viewed,
-		Dim:    !f.HasSession || f.Reconnecting,
+		Dim:    !f.HasSession || f.Reconnecting || f.Failed,
 		Pulse:  f.Reconnecting,
 		Dot:    f.Unread,
 		Bust:   f.InCall,
+		FailX:  f.Failed,
+		Retry:  f.Failed,
 	}
 }
