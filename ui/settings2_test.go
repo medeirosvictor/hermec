@@ -387,3 +387,47 @@ func TestHelpScrollReclampsBeforeDelta(t *testing.T) {
 		t.Fatalf("scroll = %d, want %d", g.helpScroll, max-1)
 	}
 }
+
+// At 150% on the default 960x600 window the rows do not all fit above the
+// fingerprint, backup and hint lines, so the rows scroll: the selected row is
+// always inside the visible window and below it the tail still fits.
+func TestSettingsWindowKeepsSelectedVisible(t *testing.T) {
+	g := testGame(t)
+	g.h = 600
+	g.set.FontScale = 150
+	lh := g.lineH()
+	top := connectFieldsTop(lh)
+	for sel := 0; sel < settingsRows; sel++ {
+		first, n := settingsWindow(float64(g.h), top, lh, settingsRows, sel)
+		if n >= settingsRows {
+			t.Fatalf("150%% fits all %d rows; test is not exercising scroll", n)
+		}
+		if sel < first || sel >= first+n {
+			t.Errorf("sel %d outside window [%d,%d)", sel, first, first+n)
+		}
+		if end := top + float64(n)*lh + 5*lh; end > float64(g.h)-lh+1e-6 {
+			t.Errorf("sel %d: hint line ends at %.1f, overlaps the notice at %.1f", sel, end, float64(g.h)-lh)
+		}
+	}
+	g.set.FontScale = 0
+	lh = g.lineH()
+	if first, n := settingsWindow(float64(g.h), connectFieldsTop(lh), lh, settingsRows, settingsRows-1); first != 0 || n != settingsRows {
+		t.Errorf("100%%: window = %d,%d, want everything", first, n)
+	}
+}
+
+// The last row's click target sits where it is drawn when the rows scroll.
+func TestSettingsScrolledHits(t *testing.T) {
+	g := testGame(t)
+	g.h = 600
+	g.set.FontScale = 150
+	g.settingsOpen = true
+	g.setRow = settingsRows - 1
+	g.buildHits()
+	lh := g.lineH()
+	first, _ := g.settingsRowsWindow()
+	y := connectFieldsTop(lh) + float64(settingsRows-1-first)*lh + 1
+	if h, ok := g.hits.At(connectX+g.railW()+5, y); !ok || h.Kind != state.HitSettingsRow || h.ID != settingsRows-1 {
+		t.Fatalf("last row hit = %+v %v", h, ok)
+	}
+}

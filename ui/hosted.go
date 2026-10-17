@@ -336,7 +336,11 @@ func (g *game) pumpInvite() {
 	case r := <-g.inviteCh:
 		g.inviteBusy = false
 		addr := inviteAddress(r.ts, r.lan, r.port)
-		st := &g.cur().st.Status
+		s := g.cur()
+		if h := g.sess[hostedKey]; h != nil {
+			s = h
+		}
+		st := &s.st.Status
 		switch {
 		case addr == noInviteAddr:
 			*st = addr

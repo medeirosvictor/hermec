@@ -332,7 +332,9 @@ func (g *game) tileFacts(e state.ServerEntry) state.TileFacts {
 		return f
 	}
 	f.HasSession = true
-	f.Reconnecting = s.everUp && s.c == nil
+	// A pending tile pulses through its first dial too; a failed one with no
+	// retry scheduled (a stopped hosted server) stays still.
+	f.Reconnecting = s.c == nil && (s.everUp || s.dialing) && !(s.failed && s.retryAt.IsZero())
 	f.InCall = g.callKey != "" && g.callKey == e.URL
 	f.Unread = s.st.AnyUnread()
 	f.Failed = s.failed

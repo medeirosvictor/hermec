@@ -64,13 +64,42 @@ func TestTileFacts(t *testing.T) {
 		"bg":     {HasSession: true, Reconnecting: true},
 		"call":   {HasSession: true, InCall: true},
 		"unread": {HasSession: true, Unread: true},
-		"first":  {HasSession: true},
+		"first":  {HasSession: true, Reconnecting: true},
 		"nosess": {},
 	}
 	for k, want := range cases {
 		if got := g.tileFacts(state.ServerEntry{URL: k}); got != want {
 			t.Errorf("%s: got %+v want %+v", k, got, want)
 		}
+	}
+}
+
+// A pending tile is greyed and pulsing while its first dial is in flight.
+func TestPendingTilePulsesDuringFirstDial(t *testing.T) {
+	g := newTestGame(t)
+	s := newSession("pend", "pend", "me")
+	s.dialing = true // never up, no client yet
+	g.sess["pend"] = s
+	ts := state.Tile(g.tileFacts(state.ServerEntry{URL: "pend"}))
+	if !ts.Dim || !ts.Pulse {
+		t.Errorf("first dial tile = %+v, want Dim and Pulse", ts)
+	}
+}
+
+// A stopped hosted server has no retry scheduled, so its tile shows the
+// failure badge but must not pulse forever.
+func TestStoppedTileDoesNotPulse(t *testing.T) {
+	g := newTestGame(t)
+	s := newSession("stopped", "stopped", "me")
+	s.everUp, s.failed = true, true // retryAt stays zero
+	g.sess["stopped"] = s
+	ts := state.Tile(g.tileFacts(state.ServerEntry{URL: "stopped"}))
+	if ts.Pulse || !ts.Dim || !ts.FailX || !ts.Retry {
+		t.Errorf("stopped tile = %+v, want dim, cross and retry without pulse", ts)
+	}
+	s.retryAt = time.Now().Add(time.Minute) // a scheduled retry pulses again
+	if ts := state.Tile(g.tileFacts(state.ServerEntry{URL: "stopped"})); !ts.Pulse {
+		t.Errorf("retrying tile = %+v, want Pulse", ts)
 	}
 }
 

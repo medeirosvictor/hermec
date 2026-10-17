@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/medeirosvictor/hermec/discover"
@@ -25,6 +27,43 @@ func (g *game) savedForDiscovery() []state.ServerEntry {
 	return out
 }
 
+// selfHostPort is the port of the server this app is hosting right now, or 0.
+func (g *game) selfHostPort() int {
+	h := g.hosted
+	if h == nil || h.srv == nil {
+		return 0
+	}
+	_, p, err := net.SplitHostPort(h.srv.Addr())
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(p)
+	return n
+}
+
+// dropSelfHosted removes the rows that are the server this app hosts on port:
+// this machine's loopback, tailnet or LAN address with that port. Joining one
+// would open a second session to yourself. port 0 (not hosting) keeps all rows
+// and skips the address lookup.
+func dropSelfHosted(ctx context.Context, found []state.DiscoveredIn, self func(context.Context) (string, string), port int) []state.DiscoveredIn {
+	if port == 0 || len(found) == 0 {
+		return found
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	ts, lan := self(ctx)
+	mine := map[string]bool{"127.0.0.1": true, "::1": true, "localhost": true, ts: ts != "", lan: lan != ""}
+	out := found[:0:0]
+	for _, f := range found {
+		host, p, err := net.SplitHostPort(f.Addr)
+		if err == nil && mine[host] && p == strconv.Itoa(port) {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
 // startProbe runs one discovery probe in a goroutine unless one is in flight.
 func (g *game) startProbe() {
 	if g.probing {
@@ -44,13 +83,17 @@ func (g *game) startProbe() {
 	}
 	g.logf("discovery probe (extra hosts %v)", opts.ExtraHosts)
 	ch := g.probeCh
+	hostPort, self := g.selfHostPort(), g.selfAddrs
+	if self == nil {
+		self = discover.SelfAddrs
+	}
 	go func() {
 		found := discover.Probe(context.Background(), opts)
 		in := make([]state.DiscoveredIn, len(found))
 		for i, f := range found {
 			in[i] = state.DiscoveredIn{Name: f.Name, Addr: f.Addr, Source: f.Source}
 		}
-		ch <- in
+		ch <- dropSelfHosted(context.Background(), in, self, hostPort)
 	}()
 }
 

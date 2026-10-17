@@ -99,7 +99,7 @@ func scanlinesOr(s state.Settings, def bool) bool {
 
 // loadSettings reads the settings file into g.set. Failures become the
 // notice; an unreadable file is moved aside so it is not overwritten.
-func (g *game) loadSettings(path string) {
+func (g *game) loadSettings(path string, others ...string) {
 	if path == "" {
 		p, err := DefaultSettingsPath()
 		if err != nil {
@@ -109,7 +109,7 @@ func (g *game) loadSettings(path string) {
 		path = p
 	}
 	g.settingsPath = path
-	s, err := state.LoadOrInitSettings(path) // no file yet: modern first-run defaults
+	s, err := state.LoadOrInitSettings(path, others...) // nothing on disk yet: modern first-run defaults
 	if err != nil {
 		g.notice = fmt.Sprintf("settings.toml unreadable (%v); moved to .bad", err)
 		_ = os.Rename(path, filepath.Clean(path)+".bad")
@@ -306,8 +306,31 @@ func (g *game) cycleOutput() {
 	g.persistSettings()
 }
 
-// addSettingsHits registers one target per settings row, from the same origin
-// and row height drawSettings uses.
+// settingsTailLines is the height, in lines, of what follows the rows: a blank
+// line, the fingerprint, the backup line, a gap and the hint, plus one line
+// kept for the notice at the bottom of the window.
+const settingsTailLines = 6
+
+// settingsWindow is the slice of settings rows that fits in a window h tall
+// when the rows start at top with line height lh: rows first..first+n-1. When
+// not all of total fit, the window scrolls just far enough to keep sel in view.
+func settingsWindow(h, top, lh float64, total, sel int) (first, n int) {
+	n = int((h-top)/lh+1e-9) - settingsTailLines
+	n = max(1, min(n, total))
+	if sel >= n {
+		first = min(sel-n+1, total-n)
+	}
+	return first, n
+}
+
+// settingsRowsWindow is settingsWindow for the current window and selection.
+func (g *game) settingsRowsWindow() (first, n int) {
+	lh := g.lineH()
+	return settingsWindow(float64(g.h), connectFieldsTop(lh), lh, settingsRows, g.setRow)
+}
+
+// addSettingsHits registers one target per visible settings row, from the same
+// origin and row height drawSettings uses.
 func (g *game) addSettingsHits() {
 	lh := g.lineH()
 	x0 := connectX + g.railW()
@@ -316,11 +339,12 @@ func (g *game) addSettingsHits() {
 		g.hits.Add(state.Hit{X0: x0, Y0: y, X1: float64(g.w), Y1: y + lh, Kind: state.HitHelpBack})
 		return
 	}
-	for r := 0; r < settingsRows; r++ {
-		y := connectFieldsTop(lh) + float64(r)*lh
+	first, n := g.settingsRowsWindow()
+	for r := first; r < first+n; r++ {
+		y := connectFieldsTop(lh) + float64(r-first)*lh
 		g.hits.Add(state.Hit{X0: x0, Y0: y, X1: float64(g.w), Y1: y + lh, Kind: state.HitSettingsRow, ID: r})
 	}
-	g.addFingerprintHit(connectFieldsTop(lh) + float64(settingsRows+1)*lh)
+	g.addFingerprintHit(connectFieldsTop(lh) + float64(n+1)*lh)
 }
 
 // updateSettings handles input for the settings scene. Every change saves.
@@ -344,6 +368,13 @@ func (g *game) updateSettings() {
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) {
 		g.setRow = (g.setRow + settingsRows - 1) % settingsRows
+	}
+	if _, wy := ebiten.Wheel(); wy != 0 { // the wheel moves the selection, so the window follows
+		if wy > 0 {
+			g.setRow = max(g.setRow-1, 0)
+		} else {
+			g.setRow = min(g.setRow+1, settingsRows-1)
+		}
 	}
 	if g.setRow != prev {
 		g.flushName()
@@ -453,7 +484,9 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 		updateRowLabel(g.updStatus, g.update, g.version()),
 		"help:      how hermec works ›",
 	}
-	for i, s := range rows {
+	first, n := g.settingsRowsWindow()
+	for i := first; i < first+n; i++ {
+		s := rows[i]
 		marker := "  "
 		if i == g.setRow {
 			marker = "> "

@@ -64,14 +64,33 @@ func FirstRunSettings() Settings {
 	return Settings{Palette: firstRunPalette, Font: firstRunFont}
 }
 
-// LoadOrInitSettings is LoadSettings, except that a missing file yields
-// FirstRunSettings. An existing file is returned as saved, so users from before
-// the font option keep their palette and VT323.
-func LoadOrInitSettings(path string) (Settings, error) {
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return FirstRunSettings(), nil
+// LoadOrInitSettings is LoadSettings, except that a first run yields
+// FirstRunSettings. It is a first run only when path and every one of others
+// (the servers list and the identity key) are absent: a user who has either
+// predates the settings file and keeps the legacy look, as does anyone with a
+// settings file, which is returned as saved (their palette and VT323).
+func LoadOrInitSettings(path string, others ...string) (Settings, error) {
+	if absent(path) {
+		first := true
+		for _, o := range others {
+			first = first && absent(o)
+		}
+		if first {
+			return FirstRunSettings(), nil
+		}
 	}
 	return LoadSettings(path)
+}
+
+// absent reports that nothing exists at path. Any other stat error counts as
+// present, so an unreadable directory never resets someone's look. An empty
+// path counts as present too.
+func absent(path string) bool {
+	if path == "" {
+		return false // unknown location: not evidence of a first run
+	}
+	_, err := os.Stat(path)
+	return errors.Is(err, os.ErrNotExist)
 }
 
 // LoadSettings reads path. A missing file yields zero Settings and no error.

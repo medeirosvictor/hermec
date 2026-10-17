@@ -277,9 +277,32 @@ func TestHostedMenuCopy(t *testing.T) {
 	wrote = nil
 	g.selfAddrs = func(context.Context) (string, string) { return "", "" }
 	pickMenu(g, hostedKey, "Copy invite address")
-	tickUntil(t, g, func() bool { return strings.Contains(g.cur().st.Status, "no network address found") })
+	tickUntil(t, g, func() bool { return strings.Contains(g.sess[hostedKey].st.Status, "no network address found") })
 	if len(wrote) != 0 {
 		t.Fatalf("copied %v with no network address", wrote)
+	}
+}
+
+// The copy result lands on the hosted tile's status line even when another
+// server is the one on screen.
+func TestCopyInviteStatusOnHostedSession(t *testing.T) {
+	g, path := hostedTestGame(t, "127.0.0.1:0", true)
+	g.bootHosted(path)
+	var wrote atomic.Int32
+	old := clipboardWrite
+	clipboardWrite = func(string) error { wrote.Add(1); return nil }
+	t.Cleanup(func() { clipboardWrite = old })
+	g.sess["other"] = newSession("other", "ws://other/", "me")
+	g.view("other")
+	g.selfAddrs = func(context.Context) (string, string) { return "", "192.168.1.5" }
+	g.copyInvite()
+	tickUntil(t, g, func() bool { return wrote.Load() == 1 })
+	g.tickBackground(time.Now())
+	if got := g.sess[hostedKey].st.Status; !strings.HasPrefix(got, "copied ws://192.168.1.5:") {
+		t.Errorf("hosted status = %q", got)
+	}
+	if got := g.sess["other"].st.Status; got != "" {
+		t.Errorf("viewed session status = %q, want untouched", got)
 	}
 }
 

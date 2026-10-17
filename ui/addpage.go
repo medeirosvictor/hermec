@@ -32,14 +32,15 @@ const (
 	maxPortDigits   = 5
 	portRangeMsg    = "port must be 1–65535"
 	nameRequiredMsg = "server name is required"
-	passMask        = '•'
+	createFields    = 2 // name, port
 )
 
-// createForm is the input state of the create page.
+// createForm is the input state of the create page. There is no password: the
+// app dials with an empty one and Join has no password field.
 type createForm struct {
-	name, pass, port field
-	focus            int // 0 name, 1 password, 2 port
-	err              string
+	name, port field
+	focus      int // 0 name, 1 port
+	err        string
 }
 
 func newCreateForm() createForm {
@@ -47,10 +48,7 @@ func newCreateForm() createForm {
 }
 
 func (f *createForm) focused() *field {
-	switch f.focus {
-	case 1:
-		return &f.pass
-	case 2:
+	if f.focus == 1 {
 		return &f.port
 	}
 	return &f.name
@@ -62,7 +60,7 @@ func (f *createForm) typed(rs []rune) {
 	cur := f.focused()
 	for _, r := range rs {
 		switch {
-		case f.focus == 2:
+		case f.focus == 1:
 			if r >= '0' && r <= '9' && len(cur.runes) < maxPortDigits {
 				cur.runes = append(cur.runes, r)
 			}
@@ -73,16 +71,16 @@ func (f *createForm) typed(rs []rune) {
 }
 
 // validate checks the form; err is the user-facing reason it cannot submit.
-func (f *createForm) validate() (name, pass string, port int, err string) {
+func (f *createForm) validate() (name string, port int, err string) {
 	name = strings.TrimSpace(f.name.String())
 	if name == "" {
-		return "", "", 0, nameRequiredMsg
+		return "", 0, nameRequiredMsg
 	}
 	port, e := strconv.Atoi(f.port.String())
 	if e != nil || port < 1 || port > 65535 {
-		return "", "", 0, portRangeMsg
+		return "", 0, portRangeMsg
 	}
-	return name, f.pass.String(), port, ""
+	return name, port, ""
 }
 
 // submitCreate validates the form and creates the hosted server. A failure
@@ -92,12 +90,12 @@ func (g *game) submitCreate() {
 		g.cf.err = "already hosting " + g.hosted.cfg.ServerName
 		return
 	}
-	name, pass, port, msg := g.cf.validate()
+	name, port, msg := g.cf.validate()
 	if msg != "" {
 		g.cf.err = msg
 		return
 	}
-	if err := g.create(name, pass, port); err != nil {
+	if err := g.create(name, "", port); err != nil {
 		g.cf.err = err.Error()
 		return
 	}
@@ -218,7 +216,7 @@ func (g *game) addChoiceRect(i int) rectF {
 	return rectF{x, y, x + w, y + 5*g.lineH()}
 }
 
-// createRowY is the y of create row i: 0 name, 1 password, 2 port.
+// createRowY is the y of create row i: 0 name, 1 port.
 func (g *game) createRowY(i int) float64 { return g.addTop() + float64(i)*g.lineH() }
 
 // createBtnRect is the Create button, below the firewall line.
@@ -241,7 +239,7 @@ func (g *game) addAddHits() {
 		}
 	case g.add == addCreate:
 		lh := g.lineH()
-		for i := 0; i < 3; i++ {
+		for i := 0; i < createFields; i++ {
 			y := g.createRowY(i)
 			g.hits.Add(state.Hit{X0: g.addX(), Y0: y, X1: float64(g.w), Y1: y + lh, Kind: state.HitCreateField, ID: i})
 		}
@@ -283,7 +281,7 @@ func (g *game) updateAdd() {
 			}
 		}
 		if inpututil.IsKeyJustPressed(ebiten.KeyTab) {
-			f.focus = (f.focus + 1) % 3
+			f.focus = (f.focus + 1) % createFields
 		}
 		f.typed(ebiten.AppendInputChars(nil))
 		cur := f.focused()
@@ -340,13 +338,12 @@ func (g *game) drawAddPage(screen *ebiten.Image) {
 		cursor = "_"
 	}
 	f := &g.cf
-	rows := [3]struct {
+	rows := [createFields]struct {
 		label string
 		val   string
 	}{
-		{"name:     ", f.name.String()},
-		{"password: ", strings.Repeat(string(passMask), len(f.pass.runes))},
-		{"port:     ", f.port.String()},
+		{"name: ", f.name.String()},
+		{"port: ", f.port.String()},
 	}
 	for i, r := range rows {
 		val, marker := r.val, "  "
@@ -357,7 +354,7 @@ func (g *game) drawAddPage(screen *ebiten.Image) {
 		g.drawText(screen, marker+r.label+val, x, g.createRowY(i), th.FG)
 	}
 	for i, l := range g.firewallLines() {
-		g.drawText(screen, l, x, g.createRowY(3)+lh/2+float64(i)*lh, th.Dim)
+		g.drawText(screen, l, x, g.createRowY(createFields)+lh/2+float64(i)*lh, th.Dim)
 	}
 	b := g.createBtnRect()
 	fill := mixRGBA(th.Panel, th.Bright, 0.18)
@@ -375,13 +372,35 @@ func (g *game) drawAddPage(screen *ebiten.Image) {
 	g.drawTextF(screen, g.faceS, "Enter to create   Tab to switch field   Esc to go back", x, y+lh, th.Dim)
 }
 
-// initAdd sets the page a fresh launch opens on: the -local connect form, as
-// before, or else the choices.
+// initAdd sets the page a fresh launch opens on: the connect form (prefilled
+// with the most recent server) for -local or when servers are saved, the
+// choices only for a user with nothing saved.
 func (g *game) initAdd() {
 	g.add = addChoose
-	if g.connect.local {
+	if g.connect.local || g.hasSavedServers() {
 		g.add = addJoin
 	}
+}
+
+// hasSavedServers reports a saved server other than the hosted one.
+func (g *game) hasSavedServers() bool {
+	for _, e := range g.servers {
+		if e.URL != hostedKey {
+			return true
+		}
+	}
+	return false
+}
+
+// startupURL is the address the connect form starts with: the most recent
+// saved server that can be dialed as written, else def.
+func startupURL(servers []state.ServerEntry, def string) string {
+	for _, e := range servers {
+		if e.URL != localKey && e.URL != hostedKey {
+			return e.URL
+		}
+	}
+	return def
 }
 
 // addCols is how many monospace columns fit right of the add page's origin.

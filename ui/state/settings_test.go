@@ -127,9 +127,36 @@ func TestMembersRoundTrip(t *testing.T) {
 	}
 }
 
+// A first run needs settings.toml, servers.toml and identity.key all absent; a
+// user who only has a servers list or a key predates settings and keeps the
+// retro look.
+func TestFirstRunNeedsEveryFileAbsent(t *testing.T) {
+	for _, have := range []string{"", "servers.toml", "identity.key"} {
+		dir := t.TempDir()
+		if have != "" {
+			if err := os.WriteFile(filepath.Join(dir, have), []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		s, err := LoadOrInitSettings(filepath.Join(dir, "settings.toml"), filepath.Join(dir, "servers.toml"), filepath.Join(dir, "identity.key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		modern := s.Palette == "slate" && s.FontID() == "jetbrains-mono"
+		legacy := s.Palette == "" && s.FontID() == "vt323"
+		if have == "" && !modern {
+			t.Errorf("nothing exists: %+v, want modern defaults", s)
+		}
+		if have != "" && !legacy {
+			t.Errorf("%s exists: %+v (font %q), want amber/VT323", have, s, s.FontID())
+		}
+	}
+}
+
 func TestFirstRunDefaultsAreModern(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "settings.toml") // does not exist
-	s, err := LoadOrInitSettings(p)
+	d := t.TempDir()
+	p := filepath.Join(d, "settings.toml") // does not exist
+	s, err := LoadOrInitSettings(p, filepath.Join(d, "servers.toml"), filepath.Join(d, "identity.key"))
 	if err != nil {
 		t.Fatal(err)
 	}

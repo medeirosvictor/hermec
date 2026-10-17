@@ -116,10 +116,40 @@ func TestCreateValidates(t *testing.T) {
 		t.Errorf("empty port err = %q", g.cf.err)
 	}
 	g.cf = newCreateForm()
-	g.cf.focus = 2
+	g.cf.focus = 1
 	g.cf.typed([]rune("a8b0c"))
 	if got := g.cf.port.String(); got != "76978" { // letters ignored, five digits at most
 		t.Errorf("port = %q", got)
+	}
+}
+
+// The create form has two fields, name and port: the app dials with an empty
+// password and Join has no password field, so a hosted password would lock
+// everyone out.
+func TestCreateFormHasNoPassword(t *testing.T) {
+	g := addTestGame(t)
+	g.add = addCreate
+	g.hits.Reset()
+	g.addAddHits()
+	lh := g.lineH()
+	for i := 0; i < 2; i++ {
+		h, ok := g.hits.At(g.addX()+5, g.createRowY(i)+lh/2)
+		if !ok || h.Kind != state.HitCreateField || h.ID != i {
+			t.Errorf("row %d hit = %+v %v", i, h, ok)
+		}
+	}
+	if h, ok := g.hits.At(g.addX()+5, g.createRowY(2)+lh/2); ok && h.Kind == state.HitCreateField {
+		t.Errorf("third field row exists: %+v", h)
+	}
+	// Focus 1 is the port: digits land there and letters are ignored.
+	f := newCreateForm()
+	f.focus = 1
+	f.typed([]rune("x1"))
+	if got := f.port.String(); got != "76971" {
+		t.Errorf("port after focus 1 typing = %q", got)
+	}
+	if f.name.String() != "" {
+		t.Errorf("name = %q", f.name.String())
 	}
 }
 
@@ -134,9 +164,8 @@ func TestCreateSubmits(t *testing.T) {
 	}
 	g.cf = newCreateForm()
 	g.cf.name.runes = []rune("Den")
-	g.cf.pass.runes = []rune("pw")
 	g.submitCreate()
-	if gotN != "Den" || gotP != "pw" || gotPort != 7697 {
+	if gotN != "Den" || gotP != "" || gotPort != 7697 {
 		t.Fatalf("create(%q,%q,%d)", gotN, gotP, gotPort)
 	}
 	if g.curKey != hostedKey {
@@ -237,6 +266,43 @@ func TestLocalStartupOpensConnectForm(t *testing.T) {
 	g.initAdd()
 	if g.add != addChoose || !g.addPageShown() {
 		t.Errorf("non-local: add=%v", g.add)
+	}
+}
+
+// With saved servers the connect form (prefilled with the most recent URL) is
+// the home screen, so one Enter reconnects; the choices only greet a user with
+// nothing saved. Esc from that form still opens the choices.
+func TestStartupURLPrefill(t *testing.T) {
+	saved := []state.ServerEntry{{URL: hostedKey}, {URL: localKey}, {URL: "ws://friend:7697/"}, {URL: "ws://old:1/"}}
+	if got := startupURL(saved, "ws://"); got != "ws://friend:7697/" {
+		t.Errorf("startupURL = %q, want the most recent dialable", got)
+	}
+	if got := startupURL(saved[:2], "ws://"); got != "ws://" {
+		t.Errorf("startupURL with nothing dialable = %q", got)
+	}
+	f := newConnectForm("me", startupURL(saved, "ws://"), false)
+	if f.server.String() != "ws://friend:7697/" || f.name.String() == "" {
+		t.Errorf("form %q/%q would not submit on Enter", f.name.String(), f.server.String())
+	}
+}
+
+func TestStartupWithSavedServersOpensJoin(t *testing.T) {
+	g := addTestGame(t)
+	g.servers = []state.ServerEntry{{URL: hostedKey}, {URL: "ws://friend:7697/"}}
+	g.initAdd()
+	if g.add != addJoin || g.addPageShown() {
+		t.Fatalf("saved servers: add=%v shown=%v", g.add, g.addPageShown())
+	}
+	g.addEsc(true)
+	if g.add != addChoose {
+		t.Errorf("esc from startup join -> %v", g.add)
+	}
+
+	g = addTestGame(t)
+	g.servers = []state.ServerEntry{{URL: hostedKey}} // only the hosted tile
+	g.initAdd()
+	if g.add != addChoose {
+		t.Errorf("hosted-only: add=%v, want addChoose", g.add)
 	}
 }
 
