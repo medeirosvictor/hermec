@@ -243,7 +243,7 @@ func (g *game) drawDialog(screen *ebiten.Image) {
 		g.drawText(screen, line, x, y, th.FG)
 		if (g.frame/30)%2 == 0 {
 			cx := x + float64(len([]rune(line)))*g.glyphW()
-			vector.FillRect(screen, float32(cx), float32(y+2), float32(g.glyphW()), float32(th.FontSize), th.Bright, false)
+			vector.FillRect(screen, float32(cx), float32(y+2), float32(g.glyphW()), float32(g.fontSize()), th.Bright, false)
 		}
 		y += lh + pad/2
 		g.drawTextF(screen, g.faceS, state.Ellipsize(renameHint, int(float64(cols)/smallScale)), x, y, th.Dim)

@@ -19,6 +19,8 @@ const (
 	HitMenuItem                     // context-menu item; ID is the item index
 	HitMembersToggle                // members panel toggle in the channel header
 	HitDialogBtn                    // dialog button; ID 0 = primary (Save / Leave), 1 = Cancel
+	HitFingerprint                  // the user's fingerprint line (hover tooltip only)
+	HitHelpBack                     // the back row of the settings help view
 )
 
 // Hit is one click target: the half-open rect [X0,X1) x [Y0,Y1).

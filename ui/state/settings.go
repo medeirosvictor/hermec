@@ -16,7 +16,11 @@ type Settings struct {
 	ThemePath string `toml:"theme_path,omitempty"` // custom theme file
 	Font      string `toml:"font,omitempty"`       // font id; "" = vt323 (see FontID)
 
-	UpdateCheck *bool `toml:"update_check,omitempty"` // nil = unset (enabled)
+	FontScale int `toml:"font_scale,omitempty"` // percent; 0 = 100 (see FontScalePct)
+
+	// UpdateCheck is no longer read: the update check always runs and the
+	// settings row shows its status. The field stays so old files still load.
+	UpdateCheck *bool `toml:"update_check,omitempty"`
 
 	Curvature *bool `toml:"curvature,omitempty"` // nil = unset (on)
 
@@ -111,4 +115,29 @@ func SaveSettings(path string, s Settings) error {
 		os.Remove(name)
 	}
 	return err
+}
+
+// FontScales are the selectable text sizes in percent, in cycle order.
+var FontScales = []int{80, 90, 100, 110, 125, 150}
+
+// FontScalePct is the text size in percent; unset (or nonsense) means 100.
+func (s Settings) FontScalePct() int {
+	if s.FontScale <= 0 {
+		return 100
+	}
+	return s.FontScale
+}
+
+// NextFontScale is the step after cur, wrapping around. 0 counts as 100, and
+// a value that is not a step goes to 100.
+func NextFontScale(cur int) int {
+	if cur == 0 {
+		cur = 100
+	}
+	for i, v := range FontScales {
+		if v == cur {
+			return FontScales[(i+1)%len(FontScales)]
+		}
+	}
+	return 100
 }

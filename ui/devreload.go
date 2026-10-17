@@ -104,7 +104,7 @@ func statMtime(path string) (time.Time, error) {
 // changed (in the current font). crtOn is separate state and is left alone.
 func (g *game) applyDevTheme(th theme.Theme) error {
 	if th.FontSize != g.th.FontSize || g.face == nil {
-		face, faceS, faceT, err := buildFaces(g.set.FontID(), th.FontSize)
+		face, faceS, faceT, err := buildFaces(g.set.FontID(), th.FontSize, g.set.FontScalePct())
 		if err != nil {
 			return err
 		}

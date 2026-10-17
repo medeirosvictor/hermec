@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -22,11 +23,13 @@ const (
 	rowName = iota
 	rowPalette
 	rowFont
+	rowSize
 	rowScanlines
 	rowCurvature
 	rowInput
 	rowOutput
-	rowUpdateCheck
+	rowUpdate
+	rowHelp
 	settingsRows
 )
 
@@ -149,13 +152,6 @@ func (g *game) toggleMembers() {
 	g.persistSettings()
 }
 
-// setUpdateCheck persists the update-check opt-in/out.
-func (g *game) setUpdateCheck(on bool) {
-	g.set.UpdateCheck = &on
-	g.logf("update check: %v", on)
-	g.persistSettings()
-}
-
 // cyclePalette advances to the next preset and persists its name. The saved
 // custom theme file (if any) is dropped so the preset wins on next start.
 func (g *game) cyclePalette() {
@@ -170,7 +166,8 @@ func (g *game) cyclePalette() {
 
 // buildFaces makes the body, small and title faces of one font, at the scales
 // used everywhere.
-func buildFaces(font string, size float64) (face, faceS, faceT *text.GoTextFace, err error) {
+func buildFaces(font string, base float64, pct int) (face, faceS, faceT *text.GoTextFace, err error) {
+	size := base * (float64(pct) / 100)
 	if face, err = theme.Face(font, size); err != nil {
 		return
 	}
@@ -186,7 +183,7 @@ func buildFaces(font string, size float64) (face, faceS, faceT *text.GoTextFace,
 // they refresh on the next frame even if the new advance equals the old one.
 func (g *game) cycleFont() {
 	next := theme.NextFont(g.set.FontID())
-	face, faceS, faceT, err := buildFaces(next, g.th.FontSize)
+	face, faceS, faceT, err := buildFaces(next, g.th.FontSize, g.set.FontScalePct())
 	if err != nil {
 		g.notice = fmt.Sprintf("font: %v", err)
 		return
@@ -194,6 +191,28 @@ func (g *game) cycleFont() {
 	g.face, g.faceS, g.faceT = face, faceS, faceT
 	g.set.Font = next
 	g.logf("font: %s", next)
+	g.persistSettings()
+}
+
+// fontSize is the effective body text size: the theme size times the saved
+// percentage. Everything sized from the font (faces, line height, cursor
+// blocks, layout cache keys) goes through it.
+func (g *game) fontSize() float64 {
+	return g.th.FontSize * (float64(g.set.FontScalePct()) / 100)
+}
+
+// cycleSize advances the text size to the next percentage step, rebuilds the
+// faces and persists it. The layout caches key on the effective size.
+func (g *game) cycleSize() {
+	next := state.NextFontScale(g.set.FontScale)
+	face, faceS, faceT, err := buildFaces(g.set.FontID(), g.th.FontSize, next)
+	if err != nil {
+		g.notice = fmt.Sprintf("size: %v", err)
+		return
+	}
+	g.face, g.faceS, g.faceT = face, faceS, faceT
+	g.set.FontScale = next
+	g.logf("font size: %d%%", next)
 	g.persistSettings()
 }
 
@@ -220,6 +239,7 @@ func (g *game) flushName() {
 
 func (g *game) closeSettings() {
 	g.flushName()
+	g.helpOpen, g.helpScroll = false, 0
 	if g.settingsOpen {
 		g.settingsOpen = false
 		g.cur().st.SetViewed(g.curKey != "") // reads the active channel again
@@ -291,17 +311,31 @@ func (g *game) cycleOutput() {
 func (g *game) addSettingsHits() {
 	lh := g.lineH()
 	x0 := connectX + g.railW()
+	if g.helpOpen {
+		y := connectFieldsTop(lh)
+		g.hits.Add(state.Hit{X0: x0, Y0: y, X1: float64(g.w), Y1: y + lh, Kind: state.HitHelpBack})
+		return
+	}
 	for r := 0; r < settingsRows; r++ {
 		y := connectFieldsTop(lh) + float64(r)*lh
 		g.hits.Add(state.Hit{X0: x0, Y0: y, X1: float64(g.w), Y1: y + lh, Kind: state.HitSettingsRow, ID: r})
 	}
+	g.addFingerprintHit(connectFieldsTop(lh) + float64(settingsRows+1)*lh)
 }
 
 // updateSettings handles input for the settings scene. Every change saves.
 func (g *game) updateSettings() {
 	if g.escPressed() {
 		g.escSpent = true
-		g.closeSettings()
+		if g.helpOpen {
+			g.helpBack()
+		} else {
+			g.closeSettings()
+		}
+		return
+	}
+	if g.helpOpen {
+		g.updateHelp()
 		return
 	}
 	prev := g.setRow
@@ -365,8 +399,12 @@ func (g *game) activateSetting(row int) {
 		g.cycleInput()
 	case rowOutput:
 		g.cycleOutput()
-	case rowUpdateCheck:
-		g.setUpdateCheck(!g.set.UpdateCheckEnabled())
+	case rowSize:
+		g.cycleSize()
+	case rowUpdate:
+		g.activateUpdateRow()
+	case rowHelp:
+		g.openHelp()
 	}
 }
 
@@ -374,6 +412,10 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 	th := g.th
 	lh := g.lineH()
 	g.drawContentPanel(screen, 0)
+	if g.helpOpen {
+		g.drawHelp(screen)
+		return
+	}
 	x, y := connectX+g.railW(), connectY
 
 	g.drawTextF(screen, g.faceT, "SETTINGS", x, y, th.Bright)
@@ -391,10 +433,6 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 	if g.set.CurvatureEnabled() {
 		curv = "on"
 	}
-	upd := "off"
-	if g.set.UpdateCheckEnabled() {
-		upd = "on"
-	}
 	cursor := ""
 	if (g.frame/30)%2 == 0 {
 		cursor = "_"
@@ -407,11 +445,13 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 		"name:      " + nameVal,
 		"palette:   " + pal,
 		"font:      " + theme.FontLabel(g.set.FontID()),
+		"size:      " + strconv.Itoa(g.set.FontScalePct()) + "%",
 		"scanlines: " + scan,
 		"curvature: " + curv,
 		"input:     " + deviceLabel(g.set.InputDevice, g.devIn),
 		"output:    " + deviceLabel(g.set.OutputDevice, g.devOut),
-		"update check: " + upd,
+		updateRowLabel(g.updStatus, g.update, g.version()),
+		"help:      how hermec works ›",
 	}
 	for i, s := range rows {
 		marker := "  "

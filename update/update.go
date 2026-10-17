@@ -5,6 +5,7 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -34,38 +35,46 @@ type Available struct {
 // for dev builds (without making any request), network or HTTP errors,
 // malformed responses, and when the remote is not strictly newer.
 func Check(ctx context.Context, current string) (Available, bool) {
+	a, found, _ := Latest(ctx, current)
+	return a, found
+}
+
+// Latest is Check that also says why nothing was found: found is false with a
+// nil error when current is up to date (or a dev build, which makes no
+// request), and err is non-nil when the check itself failed.
+func Latest(ctx context.Context, current string) (Available, bool, error) {
 	if current == devBuild {
-		return Available{}, false
+		return Available{}, false, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return Available{}, false
+		return Available{}, false, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return Available{}, false
+		return Available{}, false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return Available{}, false
+		return Available{}, false, fmt.Errorf("release check: HTTP %d", resp.StatusCode)
 	}
 	// A body over the cap is truncated, hence invalid JSON, hence rejected.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
-		return Available{}, false
+		return Available{}, false, err
 	}
 	var rel struct {
 		Tag string `json:"tag_name"`
 		URL string `json:"html_url"`
 	}
 	if err := json.Unmarshal(body, &rel); err != nil {
-		return Available{}, false
+		return Available{}, false, err
 	}
 	if !newer(rel.Tag, current) {
-		return Available{}, false
+		return Available{}, false, nil
 	}
 	// html_url is response data a caller will open in a browser, so only
 	// trust github.com https links; otherwise fall back to the releases page
@@ -74,7 +83,7 @@ func Check(ctx context.Context, current string) (Available, bool) {
 	if !strings.HasPrefix(url, "https://github.com/") {
 		url = fallbackURL
 	}
-	return Available{Version: rel.Tag, URL: url}, true
+	return Available{Version: rel.Tag, URL: url}, true, nil
 }
 
 // parse reads strict vMAJOR.MINOR.PATCH. Hyphenated tags (prereleases) are

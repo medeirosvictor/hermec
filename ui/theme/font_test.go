@@ -12,9 +12,9 @@ import (
 // the non-test .go files under ui/ (found by grepping for [^\x00-\x7F]):
 // U+2014 em dash (main_scene.go "CONNECTION LOST — ...", titlebar.go,
 // update.go, state/roster.go) and U+2026 ellipsis (state/tooltip.go
-// Ellipsis). U+00B2, U+00B7 (state/barrel.go) and U+2500 (state/voice.go) occur
+// Ellipsis), U+203A › and U+2039 ‹ (settings rows: update.go, help.go, settings.go). U+00B2, U+00B7 (state/barrel.go) and U+2500 (state/voice.go) occur
 // only in comments, so they are not required.
-var uiRunes = []rune{'…', '—'}
+var uiRunes = []rune{'…', '—', '›', '‹'}
 
 func fontBytes(t *testing.T, id string) []byte {
 	t.Helper()

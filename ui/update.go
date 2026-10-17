@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"os"
+	"strings"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -15,35 +16,117 @@ import (
 // fakeUpdateEnv is a hidden dev aid, deliberately undocumented outside this
 // comment: HERMEC_FAKE_UPDATE=vX.Y.Z injects a fake available update (pointing
 // at the releases page) so the banner can be seen without a real newer
-// release. It is read only when set, and bypasses the dev-build and opt-out
-// checks.
+// release. It is read only when set, and bypasses the dev-build
+// check.
 const fakeUpdateEnv = "HERMEC_FAKE_UPDATE"
+
+// updateStatus is what the settings row shows about the release check. The
+// banner and Ctrl+U read g.update; the row reads this as well.
+type updateStatus int
+
+const (
+	updChecking  updateStatus = iota // a check is in flight (the zero value)
+	updUpToDate                      // checked, nothing newer (or a dev build)
+	updAvailable                     // g.update holds a newer release
+	updFailed                        // the check could not complete
+)
+
+// updateResult is what one release check sends back on g.updateCh.
+type updateResult struct {
+	a     update.Available
+	found bool
+	err   error
+}
+
+// version is the running build's version: g.ver when set (tests), otherwise
+// the stamped version.Version.
+func (g *game) version() string {
+	if g.ver != "" {
+		return g.ver
+	}
+	return version.Version
+}
+
+// updateRowLabel is the settings row for the release check. cur is the running
+// version, "" or "dev" for a dev build.
+func updateRowLabel(st updateStatus, a *update.Available, cur string) string {
+	const p = "update:    "
+	switch st {
+	case updUpToDate:
+		if cur == "" || cur == "dev" {
+			cur = "dev"
+		} else if !strings.HasPrefix(cur, "v") {
+			cur = "v" + cur
+		}
+		return p + "up to date (" + cur + ")"
+	case updAvailable:
+		if a != nil {
+			return p + a.Version + " available ›"
+		}
+		return p + "available ›"
+	case updFailed:
+		return p + "check failed"
+	}
+	return p + "checking…"
+}
 
 // startUpdateCheck runs the release check in the background (house
 // goroutine+channel pattern). The result arrives on g.updateCh, drained in
-// pollUpdate. Check bounds its own time, so context.Background is enough.
+// pollUpdate. Check bounds its own time, so context.Background is enough. It
+// always runs: the old update_check setting is no longer read. Only one check
+// is in flight at a time.
 func (g *game) startUpdateCheck() {
-	if v := os.Getenv(fakeUpdateEnv); v != "" {
-		g.updateCh <- update.Available{Version: v, URL: "https://github.com/medeirosvictor/hermec/releases"}
+	if v := os.Getenv(fakeUpdateEnv); v != "" && !g.updBusy {
+		g.updBusy, g.updStatus = true, updChecking
+		g.updateCh <- updateResult{a: update.Available{Version: v, URL: "https://github.com/medeirosvictor/hermec/releases"}, found: true}
 		return
 	}
-	if version.Version == "dev" || !g.set.UpdateCheckEnabled() {
+	cur := g.version()
+	if cur == "dev" {
+		g.updStatus = updUpToDate
 		return
+	}
+	if g.updBusy {
+		return
+	}
+	g.updBusy, g.updStatus = true, updChecking
+	check, ch := g.checkFn, g.updateCh
+	if check == nil {
+		check = update.Latest
 	}
 	go func() {
-		if a, ok := update.Check(context.Background(), version.Version); ok {
-			g.updateCh <- a
-		}
+		a, found, err := check(context.Background(), cur)
+		ch <- updateResult{a: a, found: found, err: err}
 	}()
 }
 
 func (g *game) pollUpdate() {
 	select {
-	case a := <-g.updateCh:
-		g.update = &a
-		g.logf("update %s available: %s", a.Version, a.URL)
+	case r := <-g.updateCh:
+		g.updBusy = false
+		switch {
+		case r.err != nil:
+			g.updStatus = updFailed
+			g.logf("update check failed: %v", r.err)
+		case r.found:
+			a := r.a
+			g.update, g.updStatus = &a, updAvailable
+			g.logf("update %s available: %s", a.Version, a.URL)
+		default:
+			g.updStatus = updUpToDate
+		}
 	default:
 	}
+}
+
+// activateUpdateRow is Enter or a click on the settings row: with an update
+// available it does what the banner and Ctrl+U do, otherwise it re-checks.
+func (g *game) activateUpdateRow() {
+	if g.update != nil {
+		g.openUpdate()
+		return
+	}
+	g.startUpdateCheck()
 }
 
 // updateKey opens the release page on Ctrl+U while the banner is showing.
@@ -60,7 +143,11 @@ func (g *game) updateKey() {
 
 func (g *game) openUpdate() {
 	g.logf("opening %s", g.update.URL)
-	openURL(g.update.URL) // URL is validated upstream by update.Check
+	open := g.openFn
+	if open == nil {
+		open = openURL
+	}
+	open(g.update.URL) // URL is validated upstream by update.Latest
 }
 
 // updateBanner opens the release page when the banner is clicked.

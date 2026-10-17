@@ -1,0 +1,32 @@
+# What HERMEC is
+HERMEC is a small voice and text chat app for you and your friends. There's no company server in the middle: one of you runs a HERMEC server, and everyone else connects to it.
+
+# Your identity and fingerprint
+The first time you start HERMEC it creates an identity key on your computer. Your fingerprint is a short code made from that key. Your name is just a label you can change; your fingerprint is what servers use to recognise you. Keep the key file safe: if you lose it, you start over as a new person.
+
+# Servers
+Each icon on the left is a server. Right-click an icon to rename it (only on your computer), disconnect, or leave it. You can stay connected to several servers at once; switching servers doesn't end your call.
+
+# Reaching your friends
+Your friends need a way to reach the computer running the server. The easiest is Tailscale: everyone installs it and joins the same tailnet, and the server's tailnet address works from anywhere. On the same home network, servers also show up by themselves under DISCOVERED.
+
+# Voice
+Click a voice channel to join the call. The bars next to the server show your connection quality; click them for details.
+
+# Keys
+Enter: connect to a server, or send a message
+Tab or Ctrl+Up/Down: switch channel
+PgUp/PgDn or mouse wheel: scroll the chat
+F1: CRT effect on or off
+F2: next colour palette
+F3: CRT screen curvature on or off
+F10: settings (or click the gear tile)
+Ctrl+M: mute or unmute your voice
+Ctrl+R: refresh discovered servers (connect screen)
+Click a server icon: switch to that server
+Right-click a server icon: rename, disconnect or leave
+Click the + tile: add a server
+Members button (top right of the chat): show or hide the member list
+Click the signal bars: connection quality; Esc or a second click closes it
+Click a voice channel: join or leave the call
+Title bar (Windows): drag to move the window, double-click to maximize or restore

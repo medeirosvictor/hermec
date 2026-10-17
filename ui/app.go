@@ -125,7 +125,17 @@ type game struct {
 	dev     *devReload // live reload of shaders/theme; nil unless HERMEC_DEV is set
 
 	update   *update.Available // non-nil: a newer release exists, banner shown
-	updateCh chan update.Available
+	updateCh chan updateResult
+
+	updStatus updateStatus                                                  // what the settings update row shows
+	updBusy   bool                                                          // a release check is in flight
+	ver       string                                                        // version override for tests; "" = version.Version
+	checkFn   func(context.Context, string) (update.Available, bool, error) // nil = update.Latest
+	openFn    func(string)                                                  // nil = openURL
+
+	helpOpen   bool    // the settings help view is showing
+	helpScroll int     // first visible help line
+	helpCarry  float64 // fractional wheel remainder
 }
 
 // DefaultKeyPath returns <user config dir>/hermec/identity.key.
@@ -199,7 +209,7 @@ func Run(opts Options) error {
 	if boot.notice == "" {
 		boot.notice = savedDevicesNotice(boot.set)
 	}
-	face, faceS, faceT, err := buildFaces(boot.set.FontID(), th.FontSize)
+	face, faceS, faceT, err := buildFaces(boot.set.FontID(), th.FontSize, boot.set.FontScalePct())
 	if err != nil {
 		return fmt.Errorf("font: %w", err)
 	}
@@ -210,7 +220,7 @@ func Run(opts Options) error {
 		dialCh: make(chan dialResult, 8), probeCh: make(chan []state.DiscoveredIn, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan sendResult, 8), voiceCh: make(chan voiceResult, 4), w: 960, h: 600, crtOn: crtOn,
 		settingsPath: boot.settingsPath, set: boot.set, notice: boot.notice, autoName: opts.Name,
 	}
-	g.updateCh = make(chan update.Available, 1)
+	g.updateCh = make(chan updateResult, 1)
 	g.startUpdateCheck()
 	g.muteCh, g.muteFailCh = make(chan muteReq, 1), make(chan muteFail, 4)
 	go g.muteWorker()

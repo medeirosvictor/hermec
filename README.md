@@ -75,9 +75,10 @@ commits in each release.
 
 **Update check:** on startup, release builds ask GitHub's public releases API
 whether a newer version exists (development builds never make this request) and, if so, show a banner linking to the Releases page.
-It sends no identifiers beyond a normal HTTPS request. To turn it off, toggle
-"update check" in Settings (gear tile or F10), or set `update_check = false` in
-`<user config dir>/hermec/settings.toml`.
+It sends no identifiers beyond a normal HTTPS request. The check always runs in
+release builds; the "update" row in Settings (gear tile or F10) shows its status
+and re-checks, or opens the Releases page when a newer version is available.
+The old `update_check` key in `settings.toml` is ignored.
 
 ## Development
 
@@ -135,7 +136,7 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Click the signal bars** (status line, or the call bar in a call): Show connection quality (ping, jitter, per-participant concealment); Esc or a second click closes it
 - **Click voice channel in the pane**: Join or leave voice call
 - **Title bar** (Windows): a Discord-style app bar replaces the default frame. Drag it to move the window (double-click to maximize or restore), use the buttons on the right to minimize, maximize and close, and drag the window edges and corners to resize.
-- **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, update check; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono, and existing settings files keep VT323.
+- **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, text size as a percentage, update status, a help section; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono, and existing settings files keep VT323.
 
 Bundled fonts (all monospace, under the SIL Open Font License 1.1, licences in `ui/theme/`): VT323, JetBrains Mono, IBM Plex Mono and Geist Mono.
 

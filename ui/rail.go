@@ -218,24 +218,31 @@ func (g *game) addRailHits() {
 
 // tooltipState is the rail tooltip: the tile it is for and whether it shows.
 type tooltipState struct {
-	idx  int
-	show bool
+	idx    int
+	show   bool
+	anchor state.Hit // the hovered target; the fingerprint tooltip sits beside it
 }
 
 // stepTooltip advances the hover timer for the hit under the pointer. Only
 // rail tiles get a tooltip, and none shows over the menu or a dialog.
 func (g *game) stepTooltip(h state.Hit, ok bool, now time.Time) {
 	id := -1
-	if ok && h.Kind == state.HitRailTile {
+	switch {
+	case ok && h.Kind == state.HitRailTile:
 		id = h.ID
+	case ok && h.Kind == state.HitFingerprint:
+		id = fpTipID
 	}
 	held := g.hover.Step(id, now)
-	g.tip = tooltipState{idx: id, show: held && !g.menu.open && g.dlg.mode == dlgNone}
+	g.tip = tooltipState{idx: id, show: held && !g.menu.open && g.dlg.mode == dlgNone, anchor: h}
 }
 
 // tooltipText is the text of the visible tooltip. It re-checks the index
 // because the saved list can shrink while a tooltip is up.
 func (g *game) tooltipText() (string, bool) {
+	if g.tip.show && g.tip.idx == fpTipID {
+		return fingerprintTip, true
+	}
 	if !g.tip.show || g.tip.idx < 0 || g.tip.idx >= len(g.servers) {
 		return "", false
 	}
@@ -246,6 +253,10 @@ func (g *game) tooltipText() (string, bool) {
 func (g *game) drawTooltip(screen *ebiten.Image) {
 	s, ok := g.tooltipText()
 	if !ok {
+		return
+	}
+	if g.tip.idx == fpTipID {
+		g.drawFingerprintTip(screen, s)
 		return
 	}
 	lh := g.lineH()
@@ -299,7 +310,7 @@ func (g *game) drawRail(screen *ebiten.Image) {
 		}
 		g.drawPanelFade(screen, railInset, y+railInset, railWidth-railInset, y+railTileH-railInset, fill, 4)
 		tw := text.Advance(label, g.face)
-		g.drawText(screen, label, (railWidth-tw)/2, y+(railTileH-g.th.FontSize*1.2)/2, txt)
+		g.drawText(screen, label, (railWidth-tw)/2, y+(railTileH-g.fontSize()*1.2)/2, txt)
 		l, r, t, b := float32(railInset+4), float32(railWidth-railInset-4), float32(y+railInset+4), float32(y+railTileH-railInset-4)
 		if ts.Dot {
 			vector.FillCircle(screen, r-1, t+1, 3, th.Bright, true)

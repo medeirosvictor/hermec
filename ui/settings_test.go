@@ -81,20 +81,6 @@ func TestStartupThemeBadThemeFallsBackToPalette(t *testing.T) {
 	}
 }
 
-func TestUpdateCheckRowTogglesAndPersists(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "settings.toml")
-	g := &game{th: theme.Default(), settingsPath: p}
-	g.activateSetting(rowUpdateCheck) // default on -> off
-	s, err := state.LoadSettings(p)
-	if err != nil || s.UpdateCheck == nil || *s.UpdateCheck {
-		t.Fatalf("got %+v %v", s, err)
-	}
-	g.activateSetting(rowUpdateCheck)
-	if s, _ = state.LoadSettings(p); s.UpdateCheck == nil || !*s.UpdateCheck {
-		t.Fatalf("got %+v", s)
-	}
-}
-
 func TestCurvatureRowTogglesAndPersists(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.toml")
 	g := &game{th: theme.Default(), settingsPath: p, crtOn: true, w: 960, h: 600}
@@ -167,7 +153,7 @@ func TestFontRowCyclesRebuildsAndPersists(t *testing.T) {
 	g.settingsPath = p
 	g.set = state.Settings{Font: "vt323"}
 	var err error
-	if g.face, g.faceS, g.faceT, err = buildFaces("vt323", g.th.FontSize); err != nil {
+	if g.face, g.faceS, g.faceT, err = buildFaces("vt323", g.th.FontSize, 100); err != nil {
 		t.Skip(err)
 	}
 	oldFace, oldSmall, oldTitle := g.face, g.faceS, g.faceT
@@ -205,7 +191,7 @@ func TestFontRowIsAfterPalette(t *testing.T) {
 
 func TestStartupFaces(t *testing.T) {
 	th := theme.Default()
-	f, fs, ft, err := buildFaces("geist-mono", th.FontSize)
+	f, fs, ft, err := buildFaces("geist-mono", th.FontSize, 100)
 	if err != nil {
 		t.Skip(err)
 	}

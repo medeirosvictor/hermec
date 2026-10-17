@@ -58,6 +58,18 @@ func (f *connectForm) discTop(lh float64) float64 {
 	return y + lh + lh // blank line, then the header
 }
 
+// fpTop is the y of the fingerprint line. It must match drawConnect.
+func (f *connectForm) fpTop(lh float64) float64 {
+	if len(f.disc) > 0 {
+		return f.discTop(lh) + float64(len(f.disc))*lh + lh
+	}
+	y := connectFieldsTop(lh) + f.dy + 2*lh
+	if f.local {
+		y += lh
+	}
+	return y + lh
+}
+
 func newConnectForm(name, url string, local bool) connectForm {
 	return connectForm{
 		name:   field{runes: []rune(name)},
@@ -84,6 +96,7 @@ func (f *connectForm) addHits(h *state.Hits, lh, x0, x1 float64) {
 
 func (g *game) addConnectHits() {
 	g.connect.addHits(&g.hits, g.lineH(), connectX+g.railW(), float64(g.w))
+	g.addFingerprintHit(g.connect.fpTop(g.lineH()))
 }
 
 // click applies a left click on target h. done means update should return
@@ -179,7 +192,7 @@ func (f *connectForm) update(dialing bool, at func() (state.Hit, bool)) (url, na
 	return "", "", false
 }
 
-func (g *game) lineH() float64 { return g.th.FontSize * 1.6 }
+func (g *game) lineH() float64 { return g.fontSize() * 1.6 }
 
 func (g *game) drawText(dst *ebiten.Image, s string, x, y float64, c color.RGBA) {
 	g.drawTextF(dst, g.face, s, x, y, c)
@@ -251,6 +264,7 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 		y += lh
 	}
 
+	y = f.fpTop(lh) // the same y the hover target uses
 	g.drawText(screen, "fingerprint: "+g.fp, x, y, th.FG)
 	y += lh
 	g.drawTextF(screen, g.faceS, "back up "+g.keyAt, x, y, th.Dim)

@@ -572,18 +572,19 @@ type sbKey struct {
 	w, h       int
 	adv, lh    float64
 	fg, br, dm color.RGBA
-	font       string // a swap with an equal advance must still redraw
+	font       string  // a swap with an equal advance must still redraw
+	size       float64 // effective font size, likewise
 }
 
 // sbKeyFor builds the scrollback render key; the font id is part of it.
 func (g *game) sbKeyFor(gen, off int, r image.Rectangle, gm geometry) sbKey {
-	return sbKey{gen, off, r.Dx(), r.Dy(), gm.adv, gm.lh, g.th.FG, g.th.Bright, g.th.Dim, g.set.FontID()}
+	return sbKey{gen, off, r.Dx(), r.Dy(), gm.adv, gm.lh, g.th.FG, g.th.Bright, g.th.Dim, g.set.FontID(), g.fontSize()}
 }
 
 // relayout wraps msgs through c; the font id is part of the cache key, so a
 // font swap re-lays out even when cols and size are unchanged.
 func (g *game) relayout(c *state.LayoutCache, ch string, msgs []state.Message, cols int) ([]state.Line, bool) {
-	return c.Lines(ch, msgs, cols, g.th.FontSize, g.set.FontID())
+	return c.Lines(ch, msgs, cols, g.fontSize(), g.set.FontID())
 }
 
 func (g *game) drawScrollback(screen *ebiten.Image, gm geometry) {
@@ -659,7 +660,7 @@ func (g *game) drawInput(screen *ebiten.Image, gm geometry) {
 	g.drawText(dst, s, gm.rightX, gm.inputY, th.FG)
 	if (g.frame/30)%2 == 0 {
 		cx := gm.rightX + float64(len([]rune(s)))*gm.adv
-		vector.FillRect(dst, float32(cx), float32(gm.inputY+2), float32(gm.adv), float32(g.th.FontSize), th.Bright, false)
+		vector.FillRect(dst, float32(cx), float32(gm.inputY+2), float32(gm.adv), float32(g.fontSize()), th.Bright, false)
 	}
 }
 
