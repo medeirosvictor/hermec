@@ -41,15 +41,6 @@ var fonts = []*fontEntry{
 	{id: "geist-mono", label: "Geist Mono", data: geistMonoTTF},
 }
 
-// fontData maps a font id to its embedded TTF bytes.
-var fontData = func() map[string][]byte {
-	m := make(map[string][]byte, len(fonts))
-	for _, f := range fonts {
-		m[f.id] = f.data
-	}
-	return m
-}()
-
 func fontByID(id string) *fontEntry {
 	for _, f := range fonts {
 		if f.id == id {

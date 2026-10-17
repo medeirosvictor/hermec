@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"image"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/ui/theme"
@@ -210,5 +212,31 @@ func TestStartupFaces(t *testing.T) {
 	want, _ := theme.Face("geist-mono", th.FontSize)
 	if f.Source != want.Source || fs.Size != th.FontSize*smallScale || ft.Size != th.FontSize*titleScale {
 		t.Fatal("buildFaces does not use the saved font and startup scales")
+	}
+}
+
+// The font id must be part of both the layout and the scrollback render key,
+// as wired in the real code paths (relayout, sbKeyFor).
+func TestFontIsPartOfCacheKeys(t *testing.T) {
+	g := &game{th: theme.Default(), set: state.Settings{Font: "vt323"}}
+	var lc state.LayoutCache
+	msgs := []state.Message{{FromName: "a", Text: "hi", TS: time.Unix(1, 0)}}
+	g.relayout(&lc, "c", msgs, 40)
+	if _, relaid := g.relayout(&lc, "c", msgs, 40); relaid {
+		t.Fatal("same font relaid")
+	}
+	g.set.Font = "geist-mono"
+	if _, relaid := g.relayout(&lc, "c", msgs, 40); !relaid {
+		t.Fatal("font change did not re-layout")
+	}
+
+	r := image.Rect(0, 0, 100, 100)
+	gm := geometry{adv: 9, lh: 20}
+	g.set.Font = "vt323"
+	a := g.sbKeyFor(1, 0, r, gm)
+	g.set.Font = "geist-mono"
+	b := g.sbKeyFor(1, 0, r, gm)
+	if a == b {
+		t.Fatal("sbKey equal for different fonts with equal adv/lh/colours")
 	}
 }

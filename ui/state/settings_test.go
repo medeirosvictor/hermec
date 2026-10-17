@@ -190,3 +190,17 @@ func TestFontRoundTrip(t *testing.T) {
 		t.Fatalf("got %+v, %v", s, err)
 	}
 }
+
+func TestMalformedSettingsNotFirstRun(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	if err := os.WriteFile(p, []byte("name = = broken\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadOrInitSettings(p)
+	if err == nil {
+		t.Fatal("malformed file must error")
+	}
+	if s.Palette != "" || s.Font != "" || s.FontID() != "vt323" {
+		t.Fatalf("malformed file got first-run defaults: %+v", s)
+	}
+}

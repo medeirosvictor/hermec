@@ -282,7 +282,7 @@ func (g *game) updateMain() {
 	}
 	// Re-wrap only when the layout key changes; colours are applied at draw.
 	var relaid bool
-	s.ms.lines, relaid = s.ms.layout.Lines(ch, msgs, gm.cols, g.th.FontSize, g.set.FontID())
+	s.ms.lines, relaid = g.relayout(&s.ms.layout, ch, msgs, gm.cols)
 	if relaid {
 		s.ms.layoutGen++
 	}
@@ -575,13 +575,24 @@ type sbKey struct {
 	font       string // a swap with an equal advance must still redraw
 }
 
+// sbKeyFor builds the scrollback render key; the font id is part of it.
+func (g *game) sbKeyFor(gen, off int, r image.Rectangle, gm geometry) sbKey {
+	return sbKey{gen, off, r.Dx(), r.Dy(), gm.adv, gm.lh, g.th.FG, g.th.Bright, g.th.Dim, g.set.FontID()}
+}
+
+// relayout wraps msgs through c; the font id is part of the cache key, so a
+// font swap re-lays out even when cols and size are unchanged.
+func (g *game) relayout(c *state.LayoutCache, ch string, msgs []state.Message, cols int) ([]state.Line, bool) {
+	return c.Lines(ch, msgs, cols, g.th.FontSize, g.set.FontID())
+}
+
 func (g *game) drawScrollback(screen *ebiten.Image, gm geometry) {
 	r := image.Rect(int(gm.rightX), int(gm.paneY0), int(gm.rightX+gm.rightW), int(gm.paneY1)).Intersect(screen.Bounds())
 	if r.Empty() {
 		return
 	}
 	ms := &g.cur().ms
-	k := sbKey{ms.layoutGen, state.ClampScroll(len(ms.lines), gm.visible, ms.scroll), r.Dx(), r.Dy(), gm.adv, gm.lh, g.th.FG, g.th.Bright, g.th.Dim, g.set.FontID()}
+	k := g.sbKeyFor(ms.layoutGen, state.ClampScroll(len(ms.lines), gm.visible, ms.scroll), r, gm)
 	if ms.sbImg == nil || k != ms.sbKey {
 		if ms.sbImg == nil || ms.sbImg.Bounds().Dx() != k.w || ms.sbImg.Bounds().Dy() != k.h {
 			if ms.sbImg != nil {

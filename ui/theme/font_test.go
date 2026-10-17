@@ -18,11 +18,11 @@ var uiRunes = []rune{'…', '—'}
 
 func fontBytes(t *testing.T, id string) []byte {
 	t.Helper()
-	b, ok := fontData[id]
-	if !ok {
+	f := fontByID(id)
+	if f == nil {
 		t.Fatalf("no embedded data for font %q", id)
 	}
-	return b
+	return f.data
 }
 
 // Every bundled font must draw the runes the UI hard-codes.
