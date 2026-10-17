@@ -976,3 +976,105 @@ func TestRailVisibleWithOnlyPending(t *testing.T) {
 		t.Fatal("rail hidden while a pending entry exists")
 	}
 }
+
+// badgeHit is the hit under the retry badge of the first tile.
+func badgeHit(t *testing.T, g *game) state.Hit {
+	t.Helper()
+	g.buildHits()
+	x0, y0, x1, y1 := retryBadgeRect(pad)
+	h, ok := g.hitFor((x0+x1)/2, (y0+y1)/2)
+	if !ok || h.Kind != state.HitRailRetry {
+		t.Fatalf("hit at badge = %+v, %v", h, ok)
+	}
+	return h
+}
+
+func TestBadgeHoverShowsFailedTooltip(t *testing.T) {
+	g := newTestGame(t)
+	withLayout(t, g)
+	failFirst(t, g, "ws://127.0.0.1:1/")
+	h := badgeHit(t, g)
+	t0 := time.Now()
+	g.stepTooltip(h, true, t0)
+	g.stepTooltip(h, true, t0.Add(state.TooltipDelay))
+	got, ok := g.tooltipText()
+	if !ok || !strings.Contains(got, "refused") {
+		t.Fatalf("tooltip over badge = %q, %v", got, ok)
+	}
+}
+
+func TestRightClickBadgeOpensTileMenu(t *testing.T) {
+	g := newTestGame(t)
+	withLayout(t, g)
+	s := failFirst(t, g, "ws://127.0.0.1:1/")
+	h := badgeHit(t, g)
+	g.clickRail(h, true, true, 10, 70)
+	if !g.menu.open || g.menu.key != s.key || len(g.menu.items) == 0 || g.menu.items[0].label != "Retry" {
+		t.Fatalf("menu = %+v", g.menu)
+	}
+}
+
+func TestClickRailBadgeRetriesOnce(t *testing.T) {
+	g := newTestGame(t)
+	withLayout(t, g)
+	s := failFirst(t, g, "ws://127.0.0.1:1/")
+	h := badgeHit(t, g)
+	g.clickRail(h, true, false, 0, 0)
+	if !s.dialing || s.failed {
+		t.Fatalf("after click: dialing=%v failed=%v", s.dialing, s.failed)
+	}
+	g.clickRail(h, true, false, 0, 0) // while dialing: no second dial
+	<-g.dialCh                        // the first (faked-over) dial
+	<-g.dialCh                        // the retry
+	select {
+	case <-g.dialCh:
+		t.Fatal("second click dialed again")
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestDisconnectDropsPendingEntry(t *testing.T) {
+	g := newTestGame(t)
+	s := failFirst(t, g, "ws://127.0.0.1:1/")
+	g.servers = append(g.servers, state.ServerEntry{URL: "saved"})
+	g.disconnect(s.key)
+	if len(g.servers) != 1 || g.servers[0].URL != "saved" {
+		t.Fatalf("servers = %+v, want only the saved one", g.servers)
+	}
+	// A saved (non-pending) entry stays when its session goes.
+	g.sess["saved"] = newSession("saved", "saved", "me")
+	g.disconnect("saved")
+	if len(g.servers) != 1 {
+		t.Fatalf("saved entry dropped: %+v", g.servers)
+	}
+}
+
+func TestRepeatOpenSessionAppliesName(t *testing.T) {
+	g := newTestGame(t)
+	s := failFirst(t, g, "ws://127.0.0.1:1/")
+	if again := g.openSession("ws://127.0.0.1:1/", "newname"); again != s {
+		t.Fatal("new session")
+	}
+	if s.name != "newname" {
+		t.Fatalf("name = %q, want newname", s.name)
+	}
+}
+
+func TestFailedPaneStaysWhileRedialing(t *testing.T) {
+	g := newTestGame(t)
+	s := failFirst(t, g, "ws://127.0.0.1:1/")
+	g.view(s.key)
+	if !g.viewingFailed() {
+		t.Fatal("not showing the failed pane")
+	}
+	g.retryNow(s.key)
+	if !s.dialing || !g.viewingFailed() {
+		t.Fatalf("dialing=%v viewingFailed=%v, want the pane kept", s.dialing, g.viewingFailed())
+	}
+	// A first dial that has not failed yet shows the connect form.
+	fresh := g.openSession("ws://127.0.0.1:2/", "me")
+	g.view(fresh.key)
+	if g.viewingFailed() {
+		t.Fatal("fresh dial shows the failed pane")
+	}
+}

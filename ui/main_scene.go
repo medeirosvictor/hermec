@@ -320,17 +320,22 @@ func (g *game) updateDisconnected() {
 }
 
 // viewingFailed reports that the viewed session never connected and its last
-// dial failed. It has no chat yet, so the pane shows the error instead.
+// dial failed, or is being retried. It has no chat yet, so the pane shows the
+// error instead; it stays up through the redial so it does not flicker.
 func (g *game) viewingFailed() bool {
 	s := g.cur()
-	return g.curKey != "" && s.failed && s.st.Phase == state.PhaseConnect
+	return g.curKey != "" && s.lastErr != "" && (s.failed || s.dialing) && s.st.Phase == state.PhaseConnect
 }
 
 // drawFailed is the pane of a failed first connect: the error, and how to retry.
 func (g *game) drawFailed(screen *ebiten.Image) {
 	gm := g.geom()
 	g.drawCentered(screen, g.cur().lastErr, float64(g.h)/2-gm.lh, g.th.Bright)
-	g.drawCentered(screen, "click ↻ to retry", float64(g.h)/2, g.th.Dim)
+	hint := "click ↻ to retry"
+	if g.cur().dialing {
+		hint = "retrying…"
+	}
+	g.drawCentered(screen, hint, float64(g.h)/2, g.th.Dim)
 }
 
 // lostText is the disconnected-screen headline for s at now.

@@ -176,17 +176,27 @@ func (g *game) updateRail() {
 	if g.railW() == 0 {
 		return
 	}
-	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight) {
-		if h, ok := g.hitAt(); ok && h.Kind == state.HitRailTile && h.ID >= 0 && h.ID < len(g.servers) {
-			x, y := g.cursor()
+	right := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight)
+	if !right && !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		return
+	}
+	h, ok := g.hitAt()
+	if !ok && !right {
+		return
+	}
+	x, y := g.cursor()
+	g.clickRail(h, ok, right, x, y)
+}
+
+// clickRail handles a press on h (ok: there was a target under the pointer) at
+// (x, y). A right press opens the tile menu; a left press acts on the target.
+func (g *game) clickRail(h state.Hit, ok, right bool, x, y float64) {
+	if right {
+		if ok && (h.Kind == state.HitRailTile || h.Kind == state.HitRailRetry) && h.ID >= 0 && h.ID < len(g.servers) {
 			g.openTileMenu(g.servers[h.ID].URL, x, y)
 		}
 		return
 	}
-	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		return
-	}
-	h, ok := g.hitAt()
 	if !ok {
 		return
 	}
@@ -239,7 +249,7 @@ type tooltipState struct {
 func (g *game) stepTooltip(h state.Hit, ok bool, now time.Time) {
 	id := -1
 	switch {
-	case ok && h.Kind == state.HitRailTile:
+	case ok && (h.Kind == state.HitRailTile || h.Kind == state.HitRailRetry): // the badge sits on its tile
 		id = h.ID
 	case ok && h.Kind == state.HitFingerprint:
 		id = fpTipID

@@ -88,6 +88,11 @@ func (g *game) openSession(url, name string) *session {
 		g.sess = map[string]*session{}
 	}
 	if s := g.sess[key]; s != nil {
+		if s.c == nil && !s.dialing { // an idle one still takes the name typed now
+			s.name = name
+			g.flushName()
+			g.rememberName(name)
+		}
 		return s
 	}
 	s := newSession(key, real, name)
@@ -179,6 +184,12 @@ func (g *game) disconnect(key string) {
 	}
 	s.st.SetViewed(false)
 	delete(g.sess, key) // a pending dial result no longer matches any session
+	for _, e := range g.servers {
+		if e.URL == key && e.Pending { // never saved: the tile goes with its session
+			g.servers = state.Remove(g.servers, key)
+			break
+		}
+	}
 	if !viewed {
 		return
 	}
