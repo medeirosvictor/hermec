@@ -89,9 +89,11 @@ type game struct {
 
 	serversPath string
 	servers     []state.ServerEntry
-	localURL    string        // URL of the in-process server; empty without -local
-	hosted      *hostedServer // the server hosted from the app; nil = no hosted.toml
-	hostedPath  string        // hosted.toml location in effect
+	localURL    string            // URL of the in-process server; empty without -local
+	inviteCh    chan inviteResult // address lookups for Copy invite address
+	inviteBusy  bool              // a lookup is in flight
+	hosted      *hostedServer     // the server hosted from the app; nil = no hosted.toml
+	hostedPath  string            // hosted.toml location in effect
 	// createFn creates the hosted server (the Add a Server page's action);
 	// nil = g.createHosted. selfAddrs finds this machine's addresses;
 	// nil = discover.SelfAddrs. Both are test seams.
@@ -407,6 +409,7 @@ func (g *game) tickBackground(now time.Time) {
 	g.pumpSessions()
 	g.tickReconnect(now)
 	g.pollUpdate()
+	g.pumpInvite()
 }
 
 func (g *game) Draw(screen *ebiten.Image) {

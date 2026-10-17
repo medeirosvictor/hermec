@@ -852,7 +852,7 @@ func TestSettingsCountsAsNotViewed(t *testing.T) {
 func failFirst(t *testing.T, g *game, url string) *session {
 	t.Helper()
 	s := g.openSession(url, "me")
-	g.applyDial(dialResult{key: s.key, s: s, err: errors.New("refused")})
+	g.applyDial(dialResult{key: s.key, s: s, gen: s.dialGen, err: errors.New("refused")})
 	return s
 }
 

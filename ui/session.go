@@ -23,6 +23,7 @@ type session struct {
 	attempt        int       // reconnect attempts since last success (Task 5)
 	retryAt        time.Time // zero = no retry scheduled (Task 5)
 	failed         bool      // the last dial failed; cleared by a retry or a success
+	dialGen        int       // generation of the latest dial; older results are stale
 	lastErr        string    // that dial's error, for the tooltip and the failed pane
 }
 
@@ -36,6 +37,7 @@ func newSession(key, url, name string) *session {
 type dialResult struct {
 	key string
 	s   *session
+	gen int // the dial generation that produced it
 	c   *client.Client
 	err error
 }
@@ -125,14 +127,15 @@ func (g *game) noneSession() *session {
 // dial dials s in a goroutine; the result arrives on dialCh.
 func (g *game) dial(s *session) {
 	s.dialing = true
+	s.dialGen++
 	s.st.ConnectErr = ""
 	g.logf("dialing %s as %q", s.url, s.name)
-	go func(s *session, key, url, name string) { // reads no session field
+	go func(s *session, key, url, name string, gen int) { // reads no session field
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		c, err := client.Dial(ctx, url, g.id, name, "")
-		g.dialCh <- dialResult{key: key, s: s, c: c, err: err}
-	}(s, s.key, s.url, s.name)
+		g.dialCh <- dialResult{key: key, s: s, gen: gen, c: c, err: err}
+	}(s, s.key, s.url, s.name, s.dialGen)
 }
 
 // closeClient closes a client no session owns (a stale dial result).
@@ -266,7 +269,7 @@ func (g *game) pumpSessions() {
 
 func (g *game) applyDial(r dialResult) {
 	s := g.sess[r.key]
-	if s == nil || s != r.s || !s.dialing || s.c != nil { // stale: the session is gone, replaced or moved on
+	if s == nil || s != r.s || r.gen != s.dialGen || !s.dialing || s.c != nil { // stale: the session is gone, replaced, redialed or moved on
 		if r.c != nil {
 			g.closeClient(r.c)
 		}

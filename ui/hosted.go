@@ -280,6 +280,9 @@ func (g *game) create(name, pass string, port int) error {
 	return g.createHosted(name, pass, port)
 }
 
+// removeFile is a seam for tests.
+var removeFile = os.Remove
+
 // leaveHosted stops hosting, drops the session and deletes the saved config.
 func (g *game) leaveHosted() {
 	h := g.hosted
@@ -288,38 +291,62 @@ func (g *game) leaveHosted() {
 	}
 	g.stopHosted()
 	g.disconnect(hostedKey)
-	if err := os.Remove(h.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		g.notice = fmt.Sprintf("delete hosted.toml: %v", err)
+	if err := removeFile(h.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		g.notice = fmt.Sprintf("couldn't delete hosted.toml: %v", err)
 	}
 	g.hosted = nil
 }
 
-// copyInvite puts the address friends should use on the clipboard and reports
-// the outcome on the viewed session's status line.
+// inviteResult is the outcome of a background address lookup.
+type inviteResult struct {
+	ts, lan string
+	port    int
+}
+
+// copyInvite looks up this machine's addresses in the background; pumpInvite
+// copies the result. A click while a lookup is in flight does nothing.
 func (g *game) copyInvite() {
 	h := g.hosted
-	if h == nil || h.srv == nil {
+	if h == nil || h.srv == nil || g.inviteBusy {
 		return
+	}
+	if g.inviteCh == nil {
+		g.inviteCh = make(chan inviteResult, 1)
 	}
 	self := g.selfAddrs
 	if self == nil {
 		self = discover.SelfAddrs
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	ts, lan := self(ctx)
 	_, p, _ := net.SplitHostPort(h.srv.Addr())
 	port, _ := strconv.Atoi(p)
-	addr := inviteAddress(ts, lan, port)
-	st := &g.cur().st.Status
-	switch {
-	case addr == noInviteAddr:
-		*st = addr
-	default:
-		if err := clipboardWrite(addr); err != nil {
-			*st = "copy failed: " + err.Error()
-		} else {
-			*st = "copied " + addr
+	g.inviteBusy = true
+	ch := g.inviteCh
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		ts, lan := self(ctx)
+		ch <- inviteResult{ts: ts, lan: lan, port: port}
+	}()
+}
+
+// pumpInvite applies a finished lookup: the address goes to the clipboard and
+// the outcome to the viewed session's status line.
+func (g *game) pumpInvite() {
+	select {
+	case r := <-g.inviteCh:
+		g.inviteBusy = false
+		addr := inviteAddress(r.ts, r.lan, r.port)
+		st := &g.cur().st.Status
+		switch {
+		case addr == noInviteAddr:
+			*st = addr
+		default:
+			if err := clipboardWrite(addr); err != nil {
+				*st = "copy failed: " + err.Error()
+			} else {
+				*st = "copied " + addr
+			}
 		}
+	default:
 	}
 }

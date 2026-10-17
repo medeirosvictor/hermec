@@ -10,8 +10,10 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/ui/state"
@@ -243,6 +245,19 @@ func TestHostedMenu(t *testing.T) {
 	}
 }
 
+// tickUntil runs tickBackground every 10ms until cond holds; fails after 5s.
+func tickUntil(t *testing.T, g *game, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not reached within 5s")
+		}
+		g.tickBackground(time.Now())
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestHostedMenuCopy(t *testing.T) {
 	g, path := hostedTestGame(t, "127.0.0.1:0", true)
 	g.bootHosted(path)
@@ -254,6 +269,7 @@ func TestHostedMenuCopy(t *testing.T) {
 
 	g.selfAddrs = func(context.Context) (string, string) { return "100.1.2.3", "192.168.1.5" }
 	pickMenu(g, hostedKey, "Copy invite address")
+	tickUntil(t, g, func() bool { return len(wrote) > 0 })
 	if want := fmt.Sprintf("ws://100.1.2.3:%d/", port); len(wrote) != 1 || wrote[0] != want {
 		t.Fatalf("wrote %v, want %q", wrote, want)
 	}
@@ -261,11 +277,79 @@ func TestHostedMenuCopy(t *testing.T) {
 	wrote = nil
 	g.selfAddrs = func(context.Context) (string, string) { return "", "" }
 	pickMenu(g, hostedKey, "Copy invite address")
+	tickUntil(t, g, func() bool { return strings.Contains(g.cur().st.Status, "no network address found") })
 	if len(wrote) != 0 {
 		t.Fatalf("copied %v with no network address", wrote)
 	}
-	if got := g.cur().st.Status + g.notice; !strings.Contains(got, "no network address found") {
-		t.Errorf("no feedback about the missing address: %q", got)
+}
+
+func TestCopyInviteIsAsync(t *testing.T) {
+	g, path := hostedTestGame(t, "127.0.0.1:0", true)
+	g.bootHosted(path)
+	var wrote atomic.Int32
+	old := clipboardWrite
+	clipboardWrite = func(string) error { wrote.Add(1); return nil }
+	t.Cleanup(func() { clipboardWrite = old })
+	release := make(chan struct{})
+	var calls atomic.Int32
+	g.selfAddrs = func(context.Context) (string, string) {
+		calls.Add(1)
+		select {
+		case <-release:
+		case <-time.After(2 * time.Second):
+		}
+		return "", "192.168.1.5"
+	}
+	start := time.Now()
+	g.copyInvite()
+	g.copyInvite() // one is in flight: a no-op
+	if time.Since(start) > time.Second || wrote.Load() != 0 {
+		t.Fatalf("copyInvite blocked (%v) or copied early", time.Since(start))
+	}
+	close(release)
+	tickUntil(t, g, func() bool { return wrote.Load() == 1 })
+	g.tickBackground(time.Now())
+	if calls.Load() != 1 || wrote.Load() != 1 {
+		t.Fatalf("lookups = %d, copies = %d, want 1 and 1", calls.Load(), wrote.Load())
+	}
+}
+
+func TestLeaveHostedDeleteFailure(t *testing.T) {
+	g, path := hostedTestGame(t, "127.0.0.1:0", true)
+	g.bootHosted(path)
+	old := removeFile
+	removeFile = func(string) error { return errors.New("access denied") }
+	t.Cleanup(func() { removeFile = old })
+	srv := g.hosted.srv
+	g.leaveHosted()
+	if g.hosted != nil || g.notice != "couldn't delete hosted.toml: access denied" {
+		t.Fatalf("hosted=%+v notice=%q", g.hosted, g.notice)
+	}
+	if srv.Addr() != "" {
+		if c, err := net.Dial("tcp", srv.Addr()); err == nil {
+			c.Close()
+			t.Fatal("server still accepting")
+		}
+	}
+}
+
+func TestStaleDialAfterRestart(t *testing.T) {
+	g, path := hostedTestGame(t, "127.0.0.1:0", true)
+	g.bootHosted(path)
+	s := g.sess[hostedKey]
+	gen1 := s.dialGen
+	g.stopHosted()
+	g.retryNow(hostedKey)
+	if s.dialGen == gen1 || !s.dialing {
+		t.Fatalf("gen %d -> %d dialing=%v, want a new dial", gen1, s.dialGen, s.dialing)
+	}
+	g.applyDial(dialResult{key: hostedKey, s: s, err: errors.New("old"), gen: gen1})
+	if s.failed || !s.dialing {
+		t.Fatalf("stale result applied: failed=%v dialing=%v", s.failed, s.dialing)
+	}
+	pumpUntil(t, g, connected(s)) // dial 2 (gen 2) succeeds and is not closed
+	if s.failed {
+		t.Fatal("failed after a good dial")
 	}
 }
 
