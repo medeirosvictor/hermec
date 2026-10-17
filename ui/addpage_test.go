@@ -169,6 +169,14 @@ func TestCreateWhileHosting(t *testing.T) {
 	if g.add != addChoose {
 		t.Errorf("mode changed to %v", g.add)
 	}
+	calls := 0
+	g.createFn = func(string, string, int) error { calls++; return nil }
+	g.cf = newCreateForm()
+	g.cf.name.runes = []rune("Other")
+	g.submitCreate()
+	if calls != 0 || g.cf.err != "already hosting Den" {
+		t.Errorf("calls=%d err=%q", calls, g.cf.err)
+	}
 	if b, _ := os.ReadFile(g.hostedPath); string(b) != "keep" {
 		t.Errorf("hosted.toml touched: %q", b)
 	}
@@ -210,5 +218,42 @@ func TestHelpHasFirewallLine(t *testing.T) {
 	}
 	if !strings.Contains(helpSrc, want) {
 		t.Error("help.txt lacks the firewall line")
+	}
+}
+
+func TestLocalStartupOpensConnectForm(t *testing.T) {
+	g := addTestGame(t)
+	g.connect = newConnectForm("me", "ws://127.0.0.1:1/", true)
+	g.initAdd()
+	if g.add != addJoin || g.addPageShown() {
+		t.Errorf("local: add=%v shown=%v", g.add, g.addPageShown())
+	}
+	g.escSpent = false
+	g.addEsc(true)
+	if g.add != addJoin {
+		t.Error("esc left the local connect form")
+	}
+	g = addTestGame(t)
+	g.initAdd()
+	if g.add != addChoose || !g.addPageShown() {
+		t.Errorf("non-local: add=%v", g.add)
+	}
+}
+
+func TestFirewallLineWraps(t *testing.T) {
+	g := addTestGame(t)
+	g.w = 300
+	cols := g.addCols()
+	lines := g.firewallLines()
+	if len(lines) < 2 {
+		t.Fatalf("not wrapped: %v", lines)
+	}
+	for _, l := range lines {
+		if n := len([]rune(l)); n > cols {
+			t.Errorf("line %q is %d runes, budget %d", l, n, cols)
+		}
+	}
+	if strings.Join(lines, " ") != firewallLine {
+		t.Errorf("text changed: %q", lines)
 	}
 }

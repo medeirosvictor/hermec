@@ -288,6 +288,7 @@ func Run(opts Options) error {
 		}
 	}
 	g.connect = newConnectForm(opts.Name, url, opts.Local)
+	g.initAdd()
 	g.dev = devFromEnv(g)
 
 	ebiten.SetWindowSize(960, 600)
@@ -391,11 +392,14 @@ func (g *game) Update() error {
 		}
 	} else if g.cur().st.Phase == state.PhaseConnect && !g.modal {
 		g.connect.dy = g.bannerH() // updateRail may have replaced the form
+		viewed := g.curKey
 		if g.curKey == "" {
 			g.addEsc(inpututil.IsKeyJustPressed(ebiten.KeyEscape))
 		}
 		if g.addPageShown() {
 			g.updateAdd()
+		} else if g.curKey != viewed {
+			// Esc just returned to a server: its scene runs next tick, not the form
 		} else if url, name, submit := g.connect.update(g.cur().dialing, g.hitAt); submit {
 			if s := g.openSession(url, name); s != nil {
 				g.view(s.key)

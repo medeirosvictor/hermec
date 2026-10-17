@@ -88,6 +88,10 @@ func (f *createForm) validate() (name, pass string, port int, err string) {
 // submitCreate validates the form and creates the hosted server. A failure
 // leaves the form up with the reason in err.
 func (g *game) submitCreate() {
+	if g.hosted != nil {
+		g.cf.err = "already hosting " + g.hosted.cfg.ServerName
+		return
+	}
 	name, pass, port, msg := g.cf.validate()
 	if msg != "" {
 		g.cf.err = msg
@@ -141,6 +145,9 @@ func (g *game) addEsc(pressed bool) {
 	}
 	switch g.add {
 	case addCreate, addJoin:
+		if g.add == addJoin && g.connect.local {
+			return // the -local connect form has no choices to return to
+		}
 		g.add = addChoose
 		g.escSpent = true
 	default:
@@ -218,7 +225,7 @@ func (g *game) createRowY(i int) float64 { return g.addTop() + float64(i)*g.line
 func (g *game) createBtnRect() rectF {
 	lh := g.lineH()
 	x := g.addX()
-	y := g.addTop() + 5.5*lh
+	y := g.addTop() + (4+float64(len(g.firewallLines())))*lh
 	w := text.Advance("Create", g.face) + 2*pad
 	return rectF{x, y, x + w, y + lh + pad/2}
 }
@@ -349,7 +356,9 @@ func (g *game) drawAddPage(screen *ebiten.Image) {
 		}
 		g.drawText(screen, marker+r.label+val, x, g.createRowY(i), th.FG)
 	}
-	g.drawTextF(screen, g.faceS, firewallLine, x, g.createRowY(3)+lh/2, th.Dim)
+	for i, l := range g.firewallLines() {
+		g.drawText(screen, l, x, g.createRowY(3)+lh/2+float64(i)*lh, th.Dim)
+	}
 	b := g.createBtnRect()
 	fill := mixRGBA(th.Panel, th.Bright, 0.18)
 	if h, ok := g.hitAt(); ok && h.Kind == state.HitCreateBtn {
@@ -365,3 +374,20 @@ func (g *game) drawAddPage(screen *ebiten.Image) {
 	g.drawTextF(screen, g.faceS, g.createInviteText(), x, y, th.Dim)
 	g.drawTextF(screen, g.faceS, "Enter to create   Tab to switch field   Esc to go back", x, y+lh, th.Dim)
 }
+
+// initAdd sets the page a fresh launch opens on: the -local connect form, as
+// before, or else the choices.
+func (g *game) initAdd() {
+	g.add = addChoose
+	if g.connect.local {
+		g.add = addJoin
+	}
+}
+
+// addCols is how many monospace columns fit right of the add page's origin.
+func (g *game) addCols() int {
+	return max(int((float64(g.w)-g.addX()-connectX)/g.glyphW()), 10)
+}
+
+// firewallLines is the firewall hint wrapped to the page width.
+func (g *game) firewallLines() []string { return state.Wrap(firewallLine, g.addCols()) }
