@@ -33,11 +33,16 @@ type ctxMenu struct {
 	items []menuItem
 }
 
-// openTileMenu opens the menu for a rail tile at (ax, ay): Rename, Disconnect
-// while a session exists, and Leave Server.
+// openTileMenu opens the menu for a rail tile at (ax, ay): Retry while the
+// session's last dial failed, Rename, Disconnect while a session exists, and
+// Leave Server.
 func (g *game) openTileMenu(key string, ax, ay float64) {
 	g.closeMenu()
-	items := []menuItem{{label: "Rename", act: func() { g.openRenameDialog(key) }}}
+	var items []menuItem
+	if s := g.sess[key]; s != nil && s.failed {
+		items = append(items, menuItem{label: "Retry", act: func() { g.retryNow(key) }})
+	}
+	items = append(items, menuItem{label: "Rename", act: func() { g.openRenameDialog(key) }})
 	if _, ok := g.sess[key]; ok {
 		items = append(items, menuItem{label: "Disconnect", act: func() { g.disconnect(key) }})
 	}

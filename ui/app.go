@@ -356,7 +356,11 @@ func (g *game) Update() error {
 		}
 		return nil
 	}
-	if g.cur().st.Phase == state.PhaseConnect && !g.modal {
+	if g.viewingFailed() {
+		if !g.modal && enterPressed() {
+			g.retryNow(g.curKey)
+		}
+	} else if g.cur().st.Phase == state.PhaseConnect && !g.modal {
 		g.connect.dy = g.bannerH() // updateRail may have replaced the form
 		if url, name, submit := g.connect.update(g.cur().dialing, g.hitAt); submit {
 			if s := g.openSession(url, name); s != nil {
@@ -420,6 +424,10 @@ func (g *game) drawScene(screen *ebiten.Image) {
 	screen.Fill(g.th.BG)
 	if g.settingsOpen {
 		g.drawSettings(screen)
+	} else if g.viewingFailed() {
+		g.drawFailed(screen)
+		g.drawCallBar(screen, g.geom())
+		g.drawBanner(screen)
 	} else if g.cur().st.Phase == state.PhaseConnect {
 		g.drawConnect(screen)
 		g.drawCallBar(screen, g.geom()) // a call on a server keeps its bar while "+" is open

@@ -147,3 +147,16 @@ func TestMenuDismissClickIsSwallowed(t *testing.T) {
 		t.Fatal("a voice join started from the dismissing click")
 	}
 }
+
+func TestMenuRetryItem(t *testing.T) {
+	g := menuGame(t, true)
+	g.openTileMenu("k", 10, 70)
+	if got := menuLabels(g); got[0] == "Retry" {
+		t.Fatalf("live key has Retry: %v", got)
+	}
+	g.sess["k"].failed = true
+	g.openTileMenu("k", 10, 70)
+	if got := menuLabels(g); got[0] != "Retry" {
+		t.Fatalf("failed key items = %v, want Retry first", got)
+	}
+}

@@ -22,6 +22,8 @@ type session struct {
 	everUp         bool      // connected at least once
 	attempt        int       // reconnect attempts since last success (Task 5)
 	retryAt        time.Time // zero = no retry scheduled (Task 5)
+	failed         bool      // the last dial failed; cleared by a retry or a success
+	lastErr        string    // that dial's error, for the tooltip and the failed pane
 }
 
 func newSession(key, url, name string) *session {
@@ -69,8 +71,9 @@ func (g *game) sessionKeys() []string {
 	return ks
 }
 
-// openSession returns the session for url, creating it if needed, and dials
-// it unless it is connected or dialing. It returns nil when url is the saved
+// openSession returns the session for url. A new one is dialed and, when url
+// is not saved, gets a pending rail entry at once; an existing one is returned
+// as is (a retry goes through retryNow). It returns nil when url is the saved
 // local server and this run has none; the error goes to the connect scene.
 func (g *game) openSession(url, name string) *session {
 	none := g.noneSession()
@@ -84,17 +87,21 @@ func (g *game) openSession(url, name string) *session {
 	if g.sess == nil {
 		g.sess = map[string]*session{}
 	}
-	s := g.sess[key]
-	if s == nil {
-		s = newSession(key, real, name)
-		g.sess[key] = s
+	if s := g.sess[key]; s != nil {
+		return s
 	}
-	if s.c == nil && !s.dialing {
-		s.name = name
-		g.flushName()
-		g.rememberName(name)
-		g.dial(s)
+	s := newSession(key, real, name)
+	g.sess[key] = s
+	if _, ok := g.entryFor(key); !ok { // the tile shows now; the file waits for a first success
+		label := state.HostPort(real)
+		if key == localKey {
+			label = "local"
+		}
+		g.servers = append([]state.ServerEntry{{URL: key, Label: label, Pending: true}}, g.servers...)
 	}
+	g.flushName()
+	g.rememberName(name)
+	g.dial(s)
 	return s
 }
 
@@ -144,14 +151,15 @@ func (g *game) tickReconnect(now time.Time) {
 	}
 }
 
-// retryNow redials the disconnected session at key immediately and resets
-// its backoff.
+// retryNow redials the disconnected session at key immediately, resets its
+// backoff and clears its failed mark.
 func (g *game) retryNow(key string) {
 	s := g.sess[key]
 	if s == nil || s.dialing || s.c != nil || s.url == "" {
 		return
 	}
 	s.attempt = 0
+	s.failed = false
 	g.dial(s)
 }
 
@@ -244,15 +252,11 @@ func (g *game) applyDial(r dialResult) {
 	s.dialing = false
 	if r.err != nil {
 		g.logf("dial %s failed: %v", s.url, r.err)
+		s.failed, s.lastErr = true, r.err.Error()
 		if !s.everUp {
-			delete(g.sess, s.key)
-			if g.curKey == s.key {
-				g.view("")
-				g.noneSession().st.ConnectErr = r.err.Error()
-			} // else: not on screen, the error would land on another server's form; drop it
-			return
+			return // keeps its tile and session; the user retries with the badge
 		}
-		s.st.ConnectErr = r.err.Error() // stays PhaseDisconnected
+		s.st.ConnectErr = s.lastErr // stays PhaseDisconnected
 		s.scheduleRetry(time.Now())
 		return
 	}
@@ -261,6 +265,7 @@ func (g *game) applyDial(r dialResult) {
 	s.st.SetConnected(r.c.Channels(), r.c.Fingerprint())
 	s.ms = newMainScene()
 	s.everUp = true
+	s.failed, s.lastErr = false, ""
 	s.attempt = 0
 	s.retryAt = time.Time{}
 	g.onConnected(s)

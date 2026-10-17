@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -230,7 +231,7 @@ func TestOpenSessionLocalURLMapsToLocalKey(t *testing.T) {
 	}
 }
 
-func TestFirstDialFailureDropsSession(t *testing.T) {
+func TestFirstDialFailureKeepsViewedSession(t *testing.T) {
 	g := newTestGame(t)
 	const url = "ws://127.0.0.1:1/"
 	s := g.openSession(url, "me")
@@ -239,14 +240,14 @@ func TestFirstDialFailureDropsSession(t *testing.T) {
 	}
 	g.view(s.key)
 	pumpUntil(t, g, func() bool { return !s.dialing })
-	if _, ok := g.sess[url]; ok {
-		t.Fatal("failed first dial left a session")
+	if g.sess[url] != s || !s.failed || s.lastErr == "" {
+		t.Fatalf("failed first dial: session %+v", s)
 	}
-	if g.curKey != "" {
-		t.Fatalf("curKey = %q, want connect scene", g.curKey)
+	if g.curKey != s.key || !g.viewingFailed() {
+		t.Fatalf("curKey = %q, want the failed session still viewed", g.curKey)
 	}
-	if g.none.st.ConnectErr == "" {
-		t.Fatal("want ConnectErr on the connect scene")
+	if g.none.st.ConnectErr != "" {
+		t.Fatalf("connect scene error = %q, want none", g.none.st.ConnectErr)
 	}
 }
 
@@ -815,8 +816,8 @@ func TestBackgroundDialFailureDoesNotTouchConnectScene(t *testing.T) {
 	b := g.openSession("ws://127.0.0.1:1/", "me") // not viewed
 	g.noneSession().st.ConnectErr = "typed-by-user"
 	pumpUntil(t, g, func() bool { return !b.dialing })
-	if _, ok := g.sess[b.key]; ok {
-		t.Fatal("failed first dial left a session")
+	if g.sess[b.key] != b || !b.failed {
+		t.Fatal("failed first dial should keep its session, marked failed")
 	}
 	if g.curKey != a.key {
 		t.Fatalf("curKey = %q, want A still viewed", g.curKey)
@@ -843,5 +844,135 @@ func TestSettingsCountsAsNotViewed(t *testing.T) {
 	g.toggleSettings()
 	if !s.st.Viewed || s.st.Unread["general"] {
 		t.Fatalf("after close: viewed=%v unread=%v, want viewed and read", s.st.Viewed, s.st.Unread)
+	}
+}
+
+// failFirst opens a session on a dead address and delivers a fake failure,
+// as the dial goroutine would.
+func failFirst(t *testing.T, g *game, url string) *session {
+	t.Helper()
+	s := g.openSession(url, "me")
+	g.applyDial(dialResult{key: s.key, s: s, err: errors.New("refused")})
+	return s
+}
+
+func TestFirstConnectFailureKeepsSession(t *testing.T) {
+	g := newTestGame(t)
+	s := failFirst(t, g, "ws://127.0.0.1:1/")
+	if g.sess[s.key] != s || !s.failed || s.lastErr != "refused" || s.dialing {
+		t.Fatalf("session = %+v", s)
+	}
+	if !s.retryAt.IsZero() {
+		t.Error("a failed first connect must not schedule a retry")
+	}
+	if len(g.servers) != 1 || g.servers[0].URL != s.key || !g.servers[0].Pending {
+		t.Fatalf("servers = %+v", g.servers)
+	}
+	if disk, _ := state.LoadServers(g.serversPath); len(disk) != 0 {
+		t.Fatalf("pending entry was saved: %+v", disk)
+	}
+}
+
+func TestPendingSavedOnFirstSuccess(t *testing.T) {
+	g := newTestGame(t)
+	_, url := startServer(t, "127.0.0.1:0")
+	s := g.openSession(url, "me")
+	if len(g.servers) != 1 || !g.servers[0].Pending {
+		t.Fatalf("servers before connect = %+v", g.servers)
+	}
+	pumpUntil(t, g, connected(s))
+	if g.servers[0].Pending || s.failed {
+		t.Fatalf("still pending: %+v", g.servers[0])
+	}
+	disk, err := state.LoadServers(g.serversPath)
+	if err != nil || len(disk) != 1 || disk[0].URL != s.key {
+		t.Fatalf("saved = %+v, %v", disk, err)
+	}
+}
+
+func TestLeavePendingDuringDial(t *testing.T) {
+	g := newTestGame(t)
+	_, url := startServer(t, "127.0.0.1:0")
+	s := g.openSession(url, "me")
+	g.openLeaveDialog(s.key)
+	g.dialogConfirm()
+	select {
+	case r := <-g.dialCh:
+		g.applyDial(r)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no dial result")
+	}
+	if len(g.servers) != 0 || len(g.sess) != 0 {
+		t.Fatalf("servers = %+v, sessions = %d", g.servers, len(g.sess))
+	}
+	if disk, _ := state.LoadServers(g.serversPath); len(disk) != 0 {
+		t.Fatalf("file = %+v", disk)
+	}
+}
+
+func TestJoinExistingKeyNoDuplicate(t *testing.T) {
+	g := newTestGame(t)
+	a := g.openSession("ws://127.0.0.1:1/", "me")
+	if b := g.openSession("ws://127.0.0.1:1/", "me"); b != a {
+		t.Fatal("second join made a new session")
+	}
+	if len(g.servers) != 1 || len(g.sess) != 1 {
+		t.Fatalf("servers = %+v, sessions = %d", g.servers, len(g.sess))
+	}
+	g2 := newTestGame(t)
+	g2.servers = []state.ServerEntry{{URL: "ws://127.0.0.1:1/", Label: "x"}}
+	g2.openSession("ws://127.0.0.1:1/", "me")
+	if len(g2.servers) != 1 || g2.servers[0].Pending {
+		t.Fatalf("saved entry duplicated or marked pending: %+v", g2.servers)
+	}
+}
+
+func TestRetryHitRedials(t *testing.T) {
+	g := newTestGame(t)
+	withLayout(t, g)
+	s := failFirst(t, g, "ws://127.0.0.1:1/")
+	g.buildHits()
+	x0, y0, x1, y1 := retryBadgeRect(pad)
+	h, ok := g.hitFor((x0+x1)/2, (y0+y1)/2)
+	if !ok || h.Kind != state.HitRailRetry || h.ID != 0 {
+		t.Fatalf("hit at badge = %+v, %v", h, ok)
+	}
+	if h, ok := g.hitFor(x1+8, y0); !ok || h.Kind != state.HitRailTile {
+		t.Fatalf("hit beside badge = %+v, %v", h, ok)
+	}
+	g.retryNow(g.servers[h.ID].URL)
+	if !s.dialing || s.failed {
+		t.Fatalf("after retry: dialing=%v failed=%v", s.dialing, s.failed)
+	}
+	g.retryNow(s.key) // a second activation while dialing is a no-op
+	// the first (faked-over) dial and the retry each answer once
+	<-g.dialCh
+	<-g.dialCh
+	select {
+	case <-g.dialCh:
+		t.Fatal("second retry dialed again")
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestFailedTooltipShowsError(t *testing.T) {
+	g := newTestGame(t)
+	s := failFirst(t, g, "ws://127.0.0.1:1/")
+	g.tip = tooltipState{idx: 0, show: true}
+	got, ok := g.tooltipText()
+	if !ok || !strings.Contains(got, state.DisplayName(g.servers[0])) || !strings.Contains(got, "refused") {
+		t.Fatalf("tooltip = %q, %v", got, ok)
+	}
+	s.failed = false
+	if got, _ := g.tooltipText(); strings.Contains(got, "refused") {
+		t.Fatalf("tooltip after retry = %q", got)
+	}
+}
+
+func TestRailVisibleWithOnlyPending(t *testing.T) {
+	g := newTestGame(t)
+	g.servers = []state.ServerEntry{{URL: "ws://x/", Pending: true}}
+	if g.railW() <= 0 {
+		t.Fatal("rail hidden while a pending entry exists")
 	}
 }

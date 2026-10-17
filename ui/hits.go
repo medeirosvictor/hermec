@@ -61,6 +61,8 @@ func (g *game) buildHits() {
 	case g.settingsOpen:
 		g.addSettingsHits()
 		return
+	case g.viewingFailed():
+		g.addBarHits(g.geom()) // no form to click; the rail badge retries
 	case g.cur().st.Phase == state.PhaseConnect:
 		g.connect.dy = g.bannerH()
 		g.addConnectHits()
