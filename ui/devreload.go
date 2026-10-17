@@ -101,18 +101,10 @@ func statMtime(path string) (time.Time, error) {
 }
 
 // applyDevTheme swaps in th, rebuilding the text faces only if font_size
-// changed. crtOn is separate state and is left alone.
+// changed (in the current font). crtOn is separate state and is left alone.
 func (g *game) applyDevTheme(th theme.Theme) error {
 	if th.FontSize != g.th.FontSize || g.face == nil {
-		face, err := theme.Face(th.FontSize)
-		if err != nil {
-			return err
-		}
-		faceS, err := theme.Face(th.FontSize * smallScale)
-		if err != nil {
-			return err
-		}
-		faceT, err := theme.Face(th.FontSize * titleScale)
+		face, faceS, faceT, err := buildFaces(g.set.FontID(), th.FontSize)
 		if err != nil {
 			return err
 		}

@@ -84,7 +84,7 @@ func Default() Theme {
 	return t
 }
 
-var presetNames = []string{"amber", "green", "blue", "parchment"}
+var presetNames = []string{"amber", "green", "blue", "parchment", "slate"}
 
 // PresetNames returns the preset names in Presets() order.
 func PresetNames() []string { return append([]string(nil), presetNames...) }
@@ -96,7 +96,7 @@ func PresetSource(name string) ([]byte, bool) {
 }
 
 // Presets returns the built-in themes: amber (the default), green (P1
-// phosphor), blue (P4) and parchment (light). Keys a preset file omits keep
+// phosphor), blue (P4), parchment (light) and slate (modern dark). Keys a preset file omits keep
 // the default.toml values.
 func Presets() []Theme {
 	out := make([]Theme, len(presetNames))

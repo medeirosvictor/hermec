@@ -9,6 +9,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
+	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"github.com/medeirosvictor/hermec/audio"
@@ -20,6 +21,7 @@ import (
 const (
 	rowName = iota
 	rowPalette
+	rowFont
 	rowScanlines
 	rowCurvature
 	rowInput
@@ -104,7 +106,7 @@ func (g *game) loadSettings(path string) {
 		path = p
 	}
 	g.settingsPath = path
-	s, err := state.LoadSettings(path)
+	s, err := state.LoadOrInitSettings(path) // no file yet: modern first-run defaults
 	if err != nil {
 		g.notice = fmt.Sprintf("settings.toml unreadable (%v); moved to .bad", err)
 		_ = os.Rename(path, filepath.Clean(path)+".bad")
@@ -163,6 +165,35 @@ func (g *game) cyclePalette() {
 	g.set.Palette = presetName(g.th)
 	g.set.ThemePath = ""
 	g.logf("palette: bg=%v fg=%v", g.th.BG, g.th.FG)
+	g.persistSettings()
+}
+
+// buildFaces makes the body, small and title faces of one font, at the scales
+// used everywhere.
+func buildFaces(font string, size float64) (face, faceS, faceT *text.GoTextFace, err error) {
+	if face, err = theme.Face(font, size); err != nil {
+		return
+	}
+	if faceS, err = theme.Face(font, size*smallScale); err != nil {
+		return
+	}
+	faceT, err = theme.Face(font, size*titleScale)
+	return
+}
+
+// cycleFont advances to the next bundled font, rebuilds the faces and persists
+// the choice. The scrollback layout and render caches key on the font id, so
+// they refresh on the next frame even if the new advance equals the old one.
+func (g *game) cycleFont() {
+	next := theme.NextFont(g.set.FontID())
+	face, faceS, faceT, err := buildFaces(next, g.th.FontSize)
+	if err != nil {
+		g.notice = fmt.Sprintf("font: %v", err)
+		return
+	}
+	g.face, g.faceS, g.faceT = face, faceS, faceT
+	g.set.Font = next
+	g.logf("font: %s", next)
 	g.persistSettings()
 }
 
@@ -324,6 +355,8 @@ func (g *game) activateSetting(row int) {
 	switch row {
 	case rowPalette:
 		g.cyclePalette()
+	case rowFont:
+		g.cycleFont()
 	case rowCurvature:
 		g.toggleCurvature()
 	case rowScanlines:
@@ -373,6 +406,7 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 	rows := [settingsRows]string{
 		"name:      " + nameVal,
 		"palette:   " + pal,
+		"font:      " + theme.FontLabel(g.set.FontID()),
 		"scanlines: " + scan,
 		"curvature: " + curv,
 		"input:     " + deviceLabel(g.set.InputDevice, g.devIn),

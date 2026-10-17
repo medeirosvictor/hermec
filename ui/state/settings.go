@@ -14,6 +14,7 @@ type Settings struct {
 	Palette   string `toml:"palette,omitempty"`    // preset name; "" = default
 	Scanlines *bool  `toml:"scanlines,omitempty"`  // nil = unset (theme decides)
 	ThemePath string `toml:"theme_path,omitempty"` // custom theme file
+	Font      string `toml:"font,omitempty"`       // font id; "" = vt323 (see FontID)
 
 	UpdateCheck *bool `toml:"update_check,omitempty"` // nil = unset (enabled)
 
@@ -39,6 +40,40 @@ func (s Settings) CurvatureEnabled() bool {
 // MembersShown reports whether the member roster is visible; unset means shown.
 func (s Settings) MembersShown() bool {
 	return s.Members == nil || *s.Members
+}
+
+// Defaults for a first run (no settings file): the modern look. An existing
+// file that lacks these keys keeps the retro look instead; see FontID.
+const (
+	firstRunPalette = "slate"
+	firstRunFont    = "jetbrains-mono"
+	legacyFont      = "vt323"
+)
+
+// FontID is the font to use: the saved font, or vt323 when none is saved
+// (every settings file written before the font option existed).
+func (s Settings) FontID() string {
+	if s.Font == "" {
+		return legacyFont
+	}
+	return s.Font
+}
+
+// FirstRunSettings are the defaults when no settings file exists: the slate
+// palette and JetBrains Mono. Scanlines stay nil so the theme (scanlines off
+// for slate) decides.
+func FirstRunSettings() Settings {
+	return Settings{Palette: firstRunPalette, Font: firstRunFont}
+}
+
+// LoadOrInitSettings is LoadSettings, except that a missing file yields
+// FirstRunSettings. An existing file is returned as saved, so users from before
+// the font option keep their palette and VT323.
+func LoadOrInitSettings(path string) (Settings, error) {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return FirstRunSettings(), nil
+	}
+	return LoadSettings(path)
 }
 
 // LoadSettings reads path. A missing file yields zero Settings and no error.

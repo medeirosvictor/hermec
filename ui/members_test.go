@@ -220,7 +220,7 @@ func TestMembersToggleNoOverlap(t *testing.T) {
 	g := mainGame(t)
 	for _, fs := range []float64{g.th.FontSize, g.th.FontSize * 1.5} {
 		g.th.FontSize = fs
-		face, err := theme.Face(fs)
+		face, err := theme.Face("vt323", fs)
 		if err != nil {
 			t.Skip(err)
 		}

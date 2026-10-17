@@ -35,10 +35,10 @@ func TestLayoutCacheInvalidation(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var c LayoutCache
-			if _, re := c.Lines("general", base, 80, 16); !re {
+			if _, re := c.Lines("general", base, 80, 16, "vt323"); !re {
 				t.Fatal("first call must compute")
 			}
-			lines, re := c.Lines(tc.ch, tc.msgs, tc.cols, tc.font)
+			lines, re := c.Lines(tc.ch, tc.msgs, tc.cols, tc.font, "vt323")
 			if re != tc.recomputed {
 				t.Fatalf("recomputed=%v want %v", re, tc.recomputed)
 			}
@@ -52,9 +52,22 @@ func TestLayoutCacheInvalidation(t *testing.T) {
 func TestLayoutCacheReusesSlice(t *testing.T) {
 	var c LayoutCache
 	m := msgsAt(1, 2)
-	a, _ := c.Lines("g", m, 80, 16)
-	b, re := c.Lines("g", m, 80, 16)
+	a, _ := c.Lines("g", m, 80, 16, "vt323")
+	b, re := c.Lines("g", m, 80, 16, "vt323")
 	if re || &a[0] != &b[0] {
 		t.Fatal("expected same backing slice without recompute")
+	}
+}
+
+// A font swap must re-layout even when cols and size happen to be equal.
+func TestLayoutCacheFontChangeRelays(t *testing.T) {
+	var c LayoutCache
+	m := msgsAt(1, 2)
+	c.Lines("g", m, 80, 16, "vt323")
+	if _, re := c.Lines("g", m, 80, 16, "geist-mono"); !re {
+		t.Fatal("font change did not invalidate the layout")
+	}
+	if _, re := c.Lines("g", m, 80, 16, "geist-mono"); re {
+		t.Fatal("same font recomputed")
 	}
 }

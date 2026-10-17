@@ -14,7 +14,7 @@ func hexc(s string) color.RGBA {
 }
 
 func TestPresetsOrder(t *testing.T) {
-	want := []string{"amber", "green", "blue", "parchment"}
+	want := []string{"amber", "green", "blue", "parchment", "slate"}
 	got := PresetNames()
 	ps := Presets()
 	if len(got) != len(want) || len(ps) != len(want) {
@@ -105,8 +105,11 @@ func TestUnknownKeyStillErrors(t *testing.T) {
 
 func TestNextPresetCyclesByName(t *testing.T) {
 	ps := Presets()
-	if n := NextPreset(ps[3]); n.Name != "amber" {
+	if n := NextPreset(ps[3]); n.Name != "slate" {
 		t.Errorf("parchment -> %q", n.Name)
+	}
+	if n := NextPreset(ps[4]); n.Name != "amber" {
+		t.Errorf("slate -> %q", n.Name)
 	}
 	c := Default()
 	c.Name = ""
@@ -119,5 +122,27 @@ func TestNextPresetCyclesByName(t *testing.T) {
 	}
 	if n := NextPreset(th); n.Name != "amber" {
 		t.Errorf("custom -> %q", n.Name)
+	}
+}
+
+func TestSlateValues(t *testing.T) {
+	var p Theme
+	for _, q := range Presets() {
+		if q.Name == "slate" {
+			p = q
+		}
+	}
+	if p.Name != "slate" {
+		t.Fatal("no slate preset")
+	}
+	if p.BG != hexc("#1E1F22") || p.Panel != hexc("#2B2D31") || p.FG != hexc("#DBDEE1") ||
+		p.Dim != hexc("#80848E") || p.Bright != hexc("#A5B4FC") {
+		t.Errorf("palette %+v", p)
+	}
+	if p.Scanlines || p.Glow != 0 || p.Vignette != 0 || p.ScanBar || p.Curvature != 0 || p.ScanlineStrength != 0 {
+		t.Errorf("CRT effects not all off: %+v", p)
+	}
+	if p.Radius != 6 {
+		t.Errorf("radius = %v, want the default 6", p.Radius)
 	}
 }

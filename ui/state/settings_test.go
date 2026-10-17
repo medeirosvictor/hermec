@@ -147,3 +147,46 @@ func TestMembersRoundTrip(t *testing.T) {
 		t.Fatalf("old file: %+v %v", out, err)
 	}
 }
+
+func TestFirstRunDefaultsAreModern(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml") // does not exist
+	s, err := LoadOrInitSettings(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Palette != "slate" || s.Font != "jetbrains-mono" || s.FontID() != "jetbrains-mono" || s.Scanlines != nil {
+		t.Fatalf("first run = %+v", s)
+	}
+}
+
+func TestLegacySettingsKeepRetroFont(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	if err := os.WriteFile(p, []byte("name = \"zoe\"\npalette = \"green\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadOrInitSettings(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Palette != "green" || s.Name != "zoe" || s.FontID() != "vt323" {
+		t.Fatalf("legacy = %+v (font %q)", s, s.FontID())
+	}
+	// A legacy file with no palette stays amber (""), not slate.
+	if err := os.WriteFile(p, []byte("name = \"zoe\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ = LoadOrInitSettings(p); s.Palette != "" || s.FontID() != "vt323" {
+		t.Fatalf("legacy no palette = %+v", s)
+	}
+}
+
+func TestFontRoundTrip(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	if err := SaveSettings(p, Settings{Font: "geist-mono"}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadOrInitSettings(p)
+	if err != nil || s.Font != "geist-mono" || s.FontID() != "geist-mono" {
+		t.Fatalf("got %+v, %v", s, err)
+	}
+}

@@ -1,0 +1,13 @@
+# Modern dark theme: Discord-style slate with an indigo accent. All CRT
+# effects are off, so it reads as a flat, quiet UI.
+bg = "#1E1F22"
+panel = "#2B2D31"
+fg = "#DBDEE1"
+dim = "#80848E"
+bright = "#A5B4FC"
+scanlines = false
+glow = 0.0
+vignette = 0.0
+scan_bar = false
+curvature = 0.0
+scanline_strength = 0.0

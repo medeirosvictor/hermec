@@ -107,7 +107,9 @@ func TestPresets(t *testing.T) {
 
 func TestNextPreset(t *testing.T) {
 	ps := Presets()
-	if NextPreset(ps[0]) != ps[1] || NextPreset(ps[3]) != ps[0] {
+	// NextPreset keeps the current Scanlines/FontSize, so compare by name
+	// across presets whose Scanlines differ (slate has them off).
+	if NextPreset(ps[0]) != ps[1] || NextPreset(ps[3]).Name != "slate" || NextPreset(ps[4]).Name != ps[0].Name {
 		t.Error("cycle order wrong")
 	}
 	// A custom theme starts the cycle at the first preset, keeping its

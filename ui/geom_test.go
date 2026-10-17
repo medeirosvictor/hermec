@@ -44,7 +44,7 @@ func TestGeomHeaderRow(t *testing.T) {
 func testGame(t *testing.T) *game {
 	t.Helper()
 	th := theme.Default()
-	face, err := theme.Face(th.FontSize)
+	face, err := theme.Face("vt323", th.FontSize)
 	if err != nil {
 		t.Skip(err)
 	}

@@ -199,15 +199,7 @@ func Run(opts Options) error {
 	if boot.notice == "" {
 		boot.notice = savedDevicesNotice(boot.set)
 	}
-	face, err := theme.Face(th.FontSize)
-	if err != nil {
-		return fmt.Errorf("font: %w", err)
-	}
-	faceS, err := theme.Face(th.FontSize * smallScale)
-	if err != nil {
-		return fmt.Errorf("font: %w", err)
-	}
-	faceT, err := theme.Face(th.FontSize * titleScale)
+	face, faceS, faceT, err := buildFaces(boot.set.FontID(), th.FontSize)
 	if err != nil {
 		return fmt.Errorf("font: %w", err)
 	}

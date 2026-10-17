@@ -282,7 +282,7 @@ func (g *game) updateMain() {
 	}
 	// Re-wrap only when the layout key changes; colours are applied at draw.
 	var relaid bool
-	s.ms.lines, relaid = s.ms.layout.Lines(ch, msgs, gm.cols, g.th.FontSize)
+	s.ms.lines, relaid = s.ms.layout.Lines(ch, msgs, gm.cols, g.th.FontSize, g.set.FontID())
 	if relaid {
 		s.ms.layoutGen++
 	}
@@ -572,6 +572,7 @@ type sbKey struct {
 	w, h       int
 	adv, lh    float64
 	fg, br, dm color.RGBA
+	font       string // a swap with an equal advance must still redraw
 }
 
 func (g *game) drawScrollback(screen *ebiten.Image, gm geometry) {
@@ -580,7 +581,7 @@ func (g *game) drawScrollback(screen *ebiten.Image, gm geometry) {
 		return
 	}
 	ms := &g.cur().ms
-	k := sbKey{ms.layoutGen, state.ClampScroll(len(ms.lines), gm.visible, ms.scroll), r.Dx(), r.Dy(), gm.adv, gm.lh, g.th.FG, g.th.Bright, g.th.Dim}
+	k := sbKey{ms.layoutGen, state.ClampScroll(len(ms.lines), gm.visible, ms.scroll), r.Dx(), r.Dy(), gm.adv, gm.lh, g.th.FG, g.th.Bright, g.th.Dim, g.set.FontID()}
 	if ms.sbImg == nil || k != ms.sbKey {
 		if ms.sbImg == nil || ms.sbImg.Bounds().Dx() != k.w || ms.sbImg.Bounds().Dy() != k.h {
 			if ms.sbImg != nil {

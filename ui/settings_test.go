@@ -158,3 +158,57 @@ func TestSavedDevicesNoticeNothingSaved(t *testing.T) {
 		t.Fatalf("got %q", n)
 	}
 }
+
+func TestFontRowCyclesRebuildsAndPersists(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	g := testGame(t)
+	g.settingsPath = p
+	g.set = state.Settings{Font: "vt323"}
+	var err error
+	if g.face, g.faceS, g.faceT, err = buildFaces("vt323", g.th.FontSize); err != nil {
+		t.Skip(err)
+	}
+	oldFace, oldSmall, oldTitle := g.face, g.faceS, g.faceT
+	var lc state.LayoutCache // what main_scene feeds: Lines(..., g.set.FontID())
+	lc.Lines("c", nil, 80, g.th.FontSize, g.set.FontID())
+
+	g.activateSetting(rowFont)
+
+	want := theme.NextFont("vt323")
+	if g.set.Font != want {
+		t.Fatalf("set.Font = %q, want %q", g.set.Font, want)
+	}
+	if g.face == nil || g.faceS == nil || g.faceT == nil {
+		t.Fatal("faces not rebuilt")
+	}
+	if g.face.Source == oldFace.Source || g.faceS.Source == oldSmall.Source || g.faceT.Source == oldTitle.Source {
+		t.Fatal("face sources did not change")
+	}
+	if g.face.Size != g.th.FontSize || g.faceS.Size != g.th.FontSize*smallScale || g.faceT.Size != g.th.FontSize*titleScale {
+		t.Fatalf("sizes %v %v %v", g.face.Size, g.faceS.Size, g.faceT.Size)
+	}
+	if _, relaid := lc.Lines("c", nil, 80, g.th.FontSize, g.set.FontID()); !relaid {
+		t.Fatal("layout cache not invalidated by the font swap")
+	}
+	if s, err := state.LoadSettings(p); err != nil || s.Font != want {
+		t.Fatalf("persisted %+v, %v", s, err)
+	}
+}
+
+func TestFontRowIsAfterPalette(t *testing.T) {
+	if rowFont != rowPalette+1 {
+		t.Fatalf("rowFont=%d rowPalette=%d", rowFont, rowPalette)
+	}
+}
+
+func TestStartupFaces(t *testing.T) {
+	th := theme.Default()
+	f, fs, ft, err := buildFaces("geist-mono", th.FontSize)
+	if err != nil {
+		t.Skip(err)
+	}
+	want, _ := theme.Face("geist-mono", th.FontSize)
+	if f.Source != want.Source || fs.Size != th.FontSize*smallScale || ft.Size != th.FontSize*titleScale {
+		t.Fatal("buildFaces does not use the saved font and startup scales")
+	}
+}
