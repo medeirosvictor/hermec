@@ -7,12 +7,47 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hraban/opus"
+	"github.com/thesyncim/gopus"
 )
+
+func TestEncoderSettings(t *testing.T) {
+	enc, err := newVoiceEncoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := enc.Bitrate(); got != 32000 {
+		t.Errorf("Bitrate = %d, want 32000", got)
+	}
+	if !enc.FECEnabled() {
+		t.Error("FEC not enabled")
+	}
+	if got := enc.PacketLoss(); got != 10 {
+		t.Errorf("PacketLoss = %d, want 10", got)
+	}
+	if got := enc.Application(); got != gopus.ApplicationVoIP {
+		t.Errorf("Application = %v, want VoIP", got)
+	}
+}
+
+func TestDecodePLCLength(t *testing.T) {
+	dec, err := gopus.NewDecoder(gopus.DefaultDecoderConfig(sampleRate, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf [decodeMax]int16
+	n, err := dec.DecodeInt16(encodeFrames(t, 1)[0], buf[:])
+	if err != nil || n != frameSize {
+		t.Fatalf("decode: n=%d err=%v, want %d", n, err, frameSize)
+	}
+	n, err = dec.DecodeInt16(nil, buf[:frameSize])
+	if err != nil || n != frameSize {
+		t.Fatalf("PLC: n=%d err=%v, want %d", n, err, frameSize)
+	}
+}
 
 func encodeFrames(t *testing.T, k int) [][]byte {
 	t.Helper()
-	enc, err := opus.NewEncoder(sampleRate, 1, opus.AppVoIP)
+	enc, err := newVoiceEncoder()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +58,7 @@ func encodeFrames(t *testing.T, k int) [][]byte {
 	var out [][]byte
 	for i := 0; i < k; i++ {
 		buf := make([]byte, 1500)
-		n, err := enc.Encode(pcm[i*frameSize:(i+1)*frameSize], buf)
+		n, err := enc.EncodeInt16(pcm[i*frameSize:(i+1)*frameSize], buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -134,7 +169,7 @@ func TestDropCount(t *testing.T) {
 
 func newTestCapture(t *testing.T, clock *time.Time) *capture {
 	t.Helper()
-	enc, err := opus.NewEncoder(sampleRate, 1, opus.AppVoIP)
+	enc, err := newVoiceEncoder()
 	if err != nil {
 		t.Fatal(err)
 	}

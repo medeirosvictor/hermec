@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gen2brain/malgo"
-	"github.com/hraban/opus"
+	"github.com/thesyncim/gopus"
 
 	"github.com/medeirosvictor/hermec/client"
 )
@@ -37,7 +37,7 @@ const (
 //     It is held only for short copies, never across a decode.
 type sender struct {
 	decMu sync.Mutex
-	dec   *opus.Decoder
+	dec   *gopus.Decoder
 	pcm   [decodeMax]int16
 
 	mu    sync.Mutex
@@ -124,7 +124,7 @@ func (m *mixer) lookup(fp string) *sender {
 	if s != nil {
 		return s
 	}
-	dec, err := opus.NewDecoder(sampleRate, 1)
+	dec, err := gopus.NewDecoder(gopus.DefaultDecoderConfig(sampleRate, 1))
 	if err != nil {
 		return nil
 	}
@@ -163,12 +163,12 @@ func (m *mixer) Write(fp string, frame []byte) {
 	defer s.decMu.Unlock()
 	var pcm []int16
 	if len(frame) > 0 {
-		if n, err := s.dec.Decode(frame, s.pcm[:]); err == nil && n > 0 {
+		if n, err := s.dec.DecodeInt16(frame, s.pcm[:]); err == nil && n > 0 {
 			pcm = s.pcm[:n]
 		}
 	}
 	if pcm == nil {
-		if err := s.dec.DecodePLC(s.pcm[:frameSize]); err != nil {
+		if _, err := s.dec.DecodeInt16(nil, s.pcm[:frameSize]); err != nil {
 			return
 		}
 		pcm = s.pcm[:frameSize]
@@ -215,7 +215,7 @@ func (s *sender) fill(out []int16, now time.Time) int {
 					}
 					return pos
 				}
-				err := s.dec.DecodePLC(s.cur[:])
+				_, err := s.dec.DecodeInt16(nil, s.cur[:])
 				s.decMu.Unlock()
 				if err != nil {
 					return pos

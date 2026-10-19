@@ -1,54 +1,234 @@
 name: release
 
-# Builds and publishes release artifacts when a v* tag is pushed.
+# Builds and publishes release artifacts when a v* tag is pushed. On pull
+# requests the same build and checks run as a dry run (TAG=dev-pr), but
+# nothing is published.
 #
 # This workflow BUILDS; it never tests. ci.yml remains the correctness gate
 # (only tag commits that are green there).
 #
-# Clean-machine caveat: these jobs run on runners that have toolchains
-# installed, so CI cannot prove the client zip runs on a machine with no
-# toolchain/DLLs. The gates for that are the v0.1.0-rc1 dry run plus a test
-# on a friend's machine (no Go, no msys2).
+# Client assets (one native runner each):
+#   hermec-windows-amd64.zip    windows-latest     MSYS2 UCRT64 gcc
+#   hermec-windows-arm64.zip    windows-11-arm     MSYS2 CLANGARM64 clang
+#   hermec-linux-amd64.tar.gz   ubuntu-22.04       system gcc
+#   hermec-linux-arm64.tar.gz   ubuntu-22.04-arm   system gcc
+#
+# Clean-machine caveat: runners have toolchains installed, so the checks here
+# (objdump / ldd allowlists, -version smoke run) are the proof that a binary
+# does not depend on them; a friend's machine is the final gate.
 
 on:
   push:
     tags: ['v*']
+  pull_request:
+
+env:
+  # Reaches shell steps only through the environment, never via ${{ }} inside
+  # a run: script.
+  TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'dev-pr' }}
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  client:
+    name: client ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            asset: hermec-windows-amd64.zip
+            bin: hermec.exe
+            msystem: UCRT64
+            msys-dir: ucrt64
+            msys-packages: mingw-w64-ucrt-x86_64-gcc
+            cc: gcc
+            objdump: objdump
+          - os: windows-11-arm
+            goos: windows
+            goarch: arm64
+            asset: hermec-windows-arm64.zip
+            bin: hermec.exe
+            msystem: CLANGARM64
+            msys-dir: clangarm64
+            msys-packages: >-
+              mingw-w64-clang-aarch64-clang
+              mingw-w64-clang-aarch64-lld
+              mingw-w64-clang-aarch64-llvm
+            cc: clang
+            objdump: llvm-objdump
+          - os: ubuntu-22.04
+            goos: linux
+            goarch: amd64
+            asset: hermec-linux-amd64.tar.gz
+            bin: hermec
+            cc: gcc
+          - os: ubuntu-22.04-arm
+            goos: linux
+            goarch: arm64
+            asset: hermec-linux-arm64.tar.gz
+            bin: hermec
+            cc: gcc
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate tag
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9A-Za-z.+-]+$ ]]; then
+            echo "Invalid tag '$TAG': must match ^v[0-9A-Za-z.+-]+$" >&2
+            exit 1
+          fi
+
+      - name: Install Linux build and runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # Build headers (same set as ci.yml) plus the runtime libraries
+          # needed to start the binary for the -version check.
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev \
+            libgl1 libx11-6 libxrandr2 libxcursor1 libxinerama1 libxi6 libxxf86vm1
+
       - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
         id: msys2
         with:
-          msystem: UCRT64
+          msystem: ${{ matrix.msystem }}
           update: false
-          install: >-
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-opus
-            mingw-w64-ucrt-x86_64-opusfile
-            mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-ntldd
+          install: ${{ matrix.msys-packages }}
+
       - uses: actions/setup-go@v5
         with:
           go-version: 'stable'
           cache: true
-      # The action installs msys2 wherever it likes (not necessarily
-      # C:\msys64), so hand the script the real ucrt64 bin dir.
-      - name: Build client zip and Windows server
+
+      - name: Put MSYS2 toolchain on PATH
+        if: runner.os == 'Windows'
         shell: pwsh
         env:
-          TAG: ${{ github.ref_name }}
+          MSYS2_LOC: ${{ steps.msys2.outputs.msys2-location }}
+          MSYS_DIR: ${{ matrix.msys-dir }}
         run: |
-          ./scripts/build-release.ps1 -Tag $env:TAG -SkipLinux -Msys2Bin (Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'ucrt64\bin')
+          $bin = Join-Path (Join-Path $env:MSYS2_LOC $env:MSYS_DIR) 'bin'
+          if (-not (Test-Path $bin)) { throw "MSYS2 bin dir not found: $bin" }
+          $bin | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Build client
+        shell: bash
+        env:
+          CGO_ENABLED: '1'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CC: ${{ matrix.cc }}
+          BIN: ${{ matrix.bin }}
+        run: |
+          ldflags="-s -w -X github.com/medeirosvictor/hermec/version.Version=$TAG"
+          if [ "$GOOS" = windows ]; then
+            ldflags="$ldflags -extldflags=-static"
+          fi
+          go build -trimpath -ldflags "$ldflags" -o "$BIN" ./cmd/hermec
+
+      - name: Check version stamp
+        shell: bash
+        env:
+          BIN: ${{ matrix.bin }}
+        run: |
+          got="$("./$BIN" -version)"
+          echo "got: $got"
+          if [ "$got" != "hermec $TAG" ]; then
+            echo "expected 'hermec $TAG'" >&2
+            exit 1
+          fi
+
+      - name: Check Windows imports (no MSYS2 DLLs)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          BIN: ${{ matrix.bin }}
+          OBJDUMP: ${{ matrix.objdump }}
+          MSYS2_LOC: ${{ steps.msys2.outputs.msys2-location }}
+        run: |
+          dlls="$("$OBJDUMP" -p "$BIN" | sed -n 's/.*DLL Name: *//p' | tr -d '\r')"
+          echo "imports:"
+          echo "$dlls"
+          if [ -z "$dlls" ]; then
+            echo "no imports found; objdump output unusable" >&2
+            exit 1
+          fi
+          fail=0
+          while IFS= read -r dll; do
+            [ -n "$dll" ] || continue
+            hit="$(find "$(cygpath -u "$MSYS2_LOC")" -iname "$dll" -print -quit 2>/dev/null)"
+            if [ -n "$hit" ]; then
+              echo "FAIL: $dll resolves to $hit" >&2
+              fail=1
+            fi
+          done <<< "$dlls"
+          exit $fail
+
+      - name: Check Linux shared libraries
+        if: runner.os == 'Linux'
+        env:
+          BIN: ${{ matrix.bin }}
+        run: |
+          ldd "./$BIN"
+          bad="$(ldd "./$BIN" | grep -Ev 'linux-vdso|ld-linux|libc\.so|libm\.so|libpthread|libdl|libresolv|librt' || true)"
+          if [ -n "$bad" ]; then
+            echo "unexpected shared library dependencies:" >&2
+            echo "$bad" >&2
+            exit 1
+          fi
+
+      - name: Write README
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+        run: |
+          mkdir stage
+          {
+            echo "HERMEC $TAG - voice and chat for small groups."
+            echo "Use headphones (no echo cancellation yet)."
+            if [ "$GOOS" = windows ]; then
+              echo 'Windows SmartScreen may warn about an unknown publisher: click "More info", then "Run anyway".'
+              echo 'If Windows Firewall asks, choose "Allow".'
+            else
+              echo "Needs a desktop with X11 or Wayland and PulseAudio or PipeWire."
+            fi
+          } > stage/README.txt
+          if [ "$GOOS" = windows ]; then
+            sed -i 's/$/\r/' stage/README.txt
+          fi
+
+      - name: Package (Windows zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          BIN: ${{ matrix.bin }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          Copy-Item $env:BIN stage/
+          Compress-Archive -Path stage/* -DestinationPath $env:ASSET
+          if (-not (Test-Path $env:ASSET)) { throw "missing $env:ASSET" }
+
+      - name: Package (Linux tar.gz)
+        if: runner.os == 'Linux'
+        env:
+          BIN: ${{ matrix.bin }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          install -m 755 "$BIN" stage/hermec
+          tar -czf "$ASSET" -C stage hermec README.txt
+          tar -tzvf "$ASSET"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: windows
-          path: dist/*
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
           if-no-files-found: error
 
-  linux:
+  server:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -56,27 +236,36 @@ jobs:
         with:
           go-version: 'stable'
           cache: true
-      # Duplicates the two linux go build lines of scripts/build-release.ps1
-      # (same ldflags stamp). Pure Go, no DLLs: not worth a second script.
-      - name: Build linux servers
+      - name: Validate tag
+        if: github.ref_type == 'tag'
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9A-Za-z.+-]+$ ]]; then
+            echo "Invalid tag '$TAG': must match ^v[0-9A-Za-z.+-]+$" >&2
+            exit 1
+          fi
+      # Pure Go, no DLLs; same ldflags stamp as the client.
+      - name: Build servers
         env:
           CGO_ENABLED: '0'
-          TAG: ${{ github.ref_name }}
         run: |
           mkdir dist
-          for arch in amd64 arm64; do
-            GOOS=linux GOARCH=$arch go build -trimpath \
+          for target in linux/amd64 linux/arm64 windows/amd64; do
+            goos="${target%/*}"; goarch="${target#*/}"
+            ext=""; [ "$goos" = windows ] && ext=".exe"
+            GOOS=$goos GOARCH=$goarch go build -trimpath \
               -ldflags "-s -w -X github.com/medeirosvictor/hermec/version.Version=$TAG" \
-              -o "dist/hermec-server-linux-$arch" ./cmd/hermec-server
+              -o "dist/hermec-server-$goos-$goarch$ext" ./cmd/hermec-server
           done
+          ls -l dist
       - uses: actions/upload-artifact@v4
         with:
-          name: linux
+          name: server
           path: dist/*
           if-no-files-found: error
 
   publish:
-    needs: [windows, linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [client, server]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -94,7 +283,6 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
         run: |
           flags=""
           # A hyphen in the tag (v0.1.0-rc1) marks a prerelease.

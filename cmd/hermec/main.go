@@ -3,6 +3,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 
 	"github.com/medeirosvictor/hermec/ui"
@@ -16,7 +17,13 @@ func main() {
 	themePath := flag.String("theme", "", "optional theme TOML file")
 	local := flag.Bool("local", false, "ignore -server and run an in-process server")
 	verbose := flag.Bool("v", false, "log breadcrumbs")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("hermec %s\n", version.Version)
+		return
+	}
 
 	log.Printf("hermec %s", version.Version)
 
