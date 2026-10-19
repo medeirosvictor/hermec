@@ -43,6 +43,9 @@
   - audio devices: input/output settings rows become a dropdown; switching must apply immediately, including mid-call. Known cause of "switching does nothing": capture/playback open the device once per voice join (`audio/capture.go:120-133`, `audio/playback.go:357-369`), so a change only applies after leave + rejoin.
   - bandwidth metrics: upload/download kbps per call and per person (pion stats + WebSocket bytes) in the quality panel and the log.
   - ping: clamp the RTT outlier (unanswered ping adds a 6 s sample, `client/rtt.go:75-82`); Victor saw 1400 ms spikes with fine voice; Tailscale DERP-vs-direct check pending (`tailscale ping`/`status`/`netcheck`).
+- **Screen-share round also carries (Victor 2026-10-19):** the session log file task FIRST; and all media on one fixed UDP port (ICE UDP mux) so a Tailscale grant can allow sharees only HERMEC's ports (README "How safe is this?" gap 1).
+- **Idea (later, Victor):** let something else host the server (e.g. a paid game-server/VPS) for better connections and to invite strangers without compromising security. Needs: TLS (wss://), invite links / allowlist (Plan A), server key pinning. The headless `hermec-server` already runs on Linux/Windows.
+- **Security roadmap ("make it safe", from README "How safe is this?"):** fixed media port + Tailscale grant recipe; optional "Tailscale only" listen for hosted servers; invite links/allowlist; TLS for public hosting; key pinning.
 - **Roadmap, "soon-ish":** noise suppression (RNNoise-class; find a pure-Go or WASM option to keep zero external libs).
 - **Open report:** "other apps can't use the mic at the same time". Our capture uses miniaudio's default shared mode (no exclusive request), so not by design; needs a repro (which app, what it shows, in call or not).
 

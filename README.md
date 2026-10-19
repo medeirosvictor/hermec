@@ -234,6 +234,48 @@ Any OS, once HERMEC is running:
    and press Enter.
 5. Put on headphones (there is no echo cancellation yet) and click a voice channel.
 
+## How safe is this? (Tailscale)
+
+**What is protected today:**
+
+- **Encrypted on the wire.** Tailscale wraps all traffic between devices in
+  WireGuard encryption, even when it goes through Tailscale's relay servers
+  (the relays cannot read it). Voice is also encrypted by WebRTC on top.
+- **Friends reach one machine only.** A friend you share your PC with sees only
+  that PC, not your other devices. Your PC cannot open connections into theirs.
+- **You can take access back.** Tailscale admin → Machines → your PC → Share →
+  Revoke invite.
+- **Keys, not passwords.** Every person has a key file. The server checks a
+  signature from that key when they connect.
+
+**Known gaps (we are working on these):**
+
+1. **A shared friend can reach every port on your PC, not just HERMEC.**
+   Tailscale's default policy allows all ports. You can't narrow it to
+   HERMEC yet, because voice uses random UDP ports. A fixed port is coming
+   with screen share. Until then, only share your PC with people you trust.
+2. **No password or invite list.** Anyone who can reach your server's port can
+   join. That includes other devices on your home Wi-Fi.
+3. **Windows Firewall on public Wi-Fi.** If you allowed HERMEC on "Public"
+   networks, your server is reachable on any café Wi-Fi your PC joins. To allow
+   only Tailscale and your home network, run PowerShell as admin (use your own
+   path to `hermec.exe`):
+
+   ```powershell
+   Get-NetFirewallApplicationFilter -Program "C:\Apps\hermec\hermec.exe" |
+     Get-NetFirewallRule |
+     Set-NetFirewallRule -RemoteAddress 100.64.0.0/10,LocalSubnet
+   ```
+
+   Drop `,LocalSubnet` to allow Tailscale only.
+4. **The host can read everything.** Chat and voice pass through the host's
+   server. Only join servers run by people you trust.
+5. **Names are not verified.** Anyone can pick any name. The fingerprint (hover
+   a server or person) is the real identity.
+6. **Not ready for the open internet.** HERMEC uses plain `ws://` without TLS.
+   Only reach servers through Tailscale or your LAN. Hosting on a rented server
+   for strangers needs TLS and invite links first (on the roadmap).
+
 ## Run
 
 ```sh
