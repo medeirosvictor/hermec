@@ -34,6 +34,18 @@
 
 (Standing gate: the audio round closes only on Victor's listening test, see above.)
 
+**Order set by Victor 2026-10-19 (after the first real friend call: Canada host ↔ Brazil + one more friend over Tailscale node sharing, worked; voice "pretty decent"):**
+- **Next: screen share, then webcam** (item 5 below; use govpx, pure-Go VP8).
+- **Then the "friends adjustments" round** (design drafted in chat 2026-10-19, not yet specced):
+  - session log file: one file per run in `<config>/hermec/logs/`, keep 10, always on (console only with -v), `[server]` lines from the hosted server, 30 s call-health lines, never chat text or keys, settings row "logs: open folder". Victor called this a priority — offered to fold it into the screen-share round.
+  - volume: per-person volume (right-click a person, 0–200%, saved per fingerprint) + mic gain settings row (0–200%) + soft limiter. Friends were too quiet in both directions.
+  - live names: new `profile` client→server message (name now; avatars/icon later), server re-broadcasts roster/presence/voice_state; client "profile sync" pushes local edits to every connected server and writes server-announced changes into servers.toml.
+  - audio devices: input/output settings rows become a dropdown; switching must apply immediately, including mid-call. Known cause of "switching does nothing": capture/playback open the device once per voice join (`audio/capture.go:120-133`, `audio/playback.go:357-369`), so a change only applies after leave + rejoin.
+  - bandwidth metrics: upload/download kbps per call and per person (pion stats + WebSocket bytes) in the quality panel and the log.
+  - ping: clamp the RTT outlier (unanswered ping adds a 6 s sample, `client/rtt.go:75-82`); Victor saw 1400 ms spikes with fine voice; Tailscale DERP-vs-direct check pending (`tailscale ping`/`status`/`netcheck`).
+- **Roadmap, "soon-ish":** noise suppression (RNNoise-class; find a pure-Go or WASM option to keep zero external libs).
+- **Open report:** "other apps can't use the mic at the same time". Our capture uses miniaudio's default shared mode (no exclusive request), so not by design; needs a repro (which app, what it shows, in call or not).
+
 0. **B.1 real-mouse checklist (merged to main; run `go run ./cmd/hermec -local` plus a second server):** spec section 5 (call on A, click B, chat on B, back to A with the call uninterrupted; right-click tile, Disconnect on the call server ends the call; unread dot and bright channel; bust placement; kill a server and watch the tile go reconnecting and back), plus: Ctrl+M while viewing another server, the call bar look on the connect scene, rail marks at 100% and 150% DPI, viewed + reconnecting tile look. Then the **B.2 checklist** (spec section 5, last bullet; merged to main). Also on the B.2 checklist: clicking the dim members toggle in a narrow window turns the saved setting off — decide whether that click should do nothing.
 
 1. **Owner real-mouse checklist for the title bar:** drag, snap, Win+arrows, edge/corner resize, double-click maximize, buttons, maximized layout, 150% DPI. Also the Round A eyeball checks (four presets, glow strength, curvature subtlety).
