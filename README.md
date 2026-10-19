@@ -219,6 +219,21 @@ So you build it yourself. It takes a few minutes.
 To update, run `git pull`, then the build line again
 (`go build -o hermec ./cmd/hermec`).
 
+## Join a friend's server
+
+Any OS, once HERMEC is running:
+
+1. Get on the same network as your friend. Usually that means Tailscale:
+   install it from <https://tailscale.com/download>, sign in, and accept the
+   share invite your friend sent. Their PC shows up in your Tailscale menu.
+2. Ask your friend for their **invite address** (they copy it from their
+   server tile's right-click menu). It looks like `ws://100.x.x.x:7697/`.
+3. Optional check (macOS/Linux Terminal): `nc -vz 100.x.x.x 7697` should say
+   "succeeded".
+4. In HERMEC click **+**, then **Join**. Paste the address, including `ws://`,
+   and press Enter.
+5. Put on headphones (there is no echo cancellation yet) and click a voice channel.
+
 ## Run
 
 ```sh
