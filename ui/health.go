@@ -110,5 +110,6 @@ func (g *game) openLogFolder() {
 	if open == nil {
 		open = openURL
 	}
+	g.notice = g.opts.LogDir
 	open(g.opts.LogDir)
 }

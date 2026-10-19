@@ -38,7 +38,7 @@ func main() {
 		} else {
 			defer f.Close()
 			logFile, logDir = f, dir
-			log.SetOutput(io.MultiWriter(os.Stderr, f))
+			log.SetOutput(fileFirstWriter{file: f, console: os.Stderr})
 			log.Printf("session log: %s", path)
 		}
 	} else {
@@ -53,4 +53,15 @@ func main() {
 	}); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// fileFirstWriter writes every line to the session file first and then to the
+// console, and ignores console errors (stderr may be invalid in a GUI-subsystem
+// build), so the file always gets the line. It reports the file's error only.
+type fileFirstWriter struct{ file, console io.Writer }
+
+func (w fileFirstWriter) Write(p []byte) (int, error) {
+	n, err := w.file.Write(p)
+	_, _ = w.console.Write(p)
+	return n, err
 }
