@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -275,7 +274,7 @@ func (vs *voiceSession) logStats() {
 		kbps = float64(total-vs.statsBytes) * 8 / 1000 / secs
 	}
 	vs.statsAt, vs.statsBytes = now, total
-	log.Printf("voice %q: %d participants, ~%.0f kbps relayed, %d write errors", vs.channel, len(vs.peers), kbps, vs.writeErrors.Load())
+	vs.srv.logf("voice %q: %d participants, ~%.0f kbps relayed, %d write errors", vs.channel, len(vs.peers), kbps, vs.writeErrors.Load())
 }
 
 // teardown (actor): close every PeerConnection, then join every goroutine
@@ -513,7 +512,7 @@ func (vs *voiceSession) renegotiate(p *peer) {
 		err = p.pc.SetLocalDescription(offer)
 	}
 	if err != nil {
-		log.Printf("voice %q: renegotiation offer failed: %v", vs.channel, err)
+		vs.srv.logf("voice %q: renegotiation offer failed: %v", vs.channel, err)
 		p.c.sendError("bad_request", "renegotiation failed; media reset, send a new rtc_offer")
 		vs.releaseMedia(p)
 		return
@@ -525,7 +524,7 @@ func (vs *voiceSession) renegotiate(p *peer) {
 	p.offerTimer = time.AfterFunc(answerTimeout, func() {
 		vs.post(func() {
 			if p.negotiating && p.offerGen == gen && p.pc == pc {
-				log.Printf("voice %q: no rtc_answer from %s; resetting its media", vs.channel, p.c.fingerprint)
+				vs.srv.logf("voice %q: no rtc_answer from %s; resetting its media", vs.channel, p.c.fingerprint)
 				p.c.sendError("bad_request", "rtc_answer timeout; media reset, send a new rtc_offer")
 				vs.releaseMedia(p)
 			}

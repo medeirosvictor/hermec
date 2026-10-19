@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -31,8 +32,10 @@ type Options struct {
 	Name      string // empty: derived from the identity fingerprint
 	KeyPath   string // empty: <user config dir>/hermec/identity.key
 	ThemePath string
-	Local     bool // ignore ServerURL; run an in-process server
-	Verbose   bool // log breadcrumbs
+	Local     bool      // ignore ServerURL; run an in-process server
+	Verbose   bool      // log breadcrumbs to the console too
+	LogDir    string    // session log folder; empty = no file
+	LogFile   io.Writer // the open session log; nil = none. Log lines reach it through the std logger and logf
 
 	ServersPath  string // empty: <user config dir>/hermec/servers.toml
 	SettingsPath string // empty: <user config dir>/hermec/settings.toml
@@ -67,6 +70,8 @@ type game struct {
 	sendCh  chan sendResult
 	voiceCh chan voiceResult
 
+	fileLog    *log.Logger          // session log file; nil = none
+	nextHealth time.Time            // next call-health line; zero outside a call
 	closeStale func(*client.Client) // test seam: closes stale dial results; nil = Close
 
 	muteCh     chan muteReq
@@ -255,20 +260,26 @@ func Run(opts Options) error {
 		dialCh: make(chan dialResult, 8), probeCh: make(chan []state.DiscoveredIn, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan sendResult, 8), voiceCh: make(chan voiceResult, 4), w: 960, h: 600, crtOn: crtOn,
 		settingsPath: boot.settingsPath, set: boot.set, notice: boot.notice, autoName: opts.Name,
 	}
+	if opts.LogFile != nil {
+		g.setLogWriter(opts.LogFile)
+	}
+	g.logStartup()
 	g.updateCh = make(chan updateResult, 1)
 	g.startUpdateCheck()
 	g.muteCh, g.muteFailCh = make(chan muteReq, 1), make(chan muteFail, 4)
 	go g.muteWorker()
 	url := opts.ServerURL
 	if opts.Local {
-		srv := server.New(server.Config{
+		lcfg := server.Config{
 			Addr:          "127.0.0.1:0",
 			Discoverable:  true,
 			ServerName:    "local",
 			Channels:      []string{"general"},
 			VoiceChannels: []string{"voice"},
 			Roles:         roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
-		})
+		}
+		serverLogf(&lcfg)
+		srv := server.New(lcfg)
 		if err := srv.Start(); err != nil {
 			return fmt.Errorf("local server: %w", err)
 		}
@@ -323,12 +334,6 @@ func Run(opts Options) error {
 	return err
 }
 
-func (g *game) logf(format string, args ...any) {
-	if g.opts.Verbose {
-		log.Printf(format, args...)
-	}
-}
-
 func (g *game) Update() error {
 	g.frame++
 	if !g.barInst { // once the window exists: take over the non-client area
@@ -373,6 +378,7 @@ func (g *game) Update() error {
 	g.dt = frameDT()
 	g.stepBar(g.dt)     // before buildHits: hit rects follow the drawn bar
 	g.stepQuality(g.dt) // after stepBar (geometry), before buildHits
+	g.stepHealth(time.Now())
 	g.buildHits()
 	g.stepHighlights(g.dt)
 	g.updateCursorShape()

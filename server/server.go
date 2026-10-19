@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"sync"
@@ -57,6 +58,17 @@ type Config struct {
 	// ServerName is advertised in discovery replies (max 64 runes). Empty
 	// means the listener's host:port.
 	ServerName string
+	// Logf receives every server log line; nil means log.Printf.
+	Logf func(format string, args ...any)
+}
+
+// logf writes a server log line through cfg.Logf, or log.Printf.
+func (s *Server) logf(format string, args ...any) {
+	if s.cfg.Logf != nil {
+		s.cfg.Logf(format, args...)
+		return
+	}
+	log.Printf(format, args...)
 }
 
 const (

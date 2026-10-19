@@ -4,8 +4,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"os"
+	"time"
 
+	"github.com/medeirosvictor/hermec/applog"
 	"github.com/medeirosvictor/hermec/ui"
 	"github.com/medeirosvictor/hermec/version"
 )
@@ -25,11 +29,27 @@ func main() {
 		return
 	}
 
+	var logFile io.Writer
+	var logDir string
+	if cfgDir, err := os.UserConfigDir(); err == nil {
+		dir := applog.Dir(cfgDir)
+		if f, path, err := applog.Open(dir, time.Now(), 10); err != nil {
+			log.Printf("session log disabled: %v", err)
+		} else {
+			defer f.Close()
+			logFile, logDir = f, dir
+			log.SetOutput(io.MultiWriter(os.Stderr, f))
+			log.Printf("session log: %s", path)
+		}
+	} else {
+		log.Printf("session log disabled: %v", err)
+	}
+
 	log.Printf("hermec %s", version.Version)
 
 	if err := ui.Run(ui.Options{
 		ServerURL: *server, Name: *name, KeyPath: *key, ThemePath: *themePath,
-		Local: *local, Verbose: *verbose,
+		Local: *local, Verbose: *verbose, LogDir: logDir, LogFile: logFile,
 	}); err != nil {
 		log.Fatal(err)
 	}

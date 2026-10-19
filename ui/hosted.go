@@ -183,6 +183,7 @@ func (g *game) defaultName() string {
 // the server really got, which differs from cfg only for port 0.
 func (g *game) startHosted() error {
 	h := g.hosted
+	serverLogf(&h.cfg)
 	srv := server.New(h.cfg)
 	if err := srv.Start(); err != nil {
 		h.srv = nil

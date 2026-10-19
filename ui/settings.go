@@ -29,6 +29,7 @@ const (
 	rowInput
 	rowOutput
 	rowUpdate
+	rowLogs
 	rowHelp
 	settingsRows
 )
@@ -434,6 +435,8 @@ func (g *game) activateSetting(row int) {
 		g.cycleSize()
 	case rowUpdate:
 		g.activateUpdateRow()
+	case rowLogs:
+		g.openLogFolder()
 	case rowHelp:
 		g.openHelp()
 	}
@@ -482,6 +485,7 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 		"input:     " + deviceLabel(g.set.InputDevice, g.devIn),
 		"output:    " + deviceLabel(g.set.OutputDevice, g.devOut),
 		updateRowLabel(g.updStatus, g.update, g.version()),
+		"logs:      open folder ›",
 		"help:      how hermec works ›",
 	}
 	first, n := g.settingsRowsWindow()
