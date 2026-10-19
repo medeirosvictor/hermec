@@ -483,6 +483,18 @@ func TestStopHostedWithoutSessionShowsFailedTile(t *testing.T) {
 	if !g.tileFacts(state.ServerEntry{URL: hostedKey}).Failed {
 		t.Fatal("stopped sessionless hosted tile is not failed")
 	}
+	withLayout(t, g)
+	g.buildHits()
+	idx := -1
+	for i, e := range g.servers {
+		if e.URL == hostedKey {
+			idx = i
+		}
+	}
+	x0, y0, x1, y1 := retryBadgeRect(pad + float64(idx)*railTileH)
+	if h, ok := g.hitFor((x0+x1)/2, (y0+y1)/2); !ok || h.Kind != state.HitRailRetry || h.ID != idx {
+		t.Fatalf("hit at stopped hosted badge = %+v, %v (tile %d)", h, ok, idx)
+	}
 }
 
 func TestLostTextStopped(t *testing.T) {

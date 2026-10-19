@@ -249,7 +249,8 @@ func (g *game) addRailHits() {
 		g.hits.Add(state.Hit{X0: 0, Y0: y, X1: railWidth, Y1: y + railTileH, Kind: state.HitRailTile, ID: i})
 	}
 	for i := 0; i < g.railTiles(); i++ { // after the tiles: the last registered wins, so a badge beats its tile
-		if s := g.sess[g.servers[i].URL]; s != nil && s.failed {
+		url := g.servers[i].URL
+		if s := g.sess[url]; (s != nil && s.failed) || g.hostedStopped(url) {
 			x0, y0, x1, y1 := retryBadgeRect(pad + float64(i)*railTileH)
 			g.hits.Add(state.Hit{X0: x0, Y0: y0, X1: x1, Y1: y1, Kind: state.HitRailRetry, ID: i})
 		}
