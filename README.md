@@ -251,9 +251,20 @@ Any OS, once HERMEC is running:
 **Known gaps (we are working on these):**
 
 1. **A shared friend can reach every port on your PC, not just HERMEC.**
-   Tailscale's default policy allows all ports. You can't narrow it to
-   HERMEC yet, because voice uses random UDP ports. A fixed port is coming
-   with screen share. Until then, only share your PC with people you trust.
+   Tailscale's default policy allows all ports. You can narrow it to HERMEC,
+   because all voice and video media now uses one UDP port, the same number
+   as the server's port (UDP 7697 next to TCP 7697). In the Tailscale admin
+   console, open **Access controls** and add this to the `grants` list, then
+   remove the default allow-all grant for shared users:
+
+   ```json
+   {"src": ["autogroup:shared"], "dst": ["*"], "ip": ["tcp:7697", "udp:7697"]}
+   ```
+
+   Shared friends can then reach only TCP and UDP 7697 on your devices. This
+   needs HERMEC v0.5.0 or newer on the host. If you run on another port, use
+   that port number instead of 7697; `media_port` in the server config picks a
+   different media port if you need one.
 2. **No password or invite list.** Anyone who can reach your server's port can
    join. That includes other devices on your home Wi-Fi.
 3. **Windows Firewall on public Wi-Fi.** If you allowed HERMEC on "Public"
@@ -313,7 +324,9 @@ will feed other participants' audio back into your microphone; headsets are
 strongly recommended.**
 
 For internet-facing servers, configure `public_ip` (your server's public IPv4)
-and optionally `udp_port_min`/`udp_port_max` for firewall policy. See
+and, for firewall policy, note that all media uses one UDP port (the server's
+port number by default; `media_port` overrides it, and `udp_port_min`/
+`udp_port_max` select the older random-port range instead). See
 [example.server.toml](example.server.toml) for details.
 
 ## Chat with friends

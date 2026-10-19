@@ -175,7 +175,9 @@ func (s *Server) newRTCAPI() *webrtc.API {
 	ir := &interceptor.Registry{}
 	_ = webrtc.RegisterDefaultInterceptors(me, ir)
 	se := webrtc.SettingEngine{}
-	if s.cfg.UDPPortMin != 0 && s.cfg.UDPPortMax != 0 {
+	if s.mux != nil {
+		se.SetICEUDPMux(s.mux)
+	} else if s.cfg.UDPPortMin != 0 && s.cfg.UDPPortMax != 0 {
 		_ = se.SetEphemeralUDPPortRange(s.cfg.UDPPortMin, s.cfg.UDPPortMax)
 	}
 	if s.cfg.AllowLoopbackICE {

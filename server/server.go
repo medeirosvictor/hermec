@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/pion/ice/v4"
 
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
@@ -43,6 +44,10 @@ type Config struct {
 	// UDPPortMin and UDPPortMax, when both non-zero, restrict the UDP ports
 	// used for voice media (for firewalls). Min must be <= Max.
 	UDPPortMin, UDPPortMax uint16
+	// MediaPort is the single UDP port all WebRTC media uses (through an ICE
+	// UDP mux). 0 means the same port number as the listener. Ignored when
+	// UDPPortMin/UDPPortMax are set (legacy ephemeral range).
+	MediaPort int
 	// AllowLoopbackICE restricts ICE to loopback (no LAN candidates, no mDNS).
 	// This breaks remote peers, so it is for tests only; not exposed in the
 	// TOML file.
@@ -101,6 +106,7 @@ type Server struct {
 	http *http.Server
 	ln   net.Listener
 	udp  net.PacketConn // discovery responder; nil when not discoverable
+	mux  ice.UDPMux     // single-port media mux; nil in legacy UDP-range mode
 }
 
 // New returns a Server for cfg. Call Start to begin serving.
@@ -135,7 +141,7 @@ func (s *Server) Start() error {
 	}
 	var err error
 	for i := 0; i < attempts; i++ {
-		if err = s.start(); !errors.Is(err, ErrDiscoveryBind) {
+		if err = s.start(); !errors.Is(err, ErrDiscoveryBind) && !errors.Is(err, ErrMediaBind) {
 			return err
 		}
 	}
@@ -162,13 +168,11 @@ func (s *Server) start() error {
 		})
 	}
 	s.ln = ln
-	if s.cfg.Discoverable {
-		if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
-			if err := s.startDiscovery(discoveryBindHost(tcp.IP), tcp.Port); err != nil {
-				ln.Close()
-				s.ln = nil
-				return fmt.Errorf("server: discovery listen: %w: %w", ErrDiscoveryBind, err)
-			}
+	if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
+		if err := s.startUDP(discoveryBindHost(tcp.IP), tcp.Port); err != nil {
+			ln.Close()
+			s.ln = nil
+			return err
 		}
 	}
 	s.http = &http.Server{
@@ -208,6 +212,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.udp != nil {
 		s.udp.Close() // unblocks the discovery loop
+	}
+	if s.mux != nil {
+		s.mux.Close()
 	}
 	// Hijacked websocket connections are not closed by http.Server.Shutdown.
 	for _, c := range open {

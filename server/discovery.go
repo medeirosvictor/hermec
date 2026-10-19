@@ -3,7 +3,6 @@ package server
 import (
 	"errors"
 	"net"
-	"strconv"
 	"time"
 	"unicode/utf8"
 
@@ -43,14 +42,17 @@ func discoveryBindHost(ip net.IP) string {
 	return ip.String()
 }
 
-// startDiscovery binds the UDP responder on host:port (the TCP listener's
-// port). Called from Start after the TCP listener is up; its goroutine is
-// joined by Shutdown through s.wg.
-func (s *Server) startDiscovery(host string, port int) error {
-	pc, err := listenUDP("udp", net.JoinHostPort(host, strconv.Itoa(port)))
-	if err != nil {
-		return err
-	}
+// discoverer answers discovery probes. It owns the sources table and is
+// driven by a single goroutine (discoverLoop, or the shared media socket's
+// reader), so it needs no locking.
+type discoverer struct {
+	s       *Server
+	reply   []byte
+	sources map[string]*discoverSource
+}
+
+// newDiscoverer builds the responder announcing the given listen port.
+func (s *Server) newDiscoverer(port int) (*discoverer, error) {
 	name := s.cfg.ServerName
 	if name == "" {
 		name = s.ln.Addr().String()
@@ -63,24 +65,45 @@ func (s *Server) startDiscovery(host string, port int) error {
 		Hermec: 1, Name: name, Port: port, Ver: version.Version,
 	})
 	if err != nil {
-		pc.Close()
-		return err
+		return nil, err
 	}
-	s.udp = pc
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.discoverLoop(pc, reply)
-	}()
-	return nil
+	return &discoverer{s: s, reply: reply, sources: make(map[string]*discoverSource)}, nil
 }
 
-// discoverLoop answers valid probes. Anything that is not exactly the probe
-// magic (including oversized datagrams) is dropped silently. Replies go only
-// to the probe's source address, one per probe, rate limited per source IP.
-// It owns the sources table; no locking is needed.
-func (s *Server) discoverLoop(pc net.PacketConn, reply []byte) {
-	sources := make(map[string]*discoverSource)
+// handle answers pkt if it is exactly the probe magic and reports whether it
+// was one. Replies go only to the probe's source address, one per probe, rate
+// limited per source IP.
+func (d *discoverer) handle(pc net.PacketConn, pkt []byte, from net.Addr) bool {
+	if string(pkt) != discover.Magic {
+		return false
+	}
+	now := d.s.clock()
+	key := sourceKey(from)
+	src, ok := d.sources[key]
+	if !ok {
+		if len(d.sources) >= discoverMaxSources {
+			for k, v := range d.sources {
+				if now.Sub(v.seen) > discoverIdle {
+					delete(d.sources, k)
+				}
+			}
+			if len(d.sources) >= discoverMaxSources {
+				return true // table full of active sources: drop
+			}
+		}
+		src = &discoverSource{b: newBucket(discoverRate, discoverBurst, now)}
+		d.sources[key] = src
+	}
+	src.seen = now
+	if src.b.allow(now) {
+		_, _ = pc.WriteTo(d.reply, from)
+	}
+	return true
+}
+
+// discoverLoop serves probes on a dedicated socket. Anything that is not
+// exactly the probe magic (including oversized datagrams) is dropped silently.
+func (s *Server) discoverLoop(pc net.PacketConn, d *discoverer) {
 	buf := make([]byte, discover.MaxPacket+1)
 	errRun := 0
 	for {
@@ -98,31 +121,7 @@ func (s *Server) discoverLoop(pc net.PacketConn, reply []byte) {
 			continue
 		}
 		errRun = 0
-		if string(buf[:n]) != discover.Magic {
-			continue
-		}
-		now := s.clock()
-		key := sourceKey(from)
-		src, ok := sources[key]
-		if !ok {
-			if len(sources) >= discoverMaxSources {
-				for k, v := range sources {
-					if now.Sub(v.seen) > discoverIdle {
-						delete(sources, k)
-					}
-				}
-				if len(sources) >= discoverMaxSources {
-					continue // table full of active sources: drop
-				}
-			}
-			src = &discoverSource{b: newBucket(discoverRate, discoverBurst, now)}
-			sources[key] = src
-		}
-		src.seen = now
-		if !src.b.allow(now) {
-			continue
-		}
-		_, _ = pc.WriteTo(reply, from)
+		d.handle(pc, buf[:n], from)
 	}
 }
 

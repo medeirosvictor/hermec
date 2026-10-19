@@ -152,7 +152,12 @@ func TestDiscoveryRateLimit(t *testing.T) {
 }
 
 func TestDiscoverableFalseNoSocket(t *testing.T) {
-	s := startDiscoverable(t, func(c *Config) { c.Discoverable = false }, nil)
+	// The legacy UDP range keeps media off the listen port, so with
+	// discovery off nothing binds UDP there.
+	s := startDiscoverable(t, func(c *Config) {
+		c.Discoverable = false
+		c.UDPPortMin, c.UDPPortMax = 50000, 50100
+	}, nil)
 	if s.udp != nil {
 		t.Fatal("udp socket created")
 	}
