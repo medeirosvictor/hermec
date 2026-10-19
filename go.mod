@@ -1,18 +1,17 @@
 module github.com/medeirosvictor/hermec
 
-go 1.26.0
-
-require github.com/gorilla/websocket v1.5.3
+go 1.27.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/gen2brain/malgo v0.11.26
+	github.com/gorilla/websocket v1.5.3
 	github.com/hajimehoshi/ebiten/v2 v2.10.4
-	github.com/hraban/opus v0.0.0-20260708213942-bde8e4304501
 	github.com/pion/ice/v4 v4.4.7
 	github.com/pion/interceptor v0.1.49
 	github.com/pion/webrtc/v4 v4.2.23
+	github.com/thesyncim/gopus v0.2.2
 	golang.org/x/image v0.46.0
 	golang.org/x/sys v0.48.0
 )

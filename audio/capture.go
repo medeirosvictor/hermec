@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gen2brain/malgo"
-	"github.com/hraban/opus"
+	"github.com/thesyncim/gopus"
 
 	"github.com/medeirosvictor/hermec/client"
 )
@@ -54,7 +54,7 @@ type pcmFrame struct {
 type capture struct {
 	mctx   *malgo.AllocatedContext
 	dev    *malgo.Device
-	enc    *opus.Encoder
+	enc    *gopus.Encoder
 	meter  *Meter
 	frames chan pcmFrame
 	done   chan struct{}
@@ -73,20 +73,36 @@ type capture struct {
 	times      []time.Time // scratch for dropCount
 }
 
+// newVoiceEncoder builds the 48kHz mono VoIP encoder used for the mic stream:
+// 32kbps with in-band FEC tuned for 10% expected packet loss.
+func newVoiceEncoder() (*gopus.Encoder, error) {
+	enc, err := gopus.NewEncoder(gopus.EncoderConfig{
+		SampleRate:  sampleRate,
+		Channels:    1,
+		Application: gopus.ApplicationVoIP,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := enc.SetBitrate(bitrate); err != nil {
+		return nil, err
+	}
+	enc.SetFEC(true)
+	if err := enc.SetPacketLoss(10); err != nil {
+		return nil, err
+	}
+	return enc, nil
+}
+
 // Capture opens the microphone named deviceName ("" = system default; a
 // missing name is an error, callers resolve fallbacks first) at 48kHz mono
 // and returns an AudioSource of 20ms Opus frames at 32kbps, plus a Meter of
 // the mic level. Type-assert the source to io.Closer to stop it.
 func Capture(deviceName string) (client.AudioSource, *Meter, error) {
-	enc, err := opus.NewEncoder(sampleRate, 1, opus.AppVoIP)
+	enc, err := newVoiceEncoder()
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := enc.SetBitrate(bitrate); err != nil {
-		return nil, nil, err
-	}
-	_ = enc.SetInBandFEC(true)
-	_ = enc.SetPacketLossPerc(10)
 
 	mctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
@@ -233,7 +249,7 @@ func (c *capture) ReadOpusFrame() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	n, err := c.enc.Encode(f.pcm[:], c.obuf)
+	n, err := c.enc.EncodeInt16(f.pcm[:], c.obuf)
 	if err != nil {
 		return nil, err
 	}
