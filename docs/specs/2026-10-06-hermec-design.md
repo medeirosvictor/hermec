@@ -94,7 +94,7 @@ Browser (WebRTC is native there) and mobile connect to unchanged servers. Mobile
 | Language (everything) | **Go** | Pion ecosystem; trivial cross-compilation (incl. `linux/arm64` for Pi); static binaries; contributor pool; strong AI-assisted-development support |
 | WebRTC | **Pion** | Battle-tested pure-Go WebRTC (LiveKit's foundation); used by server and client |
 | Client rendering | **Ebiten** | Pure-Go 2D engine; full custom drawing for the CRT aesthetic; Kage shaders; video frames render as textures |
-| Voice codec | **libopus via CGo** | The one C dependency; no mature pure-Go Opus encoder exists |
+| Voice codec | **libopus via CGo** *(replaced 2026-10-19 by pure-Go gopus; malgo is the remaining cgo piece)* | The one C dependency; no mature pure-Go Opus encoder exists |
 | Identity crypto | **Ed25519 (Go stdlib)** | Modern default; tiny keys; no external dependency |
 
 Known caveat: CGo (opus; platform screen-capture APIs) means cross-compiling requires a C toolchain per target — a build-tooling chore, not an architecture problem. Ships as one file regardless.

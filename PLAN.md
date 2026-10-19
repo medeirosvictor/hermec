@@ -52,7 +52,7 @@ A small, open-source, censorship-resilient comms app — "simple like TeamSpeak.
 - **Go everywhere** — core/service layer, server, desktop client. One language, one repo; cross-compiles to Pi (`GOARCH=arm64`) and every desktop OS.
 - **Pion** — pure-Go WebRTC for server and client transport.
 - **Ebiten** — pure-Go 2D engine rendering the client; custom widgets, Kage shaders for CRT effects.
-- **libopus via CGo** — the one C dependency (voice codec). Caveat: CGo means cross-compiling needs a C toolchain per target; still ships as one file.
+- **Opus via pure-Go gopus** — *update 2026-10-19:* libopus (CGo) was replaced by gopus, so the voice codec is pure Go. malgo (miniaudio) is the remaining cgo piece, so builds still need a C compiler but no libraries. (Originally: libopus via CGo, the one C dependency.)
 - **Client aesthetic:** old military field-radio / amber phosphor CRT — monochrome amber on black, bitmap fonts, scanline/glow shaders, runtime Floyd–Steinberg-dithered 1-bit avatars.
 
 ## Service layer & integration (agreed)

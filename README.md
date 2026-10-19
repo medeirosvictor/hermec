@@ -62,14 +62,38 @@ wire protocol for what exists is specified in [docs/protocol.md](docs/protocol.m
 Download the latest build from the
 [Releases page](https://github.com/medeirosvictor/hermec/releases):
 
-1. Download `hermec-windows-amd64.zip`.
+Pick the app that matches your computer:
+
+| Download | For |
+|---|---|
+| `hermec-windows-amd64.zip` | Windows, most Intel/AMD PCs (x64) |
+| `hermec-windows-arm64.zip` | Windows on ARM, such as Snapdragon laptops |
+| `hermec-linux-amd64.tar.gz` | Linux, most Intel/AMD PCs (x64) |
+| `hermec-linux-arm64.tar.gz` | Linux on ARM, such as Raspberry Pi and other ARM boards |
+
+Mac: there is no download. Build from source, see
+[macOS: run from Terminal](#macos-run-from-terminal) below.
+
+**Windows:**
+
+1. Download the zip for your PC.
 2. Unzip it anywhere.
 3. Run `hermec.exe`.
 
-No toolchain is needed; the zip includes the runtime DLLs voice requires.
+It is one file. No toolchain and no extra DLLs are needed.
 The exe is unsigned, so Windows SmartScreen may warn: click **More info**, then
 **Run anyway** (see [the friends quickstart](docs/quickstart-friends.md#what-friends-receive)).
-Each release also ships Linux and Windows servers (`hermec-server-*`) and a
+
+**Linux:**
+
+1. Download the `.tar.gz` for your machine.
+2. Unpack it: `tar xzf hermec-linux-amd64.tar.gz`
+3. Run `./hermec`.
+
+You need a desktop with X11 or Wayland, and PulseAudio or PipeWire for sound.
+
+**Servers and checks:** each release also ships servers (`hermec-server-linux-amd64`,
+`hermec-server-linux-arm64`, `hermec-server-windows-amd64.exe`) and a
 `SHA256SUMS.txt` to verify downloads. Release notes are generated from the
 commits in each release.
 
@@ -144,22 +168,22 @@ Bundled fonts (all monospace, under the SIL Open Font License 1.1, licences in `
 
 Most people should use the [prebuilt release](#install) instead.
 
-**Prerequisites:** Go 1.26 or newer. If building `cmd/hermec` (GUI client) with
-voice support, also install a C compiler and Opus audio libraries:
+**Prerequisites:** Go 1.27 or newer. The voice codec (Opus) is pure Go, so you
+need no audio libraries and no pkg-config. The GUI client (`cmd/hermec`) still
+needs a C compiler for the audio backend (miniaudio):
+
+- **Windows:** MSYS2 with the UCRT64 gcc only.
+- **Linux:** `gcc`.
+- **macOS:** Xcode command line tools (`xcode-select --install`).
 
 **Windows (MSYS2):**
 
 ```sh
 winget install MSYS2.MSYS2
-pacman -S mingw-w64-ucrt-x86_64-{gcc,opus,opusfile,pkgconf}
+pacman -S mingw-w64-ucrt-x86_64-gcc
 export PATH="/c/msys64/ucrt64/bin:$PATH"
 CGO_ENABLED=1 go build ./cmd/hermec
 ```
-
-**Windows runtime note:** Running a voice-enabled `hermec.exe` requires the MSYS2
-runtime DLLs on PATH. Either add `C:\msys64\ucrt64\bin` to your system PATH, or
-copy the needed DLLs (`libopus-0.dll`, `libopusfile-0.dll`, and their dependencies)
-next to the executable.
 
 The server (`cmd/hermec-server`) is pure Go and does not require cgo on any
 platform.
@@ -167,10 +191,30 @@ platform.
 **Linux/macOS:**
 
 ```sh
-# Install development libraries (e.g., libopus-dev on Debian/Ubuntu, opus via Homebrew)
 CGO_ENABLED=1 go build ./cmd/hermec    # GUI client (voice enabled)
 go build ./cmd/hermec-server           # or ./... for everything
 ```
+
+Check which version you built with `hermec -version`.
+
+## macOS: run from Terminal
+
+There is no Mac download. Apple signing costs money, and HERMEC stays free.
+So you build it yourself. It takes a few minutes.
+
+1. Install the command line tools: `xcode-select --install`
+2. Install Homebrew from <https://brew.sh>.
+3. Install Go and git: `brew install go git`
+4. Get the code:
+   `git clone https://github.com/medeirosvictor/hermec.git && cd hermec`
+5. Build it: `go build -o hermec ./cmd/hermec`
+6. Run it: `./hermec`
+7. The first time you use voice, macOS asks to let Terminal use the microphone.
+   Allow it. You can change it later in System Settings → Privacy & Security →
+   Microphone.
+
+To update, run `git pull`, then the build line again
+(`go build -o hermec ./cmd/hermec`).
 
 ## Run
 
@@ -264,22 +308,6 @@ for ev := range c.Events() {
 
 ## Troubleshooting
 
-### Build error: `undefined: Stream` in hraban/opus
-
-If building `cmd/hermec` fails with an undefined reference in the opus package,
-your C compiler is not on PATH, and Go silently set `CGO_ENABLED=0`. This breaks
-the voice-enabled build.
-
-**Fix:** ensure your C compiler is on PATH. On Windows with MSYS2:
-
-```sh
-export PATH="/c/msys64/ucrt64/bin:$PATH"
-CGO_ENABLED=1 go build ./cmd/hermec
-```
-
-Add `C:\msys64\ucrt64\bin` to your system PATH (via Settings > Environment
-Variables) to make it permanent.
-
 ### Windows Firewall prompts
 
 **Expected:** The real app prompts once for firewall access (UDP socket for LAN
@@ -309,5 +337,5 @@ CI (`.github/workflows/ci.yml`) runs vet, `-race` tests, a fuzz smoke run and Wi
 ```sh
 go vet ./...
 go test ./...
-go test -race ./...    # needs cgo
+go test -race ./...    # needs cgo (a C compiler)
 ```

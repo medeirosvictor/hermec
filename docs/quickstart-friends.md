@@ -116,13 +116,13 @@ It listens on `:7697` by default and logs its address on start. Add
 
 The host sends each friend the Releases link:
 <https://github.com/medeirosvictor/hermec/releases>. Friends download
-`hermec-windows-amd64.zip`, unzip it anywhere (it already contains `hermec.exe`
-and the runtime DLLs it needs), and run it. No toolchain is required.
+`hermec-windows-amd64.zip` (or the arm64 zip on a Windows ARM laptop), unzip it
+anywhere, and run `hermec.exe`. It is one file. No toolchain and no DLLs are
+needed. Mac friends build from source; see
+[macOS: run from Terminal](../README.md#macos-run-from-terminal).
 
-*Fallback:* if a friend cannot reach GitHub, the host can instead zip
-`hermec.exe` together with `libopus-0.dll`, `libopusfile-0.dll` and their
-dependencies (from `C:\msys64\ucrt64\bin` on the build machine; see the Build
-section of the [README](../README.md)) and send that.
+*Fallback:* if a friend cannot reach GitHub, the host can send them their own
+`hermec.exe` directly.
 
 Then friends run:
 
