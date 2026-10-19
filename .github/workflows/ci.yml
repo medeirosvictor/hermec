@@ -15,7 +15,7 @@ jobs:
           go-version: 'stable'
           cache: true
       - name: Install GUI build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev libopus-dev libopusfile-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev
       - name: gofmt
         run: |
           out="$(gofmt -l .)"
@@ -41,7 +41,7 @@ jobs:
         with:
           go-version: 'stable'
           cache: true
-      # audio, ui and cmd/hermec need cgo (libopus); the release workflow builds them natively.
+      # audio, ui and cmd/hermec need cgo (malgo); the release workflow builds them natively.
       - name: Windows amd64
         run: CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./client ./cmd/hermec-icon ./cmd/hermec-server ./core/identity ./core/proto ./core/roles ./discover ./server ./ui/icon ./ui/state ./ui/theme ./update ./version
       - name: Linux arm64 (Raspberry Pi)
