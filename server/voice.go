@@ -147,6 +147,9 @@ func (s *Server) shareSet(c *conn, on bool) {
 	}
 	if on {
 		c.sharing = true
+		if vs := s.sessions[ch]; vs != nil {
+			vs.shareStarted(c)
+		}
 	} else {
 		s.clearShareLocked(ch, c)
 		if vs := s.sessions[ch]; vs != nil {
@@ -175,6 +178,9 @@ func (s *Server) watch(c *conn, fp string) string {
 			vs.setWatch(c, nil)
 		}
 		return ""
+	}
+	if c.watching == fp {
+		return "" // already watching: no renegotiation, no extra keyframe
 	}
 	var target *conn
 	for m := range s.voice[ch] {

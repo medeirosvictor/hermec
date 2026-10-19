@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -144,6 +145,8 @@ type testPeer struct {
 	video   *webrtc.TrackLocalStaticRTP // nil for a pure viewer
 	vtracks chan *webrtc.TrackRemote
 	vpkts   atomic.Int64
+	vtag    atomic.Int32 // payload tag of the last video packet received
+	tag     byte         // payload tag this peer stamps on the video it sends
 	plis    atomic.Int64
 
 	states chan proto.VoiceState
@@ -209,10 +212,14 @@ func newTestPeer(t *testing.T, url string, publish bool) *testPeer {
 		}
 		go func() {
 			for {
-				if _, _, err := tr.ReadRTP(); err != nil {
+				pkt, _, err := tr.ReadRTP()
+				if err != nil {
 					return
 				}
 				if isVideo {
+					if len(pkt.Payload) > 3 {
+						p.vtag.Store(int32(pkt.Payload[3]))
+					}
 					p.vpkts.Add(1)
 				}
 			}
@@ -323,7 +330,7 @@ func (p *testPeer) pump(stop <-chan struct{}) {
 			seq++
 			ts += 900
 			_ = p.video.WriteRTP(&rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: 96, SequenceNumber: seq, Timestamp: ts, Marker: true},
-				Payload: []byte{0x10, 0x00, 0x01, 0x02, 0x03, 0x04}})
+				Payload: []byte{0x10, 0x00, 0x01, p.tag, 0x03, 0x04}})
 		}
 	}()
 }
@@ -414,6 +421,120 @@ func TestShareClearedOnLeave(t *testing.T) {
 	eventually(t, 10*time.Second, "viewer receives VP8", func() bool { return viewer.vpkts.Load() > 5 })
 	sharer.send(proto.TypeVoiceLeave, proto.VoiceLeave{})
 	viewer.waitState(func(v proto.VoiceState) bool { return !sharingOf(v, sharer.fp) && len(v.Members) == 2 })
+	time.Sleep(500 * time.Millisecond)
+	n := viewer.vpkts.Load()
+	time.Sleep(500 * time.Millisecond)
+	if viewer.vpkts.Load() > n+2 {
+		t.Fatal("video still flowing after the sharer left")
+	}
+	// The sharer comes back and shares again: the old watch must not return.
+	// (Its published video track is gone with its old PC, so it re-publishes
+	// by sending a fresh offer; the viewer must still not receive anything.)
+	sharer.send(proto.TypeVoiceJoin, proto.VoiceJoin{Channel: "lounge"})
+	sharer.send(proto.TypeShareStart, proto.ShareStart{})
+	viewer.waitState(func(v proto.VoiceState) bool { return sharingOf(v, sharer.fp) })
+	n = viewer.vpkts.Load()
+	time.Sleep(600 * time.Millisecond)
+	if viewer.vpkts.Load() > n+2 {
+		t.Fatal("re-share restored a watch that leaving should have cleared")
+	}
+}
+
+func videoTransceivers(pc *webrtc.PeerConnection) int {
+	n := 0
+	for _, tr := range pc.GetTransceivers() {
+		if tr.Kind() == webrtc.RTPCodecTypeVideo {
+			n++
+		}
+	}
+	return n
+}
+
+func videoMLines(pc *webrtc.PeerConnection) int {
+	rd := pc.RemoteDescription()
+	if rd == nil {
+		return 0
+	}
+	return strings.Count(rd.SDP, "\nm=video")
+}
+
+func TestWatchToggleReusesVideoTransceiver(t *testing.T) {
+	sharer, viewer, _ := shareScene(t)
+	start := time.Now()
+	for i := 0; i < 20; i++ {
+		viewer.send(proto.TypeWatch, proto.Watch{Fingerprint: sharer.fp})
+		viewer.send(proto.TypeWatch, proto.Watch{Fingerprint: ""})
+		time.Sleep(5 * time.Millisecond)
+	}
+	elapsed := time.Since(start)
+	viewer.send(proto.TypeWatch, proto.Watch{Fingerprint: sharer.fp})
+	eventually(t, 10*time.Second, "viewer receives VP8 after toggling", func() bool { return viewer.vpkts.Load() > 5 })
+	if n := videoTransceivers(viewer.pc); n != 1 {
+		t.Fatalf("viewer has %d video transceivers after 20 toggles, want 1", n)
+	}
+	if n := videoMLines(viewer.pc); n != 1 {
+		t.Fatalf("viewer SDP has %d video m-lines, want 1", n)
+	}
+	// Server-initiated keyframes are spaced: toggling must not make the
+	// sharer emit one per watch.
+	if max := int(elapsed/forcedPLIInterval) + 3; int(sharer.plis.Load()) > max {
+		t.Fatalf("%d PLIs in %v of toggling, want <= %d", sharer.plis.Load(), elapsed, max)
+	}
+}
+
+func TestRepeatedWatchIsNoop(t *testing.T) {
+	sharer, viewer, _ := shareScene(t)
+	viewer.send(proto.TypeWatch, proto.Watch{Fingerprint: sharer.fp})
+	eventually(t, 10*time.Second, "viewer receives VP8", func() bool { return viewer.vpkts.Load() > 5 })
+	time.Sleep(1200 * time.Millisecond)
+	base := sharer.plis.Load()
+	for i := 0; i < 10; i++ {
+		viewer.send(proto.TypeWatch, proto.Watch{Fingerprint: sharer.fp})
+	}
+	time.Sleep(800 * time.Millisecond)
+	if got := sharer.plis.Load() - base; got != 0 {
+		t.Fatalf("repeated watch of the same sharer sent %d PLIs", got)
+	}
+}
+
+func TestWatchSwitchReusesTransceiver(t *testing.T) {
+	url := startServer(t, shareCfg())
+	a := newTestPeer(t, url, true)
+	b := newTestPeer(t, url, true)
+	a.tag, b.tag = 0xA1, 0xB2
+	viewer := newTestPeer(t, url, false)
+	a.join()
+	b.join()
+	viewer.join()
+	a.send(proto.TypeShareStart, proto.ShareStart{})
+	b.send(proto.TypeShareStart, proto.ShareStart{})
+	viewer.waitState(func(v proto.VoiceState) bool { return sharingOf(v, a.fp) && sharingOf(v, b.fp) })
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	a.pump(stop)
+	b.pump(stop)
+	for i := 0; i < 6; i++ {
+		who, tag := a, int32(0xA1)
+		if i%2 == 1 {
+			who, tag = b, 0xB2
+		}
+		viewer.send(proto.TypeWatch, proto.Watch{Fingerprint: who.fp})
+		eventually(t, 10*time.Second, "viewer gets the switched stream", func() bool { return viewer.vtag.Load() == tag })
+	}
+	if n := videoTransceivers(viewer.pc); n != 1 {
+		t.Fatalf("viewer has %d video transceivers after switching, want 1", n)
+	}
+}
+
+func TestVideoRelayedOnlyWhileSharing(t *testing.T) {
+	sharer, viewer, _ := shareScene(t)
+	sharer.send(proto.TypeShareStop, proto.ShareStop{})
+	viewer.waitState(func(v proto.VoiceState) bool { return !sharingOf(v, sharer.fp) })
+	viewer.send(proto.TypeWatch, proto.Watch{Fingerprint: sharer.fp}) // refused: not sharing
+	time.Sleep(500 * time.Millisecond)
+	if viewer.vpkts.Load() != 0 {
+		t.Fatal("video relayed from a peer that is not sharing")
+	}
 }
 
 func TestShareStopClearsWatch(t *testing.T) {
