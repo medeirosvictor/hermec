@@ -96,10 +96,12 @@ type game struct {
 	hostedPath  string            // hosted.toml location in effect
 	// createFn creates the hosted server (the Add a Server page's action);
 	// nil = g.createHosted. selfAddrs finds this machine's addresses;
-	// nil = discover.SelfAddrs. Both are test seams.
-	createFn  func(name, pass string, port int) error
-	selfAddrs func(ctx context.Context) (ts, lan string)
-	curKey    string // key of the viewed session; empty = connect scene
+	// nil = discover.SelfAddrs. hostedTweak adjusts a new hosted config before
+	// it is saved. All are test seams.
+	createFn    func(name, pass string, port int) error
+	selfAddrs   func(ctx context.Context) (ts, lan string)
+	hostedTweak func(*server.Config)
+	curKey      string // key of the viewed session; empty = connect scene
 
 	add           addMode           // which step of the Add a Server page shows
 	addPrev       string            // view key Esc on the choices returns to
@@ -283,7 +285,9 @@ func Run(opts Options) error {
 		g.logf("local server on %s", url)
 	}
 	g.loadServers(opts.ServersPath)
-	g.bootHosted(opts.HostedPath)
+	if !opts.Local {
+		g.bootHosted(opts.HostedPath)
+	}
 	defer g.stopHosted()
 	if !opts.Local {
 		url = startupURL(g.servers, url) // one Enter reconnects the most recent dialable

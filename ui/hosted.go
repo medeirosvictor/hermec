@@ -215,8 +215,14 @@ func (g *game) startHostedNow() {
 	if g.sess[hostedKey] != nil {
 		g.retryNow(hostedKey)
 	} else if g.startHosted() != nil {
-		g.cur().st.Status = g.hosted.err
+		g.notice = g.hosted.err
 	}
+}
+
+// hostedStopped reports whether key is the hosted tile while its server is not
+// running; its way back is Start hosting, not Retry.
+func (g *game) hostedStopped(key string) bool {
+	return key == hostedKey && g.hosted != nil && g.hosted.srv == nil
 }
 
 // stopHosted shuts the hosted server down and marks its session failed.
@@ -255,6 +261,9 @@ func (g *game) createHosted(name, password string, port int) error {
 	}
 	path := g.hostedFile()
 	cfg := hostedConfig(name, password, port, g.fp)
+	if g.hostedTweak != nil {
+		g.hostedTweak(&cfg)
+	}
 	if err := saveHosted(path, cfg); err != nil {
 		return err
 	}

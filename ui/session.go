@@ -130,12 +130,16 @@ func (g *game) dial(s *session) {
 	s.dialGen++
 	s.st.ConnectErr = ""
 	g.logf("dialing %s as %q", s.url, s.name)
-	go func(s *session, key, url, name string, gen int) { // reads no session field
+	pass := ""
+	if s.key == hostedKey && g.hosted != nil {
+		pass = g.hosted.cfg.Password
+	}
+	go func(s *session, key, url, name, pass string, gen int) { // reads no session field
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		c, err := client.Dial(ctx, url, g.id, name, "")
+		c, err := client.Dial(ctx, url, g.id, name, pass)
 		g.dialCh <- dialResult{key: key, s: s, gen: gen, c: c, err: err}
-	}(s, s.key, s.url, s.name, s.dialGen)
+	}(s, s.key, s.url, s.name, pass, s.dialGen)
 }
 
 // closeClient closes a client no session owns (a stale dial result).
@@ -167,6 +171,10 @@ func (g *game) tickReconnect(now time.Time) {
 // backoff and clears its failed mark.
 func (g *game) retryNow(key string) {
 	s := g.sess[key]
+	if s == nil && key == hostedKey {
+		g.startHostedNow()
+		return
+	}
 	if s == nil || s.dialing || s.c != nil || s.url == "" {
 		return
 	}
@@ -176,7 +184,6 @@ func (g *game) retryNow(key string) {
 			return
 		}
 		s.url = g.hosted.url
-		s.lastErr = ""
 	}
 	s.attempt = 0
 	s.failed = false

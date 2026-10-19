@@ -35,8 +35,9 @@ const (
 	createFields    = 2 // name, port
 )
 
-// createForm is the input state of the create page. There is no password: the
-// app dials with an empty one and Join has no password field.
+// createForm is the input state of the create page. There is no password field:
+// a hosted server is dialed with the password in its hosted.toml, and Join
+// dials with none.
 type createForm struct {
 	name, port field
 	focus      int // 0 name, 1 port

@@ -406,6 +406,7 @@ func TestLeaveHostedDeletesFile(t *testing.T) {
 
 func TestCreateHostedRunsAndOpens(t *testing.T) {
 	g, path := hostedTestGame(t, "", false)
+	g.hostedTweak = func(c *server.Config) { c.Addr, c.Discoverable = "127.0.0.1:0", false }
 	g.hostedPath = path
 	if err := g.createHosted("Den", "pw", 0); err != nil {
 		t.Fatal(err)
@@ -415,5 +416,79 @@ func TestCreateHostedRunsAndOpens(t *testing.T) {
 	}
 	if _, ok, err := loadHosted(path); !ok || err != nil {
 		t.Fatalf("hosted.toml not saved: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestHostedDialsWithItsPassword(t *testing.T) {
+	g, path := hostedTestGame(t, "127.0.0.1:0", false)
+	cfg := hostedConfig("Den", "sesame", 0, g.fp)
+	cfg.Addr, cfg.Discoverable = "127.0.0.1:0", false
+	if err := saveHosted(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	g.bootHosted(path)
+	s := g.sess[hostedKey]
+	pumpUntil(t, g, func() bool { return connected(s)() || s.failed })
+	if s.failed || s.c == nil {
+		t.Fatalf("hosted dial with password failed: %q", s.lastErr)
+	}
+}
+
+func TestRetryNowHostedKeepsLastErr(t *testing.T) {
+	g, path := hostedTestGame(t, "127.0.0.1:0", true)
+	g.bootHosted(path)
+	s := g.sess[hostedKey]
+	pumpUntil(t, g, connected(s))
+	g.stopHosted()
+	g.retryNow(hostedKey)
+	if s.lastErr != stoppedMsg {
+		t.Fatalf("lastErr = %q, want it kept during the redial", s.lastErr)
+	}
+}
+
+func TestStoppedHostedMenuHasNoRetry(t *testing.T) {
+	g, path := hostedTestGame(t, "127.0.0.1:0", true)
+	g.bootHosted(path)
+	pumpUntil(t, g, connected(g.sess[hostedKey]))
+	g.stopHosted()
+	g.openTileMenu(hostedKey, 10, 70)
+	got := menuLabels(g)
+	if slices.Contains(got, "Retry") || !slices.Contains(got, "Start hosting") {
+		t.Fatalf("stopped items = %v", got)
+	}
+}
+
+func TestStartHostedNowWithoutSessionNotices(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	g, path := hostedTestGame(t, ln.Addr().String(), true)
+	g.bootHosted(path)
+	delete(g.sess, hostedKey) // as if the tile had no session
+	g.sess["k"] = newSession("k", "ws://k/", "me")
+	g.view("k")
+	g.startHostedNow()
+	if g.notice == "" || g.sess["k"].st.Status != "" {
+		t.Fatalf("notice=%q viewed status=%q", g.notice, g.sess["k"].st.Status)
+	}
+}
+
+func TestStopHostedWithoutSessionShowsFailedTile(t *testing.T) {
+	g, path := hostedTestGame(t, "127.0.0.1:0", true)
+	g.bootHosted(path)
+	delete(g.sess, hostedKey)
+	g.stopHosted()
+	if !g.tileFacts(state.ServerEntry{URL: hostedKey}).Failed {
+		t.Fatal("stopped sessionless hosted tile is not failed")
+	}
+}
+
+func TestLostTextStopped(t *testing.T) {
+	s := newSession("k", "ws://k/", "me")
+	s.failed, s.lastErr = true, stoppedMsg
+	if got := lostText(s, time.Now()); !strings.Contains(got, stoppedMsg) || strings.Contains(got, "reconnecting") {
+		t.Fatalf("lostText = %q", got)
 	}
 }
