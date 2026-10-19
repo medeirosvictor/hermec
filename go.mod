@@ -12,6 +12,7 @@ require (
 	github.com/pion/interceptor v0.1.49
 	github.com/pion/webrtc/v4 v4.2.23
 	github.com/thesyncim/gopus v0.2.2
+	github.com/thesyncim/govpx v0.0.0-20261018202535-159dce5b931a
 	golang.org/x/image v0.46.0
 	golang.org/x/sys v0.48.0
 )
