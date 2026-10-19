@@ -4,6 +4,7 @@
 # Go build artifacts
 /bin/
 /dist/
+/hermec
 *.exe
 
 # OS noise

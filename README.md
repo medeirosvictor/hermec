@@ -71,6 +71,8 @@ Pick the app that matches your computer:
 | `hermec-linux-amd64.tar.gz` | Linux, most Intel/AMD PCs (x64) |
 | `hermec-linux-arm64.tar.gz` | Linux on ARM, such as Raspberry Pi and other ARM boards |
 
+Needs a 64-bit OS. Linux builds need glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+); 32-bit Raspberry Pi OS won't work.
+
 Mac: there is no download. Build from source, see
 [macOS: run from Terminal](#macos-run-from-terminal) below.
 
@@ -87,7 +89,7 @@ The exe is unsigned, so Windows SmartScreen may warn: click **More info**, then
 **Linux:**
 
 1. Download the `.tar.gz` for your machine.
-2. Unpack it: `tar xzf hermec-linux-amd64.tar.gz`
+2. Unpack it: `tar xzf hermec-linux-amd64.tar.gz` (or `hermec-linux-arm64.tar.gz` on ARM)
 3. Run `./hermec`.
 
 You need a desktop with X11 or Wayland, and PulseAudio or PipeWire for sound.
@@ -208,6 +210,7 @@ So you build it yourself. It takes a few minutes.
 4. Get the code:
    `git clone https://github.com/medeirosvictor/hermec.git && cd hermec`
 5. Build it: `go build -o hermec ./cmd/hermec`
+   The first build downloads Go 1.27 automatically if Homebrew's Go is older.
 6. Run it: `./hermec`
 7. The first time you use voice, macOS asks to let Terminal use the microphone.
    Allow it. You can change it later in System Settings → Privacy & Security →
