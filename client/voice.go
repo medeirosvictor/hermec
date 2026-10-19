@@ -63,7 +63,11 @@ type call struct {
 	src     AudioSource
 	sink    AudioSink
 	track   *webrtc.TrackLocalStaticSample
+	vtrack  *webrtc.TrackLocalStaticSample // VP8 screen share; sender added on first StartShare
 	api     *webrtc.API
+
+	smu   sync.Mutex // guards share
+	share *shareLoop
 
 	// actor queue
 	qmu   sync.Mutex
@@ -91,16 +95,19 @@ type call struct {
 	wg      sync.WaitGroup
 
 	// actor-owned
-	pc        *webrtc.PeerConnection
-	offerOut  bool // our rtc_offer awaits its answer
-	answered  bool // a remote description from our offer was applied
-	pending   []webrtc.ICECandidateInit
-	resets    int
-	resetting bool   // a local reset is in flight: server offers belong to discarded state
-	held      string // latest server offer received while resetting; answered only if the server reports glare
-	senderOn  bool
-	retryGen  uint64
-	glareSeen bool // the server already rejected our current offer as glare
+	pc         *webrtc.PeerConnection
+	offerOut   bool // our rtc_offer awaits its answer
+	answered   bool // a remote description from our offer was applied
+	pending    []webrtc.ICECandidateInit
+	resets     int
+	resetting  bool   // a local reset is in flight: server offers belong to discarded state
+	held       string // latest server offer received while resetting; answered only if the server reports glare
+	senderOn   bool
+	vidWanted  bool              // a video sender belongs on every PC of this call
+	vsnd       *webrtc.RTPSender // video sender on the current PC, if added
+	offerDirty bool              // PC changed while an exchange was running: offer once it ends
+	retryGen   uint64
+	glareSeen  bool // the server already rejected our current offer as glare
 }
 
 func (c *Client) newAPI() *webrtc.API {
@@ -114,6 +121,14 @@ func (c *Client) newAPI() *webrtc.API {
 		},
 		PayloadType: 111,
 	}, webrtc.RTPCodecTypeAudio)
+	_ = me.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{
+			MimeType:     webrtc.MimeTypeVP8,
+			ClockRate:    videoClock,
+			RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}},
+		},
+		PayloadType: 96,
+	}, webrtc.RTPCodecTypeVideo)
 	ir := &interceptor.Registry{}
 	_ = webrtc.RegisterDefaultInterceptors(me, ir)
 	se := webrtc.SettingEngine{}
@@ -166,8 +181,14 @@ func (c *Client) JoinVoice(ctx context.Context, channel string, src AudioSource,
 	if err != nil {
 		return err
 	}
+	vtrack, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
+		MimeType: webrtc.MimeTypeVP8, ClockRate: videoClock,
+	}, "video-"+c.fingerprint, c.fingerprint)
+	if err != nil {
+		return err
+	}
 	cl := &call{
-		c: c, channel: channel, src: src, sink: sink, track: track, api: c.newAPI(),
+		c: c, channel: channel, src: src, sink: sink, track: track, vtrack: vtrack, api: c.newAPI(),
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), adone: make(chan struct{}),
 		ready: make(chan struct{}), failCh: make(chan struct{}), tdDone: make(chan struct{}),
 		muteCh: make(chan struct{}, 1),
@@ -404,6 +425,9 @@ func (cl *call) teardownCtx(ctx context.Context) {
 			cl.tmu.Lock()
 			cl.tclosed = true
 			cl.tmu.Unlock()
+			if sl := cl.takeShare(); sl != nil {
+				sl.stop()
+			}
 			if cl.pc != nil {
 				_ = cl.pc.Close()
 				cl.pc = nil
@@ -465,6 +489,10 @@ func (cl *call) newPC() error {
 		}
 		cl.wg.Add(1)
 		cl.tmu.Unlock()
+		if remote.Kind() == webrtc.RTPCodecTypeVideo {
+			go cl.readVideo(pc, remote)
+			return
+		}
 		go cl.readTrack(remote)
 	})
 	cl.tmu.Lock()
@@ -486,6 +514,14 @@ func (cl *call) newPC() error {
 	}()
 	cl.pc = pc
 	cl.offerOut, cl.answered, cl.pending = false, false, nil
+	cl.vsnd = nil
+	if cl.vidWanted { // a share is (or was) active: the new PC carries the sender from its first offer
+		if err := cl.addVideoSender(pc); err != nil {
+			cl.pc = nil
+			_ = pc.Close()
+			return err
+		}
+	}
 	cl.startSender()
 	return nil
 }
@@ -577,7 +613,7 @@ func (cl *call) startOffer() {
 		cl.fail(fmt.Errorf("client: create offer: %w", err))
 		return
 	}
-	cl.offerOut, cl.glareSeen = true, false
+	cl.offerOut, cl.glareSeen, cl.offerDirty = true, false, false
 	if err := cl.c.send(proto.TypeRTCOffer, proto.RTCOffer{SDP: pc.LocalDescription().SDP}); err != nil {
 		cl.fail(err)
 	}
@@ -633,6 +669,10 @@ func (cl *call) handleRTC(env proto.Envelope) {
 		cl.retryGen++
 		cl.flushPending()
 		cl.checkReady()
+		cl.keyAfterNegotiation()
+		if cl.offerDirty { // a sender was added while this exchange ran
+			cl.offerSoon()
+		}
 	case proto.TypeRTCOffer:
 		var m proto.RTCOffer
 		if json.Unmarshal(env.Data, &m) != nil {

@@ -68,6 +68,11 @@ type Client struct {
 
 	loopbackICE atomic.Bool
 
+	started time.Time // Dial time; baseline of the first VideoStats window
+	vstats  videoStats
+	vsinkMu sync.RWMutex
+	vsink   VideoSink
+
 	evMu     sync.RWMutex // guards closing events against emitNB
 	evClosed bool
 
@@ -129,6 +134,7 @@ func Dial(ctx context.Context, url string, id *identity.Identity, name, password
 		loopDone:    make(chan struct{}),
 		pingDone:    make(chan struct{}),
 		rtt:         newRTTTracker(),
+		started:     time.Now(),
 	}
 	// Only the pong handler is set: the default ping handler keeps answering
 	// the server's keepalive pings.
