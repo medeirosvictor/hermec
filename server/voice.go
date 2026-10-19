@@ -78,7 +78,7 @@ func (s *Server) markAuthed(c *conn) {
 func (s *Server) voiceStateLocked(ch string) []byte {
 	members := make([]proto.VoiceMember, 0, len(s.voice[ch]))
 	for m, muted := range s.voice[ch] {
-		members = append(members, proto.VoiceMember{Fingerprint: m.fingerprint, Name: m.name, Muted: muted})
+		members = append(members, proto.VoiceMember{Fingerprint: m.fingerprint, Name: m.name, Muted: muted, Sharing: m.sharing})
 	}
 	sort.Slice(members, func(i, j int) bool {
 		if members[i].Name != members[j].Name {
@@ -115,10 +115,80 @@ func (s *Server) removeVoiceLocked(c *conn) string {
 	if ch == "" {
 		return ""
 	}
+	s.clearShareLocked(ch, c)
+	c.watching = ""
 	delete(s.voice[ch], c)
 	c.voiceCh = ""
 	s.sessionLeaveLocked(ch, c) // may destroy the channel's media session
 	return ch
+}
+
+// clearShareLocked clears c's sharing flag and the watch of every viewer of c
+// in ch. The session side (video tracks) is cleared by the caller's path:
+// shareSet posts it, and a leaving peer's forwarders die with its media.
+// Caller holds chMu.
+func (s *Server) clearShareLocked(ch string, c *conn) {
+	c.sharing = false
+	for m := range s.voice[ch] {
+		if m.watching == c.fingerprint {
+			m.watching = ""
+		}
+	}
+}
+
+// shareSet sets or clears c's sharing flag and re-broadcasts the channel's
+// voice_state. Outside a call it is ignored.
+func (s *Server) shareSet(c *conn, on bool) {
+	s.chMu.Lock()
+	ch := c.voiceCh
+	if ch == "" {
+		s.chMu.Unlock()
+		return
+	}
+	if on {
+		c.sharing = true
+	} else {
+		s.clearShareLocked(ch, c)
+		if vs := s.sessions[ch]; vs != nil {
+			vs.shareStopped(c)
+		}
+	}
+	dead := s.broadcastVoiceLocked(ch)
+	s.chMu.Unlock()
+	dropSlow(dead)
+}
+
+// watch records that c watches the sharer with fingerprint fp ("" stops).
+// Returns "" on success, "not_joined" outside a call, or "not_sharing" when
+// fp is not sharing in c's channel.
+func (s *Server) watch(c *conn, fp string) string {
+	s.chMu.Lock()
+	defer s.chMu.Unlock()
+	ch := c.voiceCh
+	if ch == "" {
+		return "not_joined"
+	}
+	vs := s.sessions[ch]
+	if fp == "" {
+		c.watching = ""
+		if vs != nil {
+			vs.setWatch(c, nil)
+		}
+		return ""
+	}
+	var target *conn
+	for m := range s.voice[ch] {
+		if m != c && m.sharing && m.fingerprint == fp {
+			target = m
+			break
+		}
+	}
+	if target == nil || vs == nil {
+		return proto.CodeNotSharing
+	}
+	c.watching = fp
+	vs.setWatch(c, target)
+	return ""
 }
 
 // voiceJoin puts c in voice channel ch (moving it if already in another).
@@ -201,6 +271,22 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 		}
 		if c.srv.voiceMute(c, m.Muted) == "not_joined" {
 			c.sendError("not_joined", "not in a voice channel")
+		}
+	case proto.TypeShareStart:
+		c.srv.shareSet(c, true)
+	case proto.TypeShareStop:
+		c.srv.shareSet(c, false)
+	case proto.TypeWatch:
+		var m proto.Watch
+		if json.Unmarshal(env.Data, &m) != nil {
+			c.sendError("bad_request", "malformed watch")
+			return true
+		}
+		switch c.srv.watch(c, m.Fingerprint) {
+		case "not_joined":
+			c.sendError("not_joined", "not in a voice channel")
+		case proto.CodeNotSharing:
+			c.sendError(proto.CodeNotSharing, "that member is not sharing in your channel")
 		}
 	case proto.TypeRTCOffer, proto.TypeRTCAnswer, proto.TypeRTCCandidate:
 		c.routeRTC(env)

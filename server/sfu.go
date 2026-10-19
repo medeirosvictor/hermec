@@ -11,6 +11,7 @@ import (
 
 	"github.com/pion/ice/v4"
 	"github.com/pion/interceptor"
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/medeirosvictor/hermec/core/proto"
@@ -58,10 +59,12 @@ type voiceSession struct {
 	finished bool
 	wg       sync.WaitGroup // forwarders and RTCP readers
 
-	relayedBytes atomic.Uint64 // payload bytes written to subscribers
+	relayedBytes atomic.Uint64 // audio payload bytes written to subscribers
+	videoBytes   atomic.Uint64 // video payload bytes written to subscribers
 	writeErrors  atomic.Uint64 // transient subscriber write errors (not pruned)
 	statsAt      time.Time
 	statsBytes   uint64
+	statsVideo   uint64
 }
 
 // answerTimeout bounds how long a server-initiated offer may go unanswered
@@ -89,12 +92,20 @@ type peer struct {
 
 	fwds    []*forwarder                     // tracks this peer publishes
 	senders map[*forwarder]*webrtc.RTPSender // tracks this peer receives
+
+	// Screen share. watchers are the peers receiving this peer's video;
+	// watching is the sharer this peer receives video from.
+	watchers map[*peer]bool
+	watching *peer
+	kfWanted bool      // a keyframe is owed to this viewer once its answer lands
+	lastPLI  time.Time // last PLI written to this peer's PC (sharer side)
 }
 
 // forwarder copies one publisher track to every subscriber's local track.
 type forwarder struct {
 	pub    *peer
 	remote *webrtc.TrackRemote
+	video  bool // VP8 screen share; fanned out only to the publisher's watchers
 
 	mu    sync.Mutex
 	sinks map[*peer]sink
@@ -157,12 +168,20 @@ func (s *Server) newVoiceSession(ch string) *voiceSession {
 	return vs
 }
 
-// newRTCAPI builds a pion API: Opus audio only, default interceptors (NACK,
+// newRTCAPI builds a pion API: Opus audio and VP8 video, default interceptors (NACK,
 // RTCP reports), host ICE candidates only. cfg.PublicIP, if set, is
 // advertised as the host candidate address (NAT 1:1) for internet-facing
 // servers.
 func (s *Server) newRTCAPI() *webrtc.API {
 	me := &webrtc.MediaEngine{}
+	_ = me.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{
+			MimeType:     webrtc.MimeTypeVP8,
+			ClockRate:    90000,
+			RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}},
+		},
+		PayloadType: 96,
+	}, webrtc.RTPCodecTypeVideo)
 	_ = me.RegisterCodec(webrtc.RTPCodecParameters{
 		RTPCodecCapability: webrtc.RTPCodecCapability{
 			MimeType:    webrtc.MimeTypeOpus,
@@ -269,14 +288,15 @@ func (vs *voiceSession) loop() {
 
 func (vs *voiceSession) logStats() {
 	now := time.Now()
-	total := vs.relayedBytes.Load()
+	total, video := vs.relayedBytes.Load(), vs.videoBytes.Load()
 	secs := now.Sub(vs.statsAt).Seconds()
-	var kbps float64
+	var kbps, vkbps float64
 	if secs > 0 {
 		kbps = float64(total-vs.statsBytes) * 8 / 1000 / secs
+		vkbps = float64(video-vs.statsVideo) * 8 / 1000 / secs
 	}
-	vs.statsAt, vs.statsBytes = now, total
-	vs.srv.logf("voice %q: %d participants, ~%.0f kbps relayed, %d write errors", vs.channel, len(vs.peers), kbps, vs.writeErrors.Load())
+	vs.statsAt, vs.statsBytes, vs.statsVideo = now, total, video
+	vs.srv.logf("voice %q: %d participants, ~%.0f kbps relayed, ~%.0f kbps video, %d write errors", vs.channel, len(vs.peers), kbps, vkbps, vs.writeErrors.Load())
 }
 
 // teardown (actor): close every PeerConnection, then join every goroutine
@@ -303,7 +323,7 @@ func (vs *voiceSession) teardown() {
 func (vs *voiceSession) addPeer(c *conn) {
 	vs.post(func() {
 		if _, ok := vs.peers[c]; !ok {
-			vs.peers[c] = &peer{c: c, senders: make(map[*forwarder]*webrtc.RTPSender)}
+			vs.peers[c] = &peer{c: c, senders: make(map[*forwarder]*webrtc.RTPSender), watchers: make(map[*peer]bool)}
 		}
 	})
 }
@@ -314,9 +334,80 @@ func (vs *voiceSession) removePeer(c *conn) {
 		if !ok {
 			return
 		}
+		vs.clearWatchers(p)
+		if p.watching != nil {
+			delete(p.watching.watchers, p)
+			p.watching = nil
+		}
 		delete(vs.peers, c)
 		vs.releaseMedia(p)
 	})
+}
+
+// shareStopped (called under chMu; non-blocking) removes the sharer's video
+// from every watcher. The conn-side watch state is already cleared.
+func (vs *voiceSession) shareStopped(c *conn) {
+	vs.post(func() {
+		if p, ok := vs.peers[c]; ok {
+			vs.clearWatchers(p)
+		}
+	})
+}
+
+// setWatch (called under chMu; non-blocking) points viewer c at the sharer
+// target (nil = stop watching).
+func (vs *voiceSession) setWatch(c, target *conn) {
+	vs.post(func() {
+		v, ok := vs.peers[c]
+		if !ok {
+			return
+		}
+		if v.watching != nil {
+			delete(v.watching.watchers, v)
+			v.watching = nil
+		}
+		v.kfWanted = false
+		if target != nil {
+			if t, ok := vs.peers[target]; ok {
+				v.watching = t
+				t.watchers[v] = true
+				v.kfWanted = true
+				vs.requestKeyframe(t, true)
+			}
+		}
+		vs.syncTracks(v)
+	})
+}
+
+// clearWatchers (actor) detaches every viewer of sharer p and drops their
+// video track.
+func (vs *voiceSession) clearWatchers(p *peer) {
+	viewers := p.watchers
+	p.watchers = make(map[*peer]bool)
+	for v := range viewers {
+		v.watching = nil
+		v.kfWanted = false
+		vs.syncTracks(v)
+	}
+}
+
+// requestKeyframe (actor) writes a PLI to sharer t's PC. Unless force, at most
+// one per second per sharer is sent.
+func (vs *voiceSession) requestKeyframe(t *peer, force bool) {
+	if t.pc == nil {
+		return
+	}
+	now := time.Now()
+	if !force && now.Sub(t.lastPLI) < time.Second {
+		return
+	}
+	for _, f := range t.fwds {
+		if f.video && !f.isDead() {
+			t.lastPLI = now
+			_ = t.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(f.remote.SSRC())}})
+			return
+		}
+	}
 }
 
 // handleRTC is called from a conn's read loop after it verified membership.
@@ -390,7 +481,7 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 			}
 			vs.wg.Add(1)
 			go vs.drainReceiverRTCP(recv)
-			f := &forwarder{pub: p, remote: remote, sinks: make(map[*peer]sink)}
+			f := &forwarder{pub: p, remote: remote, video: remote.Kind() == webrtc.RTPCodecTypeVideo, sinks: make(map[*peer]sink)}
 			p.fwds = append(p.fwds, f)
 			vs.wg.Add(1)
 			go vs.runForwarder(f)
@@ -475,6 +566,12 @@ func (vs *voiceSession) handleAnswer(p *peer, sdp string) {
 	p.negotiating = false
 	vs.stopOfferTimer(p)
 	vs.flushPending(p)
+	if p.kfWanted && p.watching != nil {
+		// The viewer's track is bound now; the keyframe requested at watch
+		// time may have been dropped before that.
+		p.kfWanted = false
+		vs.requestKeyframe(p.watching, true)
+	}
 	if p.dirty {
 		p.dirty = false
 		vs.renegotiate(p)
@@ -550,7 +647,8 @@ func (vs *voiceSession) syncTracks(q *peer) {
 	}
 	changed := false
 	for f, snd := range q.senders {
-		if f.isDead() {
+		if f.isDead() || (f.video && !f.pub.watchers[q]) {
+			f.removeSink(q)
 			_ = q.pc.RemoveTrack(snd)
 			delete(q.senders, f)
 			changed = true
@@ -564,8 +662,15 @@ func (vs *voiceSession) syncTracks(q *peer) {
 			if _, ok := q.senders[f]; ok || f.isDead() {
 				continue
 			}
+			if f.video && !r.watchers[q] {
+				continue
+			}
+			kind := "audio-"
+			if f.video {
+				kind = "video-"
+			}
 			local, err := webrtc.NewTrackLocalStaticRTP(f.remote.Codec().RTPCodecCapability,
-				"audio-"+r.c.fingerprint, r.c.fingerprint)
+				kind+r.c.fingerprint, r.c.fingerprint)
 			if err != nil {
 				continue
 			}
@@ -577,7 +682,11 @@ func (vs *voiceSession) syncTracks(q *peer) {
 			q.senders[f] = snd
 			f.addSink(q, local, q.pc)
 			vs.wg.Add(1)
-			go vs.drainRTCP(snd)
+			if f.video {
+				go vs.readViewerRTCP(snd, f)
+			} else {
+				go vs.drainRTCP(snd)
+			}
 			changed = true
 		}
 	}
@@ -644,7 +753,11 @@ func (vs *voiceSession) runForwarder(f *forwarder) {
 				}
 				continue
 			}
-			vs.relayedBytes.Add(uint64(len(pkt.Payload)))
+			if f.video {
+				vs.videoBytes.Add(uint64(len(pkt.Payload)))
+			} else {
+				vs.relayedBytes.Add(uint64(len(pkt.Payload)))
+			}
 		}
 	}
 }
@@ -703,6 +816,25 @@ func (vs *voiceSession) drainRTCP(snd *webrtc.RTPSender) {
 	for {
 		if _, _, err := snd.Read(buf); err != nil {
 			return
+		}
+	}
+}
+
+// readViewerRTCP reads a viewer's RTCP for a video sender (which also keeps
+// pion's interceptors running) and relays keyframe requests (PLI/FIR) to the
+// sharer through the actor, which rate-limits them to one per second.
+func (vs *voiceSession) readViewerRTCP(snd *webrtc.RTPSender, f *forwarder) {
+	defer vs.wg.Done()
+	for {
+		pkts, _, err := snd.ReadRTCP()
+		if err != nil {
+			return
+		}
+		for _, pk := range pkts {
+			switch pk.(type) {
+			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+				vs.post(func() { vs.requestKeyframe(f.pub, false) })
+			}
 		}
 	}
 }

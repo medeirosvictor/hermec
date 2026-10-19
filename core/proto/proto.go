@@ -39,7 +39,16 @@ const (
 	TypeRTCOffer     = "rtc_offer"
 	TypeRTCAnswer    = "rtc_answer"
 	TypeRTCCandidate = "rtc_candidate"
+
+	// Screen sharing (additive; protocol Version stays 1).
+	TypeShareStart = "share_start"
+	TypeShareStop  = "share_stop"
+	TypeWatch      = "watch"
 )
+
+// CodeNotSharing is the error code for a watch whose target is not sharing in
+// the sender's voice channel.
+const CodeNotSharing = "not_sharing"
 
 // Reserved for future end-to-end encryption. They have no handler in v1.
 const (
@@ -100,6 +109,19 @@ type VoiceMember struct {
 	Fingerprint string `json:"fingerprint"`
 	Name        string `json:"name"`
 	Muted       bool   `json:"muted"`
+	Sharing     bool   `json:"sharing,omitempty"`
+}
+
+// ShareStart announces that the sender is sharing its screen.
+type ShareStart struct{}
+
+// ShareStop announces that the sender stopped sharing.
+type ShareStop struct{}
+
+// Watch says the sender now watches the sharer with this fingerprint; ""
+// stops watching. A viewer watches one stream at a time.
+type Watch struct {
+	Fingerprint string `json:"fingerprint"`
 }
 
 // VoiceState is the full participant list of a voice channel.
@@ -124,7 +146,7 @@ type RTCCandidate struct {
 }
 
 // ErrorMsg reports a failure. Codes: "auth_failed", "forbidden",
-// "bad_request", "not_joined", "rate_limited".
+// "bad_request", "not_joined", "rate_limited", "not_sharing".
 type ErrorMsg struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

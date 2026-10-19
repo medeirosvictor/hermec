@@ -32,7 +32,9 @@ type conn struct {
 	fingerprint string
 	name        string
 
-	voiceCh string // current voice channel, "" if none; guarded by srv.chMu
+	voiceCh  string // current voice channel, "" if none; guarded by srv.chMu
+	sharing  bool   // sharing a screen in voiceCh; guarded by srv.chMu
+	watching string // fingerprint of the sharer being watched, "" if none; guarded by srv.chMu
 }
 
 func newConn(s *Server, ws *websocket.Conn) *conn {
