@@ -240,3 +240,80 @@ func TestDecodeGarbage(t *testing.T) {
 		t.Fatal("expected error for garbage packet")
 	}
 }
+
+func TestDecodeReturnsOwnedFrame(t *testing.T) {
+	enc, _ := NewEncoder(320, 240, 15, 500)
+	defer enc.Close()
+	dec, _ := NewDecoder()
+	defer dec.Close()
+	f := NewFrame(320, 240)
+	var first *Frame
+	var snap []byte
+	for i := 0; i < 2; i++ {
+		synthFrame(f, i*10)
+		pkt, _, err := enc.Encode(f, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := dec.Decode(pkt)
+		if err != nil || out == nil {
+			t.Fatalf("decode %d: %v %v", i, out, err)
+		}
+		if i == 0 {
+			first, snap = out, append([]byte(nil), out.Y...)
+		} else if out == first {
+			t.Fatal("same frame returned twice")
+		}
+	}
+	if string(first.Y) != string(snap) {
+		t.Fatal("first frame mutated by second Decode")
+	}
+}
+
+func TestPendingKeySurvivesDrop(t *testing.T) {
+	e := &Encoder{keyEvery: 75, n: 5, sinceKey: 3}
+	e.pendingKey = true
+	e.noteResult(false, false)
+	if !e.pendingKey {
+		t.Fatal("pending key lost on drop")
+	}
+	e.noteResult(true, true)
+	if e.pendingKey || e.sinceKey != 0 {
+		t.Fatalf("pending=%v since=%d", e.pendingKey, e.sinceKey)
+	}
+}
+
+func TestEncodeBadFrame(t *testing.T) {
+	enc, _ := NewEncoder(320, 240, 15, 500)
+	defer enc.Close()
+	if _, _, err := enc.Encode(&Frame{W: 320, H: 240, Y: make([]byte, 10)}, false); err == nil {
+		t.Fatal("expected error for short planes")
+	}
+	if _, _, err := enc.Encode(NewFrame(160, 120), false); err == nil {
+		t.Fatal("expected error for size mismatch")
+	}
+}
+
+func TestFromBGRAGuards(t *testing.T) {
+	FromBGRA(&Frame{}, make([]byte, 64), 4, 4, 16)
+	FromBGRA(NewFrame(4, 4), make([]byte, 10), 4, 4, 16)
+	FromBGRA(NewFrame(4, 4), make([]byte, 64), 4, 4, 8)
+	FromBGRA(NewFrame(4, 4), make([]byte, 64), 0, 4, 0)
+}
+
+func TestInterBeforeKeyframe(t *testing.T) {
+	enc, _ := NewEncoder(320, 240, 15, 500)
+	defer enc.Close()
+	f := NewFrame(320, 240)
+	var second []byte
+	for i := 0; i < 2; i++ {
+		synthFrame(f, i)
+		pkt, _, _ := enc.Encode(f, false)
+		second = append(second[:0], pkt...)
+	}
+	dec, _ := NewDecoder()
+	defer dec.Close()
+	if out, err := dec.Decode(second); err == nil && out != nil {
+		t.Fatal("inter frame before keyframe decoded")
+	}
+}

@@ -58,6 +58,10 @@ func FitSize(sw, sh, maxW, maxH int) (w, h int) {
 // downscaling to dst.W×dst.H (set by the caller; planes are (re)allocated as
 // needed). BT.601 limited range.
 func FromBGRA(dst *Frame, src []byte, sw, sh, stride int) {
+	if dst.W <= 0 || dst.H <= 0 || sw <= 0 || sh <= 0 || stride < sw*4 ||
+		len(src) < (sh-1)*stride+sw*4 {
+		return
+	}
 	dst.ensure()
 	dw, dh := dst.W, dst.H
 	cw := (dw + 1) / 2

@@ -14,8 +14,10 @@ type Encoder struct {
 	w, h     int
 	keyEvery int
 	sinceKey int
-	n        uint64
-	buf      []byte
+	// pendingKey: a keyframe was requested/due but not yet emitted.
+	pendingKey bool
+	n          uint64
+	buf        []byte
 }
 
 // NewEncoder creates a w×h (even) encoder at fps and a CBR target of kbps.
@@ -57,17 +59,26 @@ func NewEncoder(w, h, fps, kbps int) (*Encoder, error) {
 }
 
 // Encode compresses f (which must match the encoder size). The returned
-// packet aliases an internal buffer valid until the next Encode call. pkt is
-// nil when rate control dropped the frame.
+// packet aliases an internal buffer and is ONLY valid until the next Encode
+// call: copy it before handing it to another goroutine or keeping it. pkt is
+// nil when rate control dropped the frame; a requested keyframe is then
+// carried over to the next encoded frame.
 func (e *Encoder) Encode(f *Frame, forceKey bool) (pkt []byte, key bool, err error) {
 	if f.W != e.w || f.H != e.h {
 		return nil, false, fmt.Errorf("video: frame %dx%d, encoder %dx%d", f.W, f.H, e.w, e.h)
 	}
-	var flags govpx.EncodeFlags
-	if forceKey || e.n == 0 || e.sinceKey+1 >= e.keyEvery {
-		flags = govpx.EncodeForceKeyFrame
-	}
 	cw := (e.w + 1) / 2
+	if len(f.Y) < e.w*e.h || len(f.U) < cw*((e.h+1)/2) || len(f.V) < cw*((e.h+1)/2) {
+		return nil, false, errors.New("video: frame planes too small")
+	}
+	if forceKey {
+		e.pendingKey = true
+	}
+	var flags govpx.EncodeFlags
+	if e.pendingKey || e.n == 0 || e.sinceKey+1 >= e.keyEvery {
+		flags = govpx.EncodeForceKeyFrame
+		e.pendingKey = true
+	}
 	img := govpx.Image{
 		Width: e.w, Height: e.h,
 		Y: f.Y, U: f.U, V: f.V,
@@ -79,15 +90,26 @@ func (e *Encoder) Encode(f *Frame, forceKey bool) (pkt []byte, key bool, err err
 		return nil, false, fmt.Errorf("video: vp8 encode: %w", err)
 	}
 	if res.Dropped || len(res.Data) == 0 {
-		e.sinceKey++
+		e.noteResult(false, false)
 		return nil, false, nil
 	}
-	if res.KeyFrame {
+	e.noteResult(true, res.KeyFrame)
+	return res.Data, res.KeyFrame, nil
+}
+
+// noteResult updates keyframe bookkeeping after an encode attempt. A dropped
+// frame leaves pendingKey set so the next emitted frame is a keyframe.
+func (e *Encoder) noteResult(emitted, key bool) {
+	if !emitted {
+		e.sinceKey++
+		return
+	}
+	if key {
 		e.sinceKey = 0
+		e.pendingKey = false
 	} else {
 		e.sinceKey++
 	}
-	return res.Data, res.KeyFrame, nil
 }
 
 // Close releases the encoder.
@@ -96,7 +118,6 @@ func (e *Encoder) Close() { e.enc.Close() }
 // Decoder decodes raw VP8 payloads into I420 frames.
 type Decoder struct {
 	dec *govpx.VP8Decoder
-	out Frame
 }
 
 // NewDecoder creates a VP8 decoder.
@@ -108,8 +129,12 @@ func NewDecoder() (*Decoder, error) {
 	return &Decoder{dec: d}, nil
 }
 
-// Decode decodes one packet. The returned frame is owned by the Decoder and
-// valid until the next Decode; it is nil when no visible frame is ready.
+// Close releases the decoder.
+func (d *Decoder) Close() { d.dec.Close() }
+
+// Decode decodes one packet. The returned frame is newly allocated and owned
+// by the caller (safe to hand to another goroutine); it is nil when no
+// visible frame is ready.
 func (d *Decoder) Decode(pkt []byte) (*Frame, error) {
 	if err := d.dec.Decode(pkt); err != nil {
 		return nil, fmt.Errorf("video: vp8 decode: %w", err)
@@ -118,13 +143,12 @@ func (d *Decoder) Decode(pkt []byte) (*Frame, error) {
 	if !ok {
 		return nil, nil
 	}
-	d.out.W, d.out.H = img.Width, img.Height
-	d.out.ensure()
+	out := NewFrame(img.Width, img.Height)
 	cw, ch := (img.Width+1)/2, (img.Height+1)/2
-	copyPlane(d.out.Y, img.Y, img.YStride, img.Width, img.Height)
-	copyPlane(d.out.U, img.U, img.UStride, cw, ch)
-	copyPlane(d.out.V, img.V, img.VStride, cw, ch)
-	return &d.out, nil
+	copyPlane(out.Y, img.Y, img.YStride, img.Width, img.Height)
+	copyPlane(out.U, img.U, img.UStride, cw, ch)
+	copyPlane(out.V, img.V, img.VStride, cw, ch)
+	return out, nil
 }
 
 func copyPlane(dst, src []byte, stride, w, h int) {
