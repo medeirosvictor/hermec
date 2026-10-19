@@ -2,11 +2,91 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/medeirosvictor/hermec/discover"
 )
+
+func muxClosed(t *testing.T, s *Server) bool {
+	t.Helper()
+	m, ok := s.mux.(interface{ IsClosed() bool })
+	if !ok {
+		t.Fatal("mux has no IsClosed")
+	}
+	return m.IsClosed()
+}
+
+// One oversized datagram (WSAEMSGSIZE on Windows) must not kill the mux or
+// the discovery responder that shares its socket.
+func TestMediaSurvivesOversizedDatagram(t *testing.T) {
+	s := startLoopback(t, func(c *Config) { c.Discoverable = true })
+	c := udpClient(t, s)
+	if _, err := c.Write(make([]byte, 9000)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if muxClosed(t, s) {
+		t.Fatal("mux closed by an oversized datagram")
+	}
+	if _, err := c.Write([]byte(discover.Magic)); err != nil {
+		t.Fatal(err)
+	}
+	if got := readAll(c, 500*time.Millisecond); len(got) != 1 {
+		t.Fatalf("announces after oversized datagram = %d, want 1", len(got))
+	}
+}
+
+func TestMediaSurvivesOversizedDatagramNoDiscovery(t *testing.T) {
+	s := startLoopback(t, func(c *Config) { c.Discoverable = false })
+	c := udpClient(t, s)
+	if _, err := c.Write(make([]byte, 9000)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if muxClosed(t, s) {
+		t.Fatal("mux closed by an oversized datagram")
+	}
+}
+
+type errConn struct {
+	net.PacketConn
+	errs int
+}
+
+func (e *errConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	if e.errs > 0 {
+		e.errs--
+		return 0, nil, errors.New("wsarecvfrom: message too long")
+	}
+	return copy(p, "data"), &net.UDPAddr{}, nil
+}
+
+func TestMediaConnSwallowsReadErrors(t *testing.T) {
+	c := &mediaConn{PacketConn: &errConn{errs: 5}}
+	n, _, err := c.ReadFrom(make([]byte, 16))
+	if err != nil || n != 4 {
+		t.Fatalf("ReadFrom = %d, %v; want 4, nil", n, err)
+	}
+}
+
+func TestDiscoverableFalseSharedPortNoAnnounce(t *testing.T) {
+	s := startLoopback(t, func(c *Config) { c.Discoverable = false })
+	c := udpClient(t, s)
+	if _, err := c.Write([]byte(discover.Magic)); err != nil {
+		t.Fatal(err)
+	}
+	if got := readAll(c, 400*time.Millisecond); len(got) != 0 {
+		t.Fatalf("got %d replies, want none", len(got))
+	}
+	if muxClosed(t, s) {
+		t.Fatal("mux closed")
+	}
+}
 
 func startLoopback(t *testing.T, mod func(*Config)) *Server {
 	t.Helper()

@@ -3,8 +3,10 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
+	"time"
 
 	"github.com/pion/ice/v4"
 )
@@ -12,22 +14,35 @@ import (
 // ErrMediaBind marks a failure to bind the UDP media port.
 var ErrMediaBind = errors.New("media port bind failed")
 
-// probeConn wraps the shared discovery+media socket. Discovery probes are
-// answered inline and never reach the ICE mux; everything else (STUN, DTLS,
-// RTP) is passed through. ReadFrom is only called from the mux's single
-// reader goroutine, which is what makes the discoverer's lock-free state safe.
-type probeConn struct {
+// mediaConn wraps the media socket handed to the ICE mux. The mux closes its
+// socket on any non-timeout read error, and on Windows a single oversized
+// datagram (WSAEMSGSIZE) is such an error, so one unauthenticated packet
+// could kill media for good. ReadFrom therefore swallows every error except
+// close and timeouts, with a backoff so a persistent error cannot spin. When d
+// is set (shared discovery+media socket) discovery probes are answered inline
+// and never reach the mux. ReadFrom is only called from the mux's single
+// reader goroutine, which is what makes the lock-free state safe.
+type mediaConn struct {
 	net.PacketConn
-	d *discoverer
+	d      *discoverer
+	errRun int
 }
 
-func (c *probeConn) ReadFrom(p []byte) (int, net.Addr, error) {
+func (c *mediaConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	for {
 		n, from, err := c.PacketConn.ReadFrom(p)
 		if err != nil {
-			return n, from, err
+			var ne net.Error
+			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || (errors.As(err, &ne) && ne.Timeout()) {
+				return n, from, err
+			}
+			if c.errRun++; c.errRun >= 3 {
+				time.Sleep(50 * time.Millisecond)
+			}
+			continue
 		}
-		if c.d.handle(c.PacketConn, p[:n], from) {
+		c.errRun = 0
+		if c.d != nil && c.d.handle(c.PacketConn, p[:n], from) {
 			continue
 		}
 		return n, from, nil
@@ -70,10 +85,10 @@ func (s *Server) startUDP(host string, port int) error {
 		}
 	}
 
-	mediaConn := pc
+	mc := pc
 	if media && !shared {
 		var err error
-		mediaConn, err = net.ListenPacket("udp", net.JoinHostPort(host, strconv.Itoa(mediaPort)))
+		mc, err = net.ListenPacket("udp", net.JoinHostPort(host, strconv.Itoa(mediaPort)))
 		if err != nil {
 			s.closeUDP()
 			return fmt.Errorf("server: media port %d is in use: %w: %w", mediaPort, ErrMediaBind, err)
@@ -82,16 +97,21 @@ func (s *Server) startUDP(host string, port int) error {
 
 	if d != nil && shared {
 		// The mux reader drives discovery; no separate loop.
-		mediaConn = &probeConn{PacketConn: pc, d: d}
-	} else if d != nil {
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			s.discoverLoop(pc, d)
-		}()
+		mc = &mediaConn{PacketConn: pc, d: d}
+	} else {
+		if d != nil {
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				s.discoverLoop(pc, d)
+			}()
+		}
+		if media {
+			mc = &mediaConn{PacketConn: mc}
+		}
 	}
 	if media {
-		s.mux = ice.NewUDPMuxDefault(ice.UDPMuxParams{UDPConn: mediaConn})
+		s.mux = ice.NewUDPMuxDefault(ice.UDPMuxParams{UDPConn: mc})
 		s.logf("media: UDP port %d", mediaPort)
 	}
 	return nil

@@ -64,16 +64,19 @@ between machines is encrypted in transit by WireGuard.
    in the Tailscale app.
 
 If voice does not connect, check that your Tailscale policy lets friends reach
-the host's UDP ports too (Tailscale allows all by default).
+the host's UDP port too: all voice and video uses UDP 7697, next to TCP 7697
+(Tailscale allows all by default). To limit shared friends to just those two
+ports, see the grant recipe in the README under "How safe is this?".
 
 ### (c) Public internet
 
 Use this only if you cannot use Tailscale.
 
-1. On the host's router, forward **TCP 7697** and a **UDP range** (for
-   example 50000-50100) to the host machine.
-2. In the server TOML set `public_ip` to the host's public IPv4 and
-   `udp_port_min` / `udp_port_max` to that same UDP range.
+1. On the host's router, forward **TCP 7697** and **UDP 7697** to the host
+   machine (all media uses that one UDP port).
+2. In the server TOML set `public_ip` to the host's public IPv4. Optionally
+   set `media_port` for a different UDP port, or (older style)
+   `udp_port_min` / `udp_port_max` for a UDP range you forward instead.
 3. Friends connect to `ws://<host-public-ip-or-domain>:7697/`.
 
 **Honest warning:** chat and signaling travel over plain `ws://` unless you

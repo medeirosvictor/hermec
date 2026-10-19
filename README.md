@@ -254,11 +254,17 @@ Any OS, once HERMEC is running:
    Tailscale's default policy allows all ports. You can narrow it to HERMEC,
    because all voice and video media now uses one UDP port, the same number
    as the server's port (UDP 7697 next to TCP 7697). In the Tailscale admin
-   console, open **Access controls** and add this to the `grants` list, then
-   remove the default allow-all grant for shared users:
+   console, open **Access controls**. The default grant lets everyone reach
+   everything. Do not delete it (that would lock out your own devices).
+   Instead, change its `src` from `"*"` to `"autogroup:member"` (people in your
+   own tailnet), and add a second grant for shared users. The `grants` list
+   then looks like this:
 
    ```json
-   {"src": ["autogroup:shared"], "dst": ["*"], "ip": ["tcp:7697", "udp:7697"]}
+   "grants": [
+     {"src": ["autogroup:member"], "dst": ["*"], "ip": ["*"]},
+     {"src": ["autogroup:shared"], "dst": ["*"], "ip": ["tcp:7697", "udp:7697"]}
+   ]
    ```
 
    Shared friends can then reach only TCP and UDP 7697 on your devices. This
