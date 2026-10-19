@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -343,6 +344,12 @@ func lostText(s *session, now time.Time) string {
 	if s.dialing {
 		return "reconnecting..."
 	}
+	if s.failed && s.retryAt.IsZero() {
+		if strings.Contains(s.lastErr, "↻") {
+			return s.lastErr
+		}
+		return s.lastErr + " — click ↻ to start"
+	}
 	n := 0
 	if !s.retryAt.IsZero() {
 		n = int(math.Ceil(s.retryAt.Sub(now).Seconds()))
@@ -374,7 +381,7 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	if s := g.cur(); s.st.Phase == state.PhaseDisconnected {
 		msg := lostText(s, time.Now())
 		sub := ""
-		if !s.dialing && s.st.ConnectErr != "" {
+		if !s.dialing && s.st.ConnectErr != "" && !(s.failed && s.retryAt.IsZero()) {
 			sub = "error: " + s.st.ConnectErr
 		}
 		g.drawCentered(screen, msg, float64(g.h)/2-gm.lh, th.Bright)

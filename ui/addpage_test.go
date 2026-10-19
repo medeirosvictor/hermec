@@ -46,6 +46,7 @@ func TestAddPageEntry(t *testing.T) {
 
 func TestAddChoiceHits(t *testing.T) {
 	g := addTestGame(t)
+	g.selfAddrs = func(context.Context) (string, string) { return "", "" }
 	g.chooseAdd(0)
 	if g.add != addCreate {
 		t.Fatalf("choice 0 -> %v", g.add)

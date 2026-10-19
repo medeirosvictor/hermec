@@ -39,7 +39,7 @@ type ctxMenu struct {
 func (g *game) openTileMenu(key string, ax, ay float64) {
 	g.closeMenu()
 	var items []menuItem
-	if s := g.sess[key]; s != nil && s.failed {
+	if s := g.sess[key]; s != nil && s.failed && !g.hostedStopped(key) {
 		items = append(items, menuItem{label: "Retry", act: func() { g.retryNow(key) }})
 	}
 	if h := g.hosted; key == hostedKey && h != nil {

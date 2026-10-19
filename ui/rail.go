@@ -168,10 +168,14 @@ func (g *game) switchServer(e state.ServerEntry) {
 	}
 	g.connect = newConnectForm(name, g.realURL(e.URL), e.URL == localKey && g.localURL != "")
 	key := ""
-	if s := g.openSession(e.URL, name); s != nil {
+	s := g.openSession(e.URL, name)
+	if s != nil {
 		key = s.key
 	}
 	g.view(key)
+	if s == nil {
+		g.add = addJoin // the connect form is where openSession's error shows
+	}
 }
 
 // addServer shows a fresh connect form; every session keeps running.
@@ -329,6 +333,7 @@ func (g *game) tileFacts(e state.ServerEntry) state.TileFacts {
 	f := state.TileFacts{Viewed: e.URL == g.curKey}
 	s, ok := g.sess[e.URL]
 	if !ok {
+		f.Failed = g.hostedStopped(e.URL) // stopped with no session yet
 		return f
 	}
 	f.HasSession = true

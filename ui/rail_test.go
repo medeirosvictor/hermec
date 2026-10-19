@@ -215,3 +215,14 @@ func TestTooltipSurvivesRemoval(t *testing.T) {
 		t.Fatalf("after removal tooltipText = %q, %v", s, ok)
 	}
 }
+
+func TestSwitchServerUnavailableShowsConnectError(t *testing.T) {
+	g := addTestGame(t)
+	g.servers = []state.ServerEntry{{URL: hostedKey, Label: "Den"}}
+	g.sess["k1"] = newSession("k1", "ws://k1/", "me")
+	g.view("k1")
+	g.switchServer(g.servers[0])
+	if g.curKey != "" || g.add != addJoin || g.noneSession().st.ConnectErr == "" {
+		t.Fatalf("cur=%q add=%v err=%q", g.curKey, g.add, g.noneSession().st.ConnectErr)
+	}
+}
