@@ -79,11 +79,19 @@ func Latest(ctx context.Context, current string) (Available, bool, error) {
 	// html_url is response data a caller will open in a browser, so only
 	// trust github.com https links; otherwise fall back to the releases page
 	// (the version info is still good).
-	url := rel.URL
-	if !strings.HasPrefix(url, "https://github.com/") {
-		url = fallbackURL
+	return Available{Version: rel.Tag, URL: releaseURL(rel.URL)}, true, nil
+}
+
+// releaseURLPrefix is the only place a release link may point.
+const releaseURLPrefix = "https://github.com/medeirosvictor/hermec/releases/"
+
+// releaseURL returns u when it is under this project's releases, else the
+// fallback releases page.
+func releaseURL(u string) string {
+	if strings.HasPrefix(u, releaseURLPrefix) {
+		return u
 	}
-	return Available{Version: rel.Tag, URL: url}, true, nil
+	return fallbackURL
 }
 
 // parse reads strict vMAJOR.MINOR.PATCH. Hyphenated tags (prereleases) are

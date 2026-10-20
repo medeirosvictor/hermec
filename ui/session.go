@@ -154,7 +154,7 @@ func (g *game) closeClient(c *client.Client) {
 
 // scheduleRetry arms the next background reconnect of s.
 func (s *session) scheduleRetry(now time.Time) {
-	s.retryAt = now.Add(state.NextBackoff(s.attempt))
+	s.retryAt = now.Add(state.JitteredBackoff(s.attempt, nil))
 	s.attempt++
 }
 
@@ -294,6 +294,11 @@ func (g *game) applyDial(r dialResult) {
 			return // keeps its tile and session; the user retries with the badge
 		}
 		s.st.ConnectErr = s.lastErr // stays PhaseDisconnected
+		var se *client.ServerError
+		if errors.As(r.err, &se) && se.Code == "auth_failed" {
+			s.retryAt = time.Time{} // retrying cannot help; the tile's ↻ still can
+			return
+		}
 		s.scheduleRetry(time.Now())
 		return
 	}

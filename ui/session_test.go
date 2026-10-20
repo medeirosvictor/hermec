@@ -435,8 +435,8 @@ func TestEverUpDialFailureSchedulesRetry(t *testing.T) {
 	if s.attempt != 3 {
 		t.Fatalf("attempt = %d, want 3", s.attempt)
 	}
-	if want := before.Add(4 * time.Second); s.retryAt.Before(want) {
-		t.Fatalf("retryAt %v, want >= %v (4s backoff for attempt 2)", s.retryAt, want)
+	if want := before.Add(3 * time.Second); s.retryAt.Before(want) {
+		t.Fatalf("retryAt %v, want >= %v (4s backoff for attempt 2, -25%% jitter)", s.retryAt, want)
 	}
 	if s.st.ConnectErr == "" {
 		t.Error("want ConnectErr")

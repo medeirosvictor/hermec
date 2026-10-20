@@ -9,6 +9,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
+	"github.com/medeirosvictor/hermec/discover"
 	"github.com/medeirosvictor/hermec/ui/state"
 )
 
@@ -288,5 +289,8 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 			hint += "   Up/Down pick discovered   Ctrl+R refresh"
 		}
 		g.drawTextF(screen, g.faceS, hint, x, y, th.Dim)
+		if discover.TailscaleMissing() {
+			g.drawTextF(screen, g.faceS, "Tailscale not found — type your friend's invite address", x, y+lh, th.Dim)
+		}
 	}
 }

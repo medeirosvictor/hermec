@@ -14,8 +14,8 @@ func SelfAddrs(ctx context.Context) (tailscaleIP, lanIP string) {
 }
 
 func selfTailscaleIP(parent context.Context) string {
-	bin, err := lookPath("tailscale")
-	if err != nil {
+	bin, ok := tailscaleBin()
+	if !ok {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(parent, statusTimeout)

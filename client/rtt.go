@@ -35,6 +35,7 @@ type rttTracker struct {
 	mu          sync.Mutex
 	ewma        rttEWMA
 	outstanding time.Time // send time of the oldest unanswered ping; zero if none
+	timedOut    time.Time // send time of the newest ping already counted as timed out
 }
 
 func newRTTTracker() *rttTracker { return &rttTracker{} }
@@ -63,6 +64,10 @@ func (r *rttTracker) pong(payload string, now time.Time) {
 		return
 	}
 	r.mu.Lock()
+	if !sent.After(r.timedOut) { // already counted as a timeout sample
+		r.mu.Unlock()
+		return
+	}
 	r.ewma.observe(d)
 	if !r.outstanding.IsZero() && !sent.Before(r.outstanding) {
 		r.outstanding = time.Time{}
@@ -76,6 +81,7 @@ func (r *rttTracker) check(now time.Time, timeout time.Duration) {
 	r.mu.Lock()
 	if !r.outstanding.IsZero() && now.Sub(r.outstanding) >= timeout {
 		r.ewma.observe(timeout)
+		r.timedOut = r.outstanding
 		r.outstanding = time.Time{}
 	}
 	r.mu.Unlock()
@@ -101,11 +107,14 @@ func (c *Client) startPinger(interval, timeout time.Duration, now func() time.Ti
 		tick := time.NewTicker(interval)
 		defer tick.Stop()
 		for {
+			// Stamp the ping while holding writeMu: waiting behind a slow
+			// data write must not count as network latency.
+			c.writeMu.Lock()
 			t := now()
 			c.rtt.check(t, timeout)
 			payload := c.rtt.sent(t)
-			// WriteControl is safe concurrently with the writer.
 			_ = c.ws.WriteControl(websocket.PingMessage, []byte(payload), t.Add(pingWrite))
+			c.writeMu.Unlock()
 			select {
 			case <-c.done:
 				return
