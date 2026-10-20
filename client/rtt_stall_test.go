@@ -4,14 +4,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-// A data write stalled while holding writeMu must not delay timeout sampling.
-func TestTimeoutSampledWhileWriteMuHeld(t *testing.T) {
+// While a data write holds writeMu the pinger must neither wait nor write, and
+// must still sample the outstanding ping's timeout on the tick it falls due.
+func TestPingerNeverWaitsOnWriteMu(t *testing.T) {
+	var pings atomic.Int32
 	up := websocket.Upgrader{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := up.Upgrade(w, r, nil)
@@ -19,6 +22,7 @@ func TestTimeoutSampledWhileWriteMuHeld(t *testing.T) {
 			return
 		}
 		defer ws.Close()
+		ws.SetPingHandler(func(string) error { pings.Add(1); return nil })
 		for {
 			if _, _, err := ws.ReadMessage(); err != nil {
 				return
@@ -34,30 +38,52 @@ func TestTimeoutSampledWhileWriteMuHeld(t *testing.T) {
 
 	c := &Client{ws: ws, rtt: newRTTTracker()}
 	t0 := time.Now()
-	c.rtt.sent(t0) // a ping that never gets answered
+	c.rtt.sent(t0) // ping N-1, never answered
 
-	c.writeMu.Lock() // simulates a stalled data write
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		c.pingOnce(pongTimeout, func() time.Time { return t0.Add(pongTimeout) })
-	}()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if v, ok := c.rtt.get(); ok && v == pongTimeout {
-			break
-		}
-		if time.Now().After(deadline) {
+	c.writeMu.Lock() // a stalled data write
+	tick := 2 * time.Second
+	for i := 1; i <= 5; i++ {
+		at := t0.Add(time.Duration(i) * tick)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			c.pingOnce(pongTimeout, func() time.Time { return at })
+		}()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
 			c.writeMu.Unlock()
-			t.Fatal("timeout not sampled while writeMu was held")
+			t.Fatalf("tick %d: pinger blocked on writeMu", i)
+		}
+		v, ok := c.rtt.get()
+		if due := time.Duration(i)*tick >= pongTimeout; due != (ok && v == pongTimeout) {
+			c.writeMu.Unlock()
+			t.Fatalf("tick %d: due=%v but sample ok=%v v=%v", i, due, ok, v)
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := pings.Load(); n != 0 {
+		c.writeMu.Unlock()
+		t.Fatalf("%d ping(s) written while writeMu was held", n)
+	}
+	if !c.rtt.outstandingZero() {
+		c.writeMu.Unlock()
+		t.Fatal("a ping was registered while the lock was held")
+	}
+
+	c.writeMu.Unlock() // pings resume
+	c.pingOnce(pongTimeout, func() time.Time { return t0.Add(12 * time.Second) })
+	deadline := time.Now().Add(2 * time.Second)
+	for pings.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("no ping after the lock was released")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	select {
-	case <-done:
-		t.Fatal("ping was sent despite the held write lock")
-	default:
-	}
-	c.writeMu.Unlock()
-	<-done
+}
+
+func (r *rttTracker) outstandingZero() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.outstanding.IsZero()
 }

@@ -97,14 +97,17 @@ func (r *rttTracker) get() (time.Duration, bool) {
 // the first pong arrives. It is cheap and never blocks on I/O.
 func (c *Client) RTT() (rtt time.Duration, ok bool) { return c.rtt.get() }
 
-// pingOnce samples a timeout and sends one ping. The timeout check runs before
-// (and independent of) writeMu, so a data write stalled for up to writeTimeout
-// cannot delay it. The ping itself is stamped while holding writeMu, so time
-// spent queued behind a slow write is not counted as network latency; that
-// wait only delays this ping, not the next timeout sample.
+// pingOnce samples a timeout and sends one ping. The timeout check runs every
+// tick and never touches writeMu. The pinger never waits on writeMu: if a data
+// write holds it the link is congested, so this ping is skipped (an already
+// outstanding one is sampled as a timeout on a later tick). The ping is
+// stamped while holding writeMu, so queueing behind a write is never counted
+// as network latency.
 func (c *Client) pingOnce(timeout time.Duration, now func() time.Time) {
 	c.rtt.check(now(), timeout)
-	c.writeMu.Lock()
+	if !c.writeMu.TryLock() {
+		return
+	}
 	defer c.writeMu.Unlock()
 	t := now()
 	payload := c.rtt.sent(t)
