@@ -3,6 +3,7 @@
 package state
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -88,6 +89,15 @@ func (s *State) SetConnected(channels []proto.ChannelInfo, fingerprint string) {
 	s.Status = ""
 }
 
+// cleanMembers copies ms with every name cleaned (a v0.4 server sends them raw).
+func cleanMembers(ms []proto.Member) []proto.Member {
+	out := append([]proto.Member(nil), ms...)
+	for i := range out {
+		out[i].Name = CleanName(out[i].Name, MaxServerNameRunes)
+	}
+	return out
+}
+
 // Apply reduces one client event. open=false means the Events channel closed.
 func (s *State) Apply(ev client.Event, open bool) {
 	if !open {
@@ -100,7 +110,7 @@ func (s *State) Apply(ev client.Event, open bool) {
 	case ev.Chat != nil:
 		c := ev.Chat
 		ms := append(s.Messages[c.Channel], Message{
-			FromName: c.From.Name, FromFP: c.From.Fingerprint, Text: c.Text, TS: c.TS,
+			FromName: CleanName(c.From.Name, MaxServerNameRunes), FromFP: c.From.Fingerprint, Text: c.Text, TS: c.TS,
 		})
 		if len(ms) > MaxMessages {
 			ms = append([]Message(nil), ms[len(ms)-MaxMessages:]...)
@@ -111,17 +121,23 @@ func (s *State) Apply(ev client.Event, open bool) {
 			s.Unread[c.Channel] = true
 		}
 	case ev.Presence != nil:
-		s.Members[ev.Presence.Channel] = append([]proto.Member(nil), ev.Presence.Members...)
+		s.Members[ev.Presence.Channel] = cleanMembers(ev.Presence.Members)
 	case ev.Roster != nil:
-		s.Roster = append([]proto.Member(nil), ev.Roster.Members...)
+		s.Roster = cleanMembers(ev.Roster.Members)
 		s.RosterTotal = ev.Roster.Total
 		s.HasRoster = true
 	case ev.Voice != nil:
 		if len(ev.Voice.Members) == 0 {
 			delete(s.Voice, ev.Voice.Channel)
 		} else {
-			s.Voice[ev.Voice.Channel] = append([]proto.VoiceMember(nil), ev.Voice.Members...)
+			ms := append([]proto.VoiceMember(nil), ev.Voice.Members...)
+			for i := range ms {
+				ms[i].Name = CleanName(ms[i].Name, MaxServerNameRunes)
+			}
+			s.Voice[ev.Voice.Channel] = ms
 		}
+	case errors.Is(ev.Err, client.ErrShareUnsupported):
+		s.Status = ev.Err.Error() // a plain explanation, not an error code
 	case ev.Err != nil:
 		s.Status = fmt.Sprintf("error: %v", ev.Err)
 	}

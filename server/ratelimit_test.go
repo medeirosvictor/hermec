@@ -320,6 +320,42 @@ func TestLoadConfigMsgRate(t *testing.T) {
 	}
 }
 
+// A config that keeps the limit defaults writes none of the limit keys, so an
+// older app that rejects unknown keys can still read it.
+func TestMarshalTOMLOmitsDefaultLimits(t *testing.T) {
+	out, err := DefaultConfig().MarshalTOML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"max_voice", "max_clients", "max_per_ip"} {
+		if strings.Contains(string(out), k) {
+			t.Errorf("default config writes %s:\n%s", k, out)
+		}
+	}
+	cfg := DefaultConfig()
+	cfg.MaxVoice, cfg.MaxClients, cfg.MaxPerIP = 40, 100, 4
+	out, err = cfg.MarshalTOML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"max_voice = 40", "max_clients = 100", "max_per_ip = 4"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("non-default config lacks %q:\n%s", want, out)
+		}
+	}
+	p := filepath.Join(t.TempDir(), "c.toml")
+	if err := os.WriteFile(p, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadConfig(p)
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	if got.MaxVoice != 40 || got.MaxClients != 100 || got.MaxPerIP != 4 {
+		t.Errorf("round trip = %d/%d/%d", got.MaxVoice, got.MaxClients, got.MaxPerIP)
+	}
+}
+
 func TestMarshalTOMLRoundTripsMsgRate(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MsgRate, cfg.MsgBurst = 7, 9

@@ -2,11 +2,13 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
 	"github.com/medeirosvictor/hermec/client"
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
 )
 
@@ -153,7 +155,7 @@ func (g *game) closeClient(c *client.Client) {
 
 // scheduleRetry arms the next background reconnect of s.
 func (s *session) scheduleRetry(now time.Time) {
-	s.retryAt = now.Add(state.NextBackoff(s.attempt))
+	s.retryAt = now.Add(state.JitteredBackoff(s.attempt, nil))
 	s.attempt++
 }
 
@@ -288,16 +290,22 @@ func (g *game) applyDial(r dialResult) {
 	s.dialing = false
 	if r.err != nil {
 		g.logf("dial %s failed: %v", s.url, r.err)
-		s.failed, s.lastErr = true, r.err.Error()
+		s.failed, s.lastErr = true, state.DialErrorText(r.err)
 		if !s.everUp {
 			return // keeps its tile and session; the user retries with the badge
 		}
 		s.st.ConnectErr = s.lastErr // stays PhaseDisconnected
+		var se *client.ServerError
+		if errors.As(r.err, &se) && se.Code == proto.CodeAuthFailed {
+			s.retryAt = time.Time{} // retrying cannot help; the tile's ↻ still can
+			return
+		}
 		s.scheduleRetry(time.Now())
 		return
 	}
 	g.logf("connected to %s, channels %v", s.url, r.c.Channels())
 	s.c = r.c
+	s.c.SetVideoSink(&g.vsink)
 	s.st.SetConnected(r.c.Channels(), r.c.Fingerprint())
 	s.ms = newMainScene()
 	s.everUp = true
@@ -320,6 +328,23 @@ func (g *game) applyJoin(r joinResult) {
 	g.logf("joined %s on %s", r.channel, s.url)
 }
 
+// noteEvent reacts to client events beyond what state.Apply records. A host
+// that cannot carry screen share has already ended our share in the client, so
+// the button must go back to "share".
+func (g *game) noteEvent(s *session, ev client.Event) {
+	if errors.Is(ev.Err, client.ErrShareUnsupported) && g.share.on && g.share.c == s.c {
+		g.stopShare()
+	}
+	// A refusal that reaches us for the watch still in force (it arrived after
+	// Watch gave up waiting) ends the view; a timely refusal is handled by the
+	// media worker, which sees it as Watch's error.
+	var se *client.ServerError
+	if errors.As(ev.Err, &se) && se.Code == proto.CodeNotSharing && se.Gen != 0 &&
+		s.c != nil && se.Gen == s.c.WatchGen() && g.watch.fp != "" && g.callSess() == s {
+		g.stopWatching()
+	}
+}
+
 // drainEvents applies up to maxEventsPerTick events of s. A closed stream
 // marks s disconnected.
 func (g *game) drainEvents(s *session) {
@@ -338,6 +363,7 @@ func (g *game) drainEvents(s *session) {
 				return
 			}
 			s.st.Apply(ev, true)
+			g.noteEvent(s, ev)
 		default:
 			return
 		}

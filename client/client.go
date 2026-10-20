@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,9 +43,17 @@ type Event struct {
 type ServerError struct {
 	Code    string
 	Message string
+	Gen     uint32 // gen of the refused watch request, 0 if none
 }
 
 func (e *ServerError) Error() string { return e.Code + ": " + e.Message }
+
+// Codes for refusals the server makes before the WebSocket upgrade. They come
+// as an HTTP status, not a protocol error message, so Dial synthesizes them.
+const (
+	CodeServerBusy = "server_busy" // 503: pre-auth or per-IP cap, or a blocked IP
+	CodeForbidden  = "forbidden"   // 403: the request carried an Origin header
+)
 
 type joinWaiter struct {
 	channel string
@@ -67,6 +76,24 @@ type Client struct {
 	call    *call // active voice call, if any
 
 	loopbackICE atomic.Bool
+	audioOnly   atomic.Bool
+
+	started     time.Time // Dial time; baseline of the first VideoStats window
+	vstats      videoStats
+	vsinkMu     sync.RWMutex
+	vsink       VideoSink
+	watchMu     sync.Mutex
+	watchFP     string // sharer we asked to watch ("" = none)
+	watchGen    uint64 // bumped by every Watch call
+	watchAt     time.Time
+	watchWire   uint32      // gen sent with the latest effective Watch; video_source must echo it
+	prevWatch   *watchState // state before that Watch, restored if the server refuses it
+	wireCtr     uint32      // last gen handed out; watchWire may be restored below it
+	watchWait   chan error  // answer channel of the pending Watch, nil if none
+	watchCallMu sync.Mutex  // serializes Watch calls
+	srcHave     bool        // a video_source for watchFP arrived since the last Watch
+	srcSeq      uint16      // first RTP sequence number of that source
+	srcID       uint64      // bumped by every accepted video_source
 
 	evMu     sync.RWMutex // guards closing events against emitNB
 	evClosed bool
@@ -79,11 +106,32 @@ type Client struct {
 	once     sync.Once
 }
 
+// refusalError maps a pre-upgrade HTTP status to a typed ServerError, or nil
+// for statuses that are not server refusals.
+func refusalError(status int) *ServerError {
+	switch status {
+	case http.StatusServiceUnavailable:
+		return &ServerError{Code: CodeServerBusy, Message: "server busy"}
+	case http.StatusForbidden:
+		return &ServerError{Code: CodeForbidden, Message: "origin refused"}
+	}
+	return nil
+}
+
 // Dial connects to url (e.g. "ws://host:port/"), answers the server's
 // challenge as id, and returns once auth_ok has been received.
 func Dial(ctx context.Context, url string, id *identity.Identity, name, password string) (*Client, error) {
-	ws, _, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
+	ws, resp, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
 	if err != nil {
+		if errors.Is(err, websocket.ErrBadHandshake) && resp != nil {
+			se := refusalError(resp.StatusCode)
+			if resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+			if se != nil {
+				return nil, fmt.Errorf("client: dial: %w", se)
+			}
+		}
 		return nil, fmt.Errorf("client: dial: %w", err)
 	}
 	ws.SetReadLimit(proto.MaxMessageSize)
@@ -129,6 +177,7 @@ func Dial(ctx context.Context, url string, id *identity.Identity, name, password
 		loopDone:    make(chan struct{}),
 		pingDone:    make(chan struct{}),
 		rtt:         newRTTTracker(),
+		started:     time.Now(),
 	}
 	// Only the pong handler is set: the default ping handler keeps answering
 	// the server's keepalive pings.
@@ -176,7 +225,7 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string)
 	case proto.TypeError:
 		var em proto.ErrorMsg
 		_ = json.Unmarshal(env.Data, &em)
-		return proto.AuthOK{}, fmt.Errorf("client: auth rejected: %w", &ServerError{em.Code, em.Message})
+		return proto.AuthOK{}, fmt.Errorf("client: auth rejected: %w", &ServerError{Code: em.Code, Message: em.Message})
 	default:
 		return proto.AuthOK{}, fmt.Errorf("client: unexpected %q during auth", env.Type)
 	}
@@ -392,10 +441,15 @@ func (c *Client) readLoop() {
 			c.emit(Event{Roster: &r})
 		case proto.TypeRTCOffer, proto.TypeRTCAnswer, proto.TypeRTCCandidate:
 			c.onRTC(env)
+		case proto.TypeVideoSource:
+			var vsrc proto.VideoSource
+			if json.Unmarshal(env.Data, &vsrc) == nil {
+				c.onVideoSource(vsrc)
+			}
 		case proto.TypeError:
 			var em proto.ErrorMsg
 			_ = json.Unmarshal(env.Data, &em)
-			se := &ServerError{em.Code, em.Message}
+			se := &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen}
 			if c.failOldestJoin(se) {
 				continue
 			}

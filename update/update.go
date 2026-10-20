@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -79,11 +80,30 @@ func Latest(ctx context.Context, current string) (Available, bool, error) {
 	// html_url is response data a caller will open in a browser, so only
 	// trust github.com https links; otherwise fall back to the releases page
 	// (the version info is still good).
-	url := rel.URL
-	if !strings.HasPrefix(url, "https://github.com/") {
-		url = fallbackURL
+	return Available{Version: rel.Tag, URL: releaseURL(rel.URL)}, true, nil
+}
+
+// releaseURLPrefix is the only place a release link may point.
+const releaseURLPrefix = "https://github.com/medeirosvictor/hermec/releases/"
+
+// releaseURL returns u when it is an https link on exactly github.com (no
+// userinfo, no port, lowercase host) whose decoded path stays under this
+// project's /releases/, else the fallback releases page. Any ".." or
+// backslash in the decoded path is rejected, so traversal (including
+// %2e%2e) cannot climb out of the repo after a browser normalises it. Case
+// differences in host or path are denied rather than normalised.
+func releaseURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil {
+		return fallbackURL
 	}
-	return Available{Version: rel.Tag, URL: url}, true, nil
+	if strings.Contains(u.Path, "..") || strings.Contains(u.Path, `\`) || strings.Contains(raw, `\`) {
+		return fallbackURL
+	}
+	if !strings.HasPrefix(u.Path, "/medeirosvictor/hermec/releases/") {
+		return fallbackURL
+	}
+	return raw
 }
 
 // parse reads strict vMAJOR.MINOR.PATCH. Hyphenated tags (prereleases) are

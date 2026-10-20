@@ -3,6 +3,7 @@
 package proto
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,7 +40,30 @@ const (
 	TypeRTCOffer     = "rtc_offer"
 	TypeRTCAnswer    = "rtc_answer"
 	TypeRTCCandidate = "rtc_candidate"
+
+	// Screen sharing (additive; protocol Version stays 1).
+	TypeShareStart = "share_start"
+	TypeShareStop  = "share_stop"
+	TypeWatch      = "watch"
+	// TypeVideoSource (S) marks the boundary of a viewer's video stream.
+	TypeVideoSource = "video_source"
 )
+
+// CodeNotSharing is the error code for a watch whose target is not sharing in
+// the sender's voice channel.
+const CodeNotSharing = "not_sharing"
+
+// CodeVoiceFull is the error code for a voice_join to a channel at its
+// participant cap (server config max_voice).
+const CodeVoiceFull = "voice_full"
+
+// CodeServerFull is the error code for an authentication refused because the
+// server is at its authenticated-session cap (server config max_clients).
+const CodeServerFull = "server_full"
+
+// CodeAuthFailed is the error code for a rejected authentication (bad
+// signature, wrong password, banned key). Retrying cannot succeed.
+const CodeAuthFailed = "auth_failed"
 
 // Reserved for future end-to-end encryption. They have no handler in v1.
 const (
@@ -100,6 +124,36 @@ type VoiceMember struct {
 	Fingerprint string `json:"fingerprint"`
 	Name        string `json:"name"`
 	Muted       bool   `json:"muted"`
+	Sharing     bool   `json:"sharing,omitempty"`
+}
+
+// ShareStart announces that the sender is sharing its screen.
+type ShareStart struct{}
+
+// ShareStop announces that the sender stopped sharing.
+type ShareStop struct{}
+
+// Watch says the sender now watches the sharer with this fingerprint; ""
+// stops watching. A viewer watches one stream at a time.
+type Watch struct {
+	Fingerprint string `json:"fingerprint"`
+	// Gen identifies this watch request; the server echoes the newest one in
+	// VideoSource.Gen so a client can tell a stale boundary from a current one.
+	// 0 (omitted) from clients that do not number their requests.
+	Gen uint32 `json:"gen,omitempty"`
+}
+
+// VideoSource tells a viewer which sharer the packets on its (single) video
+// track belong to from now on. Seq is the RTP sequence number, as the viewer
+// receives it, of that source's first packet; every packet before it (serial
+// number order) belongs to the previous source. Fingerprint "" means the
+// viewer's video was detached (Seq is 0 and unused).
+type VideoSource struct {
+	Fingerprint string `json:"fingerprint"`
+	Seq         uint16 `json:"seq"`
+	// Gen is the Gen of the watch request this boundary answers (0 if the
+	// client sent none).
+	Gen uint32 `json:"gen,omitempty"`
 }
 
 // VoiceState is the full participant list of a voice channel.
@@ -124,10 +178,13 @@ type RTCCandidate struct {
 }
 
 // ErrorMsg reports a failure. Codes: "auth_failed", "forbidden",
-// "bad_request", "not_joined", "rate_limited".
+// "bad_request", "not_joined", "rate_limited", "not_sharing", "voice_full", "server_full".
 type ErrorMsg struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Gen is the Gen of the watch request this error answers (only set for
+	// refused watches whose request carried a gen).
+	Gen uint32 `json:"gen,omitempty"`
 }
 
 // Join requests joining a channel.
@@ -151,6 +208,9 @@ type Member struct {
 type Presence struct {
 	Channel string   `json:"channel"`
 	Members []Member `json:"members"`
+	// Total is the real member count; Members may be a prefix of the list
+	// when the full frame would not fit MaxMessageSize. Zero from old servers.
+	Total int `json:"total,omitempty"`
 }
 
 // Roster lists the connected members server-wide, sorted by name then
@@ -178,11 +238,25 @@ type ChatMessage struct {
 
 // Encode wraps payload in a versioned envelope and marshals it.
 func Encode(msgType string, payload any) ([]byte, error) {
-	data, err := json.Marshal(payload)
+	data, err := marshalNoEscape(payload)
 	if err != nil {
 		return nil, fmt.Errorf("proto: marshal payload: %w", err)
 	}
-	return json.Marshal(Envelope{V: Version, Type: msgType, Data: data})
+	return marshalNoEscape(Envelope{V: Version, Type: msgType, Data: data})
+}
+
+// marshalNoEscape is json.Marshal without HTML escaping: '<', '>' and '&' stay
+// one byte instead of growing to six, so frames stay predictably small. The
+// envelope is encoded the same way because marshalling a json.RawMessage
+// re-escapes it.
+func marshalNoEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 // Decode parses and validates a raw envelope. It returns an error on

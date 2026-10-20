@@ -28,7 +28,11 @@ func authed(t *testing.T, url string) (*websocket.Conn, *identity.Identity) {
 	}
 	// Drain the roster the server sends right after auth_ok. Frames broadcast
 	// later (other conns coming and going) are skipped by the readers.
-	if r := readEnv(t, c); r.Type != proto.TypeRoster {
+	r := readEnv(t, c)
+	for r.Type == proto.TypeVoiceState { // joining an occupied server: snapshot precedes the roster
+		r = readEnv(t, c)
+	}
+	if r.Type != proto.TypeRoster {
 		t.Fatalf("after auth_ok: type = %q, want roster", r.Type)
 	}
 	return c, id

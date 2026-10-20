@@ -63,7 +63,12 @@ type call struct {
 	src     AudioSource
 	sink    AudioSink
 	track   *webrtc.TrackLocalStaticSample
+	vtrack  *webrtc.TrackLocalStaticSample // VP8 screen share; sender added on first StartShare
 	api     *webrtc.API
+
+	smu     sync.Mutex // guards share
+	share   *shareLoop
+	sclosed bool // teardown has run: StartShare must refuse
 
 	// actor queue
 	qmu   sync.Mutex
@@ -91,16 +96,19 @@ type call struct {
 	wg      sync.WaitGroup
 
 	// actor-owned
-	pc        *webrtc.PeerConnection
-	offerOut  bool // our rtc_offer awaits its answer
-	answered  bool // a remote description from our offer was applied
-	pending   []webrtc.ICECandidateInit
-	resets    int
-	resetting bool   // a local reset is in flight: server offers belong to discarded state
-	held      string // latest server offer received while resetting; answered only if the server reports glare
-	senderOn  bool
-	retryGen  uint64
-	glareSeen bool // the server already rejected our current offer as glare
+	pc         *webrtc.PeerConnection
+	offerOut   bool // our rtc_offer awaits its answer
+	answered   bool // a remote description from our offer was applied
+	pending    []webrtc.ICECandidateInit
+	resets     int
+	resetting  bool   // a local reset is in flight: server offers belong to discarded state
+	held       string // latest server offer received while resetting; answered only if the server reports glare
+	senderOn   bool
+	vidWanted  bool              // a video sender belongs on every PC of this call
+	vsnd       *webrtc.RTPSender // video sender on the current PC, if added
+	offerDirty bool              // PC changed while an exchange was running: offer once it ends
+	retryGen   uint64
+	glareSeen  bool // the server already rejected our current offer as glare
 }
 
 func (c *Client) newAPI() *webrtc.API {
@@ -114,6 +122,16 @@ func (c *Client) newAPI() *webrtc.API {
 		},
 		PayloadType: 111,
 	}, webrtc.RTPCodecTypeAudio)
+	if !c.audioOnly.Load() {
+		_ = me.RegisterCodec(webrtc.RTPCodecParameters{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:     webrtc.MimeTypeVP8,
+				ClockRate:    videoClock,
+				RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}},
+			},
+			PayloadType: 96,
+		}, webrtc.RTPCodecTypeVideo)
+	}
 	ir := &interceptor.Registry{}
 	_ = webrtc.RegisterDefaultInterceptors(me, ir)
 	se := webrtc.SettingEngine{}
@@ -139,6 +157,10 @@ func loopbackOnly(se *webrtc.SettingEngine) {
 // candidates, no mDNS). This breaks remote peers, so it is for tests only;
 // call before JoinVoice.
 func (c *Client) SetLoopbackICE(on bool) { c.loopbackICE.Store(on) }
+
+// SetAudioOnly makes future voice calls offer Opus only, like a pre-v0.5
+// client. It is for compatibility tests only; call before JoinVoice.
+func (c *Client) SetAudioOnly(on bool) { c.audioOnly.Store(on) }
 
 // VoiceChannel returns the voice channel of the active call, or "".
 func (c *Client) VoiceChannel() string {
@@ -166,8 +188,14 @@ func (c *Client) JoinVoice(ctx context.Context, channel string, src AudioSource,
 	if err != nil {
 		return err
 	}
+	vtrack, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
+		MimeType: webrtc.MimeTypeVP8, ClockRate: videoClock,
+	}, "video-"+c.fingerprint, c.fingerprint)
+	if err != nil {
+		return err
+	}
 	cl := &call{
-		c: c, channel: channel, src: src, sink: sink, track: track, api: c.newAPI(),
+		c: c, channel: channel, src: src, sink: sink, track: track, vtrack: vtrack, api: c.newAPI(),
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), adone: make(chan struct{}),
 		ready: make(chan struct{}), failCh: make(chan struct{}), tdDone: make(chan struct{}),
 		muteCh: make(chan struct{}, 1),
@@ -266,6 +294,9 @@ func (c *Client) onVoiceState(st proto.VoiceState) {
 			if cl.joined.CompareAndSwap(false, true) {
 				cl.post(cl.startOffer)
 			}
+			if m.Sharing && cl.curShare() != nil {
+				cl.post(cl.ensureVideo) // the host confirmed the share: it can take video
+			}
 			return
 		}
 	}
@@ -284,6 +315,18 @@ func (c *Client) onRTC(env proto.Envelope) {
 // onError offers a server error to the active call. It reports whether the
 // call consumed it (media recovery or a failed join).
 func (c *Client) onError(em proto.ErrorMsg) bool {
+	if em.Code == proto.CodeNotSharing || em.Code == "not_joined" {
+		c.watchFailed(em.Gen, &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen}) // the error itself still reaches the UI below
+	}
+	if em.Code == "bad_request" {
+		switch em.Message {
+		case msgShareStartUnsupported:
+			c.shareUnsupported()
+			return true
+		case "unsupported message type " + proto.TypeShareStop:
+			return true // we stopped a share the host never knew about
+		}
+	}
 	cl := c.getCall()
 	if cl == nil {
 		return false
@@ -299,7 +342,7 @@ func (c *Client) onError(em proto.ErrorMsg) bool {
 		}
 	}
 	if !cl.joined.Load() {
-		cl.fail(&ServerError{em.Code, em.Message})
+		cl.fail(&ServerError{Code: em.Code, Message: em.Message})
 		return true
 	}
 	return false
@@ -404,6 +447,9 @@ func (cl *call) teardownCtx(ctx context.Context) {
 			cl.tmu.Lock()
 			cl.tclosed = true
 			cl.tmu.Unlock()
+			if sl := cl.closeShare(); sl != nil {
+				sl.stop()
+			}
 			if cl.pc != nil {
 				_ = cl.pc.Close()
 				cl.pc = nil
@@ -465,6 +511,10 @@ func (cl *call) newPC() error {
 		}
 		cl.wg.Add(1)
 		cl.tmu.Unlock()
+		if remote.Kind() == webrtc.RTPCodecTypeVideo {
+			go cl.readVideo(pc, remote)
+			return
+		}
 		go cl.readTrack(remote)
 	})
 	cl.tmu.Lock()
@@ -486,6 +536,14 @@ func (cl *call) newPC() error {
 	}()
 	cl.pc = pc
 	cl.offerOut, cl.answered, cl.pending = false, false, nil
+	cl.vsnd = nil
+	if cl.vidWanted { // a share is (or was) active: the new PC carries the sender from its first offer
+		if err := cl.addVideoSender(pc); err != nil {
+			cl.pc = nil
+			_ = pc.Close()
+			return err
+		}
+	}
 	cl.startSender()
 	return nil
 }
@@ -577,7 +635,7 @@ func (cl *call) startOffer() {
 		cl.fail(fmt.Errorf("client: create offer: %w", err))
 		return
 	}
-	cl.offerOut, cl.glareSeen = true, false
+	cl.offerOut, cl.glareSeen, cl.offerDirty = true, false, false
 	if err := cl.c.send(proto.TypeRTCOffer, proto.RTCOffer{SDP: pc.LocalDescription().SDP}); err != nil {
 		cl.fail(err)
 	}
@@ -590,6 +648,11 @@ func (cl *call) reset() {
 	if cl.resets > maxResets {
 		cl.fail(errors.New("client: voice negotiation keeps failing"))
 		return
+	}
+	if cl.vidWanted && cl.resets >= 2 {
+		// Two resets in a row with a video sender on the PC: the host most
+		// likely cannot negotiate video. Sacrifice the share, not the call.
+		cl.dropVideo()
 	}
 	cl.discardPC()
 	cl.held = ""
@@ -633,6 +696,10 @@ func (cl *call) handleRTC(env proto.Envelope) {
 		cl.retryGen++
 		cl.flushPending()
 		cl.checkReady()
+		cl.keyAfterNegotiation()
+		if cl.offerDirty { // a sender was added while this exchange ran
+			cl.offerSoon()
+		}
 	case proto.TypeRTCOffer:
 		var m proto.RTCOffer
 		if json.Unmarshal(env.Data, &m) != nil {

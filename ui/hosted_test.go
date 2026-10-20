@@ -20,7 +20,7 @@ import (
 )
 
 func TestHostedConfigRoundTrip(t *testing.T) {
-	cfg := hostedConfig("  My‮Server ", "pw", 7697, "FP")
+	cfg := hostedConfig("  My\u202eServer ", "pw", 7697, "FP")
 	path := filepath.Join(t.TempDir(), "sub", "hosted.toml")
 	if err := saveHosted(path, cfg); err != nil {
 		t.Fatal(err)
@@ -296,8 +296,14 @@ func TestCopyInviteStatusOnHostedSession(t *testing.T) {
 	g.view("other")
 	g.selfAddrs = func(context.Context) (string, string) { return "", "192.168.1.5" }
 	g.copyInvite()
-	tickUntil(t, g, func() bool { return wrote.Load() == 1 })
-	g.tickBackground(time.Now())
+	// Wait on the status line itself. The hosted dial can finish late, and
+	// its SetConnected clears Status, so no extra tick may run once it is set.
+	tickUntil(t, g, func() bool {
+		return strings.HasPrefix(g.sess[hostedKey].st.Status, "copied ws://192.168.1.5:")
+	})
+	if wrote.Load() != 1 {
+		t.Fatalf("clipboard writes = %d, want 1", wrote.Load())
+	}
 	if got := g.sess[hostedKey].st.Status; !strings.HasPrefix(got, "copied ws://192.168.1.5:") {
 		t.Errorf("hosted status = %q", got)
 	}

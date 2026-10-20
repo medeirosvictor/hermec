@@ -16,6 +16,9 @@ import (
 // DefaultAddr is the listen address used when none is configured.
 const DefaultAddr = ":7697"
 
+// MaxVoiceLimit is the largest accepted max_voice (see LoadConfig).
+const MaxVoiceLimit = 50
+
 // fileConfig is the on-disk TOML shape of Config.
 type fileConfig struct {
 	Addr          string              `toml:"addr"`
@@ -28,11 +31,15 @@ type fileConfig struct {
 	PublicIP      string              `toml:"public_ip"`
 	UDPPortMin    uint16              `toml:"udp_port_min"`
 	UDPPortMax    uint16              `toml:"udp_port_max"`
+	MediaPort     int                 `toml:"media_port"`
 	DefaultRoles  []string            `toml:"default_roles"`
 	Roles         map[string][]string `toml:"roles"`
 	Grants        map[string][]string `toml:"grants"`
 	MsgRate       int                 `toml:"msg_rate"`
 	MsgBurst      int                 `toml:"msg_burst"`
+	MaxVoice      *int                `toml:"max_voice"` // nil (not written) when unset or default
+	MaxClients    *int                `toml:"max_clients"`
+	MaxPerIP      *int                `toml:"max_per_ip"`
 	Discoverable  *bool               `toml:"discoverable"`
 	ServerName    string              `toml:"server_name"`
 }
@@ -44,12 +51,23 @@ func DefaultConfig() Config {
 		Channels:     []string{"general"},
 		MsgRate:      DefaultMsgRate,
 		MsgBurst:     DefaultMsgBurst,
+		MaxVoice:     DefaultMaxVoice,
+		MaxClients:   DefaultMaxClients,
+		MaxPerIP:     DefaultMaxPerIP,
 		Discoverable: true,
 		Roles: roles.Config{
 			Roles:        roles.Builtin(),
 			DefaultRoles: []string{"user"},
 		},
 	}
+}
+
+// intOr returns *p, or 0 when p is nil.
+func intOr(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // LoadConfig reads a TOML server config from path. Omitted keys take their
@@ -70,6 +88,7 @@ func LoadConfig(path string) (Config, error) {
 	}
 
 	cfg := DefaultConfig()
+	maxVoice, maxClients, maxPerIP := intOr(fc.MaxVoice), intOr(fc.MaxClients), intOr(fc.MaxPerIP)
 	if fc.Addr != "" {
 		cfg.Addr = fc.Addr
 	}
@@ -95,6 +114,10 @@ func LoadConfig(path string) (Config, error) {
 	if (cfg.UDPPortMin == 0) != (cfg.UDPPortMax == 0) || cfg.UDPPortMin > cfg.UDPPortMax {
 		return Config{}, errors.New("server: load config: udp_port_min and udp_port_max must be set together with min <= max")
 	}
+	if fc.MediaPort < 0 || fc.MediaPort > 65535 {
+		return Config{}, errors.New("server: load config: media_port must be between 0 and 65535")
+	}
+	cfg.MediaPort = fc.MediaPort
 	if (cfg.TLSCert == "") != (cfg.TLSKey == "") {
 		return Config{}, errors.New("server: load config: tls_cert and tls_key must be set together")
 	}
@@ -114,6 +137,31 @@ func LoadConfig(path string) (Config, error) {
 	if md.IsDefined("msg_burst") {
 		cfg.MsgBurst = fc.MsgBurst
 	}
+	if maxVoice < 0 || (md.IsDefined("max_voice") && maxVoice == 0) {
+		return Config{}, errors.New("server: load config: max_voice must be at least 1")
+	}
+	if maxClients < 0 || (md.IsDefined("max_clients") && maxClients == 0) {
+		return Config{}, errors.New("server: load config: max_clients must be at least 1")
+	}
+	if maxPerIP < 0 || (md.IsDefined("max_per_ip") && maxPerIP == 0) {
+		return Config{}, errors.New("server: load config: max_per_ip must be at least 1")
+	}
+	if md.IsDefined("max_per_ip") {
+		cfg.MaxPerIP = maxPerIP
+	}
+	if md.IsDefined("max_clients") {
+		cfg.MaxClients = maxClients
+	}
+	// Ceiling: the server's rtc_offer carries one audio line per other member
+	// (~0.8 KB live, ~0.55 KB retired, plus video) and must fit
+	// proto.MaxMessageSize; beyond ~60 members the first offer after a media
+	// rebuild is itself oversize and the room would reset forever.
+	if maxVoice > MaxVoiceLimit {
+		return Config{}, fmt.Errorf("server: load config: max_voice must be at most %d", MaxVoiceLimit)
+	}
+	if md.IsDefined("max_voice") {
+		cfg.MaxVoice = maxVoice
+	}
 	if utf8.RuneCountInString(fc.ServerName) > discover.MaxNameRunes {
 		return Config{}, fmt.Errorf("server: load config: server_name must be at most %d characters", discover.MaxNameRunes)
 	}
@@ -128,8 +176,17 @@ func LoadConfig(path string) (Config, error) {
 	return cfg, nil
 }
 
-// MarshalTOML renders c in the same TOML shape LoadConfig reads.
+// MarshalTOML renders c in the same TOML shape LoadConfig reads. The limit keys
+// (max_voice, max_clients, max_per_ip) are written only when they differ from
+// their defaults, so a file that keeps the defaults has no keys an older app
+// (which rejects unknown keys) would not know.
 func (c Config) MarshalTOML() ([]byte, error) {
+	omitLimit := func(v, def int) *int {
+		if v <= 0 || v == def {
+			return nil
+		}
+		return &v
+	}
 	fc := fileConfig{
 		Addr:          c.Addr,
 		Password:      c.Password,
@@ -141,11 +198,15 @@ func (c Config) MarshalTOML() ([]byte, error) {
 		PublicIP:      c.PublicIP,
 		UDPPortMin:    c.UDPPortMin,
 		UDPPortMax:    c.UDPPortMax,
+		MediaPort:     c.MediaPort,
 		DefaultRoles:  c.Roles.DefaultRoles,
 		Roles:         make(map[string][]string, len(c.Roles.Roles)),
 		Grants:        c.Roles.Grants,
 		MsgRate:       c.MsgRate,
 		MsgBurst:      c.MsgBurst,
+		MaxVoice:      omitLimit(c.MaxVoice, DefaultConfig().MaxVoice),
+		MaxClients:    omitLimit(c.MaxClients, DefaultMaxClients),
+		MaxPerIP:      omitLimit(c.MaxPerIP, DefaultMaxPerIP),
 		Discoverable:  &c.Discoverable,
 		ServerName:    c.ServerName,
 	}

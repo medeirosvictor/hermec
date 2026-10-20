@@ -13,7 +13,9 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/medeirosvictor/hermec/core/identity"
+	"github.com/medeirosvictor/hermec/core/names"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/discover"
 )
 
 const nonceSize = 32
@@ -28,11 +30,18 @@ type conn struct {
 	send   chan []byte // closed (under sendMu) when the connection ends
 	closed bool
 
+	ip           string // remote IP
+	leavePreAuth func() // releases the pre-auth slot; idempotent, readLoop only
+	counted      bool   // holds a MaxClients slot; readLoop only
+
 	// Set once authenticated; only touched by readLoop.
 	fingerprint string
 	name        string
 
-	voiceCh string // current voice channel, "" if none; guarded by srv.chMu
+	voiceCh  string // current voice channel, "" if none; guarded by srv.chMu
+	sharing  bool   // sharing a screen in voiceCh; guarded by srv.chMu
+	watching string // fingerprint of the sharer being watched, "" if none; guarded by srv.chMu
+	watchGen uint32 // gen of the watch request that set watching (echoed in video_source); guarded by srv.chMu
 }
 
 func newConn(s *Server, ws *websocket.Conn) *conn {
@@ -42,6 +51,16 @@ func newConn(s *Server, ws *websocket.Conn) *conn {
 // enqueue queues an encoded message for the writer. It reports false if the
 // connection is closed or its outbound buffer is full (slow consumer).
 func (c *conn) enqueue(raw []byte) bool {
+	if len(raw) > proto.MaxMessageSize {
+		// Clients refuse frames this large (and would drop us); one oversize
+		// frame must not take its recipient down, so drop it and report ok.
+		var head struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(raw, &head)
+		c.srv.logf("server: dropping %d-byte %q frame for %s (max %d)", len(raw), head.Type, c.fingerprint, proto.MaxMessageSize)
+		return true
+	}
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	if c.closed {
@@ -67,10 +86,19 @@ func (c *conn) sendError(code, message string) {
 	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message})
 }
 
+// sendErrorGen is sendError for a refused watch: it echoes the request's gen.
+func (c *conn) sendErrorGen(code, message string, gen uint32) {
+	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message, Gen: gen})
+}
+
 // finish stops accepting outbound messages; the writer drains what is already
 // queued (e.g. a final error), then closes the socket.
 func (c *conn) finish() {
 	c.srv.unregister(c)
+	if c.counted {
+		c.counted = false
+		c.srv.releaseClient()
+	}
 	c.srv.leaveAll(c)
 	c.sendMu.Lock()
 	if !c.closed {
@@ -95,7 +123,11 @@ func (c *conn) readLoop() {
 	defer c.srv.wg.Done()
 	defer c.finish()
 
-	if err := c.authenticate(); err != nil {
+	err := c.authenticate()
+	if c.leavePreAuth != nil {
+		c.leavePreAuth()
+	}
+	if err != nil {
 		return
 	}
 	_ = c.ws.SetReadDeadline(time.Time{})
@@ -177,6 +209,7 @@ func (c *conn) authenticate() error {
 	}
 
 	fail := func() error {
+		c.srv.noteAuthFailure(c.ip) // blocks further connects from this IP; the reply is not delayed
 		c.sendError("auth_failed", "authentication failed")
 		return errAuthFailed
 	}
@@ -207,8 +240,18 @@ func (c *conn) authenticate() error {
 		}
 	}
 
+	c.srv.noteAuthSuccess(c.ip)
+	if !c.srv.reserveClient() {
+		c.sendError(proto.CodeServerFull, "server is full")
+		return errAuthFailed
+	}
+	c.counted = true
+
 	c.fingerprint = fp
-	c.name = auth.Name
+	c.name = names.Clean(auth.Name, discover.MaxNameRunes)
+	if c.name == "" {
+		c.name = "anon"
+	}
 	c.sendMsg(proto.TypeAuthOK, proto.AuthOK{
 		Fingerprint: fp,
 		Roles:       c.srv.cfg.Roles.RolesFor(fp),

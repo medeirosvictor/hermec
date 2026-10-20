@@ -28,6 +28,8 @@ type Settings struct {
 
 	InputDevice  string `toml:"input_device,omitempty"`  // "" = system default
 	OutputDevice string `toml:"output_device,omitempty"` // "" = system default
+
+	ShareQuality string `toml:"share_quality,omitempty"` // "720p" (default) or "1080p"; see ShareQualityID
 }
 
 // CurvatureEnabled reports whether the CRT curvature is on; unset means on.

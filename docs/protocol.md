@@ -2,8 +2,8 @@
 
 This document specifies the Hermec signaling/chat protocol, version 1. It
 covers the chat subset implemented by the foundation release: authentication,
-channels, presence and text chat, plus voice signaling (section 4.12).
-Screenshare is specified separately, later.
+channels, presence and text chat, plus voice signaling (section 4.12) and
+screen share signaling (section 4.15). Webcam is specified separately, later.
 
 The reference implementation is `core/proto` (types and codec) and `server`
 (behavior). Where this document and the code disagree, that is a bug in one of
@@ -18,6 +18,9 @@ them; please report it.
 - Maximum message size: **65536 bytes (64 KiB)**, measured on the raw frame.
   The server's WebSocket read limit is set to this value, so a larger frame
   terminates the connection. `proto.Decode` also rejects larger input.
+  Servers never send a frame over this limit: an outbound frame that would be
+  too large is dropped and logged, not sent. Lists that could grow past it
+  (`presence`, `roster`) are trimmed to fit, see sections 4.7 and 4.14.
 - Keepalive: the server sends a WebSocket ping every 15 seconds and closes the
   connection on the tick after two consecutive unanswered pings (about 45
   seconds after the last pong), without sending a third. Clients must
@@ -81,6 +84,11 @@ Client                                   Server
 Any message other than `auth` before authentication is an authentication
 failure. Timeout or disconnect before `auth` simply closes the connection.
 
+**Failed logins.** After 5 failed logins in a row from one IP (forgotten after a quiet minute), that IP
+is refused for 1 s. Each further failure doubles the wait, up to 60 s. A
+successful login resets the count. While an IP is refused, its connection
+attempts get HTTP 503 instead of a WebSocket.
+
 **Fingerprint.** A key's identity is its fingerprint: the lowercase RFC 4648
 base32 (no padding) encoding of the first 10 bytes of `SHA-256(pubkey)`,
 split into hyphen-separated groups of four characters, for example
@@ -92,6 +100,21 @@ The client may send `join`, `leave` and `chat_send`. The server sends
 `presence` and `chat_message` for channels the client has joined. A
 connection that sends anything else receives `error` (`bad_request`).
 Disconnecting leaves all channels; remaining members receive a new `presence`.
+
+### 3.3 Connection and name limits
+
+- **Browser origins.** An upgrade request that carries an `Origin` header is
+  refused. Native clients send none.
+- **Connection caps.** The server allows at most 64 connections waiting for
+  `auth`, `max_per_ip` concurrent connections per remote IP (default 16; raise
+  it for a LAN party), and `max_clients` authenticated sessions (default 256).
+  A new connection over the pre-auth or per-IP cap is refused with HTTP 503,
+  before any WebSocket opens. A client over `max_clients` gets `server_full`
+  (section 5).
+- **Names.** The server cleans every `auth` name: it removes format, control
+  and line or paragraph separator characters, trims spaces, and keeps at most
+  64 characters. A name that is empty after cleaning becomes `anon`.
+  `presence`, `roster` and `chat_message` carry the cleaned name.
 
 ## 4. Messages
 
@@ -108,7 +131,7 @@ Direction: C is client to server, S is server to client.
 | Field      | Type   | Required | Description                               |
 |------------|--------|----------|-------------------------------------------|
 | `pubkey`   | base64 | yes      | 32-byte Ed25519 public key.               |
-| `name`     | string | yes      | Display name.                             |
+| `name`     | string | yes      | Display name, cleaned and capped by the server (see 3.3). |
 | `sig`      | base64 | yes      | Ed25519 signature of the challenge nonce. |
 | `password` | string | no       | Server password, if one is configured.    |
 
@@ -164,8 +187,12 @@ If the client was not in the channel the server replies `error` `not_joined`.
 |-----------|----------|--------------------------------------------------|
 | `channel` | string   | Channel name.                                    |
 | `members` | Member[] | Full current member list, sorted by name then fingerprint. |
+| `total`   | int      | Optional. The real member count. Omitted when zero, and absent from older servers. |
 
-`presence` always carries the complete member list, not a delta. A `Member`:
+`presence` always carries the complete member list, not a delta. If the list
+would not fit in one frame (section 1), `members` holds only the first members
+that fit, and `total` still gives the real count, so a client can show
+"and N more". A `Member`:
 
 | Field         | Type     | Description                       |
 |---------------|----------|-----------------------------------|
@@ -181,8 +208,9 @@ If the client was not in the channel the server replies `error` `not_joined`.
 | `text`    | string | Message body (UTF-8 text).   |
 
 The sender must be a member of the channel (`not_joined` otherwise) and hold
-the `send_chat` permission (`forbidden` otherwise). The only length limit on
-`text` is the 64 KiB message size limit.
+the `send_chat` permission (`forbidden` otherwise). `text` may be at most
+**4096 bytes** (UTF-8). A longer text is refused with `bad_request` and the
+message `message too long`.
 
 ### 4.9 `chat_message` (S)
 
@@ -225,12 +253,16 @@ WebRTC (negotiated as in section 4.13). The server acts as an SFU (selective for
 | `rtc_answer`    | C/S | `{"sdp": string}` SDP answer.                                  |
 | `rtc_candidate` | C/S | `{"candidate": string}` one ICE candidate (JSON candidate init). |
 
-`VoiceMember`: `fingerprint` (string), `name` (string), `muted` (bool).
+`VoiceMember`: `fingerprint` (string), `name` (string), `muted` (bool),
+`sharing` (bool, omitted when false; true while the member shares their
+screen, see section 4.15).
 
 Semantics:
 
 - `voice_join` targets a channel whose `type` is `voice`; unknown or non-voice
   channels yield `bad_request`. It requires the `join_channel` permission.
+  A channel already at its participant cap (`max_voice`, default 25, maximum
+  50) refuses the join with `voice_full`.
 - **One call at a time.** A connection is in at most one voice channel.
   Sending `voice_join` for another channel while in a call moves the client:
   it leaves the old channel (whose members get a fresh `voice_state`) and
@@ -316,17 +348,112 @@ Semantics:
   dropped). They also ignore `auth_ok` `server_name`, since receivers ignore
   unknown fields (section 7).
 
+### 4.15 Screen share messages
+
+A member of a voice call can share their screen. Signaling rides the same
+WebSocket; the video travels over the same WebRTC connection as the audio
+(negotiated as in section 4.13).
+
+| Type          | Dir | Payload                                                          |
+|---------------|-----|------------------------------------------------------------------|
+| `share_start` | C   | `{}` the sender starts sharing their screen.                     |
+| `share_stop`  | C   | `{}` the sender stops sharing.                                   |
+| `watch`       | C   | `{"fingerprint": string}` watch that member's share. `""` stops watching. |
+
+Semantics:
+
+- `share_start` and `share_stop` only work while the sender is in a voice
+  call; outside a call they are silently ignored. Each one changes the
+  sender's `sharing` flag and the server re-broadcasts `voice_state`
+  (section 4.12) to everyone.
+- `watch` outside a call yields `error` `not_joined`.
+- Leaving the call (or disconnecting) stops the share.
+- `watch` names a member by fingerprint. The target must be sharing in the
+  same voice channel as the sender, or the server answers `error`
+  `not_sharing`. A client watches at most one share at a time; a new `watch`
+  replaces the old one. `watch` with an empty fingerprint stops watching.
+- A watch ends by itself when the sharer stops or leaves, or when the watcher
+  leaves the call.
+- Sharing and watching need no permission beyond being in the call (which
+  itself needs the usual `join_channel` permission); there is no separate
+  share permission.
+- A server older than v0.5.0 does not know these types and answers
+  `share_start` with `error` `bad_request` "unsupported message type
+  share_start". A client treats that as "this server does not support screen
+  share": it stops the share locally (without sending `share_stop`, which such
+  a server would also reject) and tells the user. A client also adds its video
+  track to the call only after the server's `voice_state` shows the client's
+  own `sharing: true`, which an older server never sends, so a failed share
+  never puts an unanswerable video section into the call's negotiation.
+
+Media:
+
+- Video is **VP8**, RTP payload type **96**, with RTCP `nack` and `pli`
+  feedback. The sharer sends one video track to the server.
+- The server forwards a sharer's video **only to the members watching it**.
+  Members who are not watching receive no video packets.
+- When someone starts watching, the server asks the sharer for a keyframe
+  (PLI), so the new watcher can start decoding quickly.
+- Each viewer has one video transceiver. The server renegotiates with
+  `rtc_offer` (section 4.13) only the first time a viewer gets video; after
+  that it swaps the source on the same media section without renegotiating
+  (when a viewer switches to another sharer, or the sharer stops and starts
+  again). The stream id of the track (`video-<fingerprint>`) therefore names
+  only the first sharer that viewer received. A client must identify the
+  sharer from its own `watch` request, never from the track's stream id or
+  msid, and should expect a keyframe after each switch (the server requests
+  it from the new sharer). Clients must handle server offers at any time.
+- `video_source` (S): `{"fingerprint": string, "seq": uint16}`. Because the
+  source behind a viewer's single track changes without renegotiation, and
+  packets of the old source can still be in flight, the server marks the
+  boundary explicitly. Whenever it attaches a source to a viewer's video
+  (first attach or a switch), it sends `video_source` with that sharer's
+  fingerprint and the RTP sequence number, exactly as the viewer receives it,
+  of the new source's first packet. The server numbers the viewer's packets
+  itself (continuous across switches) and sends no further packet of the
+  previous source once the boundary is fixed. The message is queued before any
+  packet of the new source is written, but the WebSocket and RTP travel
+  separately, so it may arrive after the first packets. A client therefore
+  waits for it after each `watch`, discards packets whose sequence number is
+  before `seq` (16-bit serial-number order), restarts its depacketizer and
+  decoder at `seq`, waits for a keyframe, and labels frames with `fingerprint`.
+  `watch` may carry `"gen": uint32` (a client-chosen number, new for each
+  effective watch request; omitted = 0). The server echoes the newest gen it
+  has accepted in `video_source.gen`, and a client ignores a `video_source`
+  whose gen is not its current one (0 = server or client without gens), so a
+  boundary announced for an earlier watch of the same sharer is not mistaken
+  for the current one. A repeated `watch` of the sharer already watched
+  changes nothing except that, with a new gen, the server repeats the current
+  `video_source` under it. An `error` that refuses a `watch` (`not_sharing`,
+  `not_joined`) carries the request's gen in `error.gen` (omitted when the
+  request had none); a client acts on it only if it matches its pending
+  watch. A `watch` refused with `not_sharing` changes
+  nothing: the previous source keeps streaming, and the client keeps (or
+  restores) its previous target.
+  When a viewer's source is detached (`watch` with `""`, or the sharer
+  stopped) the server sends `{"fingerprint": "", "seq": 0}`; clients may
+  ignore it. Older clients ignore the unknown type. A client that gets no
+  `video_source` for about 3 seconds after `watch` may fall back to restarting
+  on the first packet it receives.
+- A server refuses an `rtc_offer` that contains a video section it has no
+  codec for with `error` `bad_request` "no common video codec; media reset,
+  send a new rtc_offer", and the client recovers as in section 4.13.
+- Hermec does not send audio from the shared screen.
+
 ## 5. Errors
 
 | Code          | Meaning                                                              |
 |---------------|----------------------------------------------------------------------|
 | `auth_failed` | Authentication failed; the connection is closed after this message. |
 | `forbidden`   | The role lacks the required permission (`join_channel`, `send_chat`). |
-| `bad_request` | Malformed message, unknown channel, or unsupported message type.     |
+| `bad_request` | Malformed message, unknown channel, unsupported message type, or chat text over 4096 bytes (`message too long`). |
 | `not_joined`  | The operation needs channel membership the client does not have.     |
+| `not_sharing` | `watch` named a member who is not sharing in the sender's voice channel. |
+| `voice_full`  | `voice_join` named a channel already at its participant cap (`max_voice`, default 25). |
+| `server_full` | Authentication was refused because the server is at its `max_clients` cap (default 256); the connection is closed after this message. |
 | `rate_limited`| The client is sending too fast; the connection is closed after this message. |
 
-Except for `auth_failed` and `rate_limited`, errors do not close the connection.
+Except for `auth_failed`, `server_full` and `rate_limited`, errors do not close the connection.
 
 **Known v1 limitation: no error correlation.** Messages carry no request or
 correlation ID, so an `error` cannot be tied to the request that caused it.
@@ -365,6 +492,11 @@ version number.
 The following were added later and are purely additive, so v1 clients ignore
 them: the `auth_ok` `server_name` field (section 4.3) and the `roster` message
 (section 4.14).
+
+The screen share release added the `share_start`, `share_stop` and `watch`
+messages, the `not_sharing` error and the `VoiceMember` `sharing` field
+(section 4.15). They are additive: older clients ignore the `sharing` field
+and never send the new messages.
 
 ## 8. Discovery
 

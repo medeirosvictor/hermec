@@ -29,7 +29,7 @@ var (
 
 // barH is the title bar height, 0 where the OS frame is used.
 func (g *game) barH() float64 {
-	if !hasCustomBar() {
+	if !hasCustomBar() || g.fullscreen {
 		return 0
 	}
 	return titleBarH
@@ -65,6 +65,10 @@ func rawCursor() (float64, float64) {
 // the app should quit.
 func (g *game) updateTitleBar() (quit bool) {
 	if !hasCustomBar() {
+		return false
+	}
+	if g.fullscreen { // no caption, buttons or resize edges
+		g.tzone = state.ZoneNone
 		return false
 	}
 	g.maxed = ebiten.IsWindowMaximized()

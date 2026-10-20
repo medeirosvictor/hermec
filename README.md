@@ -53,8 +53,9 @@ rest.
 This repository currently ships a Go server with Ed25519 key-based
 authentication, roles, channels, presence and text chat, plus a headless client
 library, a desktop GUI client, and integration tests. Voice chat now works in
-the GUI, with audio relayed through the self-hosted server. Screenshare, camera
-video, and the direct peer-to-peer opt-in remain unimplemented. The
+the GUI, with audio relayed through the self-hosted server. Screen share works
+too (sharing from Windows, watching on Windows, macOS or Linux). Camera video and the
+direct peer-to-peer opt-in remain unimplemented. The
 wire protocol for what exists is specified in [docs/protocol.md](docs/protocol.md).
 
 ## Install
@@ -93,6 +94,8 @@ The exe is unsigned, so Windows SmartScreen may warn: click **More info**, then
 3. Run `./hermec`.
 
 You need a desktop with X11 or Wayland, and PulseAudio or PipeWire for sound.
+Copy and paste need one of `xclip`, `xsel` or `wl-clipboard` (for example,
+`sudo apt install xclip`).
 
 **Servers and checks:** each release also ships servers (`hermec-server-linux-amd64`,
 `hermec-server-linux-arm64`, `hermec-server-windows-amd64.exe`) and a
@@ -148,6 +151,7 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 ### Keys
 
 - **Enter**: Connect to server or send message
+- **Ctrl+V** (Cmd+V on macOS): Paste into any text field. **Left**, **Right**, **Home**, **End** and **Delete** move and edit at the caret. On Linux, copy and paste need `xclip`, `xsel` or `wl-clipboard`.
 - **Tab** or **Ctrl+Up/Down**: Switch channel
 - **PgUp/PgDn** or **mouse wheel**: Scroll chat
 - **F1**: Toggle CRT effect
@@ -161,8 +165,9 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Click "+" tile**: Add a server
 - **Click the signal bars** (status line, or the call bar in a call): Show connection quality (ping, jitter, per-participant concealment); Esc or a second click closes it
 - **Click voice channel in the pane**: Join or leave voice call
+- **Click share** (call bar): Share a screen, see [Screen share](#screen-share). **Click LIVE** next to a person in the voice list to watch them. **Esc** goes back to chat; **double-click** the video for fullscreen.
 - **Title bar** (Windows): a Discord-style app bar replaces the default frame. Drag it to move the window (double-click to maximize or restore), use the buttons on the right to minimize, maximize and close, and drag the window edges and corners to resize.
-- **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, text size as a percentage, update status, a help section; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono, and existing settings files keep VT323.
+- **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, text size as a percentage, share quality (720p or 1080p), logs (open folder), update status, a help section; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono, and existing settings files keep VT323.
 
 Bundled fonts (all monospace, under the SIL Open Font License 1.1, licences in `ui/theme/`): VT323, JetBrains Mono, IBM Plex Mono and Geist Mono.
 
@@ -209,15 +214,19 @@ So you build it yourself. It takes a few minutes.
 3. Install Go and git: `brew install go git`
 4. Get the code:
    `git clone https://github.com/medeirosvictor/hermec.git && cd hermec`
-5. Build it: `go build -o hermec ./cmd/hermec`
+5. Build the latest release: `scripts/build-mac.sh`
+   The script fetches the release tags, checks out the newest one, and builds
+   `./hermec` with its version number set, so the update banner works.
    The first build downloads Go 1.27 automatically if Homebrew's Go is older.
 6. Run it: `./hermec`
 7. The first time you use voice, macOS asks to let Terminal use the microphone.
    Allow it. You can change it later in System Settings → Privacy & Security →
    Microphone.
 
-To update, run `git pull`, then the build line again
-(`go build -o hermec ./cmd/hermec`).
+To update: run `scripts/build-mac.sh` again.
+
+The script checks out a release tag, so the repo is on a detached HEAD. To go
+back to the development branch, run `git checkout main`.
 
 ## Join a friend's server
 
@@ -230,8 +239,10 @@ Any OS, once HERMEC is running:
    server tile's right-click menu). It looks like `ws://100.x.x.x:7697/`.
 3. Optional check (macOS/Linux Terminal): `nc -vz 100.x.x.x 7697` should say
    "succeeded".
-4. In HERMEC click **+**, then **Join**. Paste the address, including `ws://`,
-   and press Enter.
+4. In HERMEC click **+**, then **Join**. The address field already starts with
+   `ws://`. Paste the full address (Ctrl+V, or Cmd+V on a Mac), or type the
+   rest after the `ws://`, then press Enter. Pasting a full `ws://` address
+   replaces the prefilled text, so you never get `ws://ws://`.
 5. Put on headphones (there is no echo cancellation yet) and click a voice channel.
 
 ## How safe is this? (Tailscale)
@@ -251,11 +262,30 @@ Any OS, once HERMEC is running:
 **Known gaps (we are working on these):**
 
 1. **A shared friend can reach every port on your PC, not just HERMEC.**
-   Tailscale's default policy allows all ports. You can't narrow it to
-   HERMEC yet, because voice uses random UDP ports. A fixed port is coming
-   with screen share. Until then, only share your PC with people you trust.
-2. **No password or invite list.** Anyone who can reach your server's port can
-   join. That includes other devices on your home Wi-Fi.
+   Tailscale's default policy allows all ports. You can narrow it to HERMEC,
+   because all voice and video media now uses one UDP port, the same number
+   as the server's port (UDP 7697 next to TCP 7697). In the Tailscale admin
+   console, open **Access controls**. The default grant lets everyone reach
+   everything. Do not delete it (that would lock out your own devices).
+   Instead, change its `src` from `"*"` to `"autogroup:member"` (people in your
+   own tailnet), and add a second grant for shared users. The `grants` list
+   then looks like this:
+
+   ```json
+   "grants": [
+     {"src": ["autogroup:member"], "dst": ["*"], "ip": ["*"]},
+     {"src": ["autogroup:shared"], "dst": ["*"], "ip": ["tcp:7697", "udp:7697"]}
+   ]
+   ```
+
+   Shared friends can then reach only TCP and UDP 7697 on your devices. This
+   needs HERMEC v0.5.0 or newer on the host. If you run on another port, use
+   that port number instead of 7697; `media_port` in the server config picks a
+   different media port if you need one.
+2. **No password or invite list in the app.** Anyone who can reach your
+   server's port can join, including other devices on your home Wi-Fi. The
+   server config already has `password` and `allowed_keys` (see
+   [example.server.toml](example.server.toml)); the app cannot set them yet.
 3. **Windows Firewall on public Wi-Fi.** If you allowed HERMEC on "Public"
    networks, your server is reachable on any café Wi-Fi your PC joins. To allow
    only Tailscale and your home network, run PowerShell as admin (use your own
@@ -269,12 +299,17 @@ Any OS, once HERMEC is running:
 
    Drop `,LocalSubnet` to allow Tailscale only.
 4. **The host can read everything.** Chat and voice pass through the host's
-   server. Only join servers run by people you trust.
+   server. Only join servers run by people you trust. A host could also pretend
+   to be you on other servers you use, until server identity keys land
+   (planned).
 5. **Names are not verified.** Anyone can pick any name. The fingerprint (hover
    a server or person) is the real identity.
-6. **Not ready for the open internet.** HERMEC uses plain `ws://` without TLS.
+6. **Not ready for the open internet.** HERMEC uses plain `ws://` unless you
+   set `tls_cert` and `tls_key` in the server config (both are in
+   [example.server.toml](example.server.toml); the server then serves `wss://`).
    Only reach servers through Tailscale or your LAN. Hosting on a rented server
-   for strangers needs TLS and invite links first (on the roadmap).
+   for strangers needs invite links and server identity keys first (on the
+   roadmap).
 
 ## Run
 
@@ -313,8 +348,74 @@ will feed other participants' audio back into your microphone; headsets are
 strongly recommended.**
 
 For internet-facing servers, configure `public_ip` (your server's public IPv4)
-and optionally `udp_port_min`/`udp_port_max` for firewall policy. See
+and, for firewall policy, note that all media uses one UDP port (the server's
+port number by default; `media_port` overrides it, and `udp_port_min`/
+`udp_port_max` select the older random-port range instead). See
 [example.server.toml](example.server.toml) for details.
+
+### Screen share
+
+Show your screen to the people in your voice call.
+
+**Share your screen** (Windows only for now):
+
+1. Join a voice channel.
+2. Click **share** on the call bar.
+3. Pick a monitor from the list, like `screen 1 (2560×1440)`.
+4. The button now says **stop share**. Click it to stop.
+
+Leaving the voice call stops your share too.
+
+**Watch someone's screen** (Windows, macOS and Linux):
+
+1. Look at the voice channel list. People who share have a red **LIVE** tag.
+2. Click **LIVE**.
+3. The video replaces the chat.
+4. Press **Esc** to go back to chat.
+5. **Double-click** the video to go fullscreen, and double-click again to leave it.
+
+You can watch one screen at a time. The video is drawn clean, without the CRT
+effects, so text stays readable.
+
+**Quality.** In Settings, the row `share quality` switches between `720p` and
+`1080p`. 720p uses about 1.5 Mbps (15 frames a second). 1080p uses about 3 Mbps.
+
+**Bandwidth.** The server relays the video:
+
+- The sharer uploads one stream.
+- The host uploads one copy for each person watching, about 1.5 Mbps each at 720p.
+- The server only sends a stream to people who are watching it.
+
+So a host with a slow upload should keep the number of watchers small.
+
+**Not yet:** sound from the shared screen, sharing a single window, and sharing
+from macOS or Linux.
+
+**Ports.** Voice and video use one UDP port, the same number as the server
+port (7697). To let shared friends reach only that port, see the Tailscale
+grant in [How safe is this?](#how-safe-is-this-tailscale).
+
+### Logs
+
+Each time you start HERMEC it writes one log file. It helps when something goes
+wrong. The log never contains chat text or keys.
+
+Where the files are:
+
+| System | Folder |
+|---|---|
+| Windows | `%APPDATA%\hermec\logs` |
+| macOS | `~/Library/Application Support/hermec/logs` |
+| Linux | `~/.config/hermec/logs` |
+
+Files are named like `hermec-2026-10-19_21-30-05.log`. HERMEC keeps the newest
+10 and deletes older ones.
+
+To find the folder fast, open Settings and click the row `logs: open folder`.
+It opens the folder and shows the path.
+
+**To send a log to a friend:** open the folder, then attach the newest file
+to a message.
 
 ## Chat with friends
 

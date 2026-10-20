@@ -4,8 +4,12 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"os"
+	"time"
 
+	"github.com/medeirosvictor/hermec/applog"
 	"github.com/medeirosvictor/hermec/ui"
 	"github.com/medeirosvictor/hermec/version"
 )
@@ -25,12 +29,39 @@ func main() {
 		return
 	}
 
+	var logFile io.Writer
+	var logDir string
+	if cfgDir, err := os.UserConfigDir(); err == nil {
+		dir := applog.Dir(cfgDir)
+		if f, path, err := applog.Open(dir, time.Now(), 10); err != nil {
+			log.Printf("session log disabled: %v", err)
+		} else {
+			defer f.Close()
+			logFile, logDir = f, dir
+			log.SetOutput(fileFirstWriter{file: f, console: os.Stderr})
+			log.Printf("session log: %s", path)
+		}
+	} else {
+		log.Printf("session log disabled: %v", err)
+	}
+
 	log.Printf("hermec %s", version.Version)
 
 	if err := ui.Run(ui.Options{
 		ServerURL: *server, Name: *name, KeyPath: *key, ThemePath: *themePath,
-		Local: *local, Verbose: *verbose,
+		Local: *local, Verbose: *verbose, LogDir: logDir, LogFile: logFile,
 	}); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// fileFirstWriter writes every line to the session file first and then to the
+// console, and ignores console errors (stderr may be invalid in a GUI-subsystem
+// build), so the file always gets the line. It reports the file's error only.
+type fileFirstWriter struct{ file, console io.Writer }
+
+func (w fileFirstWriter) Write(p []byte) (int, error) {
+	n, err := w.file.Write(p)
+	_, _ = w.console.Write(p)
+	return n, err
 }

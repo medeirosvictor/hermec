@@ -90,6 +90,9 @@ admin = ["join_channel", "send_chat", "manage"]
 		TLSKey:       "key.pem",
 		MsgRate:      DefaultMsgRate,
 		MsgBurst:     DefaultMsgBurst,
+		MaxVoice:     DefaultMaxVoice,
+		MaxClients:   DefaultMaxClients,
+		MaxPerIP:     DefaultMaxPerIP,
 		Discoverable: true,
 		Roles: roles.Config{
 			Roles: map[string][]roles.Permission{
@@ -124,6 +127,25 @@ func TestLoadConfigErrors(t *testing.T) {
 	}
 	if _, err := LoadConfig(writeTOML(t, `adr = ":1"`)); err == nil {
 		t.Error("unknown key: expected error")
+	}
+}
+
+func TestLoadConfigMaxVoice(t *testing.T) {
+	cfg, err := LoadConfig(writeTOML(t, ""))
+	if err != nil || cfg.MaxVoice != 25 {
+		t.Fatalf("default: %d, %v", cfg.MaxVoice, err)
+	}
+	cfg, err = LoadConfig(writeTOML(t, "max_voice = 3\n"))
+	if err != nil || cfg.MaxVoice != 3 {
+		t.Fatalf("set: %d, %v", cfg.MaxVoice, err)
+	}
+	if cfg, err = LoadConfig(writeTOML(t, "max_voice = 50\n")); err != nil || cfg.MaxVoice != 50 {
+		t.Fatalf("50: %d, %v", cfg.MaxVoice, err)
+	}
+	for _, body := range []string{"max_voice = 0\n", "max_voice = -1\n", "max_voice = 51\n"} {
+		if _, err := LoadConfig(writeTOML(t, body)); err == nil {
+			t.Errorf("%q: expected error", body)
+		}
 	}
 }
 

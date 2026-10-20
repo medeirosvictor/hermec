@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -60,6 +61,9 @@ func (shaderGame) Layout(w, h int) (int, int) { return 16, 16 }
 // when no display is available.
 func withGraphics(t *testing.T, fn func()) {
 	t.Helper()
+	if runtime.GOOS == "darwin" {
+		t.Skip("ebiten.RunGame must own the main thread on darwin")
+	}
 	gfx.once.Do(func() {
 		gfx.jobs = make(chan gfxJob)
 		gfx.exited = make(chan struct{})

@@ -59,6 +59,16 @@ func TestApplyErrSetsStatus(t *testing.T) {
 	}
 }
 
+func TestApplyShareUnsupportedStatus(t *testing.T) {
+	s := New()
+	s.SetConnected(chans("general"), "me")
+	s.Apply(client.Event{Err: client.ErrShareUnsupported}, true)
+	const want = "this server does not support screen share (host needs v0.5.0+)"
+	if s.Status != want {
+		t.Fatalf("status=%q, want %q", s.Status, want)
+	}
+}
+
 func TestEventsClosedMeansDisconnected(t *testing.T) {
 	s := New()
 	s.SetConnected(chans("general"), "me")

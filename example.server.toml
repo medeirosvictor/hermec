@@ -26,7 +26,12 @@ voice_channels = ["voice"]
 # Voice: public IP to advertise for media on an internet-facing host (NAT 1:1); omit on a LAN.
 # public_ip = "203.0.113.7"
 
-# Voice: restrict media to this UDP port range (open it in your firewall); both or neither.
+# Media: all WebRTC media uses ONE UDP port, by default the same number as the
+# listen port (7697 -> UDP 7697). Set this to use a different one (0 = default).
+# media_port = 0
+
+# Voice (legacy): restrict media to this UDP port range instead of the single
+# port above; when set it takes precedence. Both or neither.
 # udp_port_min = 50000
 # udp_port_max = 50100
 
@@ -34,6 +39,20 @@ voice_channels = ["voice"]
 # Either being 0 disables all rate limiting. Defaults: 30 sustained, 60 burst.
 # msg_rate = 30
 # msg_burst = 60
+
+# Most participants in one voice channel; a further voice_join is refused with
+# "voice_full". Default 25.
+# Maximum 50 (larger rooms would overflow the signaling message size limit).
+# max_voice = 25
+
+# Most authenticated sessions at once; a further client is refused with
+# "server_full". Default 256. (Also fixed: 64 connections awaiting auth,
+# and an IP is refused for a growing time after 5 failed logins in a minute.)
+# max_clients = 256
+
+# Most simultaneous connections from one remote IP (default 16). Raise it for a
+# LAN party or an office behind one NAT address.
+# max_per_ip = 16
 
 # LAN discovery: answer UDP probes on the same port number as addr (default true).
 # Set false to bind no UDP discovery socket at all.

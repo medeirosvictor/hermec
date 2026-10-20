@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"reflect"
 	"testing"
 
@@ -57,7 +58,7 @@ func TestMenuItemRectsNoOverlap(t *testing.T) {
 	m := g.menu
 	for i := range m.items {
 		r := g.menuItemRect(i)
-		if r.x0 < m.x || r.y0 < m.y || r.x1 > m.x+w || r.y1 > m.y+h {
+		if r.x0 < m.x || r.y0 < m.y || r.x1 > m.x+w+1e-9 || r.y1 > m.y+h+1e-9 {
 			t.Fatalf("item %d %+v outside menu box %v,%v %vx%v", i, r, m.x, m.y, w, h)
 		}
 		if i > 0 && r.y0 < g.menuItemRect(i-1).y1 {
@@ -65,7 +66,7 @@ func TestMenuItemRectsNoOverlap(t *testing.T) {
 		}
 	}
 	// the separator takes room above the Leave row
-	if gap := g.menuItemRect(2).y0 - g.menuItemRect(1).y1; gap != sepH {
+	if gap := g.menuItemRect(2).y0 - g.menuItemRect(1).y1; math.Abs(float64(gap-sepH)) > 1e-9 {
 		t.Fatalf("separator gap = %v, want %v", gap, sepH)
 	}
 }

@@ -35,6 +35,7 @@ type rttTracker struct {
 	mu          sync.Mutex
 	ewma        rttEWMA
 	outstanding time.Time // send time of the oldest unanswered ping; zero if none
+	timedOut    time.Time // send time of the newest ping already counted as timed out
 }
 
 func newRTTTracker() *rttTracker { return &rttTracker{} }
@@ -63,6 +64,10 @@ func (r *rttTracker) pong(payload string, now time.Time) {
 		return
 	}
 	r.mu.Lock()
+	if !sent.After(r.timedOut) { // already counted as a timeout sample
+		r.mu.Unlock()
+		return
+	}
 	r.ewma.observe(d)
 	if !r.outstanding.IsZero() && !sent.Before(r.outstanding) {
 		r.outstanding = time.Time{}
@@ -76,6 +81,7 @@ func (r *rttTracker) check(now time.Time, timeout time.Duration) {
 	r.mu.Lock()
 	if !r.outstanding.IsZero() && now.Sub(r.outstanding) >= timeout {
 		r.ewma.observe(timeout)
+		r.timedOut = r.outstanding
 		r.outstanding = time.Time{}
 	}
 	r.mu.Unlock()
@@ -91,6 +97,23 @@ func (r *rttTracker) get() (time.Duration, bool) {
 // the first pong arrives. It is cheap and never blocks on I/O.
 func (c *Client) RTT() (rtt time.Duration, ok bool) { return c.rtt.get() }
 
+// pingOnce samples a timeout and sends one ping. The timeout check runs every
+// tick and never touches writeMu. The pinger never waits on writeMu: if a data
+// write holds it the link is congested, so this ping is skipped (an already
+// outstanding one is sampled as a timeout on a later tick). The ping is
+// stamped while holding writeMu, so queueing behind a write is never counted
+// as network latency.
+func (c *Client) pingOnce(timeout time.Duration, now func() time.Time) {
+	c.rtt.check(now(), timeout)
+	if !c.writeMu.TryLock() {
+		return
+	}
+	defer c.writeMu.Unlock()
+	t := now()
+	payload := c.rtt.sent(t)
+	_ = c.ws.WriteControl(websocket.PingMessage, []byte(payload), t.Add(pingWrite))
+}
+
 // startPinger sends a ping immediately and then every interval until the
 // client closes or the read loop exits. Pongs are handled by the pong handler
 // installed in Dial (on the read goroutine). The server's own pings are still
@@ -101,11 +124,7 @@ func (c *Client) startPinger(interval, timeout time.Duration, now func() time.Ti
 		tick := time.NewTicker(interval)
 		defer tick.Stop()
 		for {
-			t := now()
-			c.rtt.check(t, timeout)
-			payload := c.rtt.sent(t)
-			// WriteControl is safe concurrently with the writer.
-			_ = c.ws.WriteControl(websocket.PingMessage, []byte(payload), t.Add(pingWrite))
+			c.pingOnce(timeout, now)
 			select {
 			case <-c.done:
 				return

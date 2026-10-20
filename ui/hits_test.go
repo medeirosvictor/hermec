@@ -188,6 +188,7 @@ func TestHitsRailAndBanner(t *testing.T) {
 
 func TestHitsSettingsRows(t *testing.T) {
 	g := testGame(t)
+	g.h = 800 // tall enough that no row scrolls
 	g.settingsOpen = true
 	g.buildHits()
 	lh := g.lineH()

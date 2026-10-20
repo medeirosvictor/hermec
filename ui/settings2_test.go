@@ -192,6 +192,7 @@ func TestPollUpdateStates(t *testing.T) {
 func TestFingerprintTooltip(t *testing.T) {
 	g := testGame(t)
 	g.fp = "abcd1234"
+	g.h = 800 // tall enough that no row scrolls
 	g.settingsOpen = true
 	g.buildHits()
 	lh := g.lineH()
@@ -410,6 +411,7 @@ func TestSettingsWindowKeepsSelectedVisible(t *testing.T) {
 		}
 	}
 	g.set.FontScale = 0
+	g.h = 800
 	lh = g.lineH()
 	if first, n := settingsWindow(float64(g.h), connectFieldsTop(lh), lh, settingsRows, settingsRows-1); first != 0 || n != settingsRows {
 		t.Errorf("100%%: window = %d,%d, want everything", first, n)

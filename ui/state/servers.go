@@ -5,11 +5,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
-	"unicode"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/medeirosvictor/hermec/core/names"
 )
 
 // MaxServers caps the saved server list.
@@ -146,19 +146,7 @@ func DisplayName(e ServerEntry) string {
 // CleanName strips control, format (bidi overrides and the like) and line or
 // paragraph separator runes from s, trims spaces and caps the result at max
 // runes.
-func CleanName(s string, max int) string {
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
-			return -1
-		}
-		return r
-	}, s)
-	r := []rune(strings.TrimSpace(s))
-	if len(r) > max {
-		r = r[:max]
-	}
-	return string(r)
-}
+func CleanName(s string, max int) string { return names.Clean(s, max) }
 
 // SetNick returns a copy of entries with the nick of url set to the cleaned
 // nick (empty clears it). An unknown url yields an unchanged copy.

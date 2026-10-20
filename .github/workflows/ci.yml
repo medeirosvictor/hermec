@@ -5,14 +5,24 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The [D] keeps this line from matching its own workflow file.
+      - name: No private keys in the tree
+        run: |
+          if git grep -l "BEGIN HERMEC ED25519 SEE[D]"; then
+            echo "tracked file contains a HERMEC private key" >&2
+            exit 1
+          fi
       - uses: actions/setup-go@v5
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
           cache: true
       - name: Install GUI build dependencies
         run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev
@@ -23,13 +33,37 @@ jobs:
       - run: go vet ./...
       - run: go test -race -count=1 ./...
 
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go vet ./...
+      - run: go test ./...
+
+  test-linux-arm:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install GUI build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev
+      - run: go vet ./...
+      - run: go test ./...
+
   fuzz:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
           cache: true
       - run: go test ./core/proto -run='^$' -fuzz=FuzzDecode -fuzztime=60s
 
@@ -39,7 +73,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
           cache: true
       # audio, ui and cmd/hermec need cgo (malgo); the release workflow builds them natively.
       - name: Windows amd64

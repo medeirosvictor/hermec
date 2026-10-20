@@ -102,12 +102,15 @@ func TestRosterOnDisconnect(t *testing.T) {
 
 // drainAll reads c in the background, handing every roster frame (raw and
 // decoded) to fn. Clients must keep reading or the send buffer overflows.
-func drainAll(c *websocket.Conn, fn func(raw []byte, r proto.Roster)) {
+func drainAll(c *websocket.Conn, fn func(raw []byte, r proto.Roster), onErr ...func(error)) {
 	_ = c.SetReadDeadline(time.Time{})
 	go func() {
 		for {
 			_, raw, err := c.ReadMessage()
 			if err != nil {
+				for _, f := range onErr {
+					f(err)
+				}
 				return
 			}
 			env, err := proto.Decode(raw)
@@ -122,25 +125,74 @@ func drainAll(c *websocket.Conn, fn func(raw []byte, r proto.Roster)) {
 	}()
 }
 
+// drainRaw reads and discards everything c receives (no decoding), calling
+// onErr when the read fails.
+func drainRaw(c *websocket.Conn, onErr func(error)) {
+	_ = c.SetReadDeadline(time.Time{})
+	go func() {
+		for {
+			if _, _, err := c.ReadMessage(); err != nil {
+				onErr(err)
+				return
+			}
+		}
+	}()
+}
+
 func TestRosterTruncatesAtMax(t *testing.T) {
-	url := startServer(t, chatCfg())
+	cfg := chatCfg()
+	cfg.MaxPerIP = 1000 // every client is 127.0.0.1; the per-IP cap would refuse most
+	url := startServer(t, cfg)
 	n := proto.MaxRosterMembers + 5
 	var mu sync.Mutex
 	var last proto.Roster
+	// A drainer that dies (typically: the server dropped it as a slow consumer)
+	// reports here so the test fails with that cause instead of a Total timeout.
+	dead := make(chan string, n)
+	checkDead := func() {
+		select {
+		case msg := <-dead:
+			t.Fatal(msg)
+		default:
+		}
+	}
+	waitTotal := func(want int) {
+		deadline := time.Now().Add(time.Minute)
+		for {
+			checkDead()
+			mu.Lock()
+			got := last.Total
+			mu.Unlock()
+			if got >= want {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("client 0 saw roster Total %d, want %d", got, want)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
 	for i := 0; i < n; i++ {
 		c := authNamed(t, url, mustID(t), fmt.Sprintf("n%03d", i))
+		i := i
 		if i == 0 {
 			drainAll(c, func(_ []byte, r proto.Roster) {
 				mu.Lock()
 				last = r
 				mu.Unlock()
-			})
+			}, func(err error) { dead <- fmt.Sprintf("client 0 connection died: %v", err) })
 		} else {
-			drainAll(c, func([]byte, proto.Roster) {})
+			// Only client 0 needs the roster; the others just keep their
+			// socket drained so they are never slow consumers.
+			drainRaw(c, func(err error) { dead <- fmt.Sprintf("client %d connection died: %v", i, err) })
 		}
+		// Pace the joins: every join broadcasts a roster to every client, and
+		// 200+ unpaced joins can outrun a loaded CI box's drainers.
+		waitTotal(i + 1)
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(2 * time.Minute)
 	for {
+		checkDead()
 		mu.Lock()
 		r := last
 		mu.Unlock()

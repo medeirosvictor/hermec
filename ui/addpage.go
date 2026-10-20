@@ -57,18 +57,17 @@ func (f *createForm) focused() *field {
 
 // typed appends printable runes to the focused field. The port takes digits
 // only, up to five.
-func (f *createForm) typed(rs []rune) {
-	cur := f.focused()
-	for _, r := range rs {
-		switch {
-		case f.focus == 1:
-			if r >= '0' && r <= '9' && len(cur.runes) < maxPortDigits {
-				cur.runes = append(cur.runes, r)
-			}
-		case r >= ' ' && r != 0x7f && len(cur.runes) < maxFieldRunes:
-			cur.runes = append(cur.runes, r)
-		}
+func (f *createForm) typed(rs []rune) { f.edit(editKeys{}, rs) }
+
+func isDigit(r rune) bool { return r >= '0' && r <= '9' }
+
+// edit applies one tick of editing input to the focused field.
+func (f *createForm) edit(k editKeys, rs []rune) {
+	if f.focus == 1 {
+		f.port.edit(k, rs, maxPortDigits, isDigit, false)
+		return
 	}
+	f.name.edit(k, rs, maxFieldRunes, nil, false)
 }
 
 // validate checks the form; err is the user-facing reason it cannot submit.
@@ -284,13 +283,7 @@ func (g *game) updateAdd() {
 		if inpututil.IsKeyJustPressed(ebiten.KeyTab) {
 			f.focus = (f.focus + 1) % createFields
 		}
-		f.typed(ebiten.AppendInputChars(nil))
-		cur := f.focused()
-		if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) {
-			cur.backspace()
-		} else if d := inpututil.KeyPressDuration(ebiten.KeyBackspace); d > 30 && d%3 == 0 {
-			cur.backspace()
-		}
+		f.edit(readEditKeys(), ebiten.AppendInputChars(nil))
 		if enterPressed() {
 			g.submitCreate()
 		}
@@ -334,25 +327,23 @@ func (g *game) drawAddPage(screen *ebiten.Image) {
 		return
 	}
 
-	cursor := ""
-	if (g.frame/30)%2 == 0 {
-		cursor = "_"
-	}
 	f := &g.cf
 	rows := [createFields]struct {
 		label string
-		val   string
+		fl    *field
 	}{
-		{"name: ", f.name.String()},
-		{"port: ", f.port.String()},
+		{"name: ", &f.name},
+		{"port: ", &f.port},
 	}
 	for i, r := range rows {
-		val, marker := r.val, "  "
+		marker := "  "
 		if i == f.focus {
-			val += cursor
 			marker = "> "
 		}
-		g.drawText(screen, marker+r.label+val, x, g.createRowY(i), th.FG)
+		g.drawText(screen, marker+r.label+r.fl.String(), x, g.createRowY(i), th.FG)
+		if i == f.focus {
+			g.drawCaret(screen, x, g.createRowY(i), marker+r.label+string(r.fl.runes[:r.fl.caret()]))
+		}
 	}
 	for i, l := range g.firewallLines() {
 		g.drawText(screen, l, x, g.createRowY(createFields)+lh/2+float64(i)*lh, th.Dim)

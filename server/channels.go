@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"sort"
 	"sync/atomic"
@@ -17,6 +18,8 @@ import (
 const (
 	pingInterval = 15 * time.Second
 	maxMissed    = 2 // unanswered pings before a connection is dropped
+
+	maxChatBytes = 4096 // longest accepted chat text, in bytes
 )
 
 // channelSet is the channel registry. All access is guarded by Server.chMu.
@@ -64,8 +67,7 @@ func (s *Server) presenceLocked(ch string) []byte {
 		members = append(members, m.member())
 	}
 	sortMembers(members)
-	raw, _ := proto.Encode(proto.TypePresence, proto.Presence{Channel: ch, Members: members})
-	return raw
+	return encodePresence(ch, members)
 }
 
 // sortMembers orders members by name, then fingerprint.
@@ -90,17 +92,70 @@ func (s *Server) rosterLocked() []byte {
 		members = append(members, mem)
 	}
 	sortMembers(members)
-	r := proto.Roster{Members: members, Total: len(members)}
-	if len(r.Members) > proto.MaxRosterMembers {
-		r.Members = r.Members[:proto.MaxRosterMembers]
+	return encodeRoster(members, len(members))
+}
+
+// encodeRoster encodes at most MaxRosterMembers of members as a roster frame
+// that fits MaxMessageSize, reporting total as the real connection count. The
+// size is worked out from each member's own encoding, so it is encoded once
+// for the budget and once for the result, however many members are dropped.
+func encodeRoster(members []proto.Member, total int) []byte {
+	if len(members) > proto.MaxRosterMembers {
+		members = members[:proto.MaxRosterMembers]
 	}
-	for {
-		raw, err := proto.Encode(proto.TypeRoster, r)
-		if err == nil && len(raw) <= proto.MaxMessageSize || len(r.Members) == 0 {
-			return raw
+	base, err := proto.Encode(proto.TypeRoster, proto.Roster{Members: []proto.Member{}, Total: total})
+	if err != nil {
+		return nil
+	}
+	keep := fitMembers(len(base), members)
+	raw, _ := proto.Encode(proto.TypeRoster, proto.Roster{Members: members[:keep], Total: total})
+	return raw
+}
+
+// encodePresence is encodeRoster for one channel's presence frame, trimmed to
+// the same size budget; Total is the real member count.
+func encodePresence(ch string, members []proto.Member) []byte {
+	base, err := proto.Encode(proto.TypePresence, proto.Presence{Channel: ch, Members: []proto.Member{}, Total: len(members)})
+	if err != nil {
+		return nil
+	}
+	keep := fitMembers(len(base), members)
+	raw, _ := proto.Encode(proto.TypePresence, proto.Presence{Channel: ch, Members: members[:keep], Total: len(members)})
+	return raw
+}
+
+// fitMembers returns how many leading members fit in MaxMessageSize on top of
+// a frame already baseLen bytes long with an empty member list.
+func fitMembers(baseLen int, members []proto.Member) int {
+	size := baseLen
+	keep := 0
+	for _, m := range members {
+		n, err := encodedLen(m)
+		if err != nil {
+			break
 		}
-		r.Members = r.Members[:len(r.Members)-1]
+		if keep > 0 {
+			n++ // comma
+		}
+		if size+n > proto.MaxMessageSize {
+			break
+		}
+		size += n
+		keep++
 	}
+	return keep
+}
+
+// encodedLen is the length of v's JSON as the proto package writes it (no HTML
+// escaping).
+func encodedLen(v any) (int, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return 0, err
+	}
+	return buf.Len() - 1, nil // minus Encode's newline
 }
 
 // capRunes returns s cut to at most n runes (not bytes).
@@ -222,6 +277,10 @@ func (c *conn) route(env proto.Envelope) {
 		var m proto.ChatSend
 		if json.Unmarshal(env.Data, &m) != nil {
 			c.sendError("bad_request", "malformed chat_send")
+			return
+		}
+		if len(m.Text) > maxChatBytes {
+			c.sendError("bad_request", "message too long")
 			return
 		}
 		switch c.srv.chat(c, m.Channel, m.Text) {

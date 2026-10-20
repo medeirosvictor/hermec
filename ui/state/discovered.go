@@ -41,6 +41,7 @@ func MergeDiscovered(found []DiscoveredIn, saved []ServerEntry) []DiscoveredRow 
 				r.Name = l
 			}
 		}
+		r.Name = CleanName(r.Name, MaxServerNameRunes)
 		rows = append(rows, r)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {

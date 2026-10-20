@@ -129,6 +129,7 @@ func (g *game) clickVoice(ch string) {
 func (g *game) joinCall(ch string) {
 	s := g.cur()
 	c := s.c
+	g.endCallMedia()
 	var oldC *client.Client // the call to leave first, if any
 	if old := g.callSess(); old != nil {
 		oldC = old.c
@@ -197,6 +198,7 @@ func (g *game) leaveCall() {
 		return
 	}
 	c := s.c
+	g.endCallMedia()
 	src, sink := g.vc.src, g.vc.sink
 	g.vc = voiceCall{busy: true, opKey: s.key}
 	g.callKey = ""
@@ -216,6 +218,7 @@ func (g *game) leaveCall() {
 // session's InCall and callKey. An op in flight is left to report on voiceCh.
 // Safe with no call.
 func (g *game) dropVoice() {
+	g.endCallMedia()
 	src, sink := g.vc.src, g.vc.sink
 	if s := g.callSess(); s != nil {
 		s.st.SetInCall("")
@@ -246,6 +249,7 @@ func (g *game) endVoiceFor(key string) {
 // updateVoice consumes background results and notices a dead call.
 func (g *game) updateVoice() {
 	g.applyMuteFail()
+	g.stepShare()
 	select {
 	case r := <-g.voiceCh:
 		g.applyVoice(r)
@@ -349,6 +353,7 @@ type barLayout struct {
 	y, h                             float64
 	nameX                            float64
 	muteX0, muteX1, leaveX0, leaveX1 float64
+	shareX0, shareX1                 float64
 	meterX, meterW                   float64
 }
 
@@ -377,6 +382,9 @@ func (g *game) barLayout(gm geometry) barLayout {
 	}
 	mw := text.Advance(label, g.face) + gm.lh + 4 + pad
 	l.muteX1, l.muteX0 = right, right-mw
+	right = l.muteX0 - pad
+	sw := text.Advance(g.shareLabel(), g.face)
+	l.shareX1, l.shareX0 = right, right-sw-pad
 	return l
 }
 
@@ -403,12 +411,7 @@ func (g *game) updateBar(gm geometry) {
 	if !ok {
 		return
 	}
-	switch h.Kind {
-	case state.HitBarMute:
-		g.toggleMute()
-	case state.HitBarLeave:
-		g.leaveCall()
-	}
+	g.clickBar(h)
 }
 
 // addBarHits registers the call-bar buttons; they are live exactly when
@@ -423,6 +426,7 @@ func (g *game) addBarHits(gm geometry) {
 	if y1 <= y0 {
 		return
 	}
+	g.hits.Add(state.Hit{X0: l.shareX0, Y0: y0, X1: l.shareX1, Y1: y1, Kind: state.HitBarShare})
 	g.hits.Add(state.Hit{X0: l.muteX0, Y0: y0, X1: l.muteX1, Y1: y1, Kind: state.HitBarMute})
 	g.hits.Add(state.Hit{X0: l.leaveX0, Y0: y0, X1: l.leaveX1, Y1: y1, Kind: state.HitBarLeave})
 }
@@ -440,8 +444,17 @@ func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
 		}
 		return
 	}
-	title := fitCallTitle(g.callTitle(), state.FormatElapsed(time.Since(g.vc.start)), int((l.muteX0-pad-l.nameX)/gm.adv))
+	title := fitCallTitle(g.callTitle(), state.FormatElapsed(time.Since(g.vc.start)), int((l.shareX0-pad-l.nameX)/gm.adv))
 	g.drawText(dst, title, l.nameX, l.y, th.Bright)
+
+	shareCol := th.FG
+	switch {
+	case !g.shareSupported():
+		shareCol = th.Dim
+	case g.share.on:
+		shareCol = th.Bright
+	}
+	g.drawText(dst, g.shareLabel(), l.shareX0+pad/2, l.y, shareCol)
 
 	col, label := th.FG, muteLabel
 	if g.vc.muted {

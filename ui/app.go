@@ -6,9 +6,11 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -31,8 +33,10 @@ type Options struct {
 	Name      string // empty: derived from the identity fingerprint
 	KeyPath   string // empty: <user config dir>/hermec/identity.key
 	ThemePath string
-	Local     bool // ignore ServerURL; run an in-process server
-	Verbose   bool // log breadcrumbs
+	Local     bool      // ignore ServerURL; run an in-process server
+	Verbose   bool      // log breadcrumbs to the console too
+	LogDir    string    // session log folder; empty = no file
+	LogFile   io.Writer // the open session log; nil = none. Log lines reach it through the std logger and logf
 
 	ServersPath  string // empty: <user config dir>/hermec/servers.toml
 	SettingsPath string // empty: <user config dir>/hermec/settings.toml
@@ -67,6 +71,8 @@ type game struct {
 	sendCh  chan sendResult
 	voiceCh chan voiceResult
 
+	fileLog    *log.Logger          // session log file; nil = none
+	nextHealth time.Time            // next call-health line; zero outside a call
 	closeStale func(*client.Client) // test seam: closes stale dial results; nil = Close
 
 	muteCh     chan muteReq
@@ -152,6 +158,18 @@ type game struct {
 	ver       string                                                        // version override for tests; "" = version.Version
 	checkFn   func(context.Context, string) (update.Available, bool, error) // nil = update.Latest
 	openFn    func(string)                                                  // nil = openURL
+
+	shareOps shareOps   // seams for capture, client and window; zero = real
+	share    shareState // our own screen share
+	watch    watchState // the stream being watched
+	// watchRefused is set by the media worker when the server refused a Watch
+	// for that fingerprint; updateVideo (game goroutine) then leaves the view.
+	watchRefused atomic.Pointer[string]
+	vid          videoView   // newest frame for the watch view
+	vsink        videoSink   // receives decoded frames from the clients
+	media        mediaWorker // serialized StartShare / StopShare / Watch
+	fullscreen   bool        // window is fullscreen: no custom title bar
+	menuSpent    bool        // a menu press already took this tick's click
 
 	helpOpen   bool    // the settings help view is showing
 	helpScroll int     // first visible help line
@@ -255,20 +273,26 @@ func Run(opts Options) error {
 		dialCh: make(chan dialResult, 8), probeCh: make(chan []state.DiscoveredIn, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan sendResult, 8), voiceCh: make(chan voiceResult, 4), w: 960, h: 600, crtOn: crtOn,
 		settingsPath: boot.settingsPath, set: boot.set, notice: boot.notice, autoName: opts.Name,
 	}
+	if opts.LogFile != nil {
+		g.setLogWriter(opts.LogFile)
+	}
+	g.logStartup()
 	g.updateCh = make(chan updateResult, 1)
 	g.startUpdateCheck()
 	g.muteCh, g.muteFailCh = make(chan muteReq, 1), make(chan muteFail, 4)
 	go g.muteWorker()
 	url := opts.ServerURL
 	if opts.Local {
-		srv := server.New(server.Config{
+		lcfg := server.Config{
 			Addr:          "127.0.0.1:0",
 			Discoverable:  true,
 			ServerName:    "local",
 			Channels:      []string{"general"},
 			VoiceChannels: []string{"voice"},
 			Roles:         roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
-		})
+		}
+		serverLogf(&lcfg)
+		srv := server.New(lcfg)
 		if err := srv.Start(); err != nil {
 			return fmt.Errorf("local server: %w", err)
 		}
@@ -323,14 +347,9 @@ func Run(opts Options) error {
 	return err
 }
 
-func (g *game) logf(format string, args ...any) {
-	if g.opts.Verbose {
-		log.Printf(format, args...)
-	}
-}
-
 func (g *game) Update() error {
 	g.frame++
+	g.fullscreen = ebiten.IsFullscreen()
 	if !g.barInst { // once the window exists: take over the non-client area
 		g.barInst = true
 		ok, info := installBar()
@@ -364,6 +383,7 @@ func (g *game) Update() error {
 	}
 	g.tickBackground(time.Now())
 	g.escSpent = false
+	g.menuSpent = false
 	g.closeMenuOnEsc(inpututil.IsKeyJustPressed(ebiten.KeyEscape)) // first taker of Esc
 	if !g.settingsOpen && !g.modal {
 		g.updateKey()
@@ -373,6 +393,7 @@ func (g *game) Update() error {
 	g.dt = frameDT()
 	g.stepBar(g.dt)     // before buildHits: hit rects follow the drawn bar
 	g.stepQuality(g.dt) // after stepBar (geometry), before buildHits
+	g.stepHealth(time.Now())
 	g.buildHits()
 	g.stepHighlights(g.dt)
 	g.updateCursorShape()
@@ -422,6 +443,7 @@ func (g *game) Update() error {
 	if !g.modal {
 		g.updateBar(g.geom()) // the call may be on another server: any scene but settings
 	}
+	g.updateVideo(!g.modal && !g.settingsOpen)
 	return nil
 }
 
@@ -439,6 +461,7 @@ func (g *game) Draw(screen *ebiten.Image) {
 	bh := int(g.barH())
 	if !g.crtOn && bh == 0 {
 		g.drawScene(screen)
+		g.drawVideo(screen, image.Point{})
 		return
 	}
 	// The scene renders into an offscreen of the scene size (screen minus the
@@ -462,6 +485,7 @@ func (g *game) Draw(screen *ebiten.Image) {
 	} else {
 		blit(area, off)
 	}
+	g.drawVideo(screen, image.Pt(b.Min.X, b.Min.Y+bh)) // flat, after the CRT pass
 	g.drawTitleBar(screen)
 }
 

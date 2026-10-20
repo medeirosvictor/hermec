@@ -7,12 +7,14 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/pion/ice/v4"
 
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
@@ -42,14 +44,31 @@ type Config struct {
 	// UDPPortMin and UDPPortMax, when both non-zero, restrict the UDP ports
 	// used for voice media (for firewalls). Min must be <= Max.
 	UDPPortMin, UDPPortMax uint16
+	// MediaPort is the single UDP port all WebRTC media uses (through an ICE
+	// UDP mux). 0 means the same port number as the listener. Ignored when
+	// UDPPortMin/UDPPortMax are set (legacy ephemeral range).
+	MediaPort int
 	// AllowLoopbackICE restricts ICE to loopback (no LAN candidates, no mDNS).
 	// This breaks remote peers, so it is for tests only; not exposed in the
 	// TOML file.
 	AllowLoopbackICE bool
+	// LegacyHost makes the server behave like a pre-v0.5 host: Opus-only media
+	// (no VP8 in its MediaEngine) and share_start, share_stop and watch
+	// answered as unsupported message types. For compatibility tests only; not
+	// exposed in the TOML file.
+	LegacyHost bool
+	// NoVP8 drops only the VP8 codec from the MediaEngine (share messages stay
+	// supported). For tests only; not exposed in the TOML file.
+	NoVP8 bool
 	// MsgRate and MsgBurst are the post-auth inbound websocket message
 	// limit per connection (messages/sec sustained, bucket size). Either
 	// being 0 disables post-auth limiting. DefaultConfig sets 30 and 60.
 	MsgRate, MsgBurst int
+	// MaxVoice caps participants per voice channel; 0 means DefaultMaxVoice.
+	MaxVoice int
+	// maxOfferBytes overrides proto.MaxMessageSize as the largest server rtc_offer
+	// the SFU will send (tests only).
+	maxOfferBytes int
 	// Discoverable, when true, binds a UDP discovery responder on the same
 	// port number as the listener. DefaultConfig sets it true; the zero
 	// value (programmatic Config literals) is off.
@@ -57,6 +76,23 @@ type Config struct {
 	// ServerName is advertised in discovery replies (max 64 runes). Empty
 	// means the listener's host:port.
 	ServerName string
+	// MaxClients caps authenticated sessions; 0 means DefaultMaxClients. A
+	// client over the cap gets error "server_full".
+	MaxClients int
+	// MaxPerIP caps concurrent connections per remote IP; 0 means
+	// DefaultMaxPerIP. TOML: max_per_ip.
+	MaxPerIP int
+	// Logf receives every server log line; nil means log.Printf.
+	Logf func(format string, args ...any)
+}
+
+// logf writes a server log line through cfg.Logf, or log.Printf.
+func (s *Server) logf(format string, args ...any) {
+	if s.cfg.Logf != nil {
+		s.cfg.Logf(format, args...)
+		return
+	}
+	log.Printf(format, args...)
 }
 
 const (
@@ -86,9 +122,12 @@ type Server struct {
 	// clock is the time source for rate limiting; tests replace it.
 	clock func() time.Time
 
+	guards
+
 	http *http.Server
 	ln   net.Listener
 	udp  net.PacketConn // discovery responder; nil when not discoverable
+	mux  ice.UDPMux     // single-port media mux; nil in legacy UDP-range mode
 }
 
 // New returns a Server for cfg. Call Start to begin serving.
@@ -100,8 +139,12 @@ func New(cfg Config) *Server {
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
+			// Native clients send no Origin; any Origin means a browser page.
+			CheckOrigin: func(r *http.Request) bool { return r.Header.Get("Origin") == "" },
 		},
 	}
+	s.ipConns = make(map[string]int)
+	s.fails = make(map[string]*authFail)
 	s.initChannels()
 	if len(cfg.AllowedKeys) > 0 {
 		s.allowed = make(map[string]struct{}, len(cfg.AllowedKeys))
@@ -123,7 +166,7 @@ func (s *Server) Start() error {
 	}
 	var err error
 	for i := 0; i < attempts; i++ {
-		if err = s.start(); !errors.Is(err, ErrDiscoveryBind) {
+		if err = s.start(); !errors.Is(err, ErrDiscoveryBind) && !errors.Is(err, ErrMediaBind) {
 			return err
 		}
 	}
@@ -150,13 +193,11 @@ func (s *Server) start() error {
 		})
 	}
 	s.ln = ln
-	if s.cfg.Discoverable {
-		if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
-			if err := s.startDiscovery(discoveryBindHost(tcp.IP), tcp.Port); err != nil {
-				ln.Close()
-				s.ln = nil
-				return fmt.Errorf("server: discovery listen: %w: %w", ErrDiscoveryBind, err)
-			}
+	if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
+		if err := s.startUDP(discoveryBindHost(tcp.IP), tcp.Port); err != nil {
+			ln.Close()
+			s.ln = nil
+			return err
 		}
 	}
 	s.http = &http.Server{
@@ -197,6 +238,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.udp != nil {
 		s.udp.Close() // unblocks the discovery loop
 	}
+	if s.mux != nil {
+		s.mux.Close()
+	}
 	// Hijacked websocket connections are not closed by http.Server.Shutdown.
 	for _, c := range open {
 		c.ws.Close()
@@ -213,6 +257,24 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Origin") != "" {
+		http.Error(w, "browser origins are not allowed", http.StatusForbidden)
+		return
+	}
+	ip := remoteIP(r)
+	if !s.admit(ip) {
+		http.Error(w, "too many connections", http.StatusServiceUnavailable)
+		return
+	}
+	pre := true
+	leavePreAuth := func() {
+		if pre {
+			pre = false
+			s.dropPreAuth()
+		}
+	}
+	defer func() { leavePreAuth(); s.dropIP(ip) }()
+
 	ws, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return // Upgrade has already replied to the client
@@ -220,6 +282,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	ws.SetReadLimit(proto.MaxMessageSize)
 
 	c := newConn(s, ws)
+	c.ip, c.leavePreAuth = ip, leavePreAuth
 	if !s.register(c) {
 		ws.Close()
 		return

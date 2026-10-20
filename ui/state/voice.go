@@ -6,17 +6,24 @@ import (
 	"time"
 
 	"github.com/medeirosvictor/hermec/client"
+	"github.com/medeirosvictor/hermec/core/proto"
 )
 
 // NoVoiceSupport is the notice shown when a server rejects voice_join as a
 // bad request, which is what servers predating voice do.
 const NoVoiceSupport = "server has no voice support"
 
+// VoiceFullNotice is the notice shown when the voice channel is at its cap.
+const VoiceFullNotice = "voice channel is full"
+
 // VoiceJoinNotice turns a JoinVoice failure into a status line.
 func VoiceJoinNotice(err error) string {
 	var se *client.ServerError
 	if errors.As(err, &se) && se.Code == "bad_request" {
 		return NoVoiceSupport
+	}
+	if errors.As(err, &se) && se.Code == proto.CodeVoiceFull {
+		return VoiceFullNotice
 	}
 	return fmt.Sprintf("voice join failed: %v", err)
 }
@@ -40,6 +47,7 @@ type Row struct {
 	Name    string // RowOccupant: member name
 	FP      string // RowOccupant: member fingerprint
 	Muted   bool   // RowOccupant
+	Sharing bool   // RowOccupant: sharing their screen (shows a LIVE tag)
 }
 
 // Rows lays out the channel pane: text channels, then (if the server has any)
@@ -56,7 +64,7 @@ func (s *State) Rows() []Row {
 	for _, ch := range s.VoiceChannels {
 		rows = append(rows, Row{Kind: RowVoice, Channel: ch})
 		for _, m := range s.Voice[ch] {
-			rows = append(rows, Row{Kind: RowOccupant, Channel: ch, Name: m.Name, FP: m.Fingerprint, Muted: m.Muted})
+			rows = append(rows, Row{Kind: RowOccupant, Channel: ch, Name: m.Name, FP: m.Fingerprint, Muted: m.Muted, Sharing: m.Sharing})
 		}
 	}
 	return rows
