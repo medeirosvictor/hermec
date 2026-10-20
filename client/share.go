@@ -427,16 +427,54 @@ func (c *Client) stopShare(cl *call, only *shareLoop) error {
 }
 
 // Watch asks the server for sharer fp's video; "" stops watching. Decoded
-// frames arrive at the VideoSink. A failure (the member is not sharing) comes
-// back as an Err event. Watch lasts until the sharer stops or you stop it:
-// after a share ends it must be called again.
+// frames arrive at the VideoSink. Watch("") returns at once. Otherwise Watch
+// waits (up to videoSourceWait) for the server's answer, so calls never
+// overlap: it returns nil when the server announced the source (video_source),
+// the server's error if it refused (not_sharing; the previous watch is then
+// still in force and is restored here, the error is also delivered as an Err
+// event), or ErrWatchTimeout if no answer came (the new target is kept and the
+// first-packet fallback applies). Watch lasts until the sharer stops or you
+// stop it: after a share ends it must be called again. Concurrent callers are
+// serialized.
 func (c *Client) Watch(fp string) error {
 	if c.getCall() == nil {
 		return ErrNotInVoice
 	}
+	c.watchCallMu.Lock()
+	defer c.watchCallMu.Unlock()
+	wire, wait := c.beginWatch(fp)
+	if err := c.send(proto.TypeWatch, proto.Watch{Fingerprint: fp, Gen: wire}); err != nil {
+		c.endWatch(wait)
+		return err
+	}
+	if wait == nil {
+		return nil
+	}
+	timer := time.NewTimer(videoSourceWait)
+	defer timer.Stop()
+	select {
+	case err := <-wait:
+		return err
+	case <-timer.C:
+		c.endWatch(wait)
+		return ErrWatchTimeout
+	case <-c.done:
+		c.endWatch(wait)
+		return ErrClosed
+	}
+}
+
+// ErrWatchTimeout is returned by Watch when the server did not answer in time.
+var ErrWatchTimeout = errors.New("client: no answer to watch")
+
+// beginWatch switches the local watch target and returns the wire gen to send
+// and, when an answer is to be awaited, the channel it will arrive on. Calls
+// are serialized by Watch, so at most one watch is ever pending.
+func (c *Client) beginWatch(fp string) (wire uint32, wait chan error) {
 	c.watchMu.Lock()
-	// Re-watching the sharer we already have a boundary for changes nothing
-	// (the server ignores it too and sends no new video_source).
+	defer c.watchMu.Unlock()
+	// Re-watching the sharer we already have a boundary for changes nothing;
+	// the wire gen is unchanged, so the server stays silent too.
 	if fp == "" || fp != c.watchFP || !c.srcHave {
 		prev := c.watchStateLocked()
 		c.prevWatch = &prev
@@ -445,21 +483,41 @@ func (c *Client) Watch(fp string) error {
 		c.watchWire++
 		c.watchAt = time.Now()
 		c.srcHave = false
+		if fp != "" {
+			wait = make(chan error, 1)
+		}
+		c.watchWait = wait
 	}
-	wire := c.watchWire
-	c.watchMu.Unlock()
-	return c.send(proto.TypeWatch, proto.Watch{Fingerprint: fp, Gen: wire})
+	return c.watchWire, wait
 }
 
-// watchRefused undoes the latest Watch after the server answered it with
-// not_sharing: the server keeps streaming the previous source, so frames must
-// stay labelled with it. The reader is told (new gen/id) to restart on the
-// restored boundary.
-func (c *Client) watchRefused() {
+// endWatch stops waiting on wait (no answer will be acted on any more).
+func (c *Client) endWatch(wait chan error) {
+	c.watchMu.Lock()
+	if wait != nil && c.watchWait == wait {
+		c.watchWait = nil
+	}
+	c.watchMu.Unlock()
+}
+
+// watchAnsweredLocked completes the pending watch, if any, with err. Caller holds watchMu.
+func (c *Client) watchAnsweredLocked(err error) {
+	if c.watchWait != nil {
+		c.watchWait <- err // buffered, one answer per wait
+		c.watchWait = nil
+	}
+}
+
+// watchFailed handles the server's refusal (not_sharing, not_joined) of the
+// pending watch: the server keeps streaming the previous source, so we go back
+// to it and frames stay labelled with it. The reader is told (new gen/id) to
+// restart on the restored boundary. An error with no watch pending (a late
+// answer after a timeout) is ignored.
+func (c *Client) watchFailed(err error) {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
 	p := c.prevWatch
-	if p == nil {
+	if p == nil || c.watchWait == nil {
 		return
 	}
 	c.prevWatch = nil
@@ -468,6 +526,7 @@ func (c *Client) watchRefused() {
 	c.watchGen++
 	c.srcID++
 	c.watchAt = time.Now()
+	c.watchAnsweredLocked(err)
 }
 
 // onVideoSource records the server's source boundary. Messages for a sharer
@@ -485,6 +544,8 @@ func (c *Client) onVideoSource(m proto.VideoSource) {
 	}
 	c.srcHave, c.srcSeq = true, m.Seq
 	c.srcID++
+	c.prevWatch = nil
+	c.watchAnsweredLocked(nil)
 }
 
 // watchState is a consistent snapshot of the watch target and source boundary.
@@ -810,7 +871,10 @@ func (cl *call) readVideo(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote)
 			}
 		}
 		frames, lost, needKey := g.push(pkt)
-		if lost || needKey {
+		// Also keep asking while the gate is open but nothing has come out of
+		// it: partial keyframes (first packets sent before the track was
+		// bound) produce neither frames nor loss reports. pli is rate limited.
+		if lost || needKey || (g.active && !g.keyed) {
 			pli(false) // NACK did not repair it: only a keyframe resyncs the decoder
 		}
 		for _, data := range frames {

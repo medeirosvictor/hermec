@@ -77,19 +77,21 @@ type Client struct {
 	loopbackICE atomic.Bool
 	audioOnly   atomic.Bool
 
-	started   time.Time // Dial time; baseline of the first VideoStats window
-	vstats    videoStats
-	vsinkMu   sync.RWMutex
-	vsink     VideoSink
-	watchMu   sync.Mutex
-	watchFP   string // sharer we asked to watch ("" = none)
-	watchGen  uint64 // bumped by every Watch call
-	watchAt   time.Time
-	watchWire uint32      // gen sent with the latest effective Watch; video_source must echo it
-	prevWatch *watchState // state before that Watch, restored if the server refuses it
-	srcHave   bool        // a video_source for watchFP arrived since the last Watch
-	srcSeq    uint16      // first RTP sequence number of that source
-	srcID     uint64      // bumped by every accepted video_source
+	started     time.Time // Dial time; baseline of the first VideoStats window
+	vstats      videoStats
+	vsinkMu     sync.RWMutex
+	vsink       VideoSink
+	watchMu     sync.Mutex
+	watchFP     string // sharer we asked to watch ("" = none)
+	watchGen    uint64 // bumped by every Watch call
+	watchAt     time.Time
+	watchWire   uint32      // gen sent with the latest effective Watch; video_source must echo it
+	prevWatch   *watchState // state before that Watch, restored if the server refuses it
+	watchWait   chan error  // answer channel of the pending Watch, nil if none
+	watchCallMu sync.Mutex  // serializes Watch calls
+	srcHave     bool        // a video_source for watchFP arrived since the last Watch
+	srcSeq      uint16      // first RTP sequence number of that source
+	srcID       uint64      // bumped by every accepted video_source
 
 	evMu     sync.RWMutex // guards closing events against emitNB
 	evClosed bool

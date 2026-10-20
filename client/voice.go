@@ -315,8 +315,8 @@ func (c *Client) onRTC(env proto.Envelope) {
 // onError offers a server error to the active call. It reports whether the
 // call consumed it (media recovery or a failed join).
 func (c *Client) onError(em proto.ErrorMsg) bool {
-	if em.Code == proto.CodeNotSharing {
-		c.watchRefused() // the error itself still reaches the UI below
+	if em.Code == proto.CodeNotSharing || em.Code == "not_joined" {
+		c.watchFailed(&ServerError{em.Code, em.Message}) // the error itself still reaches the UI below
 	}
 	if em.Code == "bad_request" {
 		switch em.Message {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"image"
 	"image/color"
 	"sync"
@@ -75,7 +76,15 @@ func (g *game) videoPane(gm geometry) rectF {
 func (g *game) watchFn(c *client.Client, fp string) {
 	watch := g.shareOps.watch
 	if watch == nil {
-		watch = func(c *client.Client, fp string) { _ = c.Watch(fp) }
+		watch = func(c *client.Client, fp string) {
+			// Watch waits (at most a few seconds) for the server's answer. The
+			// error text reaches the status line as an Err event; here only
+			// the view has to follow a refusal.
+			var se *client.ServerError
+			if err := c.Watch(fp); errors.As(err, &se) && fp != "" {
+				g.watchRefused.Store(&fp)
+			}
+		}
 	}
 	// Queued behind earlier media ops so the last click is the last applied.
 	g.media.do(func() { watch(c, fp) })
@@ -173,6 +182,9 @@ func (g *game) stepVideo() {
 // updateVideo handles the clicks of the watch view. A flat video is not bent by
 // the CRT, so the press is tested against the pane with the unbent position.
 func (g *game) updateVideo(inputOK bool) {
+	if p := g.watchRefused.Swap(nil); p != nil && g.watch.fp == *p {
+		g.stopWatching() // refused: back to the chat; the client keeps no watch
+	}
 	g.stepVideo()
 	if !inputOK || !g.videoActive() || g.menuSpent || !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		return

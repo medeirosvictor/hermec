@@ -1,11 +1,14 @@
 package integration
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/medeirosvictor/hermec/client"
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/video"
 )
 
@@ -228,6 +231,52 @@ func TestStopShareEndsWatch(t *testing.T) {
 	}
 }
 
+// A refused Watch is reported to its caller, leaves the previous stream (and
+// its labels) in force, and an immediately following Watch of a real sharer
+// ends up on that sharer with correct labels.
+func TestWatchRefusedThenSwitch(t *testing.T) {
+	url := startVoiceServer(t)
+	a := newVoiceClient(t, url, "alice", 0xA1)
+	b := newVoiceClient(t, url, "bob", 0xB2)
+	c := newVoiceClient(t, url, "carol", 0xC3)
+	cv := newRecVideo()
+	c.c.SetVideoSink(cv)
+	a.join(t)
+	b.join(t)
+	c.join(t)
+	sizeA, sizeB := [2]int{320, 240}, [2]int{256, 192}
+	if err := a.c.StartShare(&synthSource{}, sizeA[0], sizeA[1], shareFPS, shareKbps); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.c.StartShare(&synthSource{}, sizeB[0], sizeB[1], shareFPS, shareKbps); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 10*time.Second, "C sees both sharing", func() bool { return c.sharing(a.fp) && c.sharing(b.fp) })
+
+	if err := c.c.Watch(a.fp); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 15*time.Second, "frames from A", func() bool { return cv.n(a.fp) >= 3 })
+
+	var se *client.ServerError
+	if err := c.c.Watch("nobody-is-sharing-this"); !errors.As(err, &se) || se.Code != proto.CodeNotSharing {
+		t.Fatalf("refused Watch returned %v, want a not_sharing ServerError", err)
+	}
+	base := cv.n(a.fp)
+	eventually(t, 10*time.Second, "A frames continue after the refused watch", func() bool { return cv.n(a.fp) >= base+3 })
+
+	if err := c.c.Watch(b.fp); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 10*time.Second, "frames labelled B", func() bool { return cv.n(b.fp) >= 3 })
+	if got := cv.sizesOf(b.fp); len(got) != 1 || got[sizeB] == 0 {
+		t.Errorf("frames labelled B have sizes %v, want only %v", got, sizeB)
+	}
+	if got := cv.sizesOf(a.fp); len(got) != 1 || got[sizeA] == 0 {
+		t.Errorf("frames labelled A have sizes %v, want only %v", got, sizeA)
+	}
+}
+
 func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 	url := startVoiceServer(t)
 	a := newVoiceClient(t, url, "alice", 0xA1)
@@ -276,7 +325,7 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 			select {
 			case <-stopFlip:
 				return
-			case <-time.After(15 * time.Millisecond):
+			case <-time.After(250 * time.Millisecond):
 			}
 		}
 	}()
