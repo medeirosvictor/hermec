@@ -34,6 +34,7 @@ type fileConfig struct {
 	Grants        map[string][]string `toml:"grants"`
 	MsgRate       int                 `toml:"msg_rate"`
 	MsgBurst      int                 `toml:"msg_burst"`
+	MaxVoice      int                 `toml:"max_voice"`
 	Discoverable  *bool               `toml:"discoverable"`
 	ServerName    string              `toml:"server_name"`
 }
@@ -45,6 +46,7 @@ func DefaultConfig() Config {
 		Channels:     []string{"general"},
 		MsgRate:      DefaultMsgRate,
 		MsgBurst:     DefaultMsgBurst,
+		MaxVoice:     DefaultMaxVoice,
 		Discoverable: true,
 		Roles: roles.Config{
 			Roles:        roles.Builtin(),
@@ -119,6 +121,12 @@ func LoadConfig(path string) (Config, error) {
 	if md.IsDefined("msg_burst") {
 		cfg.MsgBurst = fc.MsgBurst
 	}
+	if fc.MaxVoice < 0 || (md.IsDefined("max_voice") && fc.MaxVoice == 0) {
+		return Config{}, errors.New("server: load config: max_voice must be at least 1")
+	}
+	if md.IsDefined("max_voice") {
+		cfg.MaxVoice = fc.MaxVoice
+	}
 	if utf8.RuneCountInString(fc.ServerName) > discover.MaxNameRunes {
 		return Config{}, fmt.Errorf("server: load config: server_name must be at most %d characters", discover.MaxNameRunes)
 	}
@@ -152,6 +160,7 @@ func (c Config) MarshalTOML() ([]byte, error) {
 		Grants:        c.Roles.Grants,
 		MsgRate:       c.MsgRate,
 		MsgBurst:      c.MsgBurst,
+		MaxVoice:      c.MaxVoice,
 		Discoverable:  &c.Discoverable,
 		ServerName:    c.ServerName,
 	}

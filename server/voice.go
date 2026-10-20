@@ -212,6 +212,10 @@ func (s *Server) voiceJoin(c *conn, ch string) string {
 		// Idempotent re-join: membership and mute state are kept.
 		dead = s.broadcastVoiceLocked(ch)
 	} else {
+		if len(s.voice[ch]) >= s.maxVoice() {
+			s.chMu.Unlock()
+			return proto.CodeVoiceFull
+		}
 		prev := s.removeVoiceLocked(c)
 		s.voice[ch][c] = false
 		c.voiceCh = ch
@@ -276,6 +280,8 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 			c.sendError("bad_request", "not a voice channel: "+m.Channel)
 		case "forbidden":
 			c.sendError("forbidden", "not permitted to join channels")
+		case proto.CodeVoiceFull:
+			c.sendError(proto.CodeVoiceFull, "voice channel is full")
 		}
 	case proto.TypeVoiceLeave:
 		c.srv.voiceLeave(c)
@@ -328,4 +334,12 @@ func (c *conn) routeRTC(env proto.Envelope) {
 	if vs == nil {
 		c.sendError("not_joined", "not in a voice channel")
 	}
+}
+
+// maxVoice is the effective per-channel participant cap.
+func (s *Server) maxVoice() int {
+	if s.cfg.MaxVoice > 0 {
+		return s.cfg.MaxVoice
+	}
+	return DefaultMaxVoice
 }

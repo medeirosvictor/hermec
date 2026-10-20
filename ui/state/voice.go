@@ -6,17 +6,24 @@ import (
 	"time"
 
 	"github.com/medeirosvictor/hermec/client"
+	"github.com/medeirosvictor/hermec/core/proto"
 )
 
 // NoVoiceSupport is the notice shown when a server rejects voice_join as a
 // bad request, which is what servers predating voice do.
 const NoVoiceSupport = "server has no voice support"
 
+// VoiceFullNotice is the notice shown when the voice channel is at its cap.
+const VoiceFullNotice = "voice channel is full"
+
 // VoiceJoinNotice turns a JoinVoice failure into a status line.
 func VoiceJoinNotice(err error) string {
 	var se *client.ServerError
 	if errors.As(err, &se) && se.Code == "bad_request" {
 		return NoVoiceSupport
+	}
+	if errors.As(err, &se) && se.Code == proto.CodeVoiceFull {
+		return VoiceFullNotice
 	}
 	return fmt.Sprintf("voice join failed: %v", err)
 }

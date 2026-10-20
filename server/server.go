@@ -64,6 +64,11 @@ type Config struct {
 	// limit per connection (messages/sec sustained, bucket size). Either
 	// being 0 disables post-auth limiting. DefaultConfig sets 30 and 60.
 	MsgRate, MsgBurst int
+	// MaxVoice caps participants per voice channel; 0 means DefaultMaxVoice.
+	MaxVoice int
+	// maxOfferBytes overrides proto.MaxMessageSize as the largest server rtc_offer
+	// the SFU will send (tests only).
+	maxOfferBytes int
 	// Discoverable, when true, binds a UDP discovery responder on the same
 	// port number as the listener. DefaultConfig sets it true; the zero
 	// value (programmatic Config literals) is off.

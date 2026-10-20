@@ -150,13 +150,16 @@ type testPeer struct {
 	plis    atomic.Int64
 
 	states chan proto.VoiceState
+	audio  *webrtc.TrackLocalStaticRTP // the audio track this peer publishes
+	errs   chan string                 // messages of server error frames
 }
 
 func newTestPeer(t *testing.T, url string, publish bool) *testPeer {
 	t.Helper()
 	ws, id := authed(t, url)
 	p := &testPeer{t: t, ws: ws, fp: fpOf(id), vtracks: make(chan *webrtc.TrackRemote, 8),
-		states: make(chan proto.VoiceState, 64)}
+		states: make(chan proto.VoiceState, 64),
+		errs:   make(chan string, 16)}
 	me := &webrtc.MediaEngine{}
 	_ = me.RegisterCodec(webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}, PayloadType: 111}, webrtc.RTPCodecTypeAudio)
@@ -177,6 +180,7 @@ func newTestPeer(t *testing.T, url string, publish bool) *testPeer {
 	if _, err := pc.AddTrack(audio); err != nil {
 		t.Fatal(err)
 	}
+	p.audio = audio
 	if publish {
 		v, _ := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000}, "video-"+p.fp, p.fp)
 		snd, err := pc.AddTrack(v)
@@ -250,6 +254,13 @@ func (p *testPeer) readLoop() {
 			continue
 		}
 		switch env.Type {
+		case proto.TypeError:
+			var m proto.ErrorMsg
+			_ = json.Unmarshal(env.Data, &m)
+			select {
+			case p.errs <- m.Code + ": " + m.Message:
+			default:
+			}
 		case proto.TypeVoiceState:
 			var v proto.VoiceState
 			_ = json.Unmarshal(env.Data, &v)

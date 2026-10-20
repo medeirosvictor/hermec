@@ -73,6 +73,10 @@ type voiceSession struct {
 // before the peer's media state is reset. A variable so tests can shorten it.
 var answerTimeout = 15 * time.Second
 
+// maxInactiveLines is how many retired (inactive) audio m-lines a subscriber
+// PeerConnection may accumulate before its media is rebuilt from scratch.
+const maxInactiveLines = 16
+
 // errOfferPending is the fixed glare message: a client rtc_offer arrived while
 // a server offer is outstanding. See docs/protocol.md 4.13.
 const errOfferPending = "offer pending — answer first"
@@ -94,6 +98,7 @@ type peer struct {
 
 	fwds    []*forwarder                     // tracks this peer publishes
 	senders map[*forwarder]*webrtc.RTPSender // tracks this peer receives
+	retired int                              // inactive audio m-lines left on pc by removed senders
 
 	// Screen share. watchers are the peers receiving this peer's video;
 	// watching is the sharer this peer receives video from.
@@ -555,14 +560,13 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 			vs.wg.Add(1)
 			go vs.drainReceiverRTCP(recv)
 			isVideo := remote.Kind() == webrtc.RTPCodecTypeVideo
-			if isVideo {
-				for _, g := range p.fwds {
-					if g.video && !g.isDead() {
-						// One screen-share track per peer; discard extras.
-						vs.wg.Add(1)
-						go vs.discardTrack(remote)
-						return
-					}
+			for _, g := range p.fwds {
+				if g.video == isVideo && !g.isDead() {
+					// One audio and one screen-share track per peer; discard extras.
+					vs.srv.logf("voice %q: %s sent a second %s track; ignoring it", vs.channel, p.c.fingerprint, remote.Kind())
+					vs.wg.Add(1)
+					go vs.discardTrack(remote)
+					return
 				}
 			}
 			f := &forwarder{pub: p, remote: remote, video: isVideo, sinks: make(map[*peer]sink)}
@@ -732,6 +736,14 @@ func (vs *voiceSession) renegotiate(p *peer) {
 		vs.releaseMedia(p)
 		return
 	}
+	raw, err := proto.Encode(proto.TypeRTCOffer, proto.RTCOffer{SDP: p.pc.LocalDescription().SDP})
+	if err != nil || len(raw) > vs.srv.offerLimit() {
+		// A dropped offer would wedge negotiation, so reset instead.
+		vs.srv.logf("voice %q: rtc_offer for %s is %d bytes (max %d); resetting its media", vs.channel, p.c.fingerprint, len(raw), vs.srv.offerLimit())
+		p.c.sendError("bad_request", "rtc_offer too large; media reset, send a new rtc_offer")
+		vs.releaseMedia(p)
+		return
+	}
 	p.negotiating = true
 	p.kfInOffer = p.kfWanted && p.vfwd != nil
 	p.offerGen++
@@ -746,7 +758,17 @@ func (vs *voiceSession) renegotiate(p *peer) {
 			}
 		})
 	})
-	vs.reply(p, proto.TypeRTCOffer, proto.RTCOffer{SDP: p.pc.LocalDescription().SDP})
+	if !p.c.enqueue(raw) {
+		dropSlow([]*conn{p.c})
+	}
+}
+
+// offerLimit is the largest server rtc_offer (encoded frame) the SFU sends.
+func (s *Server) offerLimit() int {
+	if s.cfg.maxOfferBytes > 0 {
+		return s.cfg.maxOfferBytes
+	}
+	return proto.MaxMessageSize
 }
 
 func (vs *voiceSession) stopOfferTimer(p *peer) {
@@ -767,6 +789,7 @@ func (vs *voiceSession) syncTracks(q *peer) {
 		if f.isDead() {
 			_ = q.pc.RemoveTrack(snd)
 			delete(q.senders, f)
+			q.retired++
 			changed = true
 		}
 	}
@@ -797,6 +820,15 @@ func (vs *voiceSession) syncTracks(q *peer) {
 			go vs.drainRTCP(snd)
 			changed = true
 		}
+	}
+	// Pion never frees a transceiver, and reusing an audio line would keep the
+	// previous speaker's stream id (clients attribute audio by it), so bound
+	// the growth by rebuilding this peer's PC once enough lines are retired.
+	if q.retired > maxInactiveLines {
+		vs.srv.logf("voice %q: %s has %d inactive audio lines; resetting its media", vs.channel, q.c.fingerprint, q.retired)
+		q.c.sendError("bad_request", "too many retired audio lines; media reset, send a new rtc_offer")
+		vs.releaseMedia(q)
+		return
 	}
 	if vs.syncVideo(q) {
 		changed = true
@@ -867,6 +899,7 @@ func (vs *voiceSession) releaseMedia(p *peer) {
 	pc := p.pc
 	p.pc = nil
 	p.negotiating, p.dirty, p.pending = false, false, nil
+	p.retired = 0
 	vs.stopOfferTimer(p)
 	for _, f := range p.fwds {
 		f.kill()
@@ -961,6 +994,7 @@ func (vs *voiceSession) pruneSender(sub *peer, f *forwarder) {
 	delete(sub.senders, f)
 	if sub.pc != nil {
 		_ = sub.pc.RemoveTrack(snd)
+		sub.retired++
 		// Re-sync: if the publisher is still alive and the subscriber's PC
 		// is usable, the track comes back (fresh local track) in the same
 		// renegotiation instead of waiting for an unrelated topology change.

@@ -51,6 +51,10 @@ const (
 // the sender's voice channel.
 const CodeNotSharing = "not_sharing"
 
+// CodeVoiceFull is the error code for a voice_join to a channel at its
+// participant cap (server config max_voice).
+const CodeVoiceFull = "voice_full"
+
 // Reserved for future end-to-end encryption. They have no handler in v1.
 const (
 	TypeE2EEKeyExchange = "e2ee_key_exchange"
@@ -147,7 +151,7 @@ type RTCCandidate struct {
 }
 
 // ErrorMsg reports a failure. Codes: "auth_failed", "forbidden",
-// "bad_request", "not_joined", "rate_limited", "not_sharing".
+// "bad_request", "not_joined", "rate_limited", "not_sharing", "voice_full".
 type ErrorMsg struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

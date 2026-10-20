@@ -106,6 +106,13 @@ func TestVoiceJoinNotice(t *testing.T) {
 	}
 }
 
+func TestVoiceFullStatus(t *testing.T) {
+	err := fmt.Errorf("join: %w", &client.ServerError{Code: "voice_full", Message: "voice channel is full"})
+	if got := VoiceJoinNotice(err); got != "voice channel is full" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestFormatElapsed(t *testing.T) {
 	for d, want := range map[time.Duration]string{0: "0:00", 65 * time.Second: "1:05", 3725 * time.Second: "1:02:05", -time.Second: "0:00"} {
 		if got := FormatElapsed(d); got != want {

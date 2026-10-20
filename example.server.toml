@@ -40,6 +40,10 @@ voice_channels = ["voice"]
 # msg_rate = 30
 # msg_burst = 60
 
+# Most participants in one voice channel; a further voice_join is refused with
+# "voice_full". Default 25.
+# max_voice = 25
+
 # LAN discovery: answer UDP probes on the same port number as addr (default true).
 # Set false to bind no UDP discovery socket at all.
 # discoverable = true

@@ -387,6 +387,7 @@ Media:
 | `bad_request` | Malformed message, unknown channel, or unsupported message type.     |
 | `not_joined`  | The operation needs channel membership the client does not have.     |
 | `not_sharing` | `watch` named a member who is not sharing in the sender's voice channel. |
+| `voice_full`  | `voice_join` named a channel already at its participant cap (`max_voice`, default 25). |
 | `rate_limited`| The client is sending too fast; the connection is closed after this message. |
 
 Except for `auth_failed` and `rate_limited`, errors do not close the connection.

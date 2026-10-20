@@ -9,6 +9,9 @@ const (
 	DefaultMsgRate  = 30
 	DefaultMsgBurst = 60
 
+	// DefaultMaxVoice is the per-channel voice participant cap when none is set.
+	DefaultMaxVoice = 25
+
 	preAuthMsgRate  = 5
 	preAuthMsgBurst = 10
 )
