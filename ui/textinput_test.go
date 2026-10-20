@@ -15,11 +15,40 @@ func TestPasteStripsNewlinesAndCaps(t *testing.T) {
 	if !f.update(editKeys{paste: true}, []rune("v"), fakeClip("x\r\ny\tz\u0000\u007fQQQQ")) {
 		t.Fatal("paste reported no change")
 	}
-	if got := string(f.text); got != "axyzQb" { // room is 4: x y z Q
+	if got := string(f.text); got != "ax y b" { // room is 4: x, space, y, space
 		t.Fatalf("text = %q", got)
 	}
 	if len(f.text) != 6 || f.caret != 5 {
 		t.Fatalf("len %d caret %d", len(f.text), f.caret)
+	}
+}
+
+func TestPasteLineBreaksBecomeSpaces(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"hello\nworld", "hello world"},
+		{"hello\r\nworld", "hello world"},
+		{"hello\rworld", "hello world"},
+		{"a\r\n\r\nb", "a b"},
+		{"a\n\n\n\tb", "a b"},
+		{"col1\tcol2", "col1 col2"},
+		{"hello\n", "hello"},
+		{"  \n hi \r\n ", "hi"},
+		{"a\x00\nb", "a b"},
+	} {
+		f := textField{max: 64}
+		f.update(editKeys{paste: true}, nil, fakeClip(c.in))
+		if got := string(f.text); got != c.want {
+			t.Errorf("paste %q = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestJoinPasteTrailingNewlineHasNoSpace(t *testing.T) {
+	clipboardRead = fakeClip("100.1.2.3:7697\r\n")
+	f := field{runes: []rune("ws://")}
+	f.edit(editKeys{paste: true}, nil, 128, nil, true)
+	if f.String() != "ws://100.1.2.3:7697" {
+		t.Fatalf("got %q", f.String())
 	}
 }
 

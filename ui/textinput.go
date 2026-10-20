@@ -123,7 +123,33 @@ func (t *textField) update(k editKeys, chars []rune, paste func() (string, error
 	return changed
 }
 
+// pasteNewlines maps line breaks and tabs to spaces, so pasted lines stay
+// apart; "\r\n" is listed first so it becomes one space, not two.
+var pasteNewlines = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", " ")
+
+// flattenPaste turns line breaks and tabs into single spaces: a run of them
+// (or of spaces already there) collapses to one.
+func flattenPaste(s string) string {
+	s = pasteNewlines.Replace(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	prevSpace := false
+	for _, r := range s {
+		if r == ' ' {
+			if prevSpace {
+				continue
+			}
+			prevSpace = true
+		} else {
+			prevSpace = false
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 func (t *textField) pasteText(s string) bool {
+	s = flattenPaste(s)
 	// Bound the work on a huge clipboard: nothing past the cap can land.
 	if lim := 4*t.max + 64; len(s) > lim {
 		s = s[:lim]
