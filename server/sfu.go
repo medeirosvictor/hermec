@@ -119,6 +119,7 @@ type peer struct {
 	vfwd    *forwarder // the video forwarder currently feeding vsender
 	vout    *outStream // keeps vsender's seq/timestamps continuous across switches
 	vrw     *rewrite   // numbering of the source currently feeding vsender
+	wgen    uint32     // gen of the viewer's latest watch request, echoed in video_source
 
 	sharing atomic.Bool // this peer is sharing (set by the actor, read by forwarders)
 }
@@ -177,6 +178,8 @@ func (r *rewrite) apply(pkt *rtp.Packet) *rtp.Packet {
 	if r.retired {
 		return nil
 	}
+	// A first packet that was reordered behind a later one of the same source
+	// maps below bseq; the client treats it as pre-boundary and drops it.
 	if !r.synced {
 		r.synced = true
 		r.seqOff = r.bseq - pkt.SequenceNumber
@@ -458,12 +461,13 @@ func (vs *voiceSession) shareStopped(c *conn) {
 
 // setWatch (called under chMu; non-blocking) points viewer c at the sharer
 // target (nil = stop watching).
-func (vs *voiceSession) setWatch(c, target *conn) {
+func (vs *voiceSession) setWatch(c, target *conn, gen uint32) {
 	vs.post(func() {
 		v, ok := vs.peers[c]
 		if !ok {
 			return
 		}
+		v.wgen = gen
 		if v.watching != nil {
 			delete(v.watching.watchers, v)
 			v.watching = nil
@@ -477,6 +481,21 @@ func (vs *voiceSession) setWatch(c, target *conn) {
 			}
 		}
 		vs.syncTracks(v)
+	})
+}
+
+// resendSource (called under chMu; non-blocking) adopts a new watch gen for a
+// viewer whose source did not change and repeats the current boundary under it.
+func (vs *voiceSession) resendSource(c *conn, gen uint32) {
+	vs.post(func() {
+		v, ok := vs.peers[c]
+		if !ok {
+			return
+		}
+		v.wgen = gen
+		if v.vfwd != nil && v.vrw != nil {
+			vs.sendVideoSource(v, v.vfwd.pub.c.fingerprint, v.vrw.bseq)
+		}
 	})
 }
 
@@ -954,7 +973,7 @@ func (vs *voiceSession) syncVideo(q *peer) bool {
 // sendVideoSource (actor) tells q which source its video track carries from
 // seq on ("" = detached).
 func (vs *voiceSession) sendVideoSource(q *peer, fp string, seq uint16) {
-	raw, err := proto.Encode(proto.TypeVideoSource, proto.VideoSource{Fingerprint: fp, Seq: seq})
+	raw, err := proto.Encode(proto.TypeVideoSource, proto.VideoSource{Fingerprint: fp, Seq: seq, Gen: q.wgen})
 	if err != nil {
 		return
 	}
@@ -1051,6 +1070,11 @@ func (vs *voiceSession) pruneSender(sub *peer, f *forwarder) {
 		// Single reusable video sender: just detach and re-attach.
 		if sub.vfwd == f {
 			sub.vfwd = nil
+			if sub.vrw != nil {
+				sub.vrw.retire()
+				sub.vrw = nil
+				vs.sendVideoSource(sub, "", 0)
+			}
 			if sub.pc != nil {
 				if st := sub.pc.ConnectionState(); st != webrtc.PeerConnectionStateClosed && st != webrtc.PeerConnectionStateFailed {
 					vs.syncTracks(sub)

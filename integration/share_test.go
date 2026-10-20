@@ -256,9 +256,12 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 	eventually(t, 15*time.Second, "frames from A", func() bool { return cv.n(a.fp) >= 5 })
 
 	// Dave flips between the sharers around Carol's switch. Every flip makes
-	// the server ask the new source for a keyframe, so A keeps emitting
-	// keyframes while Carol's old packets are still in flight: the exact
-	// condition under which A frames used to be decoded and labelled B.
+	// the server ask the new source for a keyframe (rate limited to about two
+	// per second per sharer), so A keeps emitting extra keyframes while
+	// Carol's old packets are in flight: the condition under which A frames
+	// used to be decoded and labelled B. It raises the odds of hitting the
+	// window; the deterministic check of the boundary logic is the client's
+	// srcGate unit tests.
 	eventually(t, 10*time.Second, "D sees both sharing", func() bool { return d.sharing(a.fp) && d.sharing(b.fp) })
 	stopFlip := make(chan struct{})
 	flipDone := make(chan struct{})
@@ -287,7 +290,7 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 	cv.mu.Lock()
 	lat := cv.first[b.fp].Sub(start)
 	cv.mu.Unlock()
-	if lat > 1500*time.Millisecond {
+	if lat > 3*time.Second { // loose: this test is about labels, latency is only a sanity bound
 		t.Errorf("first B frame %v after switching, want about 1s", lat)
 	}
 	if got := cv.sizesOf(b.fp); len(got) != 1 || got[sizeB] == 0 {

@@ -137,6 +137,10 @@ type ShareStop struct{}
 // stops watching. A viewer watches one stream at a time.
 type Watch struct {
 	Fingerprint string `json:"fingerprint"`
+	// Gen identifies this watch request; the server echoes the newest one in
+	// VideoSource.Gen so a client can tell a stale boundary from a current one.
+	// 0 (omitted) from clients that do not number their requests.
+	Gen uint32 `json:"gen,omitempty"`
 }
 
 // VideoSource tells a viewer which sharer the packets on its (single) video
@@ -147,6 +151,9 @@ type Watch struct {
 type VideoSource struct {
 	Fingerprint string `json:"fingerprint"`
 	Seq         uint16 `json:"seq"`
+	// Gen is the Gen of the watch request this boundary answers (0 if the
+	// client sent none).
+	Gen uint32 `json:"gen,omitempty"`
 }
 
 // VoiceState is the full participant list of a voice channel.

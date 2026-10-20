@@ -417,10 +417,20 @@ Media:
   waits for it after each `watch`, discards packets whose sequence number is
   before `seq` (16-bit serial-number order), restarts its depacketizer and
   decoder at `seq`, waits for a keyframe, and labels frames with `fingerprint`.
+  `watch` may carry `"gen": uint32` (a client-chosen number, new for each
+  effective watch request; omitted = 0). The server echoes the newest gen it
+  has accepted in `video_source.gen`, and a client ignores a `video_source`
+  whose gen is not its current one (0 = server or client without gens), so a
+  boundary announced for an earlier watch of the same sharer is not mistaken
+  for the current one. A repeated `watch` of the sharer already watched
+  changes nothing except that, with a new gen, the server repeats the current
+  `video_source` under it. A `watch` refused with `not_sharing` changes
+  nothing: the previous source keeps streaming, and the client keeps (or
+  restores) its previous target.
   When a viewer's source is detached (`watch` with `""`, or the sharer
   stopped) the server sends `{"fingerprint": "", "seq": 0}`; clients may
   ignore it. Older clients ignore the unknown type. A client that gets no
-  `video_source` for about 2 seconds after `watch` may fall back to restarting
+  `video_source` for about 3 seconds after `watch` may fall back to restarting
   on the first packet it receives.
 - A server refuses an `rtc_offer` that contains a video section it has no
   codec for with `error` `bad_request` "no common video codec; media reset,

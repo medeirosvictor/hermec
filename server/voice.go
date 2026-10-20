@@ -164,7 +164,7 @@ func (s *Server) shareSet(c *conn, on bool) {
 // watch records that c watches the sharer with fingerprint fp ("" stops).
 // Returns "" on success, "not_joined" outside a call, or "not_sharing" when
 // fp is not sharing in c's channel.
-func (s *Server) watch(c *conn, fp string) string {
+func (s *Server) watch(c *conn, fp string, gen uint32) string {
 	s.chMu.Lock()
 	defer s.chMu.Unlock()
 	ch := c.voiceCh
@@ -173,14 +173,23 @@ func (s *Server) watch(c *conn, fp string) string {
 	}
 	vs := s.sessions[ch]
 	if fp == "" {
-		c.watching = ""
+		c.watching, c.watchGen = "", gen
 		if vs != nil {
-			vs.setWatch(c, nil)
+			vs.setWatch(c, nil, gen)
 		}
 		return ""
 	}
 	if c.watching == fp {
-		return "" // already watching: no renegotiation, no extra keyframe
+		// Already watching: no renegotiation, no extra keyframe. But the
+		// client may have restarted its watch (new gen) and be waiting for a
+		// video_source, so adopt the gen and repeat the current boundary.
+		if gen != c.watchGen {
+			c.watchGen = gen
+			if vs != nil {
+				vs.resendSource(c, gen)
+			}
+		}
+		return ""
 	}
 	var target *conn
 	for m := range s.voice[ch] {
@@ -192,8 +201,8 @@ func (s *Server) watch(c *conn, fp string) string {
 	if target == nil || vs == nil {
 		return proto.CodeNotSharing
 	}
-	c.watching = fp
-	vs.setWatch(c, target)
+	c.watching, c.watchGen = fp, gen
+	vs.setWatch(c, target, gen)
 	return ""
 }
 
@@ -304,7 +313,7 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 			c.sendError("bad_request", "malformed watch")
 			return true
 		}
-		switch c.srv.watch(c, m.Fingerprint) {
+		switch c.srv.watch(c, m.Fingerprint, m.Gen) {
 		case "not_joined":
 			c.sendError("not_joined", "not in a voice channel")
 		case proto.CodeNotSharing:

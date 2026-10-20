@@ -152,6 +152,7 @@ type testPeer struct {
 	states chan proto.VoiceState
 	audio  *webrtc.TrackLocalStaticRTP // the audio track this peer publishes
 	errs   chan string                 // messages of server error frames
+	vsrc   chan proto.VideoSource      // video_source messages received
 }
 
 func newTestPeer(t *testing.T, url string, publish bool) *testPeer {
@@ -159,7 +160,7 @@ func newTestPeer(t *testing.T, url string, publish bool) *testPeer {
 	ws, id := authed(t, url)
 	p := &testPeer{t: t, ws: ws, fp: fpOf(id), vtracks: make(chan *webrtc.TrackRemote, 8),
 		states: make(chan proto.VoiceState, 64),
-		errs:   make(chan string, 16)}
+		errs:   make(chan string, 16), vsrc: make(chan proto.VideoSource, 16)}
 	me := &webrtc.MediaEngine{}
 	_ = me.RegisterCodec(webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}, PayloadType: 111}, webrtc.RTPCodecTypeAudio)
@@ -254,6 +255,14 @@ func (p *testPeer) readLoop() {
 			continue
 		}
 		switch env.Type {
+		case proto.TypeVideoSource:
+			var m proto.VideoSource
+			if json.Unmarshal(env.Data, &m) == nil {
+				select {
+				case p.vsrc <- m:
+				default:
+				}
+			}
 		case proto.TypeError:
 			var m proto.ErrorMsg
 			_ = json.Unmarshal(env.Data, &m)

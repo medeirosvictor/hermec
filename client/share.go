@@ -85,7 +85,7 @@ func (r *videoRx) push(pkt *rtp.Packet) (frames [][]byte, lost bool) {
 
 // videoSourceWait is how long a viewer waits for the server's video_source
 // after Watch before falling back to starting on the first packet.
-const videoSourceWait = 2 * time.Second
+const videoSourceWait = 3 * time.Second
 
 // srcGate sits in front of a videoRx and enforces the source boundary the
 // server announced with video_source: packets before the boundary belong to
@@ -438,13 +438,36 @@ func (c *Client) Watch(fp string) error {
 	// Re-watching the sharer we already have a boundary for changes nothing
 	// (the server ignores it too and sends no new video_source).
 	if fp == "" || fp != c.watchFP || !c.srcHave {
+		prev := c.watchStateLocked()
+		c.prevWatch = &prev
 		c.watchFP = fp
 		c.watchGen++
+		c.watchWire++
 		c.watchAt = time.Now()
 		c.srcHave = false
 	}
+	wire := c.watchWire
 	c.watchMu.Unlock()
-	return c.send(proto.TypeWatch, proto.Watch{Fingerprint: fp})
+	return c.send(proto.TypeWatch, proto.Watch{Fingerprint: fp, Gen: wire})
+}
+
+// watchRefused undoes the latest Watch after the server answered it with
+// not_sharing: the server keeps streaming the previous source, so frames must
+// stay labelled with it. The reader is told (new gen/id) to restart on the
+// restored boundary.
+func (c *Client) watchRefused() {
+	c.watchMu.Lock()
+	defer c.watchMu.Unlock()
+	p := c.prevWatch
+	if p == nil {
+		return
+	}
+	c.prevWatch = nil
+	c.watchFP, c.watchWire = p.fp, p.wire
+	c.srcHave, c.srcSeq = p.have, p.seq
+	c.watchGen++
+	c.srcID++
+	c.watchAt = time.Now()
 }
 
 // onVideoSource records the server's source boundary. Messages for a sharer
@@ -457,8 +480,8 @@ func (c *Client) onVideoSource(m proto.VideoSource) {
 		c.srcHave = false
 		return
 	}
-	if m.Fingerprint != c.watchFP {
-		return
+	if m.Fingerprint != c.watchFP || (m.Gen != 0 && m.Gen != c.watchWire) {
+		return // not the sharer / not the watch request we are waiting on
 	}
 	c.srcHave, c.srcSeq = true, m.Seq
 	c.srcID++
@@ -472,6 +495,11 @@ type watchState struct {
 	seq  uint16 // first sequence number of the source
 	id   uint64 // changes on every announcement
 	at   time.Time
+	wire uint32 // gen sent to the server with the Watch
+}
+
+func (c *Client) watchStateLocked() watchState {
+	return watchState{c.watchFP, c.watchGen, c.srcHave, c.srcSeq, c.srcID, c.watchAt, c.watchWire}
 }
 
 // watchSnapshot returns the watch state. The server keeps one video
@@ -481,7 +509,7 @@ type watchState struct {
 func (c *Client) watchSnapshot() watchState {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
-	return watchState{c.watchFP, c.watchGen, c.srcHave, c.srcSeq, c.srcID, c.watchAt}
+	return c.watchStateLocked()
 }
 
 // watchTarget returns the sharer we asked to watch and a counter that changes
