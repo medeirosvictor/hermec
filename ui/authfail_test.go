@@ -47,3 +47,11 @@ func TestServerFullKeepsAutoRetry(t *testing.T) {
 		t.Fatal("server_full must keep retrying with backoff")
 	}
 }
+
+func TestServerBusyKeepsAutoRetry(t *testing.T) {
+	err := fmt.Errorf("client: dial: %w", &client.ServerError{Code: client.CodeServerBusy, Message: "busy"})
+	_, s := failedDial(t, err)
+	if s.retryAt.IsZero() {
+		t.Fatal("server_busy must keep retrying with backoff")
+	}
+}

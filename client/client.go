@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,6 +46,13 @@ type ServerError struct {
 }
 
 func (e *ServerError) Error() string { return e.Code + ": " + e.Message }
+
+// Codes for refusals the server makes before the WebSocket upgrade. They come
+// as an HTTP status, not a protocol error message, so Dial synthesizes them.
+const (
+	CodeServerBusy = "server_busy" // 503: pre-auth or per-IP cap, or a blocked IP
+	CodeForbidden  = "forbidden"   // 403: the request carried an Origin header
+)
 
 type joinWaiter struct {
 	channel string
@@ -88,11 +96,32 @@ type Client struct {
 	once     sync.Once
 }
 
+// refusalError maps a pre-upgrade HTTP status to a typed ServerError, or nil
+// for statuses that are not server refusals.
+func refusalError(status int) *ServerError {
+	switch status {
+	case http.StatusServiceUnavailable:
+		return &ServerError{Code: CodeServerBusy, Message: "server busy"}
+	case http.StatusForbidden:
+		return &ServerError{Code: CodeForbidden, Message: "origin refused"}
+	}
+	return nil
+}
+
 // Dial connects to url (e.g. "ws://host:port/"), answers the server's
 // challenge as id, and returns once auth_ok has been received.
 func Dial(ctx context.Context, url string, id *identity.Identity, name, password string) (*Client, error) {
-	ws, _, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
+	ws, resp, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
 	if err != nil {
+		if errors.Is(err, websocket.ErrBadHandshake) && resp != nil {
+			se := refusalError(resp.StatusCode)
+			if resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+			if se != nil {
+				return nil, fmt.Errorf("client: dial: %w", se)
+			}
+		}
 		return nil, fmt.Errorf("client: dial: %w", err)
 	}
 	ws.SetReadLimit(proto.MaxMessageSize)
