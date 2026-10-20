@@ -101,7 +101,7 @@ func (s *State) Apply(ev client.Event, open bool) {
 	case ev.Chat != nil:
 		c := ev.Chat
 		ms := append(s.Messages[c.Channel], Message{
-			FromName: c.From.Name, FromFP: c.From.Fingerprint, Text: c.Text, TS: c.TS,
+			FromName: CleanName(c.From.Name, MaxServerNameRunes), FromFP: c.From.Fingerprint, Text: c.Text, TS: c.TS,
 		})
 		if len(ms) > MaxMessages {
 			ms = append([]Message(nil), ms[len(ms)-MaxMessages:]...)
@@ -121,7 +121,11 @@ func (s *State) Apply(ev client.Event, open bool) {
 		if len(ev.Voice.Members) == 0 {
 			delete(s.Voice, ev.Voice.Channel)
 		} else {
-			s.Voice[ev.Voice.Channel] = append([]proto.VoiceMember(nil), ev.Voice.Members...)
+			ms := append([]proto.VoiceMember(nil), ev.Voice.Members...)
+			for i := range ms {
+				ms[i].Name = CleanName(ms[i].Name, MaxServerNameRunes)
+			}
+			s.Voice[ev.Voice.Channel] = ms
 		}
 	case errors.Is(ev.Err, client.ErrShareUnsupported):
 		s.Status = ev.Err.Error() // a plain explanation, not an error code

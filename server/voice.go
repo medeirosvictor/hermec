@@ -245,6 +245,10 @@ func (s *Server) voiceMute(c *conn, muted bool) string {
 		s.chMu.Unlock()
 		return "not_joined"
 	}
+	if s.voice[ch][c] == muted {
+		s.chMu.Unlock()
+		return "" // unchanged: nothing to tell anyone
+	}
 	s.voice[ch][c] = muted
 	dead := s.broadcastVoiceLocked(ch)
 	s.chMu.Unlock()

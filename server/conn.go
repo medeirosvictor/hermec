@@ -13,7 +13,9 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/medeirosvictor/hermec/core/identity"
+	"github.com/medeirosvictor/hermec/core/names"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/discover"
 )
 
 const nonceSize = 32
@@ -44,6 +46,12 @@ func newConn(s *Server, ws *websocket.Conn) *conn {
 // enqueue queues an encoded message for the writer. It reports false if the
 // connection is closed or its outbound buffer is full (slow consumer).
 func (c *conn) enqueue(raw []byte) bool {
+	if len(raw) > proto.MaxMessageSize {
+		// Clients refuse frames this large (and would drop us); one oversize
+		// frame must not take its recipient down, so drop it and report ok.
+		c.srv.logf("server: dropping %d-byte outbound frame (max %d)", len(raw), proto.MaxMessageSize)
+		return true
+	}
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	if c.closed {
@@ -210,7 +218,10 @@ func (c *conn) authenticate() error {
 	}
 
 	c.fingerprint = fp
-	c.name = auth.Name
+	c.name = names.Clean(auth.Name, discover.MaxNameRunes)
+	if c.name == "" {
+		c.name = "anon"
+	}
 	c.sendMsg(proto.TypeAuthOK, proto.AuthOK{
 		Fingerprint: fp,
 		Roles:       c.srv.cfg.Roles.RolesFor(fp),

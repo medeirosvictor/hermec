@@ -3,6 +3,7 @@
 package proto
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -200,11 +201,25 @@ type ChatMessage struct {
 
 // Encode wraps payload in a versioned envelope and marshals it.
 func Encode(msgType string, payload any) ([]byte, error) {
-	data, err := json.Marshal(payload)
+	data, err := marshalNoEscape(payload)
 	if err != nil {
 		return nil, fmt.Errorf("proto: marshal payload: %w", err)
 	}
-	return json.Marshal(Envelope{V: Version, Type: msgType, Data: data})
+	return marshalNoEscape(Envelope{V: Version, Type: msgType, Data: data})
+}
+
+// marshalNoEscape is json.Marshal without HTML escaping: '<', '>' and '&' stay
+// one byte instead of growing to six, so frames stay predictably small. The
+// envelope is encoded the same way because marshalling a json.RawMessage
+// re-escapes it.
+func marshalNoEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 // Decode parses and validates a raw envelope. It returns an error on
