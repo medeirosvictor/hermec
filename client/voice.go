@@ -316,7 +316,7 @@ func (c *Client) onRTC(env proto.Envelope) {
 // call consumed it (media recovery or a failed join).
 func (c *Client) onError(em proto.ErrorMsg) bool {
 	if em.Code == proto.CodeNotSharing || em.Code == "not_joined" {
-		c.watchFailed(&ServerError{em.Code, em.Message}) // the error itself still reaches the UI below
+		c.watchFailed(em.Gen, &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen}) // the error itself still reaches the UI below
 	}
 	if em.Code == "bad_request" {
 		switch em.Message {
@@ -342,7 +342,7 @@ func (c *Client) onError(em proto.ErrorMsg) bool {
 		}
 	}
 	if !cl.joined.Load() {
-		cl.fail(&ServerError{em.Code, em.Message})
+		cl.fail(&ServerError{Code: em.Code, Message: em.Message})
 		return true
 	}
 	return false

@@ -111,7 +111,13 @@ func TestAudioTransceiversStayBoundedOverChurn(t *testing.T) {
 	s, url := startServerS(t, shareCfg())
 	stay := newTestPeer(t, url, false)
 	stay.join()
-	vs := sessionFor(s, "lounge")
+	// The lounge session is created when the server processes the join, which
+	// is asynchronous to join(); wait for it rather than reading nil.
+	var vs *voiceSession
+	eventually(t, 10*time.Second, "lounge session created", func() bool {
+		vs = sessionFor(s, "lounge")
+		return vs != nil
+	})
 	max := 0
 	for i := 0; i < 50; i++ {
 		c := newTestPeer(t, url, false)

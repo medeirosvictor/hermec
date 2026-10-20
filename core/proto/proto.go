@@ -182,6 +182,9 @@ type RTCCandidate struct {
 type ErrorMsg struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Gen is the Gen of the watch request this error answers (only set for
+	// refused watches whose request carried a gen).
+	Gen uint32 `json:"gen,omitempty"`
 }
 
 // Join requests joining a channel.

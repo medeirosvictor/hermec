@@ -123,6 +123,7 @@ func (g *game) clickLive(h state.Hit) {
 		return
 	}
 	g.resetVideo()
+	g.watchRefused.Store(nil) // a refusal of an earlier target is moot now
 	g.watch = watchState{fp: h.Key, name: name}
 	g.watchFn(s.c, h.Key)
 }

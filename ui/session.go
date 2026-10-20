@@ -335,6 +335,14 @@ func (g *game) noteEvent(s *session, ev client.Event) {
 	if errors.Is(ev.Err, client.ErrShareUnsupported) && g.share.on && g.share.c == s.c {
 		g.stopShare()
 	}
+	// A refusal that reaches us for the watch still in force (it arrived after
+	// Watch gave up waiting) ends the view; a timely refusal is handled by the
+	// media worker, which sees it as Watch's error.
+	var se *client.ServerError
+	if errors.As(ev.Err, &se) && se.Code == proto.CodeNotSharing && se.Gen != 0 &&
+		s.c != nil && se.Gen == s.c.WatchGen() && g.watch.fp != "" && g.callSess() == s {
+		g.stopWatching()
+	}
 }
 
 // drainEvents applies up to maxEventsPerTick events of s. A closed stream

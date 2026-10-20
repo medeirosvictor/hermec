@@ -86,6 +86,11 @@ func (c *conn) sendError(code, message string) {
 	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message})
 }
 
+// sendErrorGen is sendError for a refused watch: it echoes the request's gen.
+func (c *conn) sendErrorGen(code, message string, gen uint32) {
+	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message, Gen: gen})
+}
+
 // finish stops accepting outbound messages; the writer drains what is already
 // queued (e.g. a final error), then closes the socket.
 func (c *conn) finish() {

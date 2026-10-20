@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -15,6 +16,29 @@ func (p *testPeer) nextSource(t *testing.T) proto.VideoSource {
 	case <-time.After(5 * time.Second):
 		t.Fatal("no video_source")
 		return proto.VideoSource{}
+	}
+}
+
+// A refused watch's error carries the request's gen.
+func TestRefusedWatchErrorCarriesGen(t *testing.T) {
+	url := startServer(t, shareCfg())
+	b, _ := authed(t, url)
+	joinLounge(t, b)
+	sendEnv(t, b, proto.TypeWatch, proto.Watch{Fingerprint: "nobody", Gen: 7})
+	_ = b.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		env := readEnvSkipRoster(t, b)
+		if env.Type != proto.TypeError {
+			continue
+		}
+		var e proto.ErrorMsg
+		if err := json.Unmarshal(env.Data, &e); err != nil {
+			t.Fatal(err)
+		}
+		if e.Code != proto.CodeNotSharing || e.Gen != 7 {
+			t.Fatalf("error = %+v, want not_sharing gen 7", e)
+		}
+		return
 	}
 }
 

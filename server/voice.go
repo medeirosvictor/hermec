@@ -315,9 +315,9 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 		}
 		switch c.srv.watch(c, m.Fingerprint, m.Gen) {
 		case "not_joined":
-			c.sendError("not_joined", "not in a voice channel")
+			c.sendErrorGen("not_joined", "not in a voice channel", m.Gen)
 		case proto.CodeNotSharing:
-			c.sendError(proto.CodeNotSharing, "that member is not sharing in your channel")
+			c.sendErrorGen(proto.CodeNotSharing, "that member is not sharing in your channel", m.Gen)
 		}
 	case proto.TypeRTCOffer, proto.TypeRTCAnswer, proto.TypeRTCCandidate:
 		c.routeRTC(env)

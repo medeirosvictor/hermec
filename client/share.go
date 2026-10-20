@@ -444,6 +444,7 @@ func (c *Client) Watch(fp string) error {
 	defer c.watchCallMu.Unlock()
 	wire, wait := c.beginWatch(fp)
 	if err := c.send(proto.TypeWatch, proto.Watch{Fingerprint: fp, Gen: wire}); err != nil {
+		c.watchFailed(wire, err) // never sent: nothing changed server side
 		c.endWatch(wait)
 		return err
 	}
@@ -457,6 +458,11 @@ func (c *Client) Watch(fp string) error {
 		return err
 	case <-timer.C:
 		c.endWatch(wait)
+		select { // an answer that raced the timer wins
+		case err := <-wait:
+			return err
+		default:
+		}
 		return ErrWatchTimeout
 	case <-c.done:
 		c.endWatch(wait)
@@ -480,7 +486,8 @@ func (c *Client) beginWatch(fp string) (wire uint32, wait chan error) {
 		c.prevWatch = &prev
 		c.watchFP = fp
 		c.watchGen++
-		c.watchWire++
+		c.wireCtr++ // gens are never reused, even across a refused watch
+		c.watchWire = c.wireCtr
 		c.watchAt = time.Now()
 		c.srcHave = false
 		if fp != "" {
@@ -508,16 +515,19 @@ func (c *Client) watchAnsweredLocked(err error) {
 	}
 }
 
-// watchFailed handles the server's refusal (not_sharing, not_joined) of the
-// pending watch: the server keeps streaming the previous source, so we go back
-// to it and frames stay labelled with it. The reader is told (new gen/id) to
-// restart on the restored boundary. An error with no watch pending (a late
-// answer after a timeout) is ignored.
-func (c *Client) watchFailed(err error) {
+// watchFailed handles the refusal (not_sharing, not_joined) of the watch with
+// the given gen, or a failure to send it: the server keeps streaming the
+// previous source, so we go back to it and frames stay labelled with it. The
+// reader is told (new gen/id) to restart on the restored boundary. The error
+// is acted on only if gen is the pending watch's own: a late answer to an
+// earlier request (after a timeout) or an error without a gen is ignored.
+// watchWire goes back to the gen the server knows (the previous source's),
+// while wireCtr keeps counting, so gens stay unique.
+func (c *Client) watchFailed(gen uint32, err error) {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
 	p := c.prevWatch
-	if p == nil || c.watchWait == nil {
+	if p == nil || c.watchWait == nil || gen == 0 || gen != c.watchWire {
 		return
 	}
 	c.prevWatch = nil
@@ -578,6 +588,14 @@ func (c *Client) watchSnapshot() watchState {
 func (c *Client) watchTarget() (string, uint64) {
 	w := c.watchSnapshot()
 	return w.fp, w.gen
+}
+
+// WatchGen returns the gen of the watch request currently in force (what a
+// refused watch's error.gen is compared with); 0 before any Watch.
+func (c *Client) WatchGen() uint32 {
+	c.watchMu.Lock()
+	defer c.watchMu.Unlock()
+	return c.watchWire
 }
 
 // SetVideoSink sets the receiver of decoded video (nil discards video).
@@ -732,6 +750,18 @@ func (cl *call) addVideoSender(pc *webrtc.PeerConnection) error {
 	return nil
 }
 
+// pliLimiter spaces a viewer's keyframe requests at least pliInterval apart
+// unless forced.
+type pliLimiter struct{ last time.Time }
+
+func (l *pliLimiter) allow(now time.Time, force bool) bool {
+	if !force && now.Sub(l.last) < pliInterval {
+		return false
+	}
+	l.last = now
+	return true
+}
+
 // latestFrame hands the newest decoded frame to a sink goroutine, replacing
 // any frame it has not picked up yet.
 type latestFrame struct {
@@ -802,13 +832,11 @@ func (cl *call) readVideo(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote)
 	}()
 	defer func() { close(done); <-delivered }()
 
-	var lastPLI time.Time
+	var lim pliLimiter
 	pli := func(force bool) {
-		now := time.Now()
-		if !force && now.Sub(lastPLI) < pliInterval {
+		if !lim.allow(time.Now(), force) {
 			return
 		}
-		lastPLI = now
 		_ = pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(remote.SSRC())}})
 	}
 	// The first keyframe may have been sent before this track was bound.

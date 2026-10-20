@@ -43,6 +43,7 @@ type Event struct {
 type ServerError struct {
 	Code    string
 	Message string
+	Gen     uint32 // gen of the refused watch request, 0 if none
 }
 
 func (e *ServerError) Error() string { return e.Code + ": " + e.Message }
@@ -87,6 +88,7 @@ type Client struct {
 	watchAt     time.Time
 	watchWire   uint32      // gen sent with the latest effective Watch; video_source must echo it
 	prevWatch   *watchState // state before that Watch, restored if the server refuses it
+	wireCtr     uint32      // last gen handed out; watchWire may be restored below it
 	watchWait   chan error  // answer channel of the pending Watch, nil if none
 	watchCallMu sync.Mutex  // serializes Watch calls
 	srcHave     bool        // a video_source for watchFP arrived since the last Watch
@@ -223,7 +225,7 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string)
 	case proto.TypeError:
 		var em proto.ErrorMsg
 		_ = json.Unmarshal(env.Data, &em)
-		return proto.AuthOK{}, fmt.Errorf("client: auth rejected: %w", &ServerError{em.Code, em.Message})
+		return proto.AuthOK{}, fmt.Errorf("client: auth rejected: %w", &ServerError{Code: em.Code, Message: em.Message})
 	default:
 		return proto.AuthOK{}, fmt.Errorf("client: unexpected %q during auth", env.Type)
 	}
@@ -447,7 +449,7 @@ func (c *Client) readLoop() {
 		case proto.TypeError:
 			var em proto.ErrorMsg
 			_ = json.Unmarshal(env.Data, &em)
-			se := &ServerError{em.Code, em.Message}
+			se := &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen}
 			if c.failOldestJoin(se) {
 				continue
 			}

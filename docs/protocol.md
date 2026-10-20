@@ -424,7 +424,10 @@ Media:
   boundary announced for an earlier watch of the same sharer is not mistaken
   for the current one. A repeated `watch` of the sharer already watched
   changes nothing except that, with a new gen, the server repeats the current
-  `video_source` under it. A `watch` refused with `not_sharing` changes
+  `video_source` under it. An `error` that refuses a `watch` (`not_sharing`,
+  `not_joined`) carries the request's gen in `error.gen` (omitted when the
+  request had none); a client acts on it only if it matches its pending
+  watch. A `watch` refused with `not_sharing` changes
   nothing: the previous source keeps streaming, and the client keeps (or
   restores) its previous target.
   When a viewer's source is detached (`watch` with `""`, or the sharer
