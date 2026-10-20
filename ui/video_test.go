@@ -45,6 +45,7 @@ func TestStepVideoIgnoresOtherSharers(t *testing.T) {
 	rec := &recorder{}
 	g.shareOps = rec.ops(twoMonitors(), true)
 	g.clickLive(state.Hit{Kind: state.HitLive, Key: "annfp"})
+	settle(t, g)
 	g.vsink.WriteVideoFrame("bobfp", video.NewFrame(8, 8))
 	g.stepVideo()
 	if g.vid.pending {
@@ -62,6 +63,7 @@ func TestVideoDoubleClickTogglesFullscreen(t *testing.T) {
 	rec := &recorder{}
 	g.shareOps = rec.ops(twoMonitors(), true)
 	g.clickLive(state.Hit{Kind: state.HitLive, Key: "annfp"})
+	settle(t, g)
 	t0 := time.Now()
 	g.videoClick(t0)
 	if rec.fullscrns != 0 {

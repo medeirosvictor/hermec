@@ -158,12 +158,14 @@ type game struct {
 	checkFn   func(context.Context, string) (update.Available, bool, error) // nil = update.Latest
 	openFn    func(string)                                                  // nil = openURL
 
-	shareOps  shareOps   // seams for capture, client and window; zero = real
-	share     shareState // our own screen share
-	watch     watchState // the stream being watched
-	vid       videoView  // newest frame for the watch view
-	vsink     videoSink  // receives decoded frames from the clients
-	menuSpent bool       // a menu press already took this tick's click
+	shareOps   shareOps    // seams for capture, client and window; zero = real
+	share      shareState  // our own screen share
+	watch      watchState  // the stream being watched
+	vid        videoView   // newest frame for the watch view
+	vsink      videoSink   // receives decoded frames from the clients
+	media      mediaWorker // serialized StartShare / StopShare / Watch
+	fullscreen bool        // window is fullscreen: no custom title bar
+	menuSpent  bool        // a menu press already took this tick's click
 
 	helpOpen   bool    // the settings help view is showing
 	helpScroll int     // first visible help line
@@ -343,6 +345,7 @@ func Run(opts Options) error {
 
 func (g *game) Update() error {
 	g.frame++
+	g.fullscreen = ebiten.IsFullscreen()
 	if !g.barInst { // once the window exists: take over the non-client area
 		g.barInst = true
 		ok, info := installBar()

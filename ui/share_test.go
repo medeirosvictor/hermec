@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 // fakeCap is a screencap.Source with fixed monitors.
 type fakeCap struct {
 	mons   []screencap.Monitor
-	closed bool
+	closed atomic.Bool
 	err    error
 }
 
@@ -27,7 +28,7 @@ func (f *fakeCap) Capture(m screencap.Monitor, dst *screencap.BGRA) error {
 	dst.Pix = make([]byte, 32)
 	return f.err
 }
-func (f *fakeCap) Close() error { f.closed = true; return nil }
+func (f *fakeCap) Close() error { f.closed.Store(true); return nil }
 
 func twoMonitors() *fakeCap {
 	return &fakeCap{mons: []screencap.Monitor{
@@ -116,6 +117,7 @@ func TestShareButtonOpensMonitorMenu(t *testing.T) {
 	}
 	// Choosing the second monitor starts a share fitted to the 720p profile.
 	g.menu.items[1].act()
+	settle(t, g)
 	if g.menu.open {
 		t.Fatal("menu still open after choosing")
 	}
@@ -146,6 +148,7 @@ func TestShareQualityPicksProfile(t *testing.T) {
 	g.set.ShareQuality = "1080p"
 	g.openShareMenu(g.geom())
 	g.menu.items[0].act() // 2560x1440 fits to 1920x1080
+	settle(t, g)
 	if len(rec.started) != 1 || rec.started[0].w != 1920 || rec.started[0].h != 1080 || rec.started[0].k != 3000 {
 		t.Fatalf("started = %+v", rec.started)
 	}
@@ -158,10 +161,11 @@ func TestShareStartFailureReportsAndReleases(t *testing.T) {
 	g.shareOps = rec.ops(cp, true)
 	g.openShareMenu(g.geom())
 	g.menu.items[0].act()
+	settle(t, g)
 	if g.share.on || s.st.Status == "" {
 		t.Fatalf("on=%v status=%q, want off with a message", g.share.on, s.st.Status)
 	}
-	if !cp.closed {
+	if !cp.closed.Load() {
 		t.Fatal("capture source leaked after a failed start")
 	}
 }
@@ -218,6 +222,7 @@ func TestLiveTagHit(t *testing.T) {
 	g.shareOps = rec.ops(twoMonitors(), true)
 	h := liveHit(t, g)
 	g.clickLive(h)
+	settle(t, g)
 	if !reflect.DeepEqual(rec.watches, []string{"annfp"}) {
 		t.Fatalf("watches = %v", rec.watches)
 	}
@@ -239,6 +244,7 @@ func TestLiveClickNeedsTheCall(t *testing.T) {
 	h := liveHit(t, g)
 	setCall(g, "")
 	g.clickLive(h)
+	settle(t, g)
 	if len(rec.watches) != 0 || g.videoActive() || s.st.Status == "" {
 		t.Fatalf("watches=%v video=%v status=%q", rec.watches, g.videoActive(), s.st.Status)
 	}
@@ -250,7 +256,9 @@ func TestLiveSwitchesStream(t *testing.T) {
 	g.shareOps = rec.ops(twoMonitors(), true)
 	s.st.Voice["voice"][1].Sharing = true
 	g.clickLive(state.Hit{Kind: state.HitLive, Key: "annfp"})
+	settle(t, g)
 	g.clickLive(state.Hit{Kind: state.HitLive, Key: "bobfp"})
+	settle(t, g)
 	if !reflect.DeepEqual(rec.watches, []string{"annfp", "bobfp"}) || g.watch.fp != "bobfp" {
 		t.Fatalf("watches = %v, now %q", rec.watches, g.watch.fp)
 	}
@@ -261,6 +269,7 @@ func TestEscLeavesVideo(t *testing.T) {
 	rec := &recorder{}
 	g.shareOps = rec.ops(twoMonitors(), true)
 	g.clickLive(state.Hit{Kind: state.HitLive, Key: "annfp"})
+	settle(t, g)
 	s.st.Input.AppendRunes([]rune("draft"))
 	g.escSpent = false
 	if !g.videoEsc(true) {
@@ -269,6 +278,7 @@ func TestEscLeavesVideo(t *testing.T) {
 	if g.videoActive() {
 		t.Fatal("still in video view")
 	}
+	settle(t, g)
 	if got := rec.watches; len(got) != 2 || got[1] != "" {
 		t.Fatalf("watches = %v, want the last to be \"\" (stop)", got)
 	}
@@ -285,6 +295,7 @@ func TestWatchEndsWhenSharerStops(t *testing.T) {
 	rec := &recorder{}
 	g.shareOps = rec.ops(twoMonitors(), true)
 	g.clickLive(state.Hit{Kind: state.HitLive, Key: "annfp"})
+	settle(t, g)
 	g.stepShare() // still sharing: nothing changes
 	if !g.videoActive() {
 		t.Fatal("video ended while the sharer still shares")
@@ -306,6 +317,7 @@ func TestWatchEndsWhenSharerLeaves(t *testing.T) {
 	rec := &recorder{}
 	g.shareOps = rec.ops(twoMonitors(), true)
 	g.clickLive(state.Hit{Kind: state.HitLive, Key: "annfp"})
+	settle(t, g)
 	s.st.Apply(client.Event{Voice: &proto.VoiceState{Channel: "voice", Members: []proto.VoiceMember{{Fingerprint: "bobfp", Name: "bob"}}}}, true)
 	g.stepShare()
 	if g.videoActive() || s.st.Status != "ann stopped sharing" {
@@ -318,8 +330,10 @@ func TestLeavingCallEndsShareAndWatch(t *testing.T) {
 	rec := &recorder{}
 	g.shareOps = rec.ops(twoMonitors(), true)
 	g.clickLive(state.Hit{Kind: state.HitLive, Key: "annfp"})
+	settle(t, g)
 	g.openShareMenu(g.geom())
 	g.menu.items[0].act()
+	settle(t, g)
 	if !g.share.on {
 		t.Fatal("setup: not sharing")
 	}
@@ -383,7 +397,7 @@ func TestCaptureSourceNext(t *testing.T) {
 		t.Fatal("failure not recorded")
 	}
 	_ = src.Close()
-	if !cp.closed {
+	if !cp.closed.Load() {
 		t.Fatal("source not closed")
 	}
 	if err := src.Next(dst); err == nil {
@@ -398,6 +412,7 @@ func TestCaptureFailureEndsShare(t *testing.T) {
 	g.shareOps = rec.ops(cp, true)
 	g.openShareMenu(g.geom())
 	g.menu.items[0].act()
+	settle(t, g)
 	cp.err = errors.New("monitor gone")
 	_ = g.share.src.Next(video.NewFrame(4, 2))
 	g.stepShare()

@@ -188,13 +188,24 @@ func (g *game) startShare(m screencap.Monitor) {
 			return c.StartShare(src, w, h, fps, kbps)
 		}
 	}
-	if err := start(s.c, src, w, h, p.FPS, p.KBPS); err != nil {
-		_ = src.Close()
-		s.st.Status = fmt.Sprintf("screen share failed: %v", err)
-		return
-	}
+	// Optimistic: the button reads "stop share" at once; the worker does the
+	// slow part and a failure rolls this back on a later Update.
+	c := s.c
+	g.share = shareState{on: true, mon: m.Name, src: src, c: c}
 	g.logf("sharing %s at %dx%d %d fps %d kbps", m.Name, w, h, p.FPS, p.KBPS)
-	g.share = shareState{on: true, mon: m.Name, src: src, c: s.c}
+	g.media.do(func() {
+		if err := start(c, src, w, h, p.FPS, p.KBPS); err != nil {
+			_ = src.Close()
+			g.media.post(func() {
+				if g.share.src == src {
+					g.share = shareState{}
+					if cs := g.callSess(); cs != nil {
+						cs.st.Status = fmt.Sprintf("screen share failed: %v", err)
+					}
+				}
+			})
+		}
+	})
 }
 
 // stopShare ends the local share; the client stop (which waits for its loops)
@@ -210,12 +221,12 @@ func (g *game) stopShare() {
 	if stop == nil {
 		stop = func(c *client.Client) { _ = c.StopShare() }
 	}
-	go func() {
+	g.media.do(func() {
 		if sh.c != nil {
 			stop(sh.c)
 		}
 		_ = sh.src.Close()
-	}()
+	})
 }
 
 // endCallMedia ends share and watch because the call is over (no messages: the
@@ -223,12 +234,13 @@ func (g *game) stopShare() {
 func (g *game) endCallMedia() {
 	g.stopShare()
 	g.watch = watchState{}
-	g.vid.reset()
+	g.resetVideo()
 }
 
 // stepShare runs every tick: it ends a share whose capture failed, and the
 // watch when the call is gone or the sharer stopped sharing or left.
 func (g *game) stepShare() {
+	g.media.pump()
 	s := g.callSess()
 	if g.share.on {
 		if err := g.share.src.failure(); err != nil {
@@ -243,13 +255,13 @@ func (g *game) stepShare() {
 	}
 	if s == nil || s.st.InCall == "" {
 		g.watch = watchState{}
-		g.vid.reset()
+		g.resetVideo()
 		return
 	}
 	if _, ok := s.st.SharerIn(s.st.InCall, g.watch.fp); !ok {
 		s.st.Status = g.watch.name + " stopped sharing"
 		g.watch = watchState{}
-		g.vid.reset()
+		g.resetVideo()
 	}
 }
 

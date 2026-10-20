@@ -73,11 +73,24 @@ func (g *game) videoPane(gm geometry) rectF {
 }
 
 func (g *game) watchFn(c *client.Client, fp string) {
-	if g.shareOps.watch != nil {
-		g.shareOps.watch(c, fp)
-		return
+	watch := g.shareOps.watch
+	if watch == nil {
+		watch = func(c *client.Client, fp string) { _ = c.Watch(fp) }
 	}
-	go func() { _ = c.Watch(fp) }() // a send can wait on the network
+	// Queued behind earlier media ops so the last click is the last applied.
+	g.media.do(func() { watch(c, fp) })
+}
+
+// resetVideo forgets the picture: the staged frame, the sink's slot and the
+// full-size texture.
+func (g *game) resetVideo() {
+	g.vid.reset()
+	g.vsink.take()
+	g.vid.rgba = nil
+	if g.vid.img != nil {
+		g.vid.img.Deallocate()
+		g.vid.img = nil
+	}
 }
 
 // clickLive starts (or switches to) watching the sharer h.Key.
@@ -100,7 +113,7 @@ func (g *game) clickLive(h state.Hit) {
 		s.st.Status = "that person is not sharing in your channel"
 		return
 	}
-	g.vid.reset()
+	g.resetVideo()
 	g.watch = watchState{fp: h.Key, name: name}
 	g.watchFn(s.c, h.Key)
 }
@@ -111,7 +124,7 @@ func (g *game) stopWatching() {
 		return
 	}
 	g.watch = watchState{}
-	g.vid.reset()
+	g.resetVideo()
 	if s := g.callSess(); s != nil && s.c != nil {
 		g.watchFn(s.c, "")
 	}
@@ -136,6 +149,7 @@ func (g *game) videoClick(now time.Time) {
 			g.shareOps.fullscreen()
 		} else {
 			ebiten.SetFullscreen(!ebiten.IsFullscreen())
+			g.fullscreen = !g.fullscreen // Update re-syncs it from the window
 		}
 		return
 	}
