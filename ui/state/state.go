@@ -3,6 +3,7 @@
 package state
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -122,6 +123,8 @@ func (s *State) Apply(ev client.Event, open bool) {
 		} else {
 			s.Voice[ev.Voice.Channel] = append([]proto.VoiceMember(nil), ev.Voice.Members...)
 		}
+	case errors.Is(ev.Err, client.ErrShareUnsupported):
+		s.Status = ev.Err.Error() // a plain explanation, not an error code
 	case ev.Err != nil:
 		s.Status = fmt.Sprintf("error: %v", ev.Err)
 	}

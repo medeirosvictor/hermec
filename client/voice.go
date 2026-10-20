@@ -122,14 +122,16 @@ func (c *Client) newAPI() *webrtc.API {
 		},
 		PayloadType: 111,
 	}, webrtc.RTPCodecTypeAudio)
-	_ = me.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{
-			MimeType:     webrtc.MimeTypeVP8,
-			ClockRate:    videoClock,
-			RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}},
-		},
-		PayloadType: 96,
-	}, webrtc.RTPCodecTypeVideo)
+	if !c.audioOnly.Load() {
+		_ = me.RegisterCodec(webrtc.RTPCodecParameters{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:     webrtc.MimeTypeVP8,
+				ClockRate:    videoClock,
+				RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}},
+			},
+			PayloadType: 96,
+		}, webrtc.RTPCodecTypeVideo)
+	}
 	ir := &interceptor.Registry{}
 	_ = webrtc.RegisterDefaultInterceptors(me, ir)
 	se := webrtc.SettingEngine{}
@@ -155,6 +157,10 @@ func loopbackOnly(se *webrtc.SettingEngine) {
 // candidates, no mDNS). This breaks remote peers, so it is for tests only;
 // call before JoinVoice.
 func (c *Client) SetLoopbackICE(on bool) { c.loopbackICE.Store(on) }
+
+// SetAudioOnly makes future voice calls offer Opus only, like a pre-v0.5
+// client. It is for compatibility tests only; call before JoinVoice.
+func (c *Client) SetAudioOnly(on bool) { c.audioOnly.Store(on) }
 
 // VoiceChannel returns the voice channel of the active call, or "".
 func (c *Client) VoiceChannel() string {
@@ -288,6 +294,9 @@ func (c *Client) onVoiceState(st proto.VoiceState) {
 			if cl.joined.CompareAndSwap(false, true) {
 				cl.post(cl.startOffer)
 			}
+			if m.Sharing && cl.curShare() != nil {
+				cl.post(cl.ensureVideo) // the host confirmed the share: it can take video
+			}
 			return
 		}
 	}
@@ -306,6 +315,15 @@ func (c *Client) onRTC(env proto.Envelope) {
 // onError offers a server error to the active call. It reports whether the
 // call consumed it (media recovery or a failed join).
 func (c *Client) onError(em proto.ErrorMsg) bool {
+	if em.Code == "bad_request" {
+		switch em.Message {
+		case msgShareStartUnsupported:
+			c.shareUnsupported()
+			return true
+		case "unsupported message type " + proto.TypeShareStop:
+			return true // we stopped a share the host never knew about
+		}
+	}
 	cl := c.getCall()
 	if cl == nil {
 		return false
@@ -627,6 +645,11 @@ func (cl *call) reset() {
 	if cl.resets > maxResets {
 		cl.fail(errors.New("client: voice negotiation keeps failing"))
 		return
+	}
+	if cl.vidWanted && cl.resets >= 2 {
+		// Two resets in a row with a video sender on the PC: the host most
+		// likely cannot negotiate video. Sacrifice the share, not the call.
+		cl.dropVideo()
 	}
 	cl.discardPC()
 	cl.held = ""

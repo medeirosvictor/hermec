@@ -17,24 +17,39 @@ import (
 // countSource returns a fresh frame instantly, every call.
 type countSource struct{ n atomic.Int64 }
 
-func (s *countSource) Next(dst *video.Frame) error { s.n.Add(1); return nil }
+// Next stamps the grab sequence number into the first two luma bytes.
+func (s *countSource) Next(dst *video.Frame) error {
+	n := s.n.Add(1)
+	dst.Y[0], dst.Y[1] = byte(n), byte(n>>8)
+	return nil
+}
 
 // fakeEnc is a frameEncoder with a configurable cost that records its calls.
 type fakeEnc struct {
 	delay     time.Duration
 	failFirst int // the first N Encode calls return an error
+	src       *countSource
 
 	mu     sync.Mutex
 	calls  int
 	keys   []bool
+	stamps []int64 // grab sequence number of each encoded frame
+	behind []int64 // grabs made after that frame when it reached the encoder
 	closed bool
 }
 
 func (e *fakeEnc) Encode(f *video.Frame, forceKey bool) ([]byte, bool, error) {
+	stamp := int64(f.Y[0]) | int64(f.Y[1])<<8
+	var behind int64
+	if e.src != nil {
+		behind = e.src.n.Load() - stamp
+	}
 	time.Sleep(e.delay)
 	e.mu.Lock()
 	e.calls++
 	e.keys = append(e.keys, forceKey)
+	e.stamps = append(e.stamps, stamp)
+	e.behind = append(e.behind, behind)
 	fail := e.calls <= e.failFirst
 	e.mu.Unlock()
 	if fail {
@@ -54,7 +69,7 @@ func (e *fakeEnc) snapshot() (int, []bool) {
 
 func TestShareSkipsWhenEncoderBusy(t *testing.T) {
 	src := &countSource{}
-	enc := &fakeEnc{delay: 150 * time.Millisecond}
+	enc := &fakeEnc{delay: 150 * time.Millisecond, src: src}
 	var wrote atomic.Int64
 	sl := newShareLoop(src, enc, 16, 16, 60, func([]byte, time.Duration) error { wrote.Add(1); return nil })
 	sl.start()
@@ -72,8 +87,24 @@ func TestShareSkipsWhenEncoderBusy(t *testing.T) {
 	if sl.dropped.Load() == 0 {
 		t.Fatal("no frames reported dropped")
 	}
-	if m := sl.maxPending.Load(); m > 1 {
-		t.Fatalf("pending queue grew to %d", m)
+	// The encoder always gets the newest grab, never a stale queued one: the
+	// stamps rise with gaps (the skipped grabs were dropped), and each frame
+	// was at most a couple of grabs behind the source when it was taken.
+	enc.mu.Lock()
+	stamps, behind := append([]int64(nil), enc.stamps...), append([]int64(nil), enc.behind...)
+	enc.mu.Unlock()
+	if len(stamps) < 3 {
+		t.Fatalf("only %d frames encoded", len(stamps))
+	}
+	for i := 1; i < len(stamps); i++ {
+		if stamps[i] <= stamps[i-1]+1 {
+			t.Fatalf("encoded grab #%d after #%d: no grabs were skipped, frames queued: %v", stamps[i], stamps[i-1], stamps)
+		}
+	}
+	for i, b := range behind {
+		if b > 3 {
+			t.Fatalf("frame %d (grab #%d) was %d grabs old when encoded: not the newest", i, stamps[i], b)
+		}
 	}
 	if wrote.Load() != int64(calls) {
 		t.Fatalf("wrote %d packets for %d encodes", wrote.Load(), calls)

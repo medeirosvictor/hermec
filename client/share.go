@@ -121,9 +121,8 @@ type shareLoop struct {
 	free  []*video.Frame
 	fresh bool
 
-	forceKey   atomic.Bool
-	dropped    atomic.Uint64
-	maxPending atomic.Int64
+	forceKey atomic.Bool
+	dropped  atomic.Uint64
 
 	quit     chan struct{}
 	quitOnce sync.Once
@@ -191,15 +190,11 @@ func (sl *shareLoop) grabLoop() {
 		case err != nil:
 			sl.free = append(sl.free, buf)
 		default:
-			pending := int64(1)
-			if sl.fresh {
+			if sl.fresh { // the encoder never took the previous one: overwrite it
 				sl.dropped.Add(1)
 				sl.free = append(sl.free, sl.slot)
 			}
 			sl.slot, sl.fresh = buf, true
-			if pending > sl.maxPending.Load() {
-				sl.maxPending.Store(pending)
-			}
 		}
 		sl.mu.Unlock()
 		if err != nil && !errors.Is(err, ErrNoFrame) {
@@ -318,8 +313,44 @@ func (c *Client) StartShare(src FrameSource, w, h, fps, kbps int) error {
 		}
 		return err
 	}
-	cl.post(cl.ensureVideo) // adds the video sender (one renegotiation) the first time
+	// The video sender is added once the server's voice_state shows us sharing
+	// (onVoiceState): a pre-v0.5 host never confirms, so it never sees a video
+	// m-line it cannot answer, and a bad_request for share_start ends the
+	// share (shareUnsupported).
 	return nil
+}
+
+// ErrShareUnsupported reports that the host cannot carry screen share. It is
+// delivered as an Err event; the share it ended is already stopped.
+var ErrShareUnsupported = errors.New("this server does not support screen share (host needs v0.5.0+)")
+
+const msgShareStartUnsupported = "unsupported message type " + proto.TypeShareStart
+
+// shareUnsupported ends our share without telling the server (a v0.4 host
+// would only answer share_stop with another bad_request) and reports
+// ErrShareUnsupported. Read loop only; it never blocks on the share loops.
+func (c *Client) shareUnsupported() {
+	if cl := c.getCall(); cl != nil {
+		if sl := cl.takeShareIf(nil); sl != nil {
+			go sl.stop()
+		}
+		cl.post(func() { cl.vidWanted = false })
+	}
+	c.emit(Event{Err: ErrShareUnsupported})
+}
+
+// dropVideo gives up on sending video after negotiation kept failing: the
+// share ends (the server is told) and later PeerConnections of this call are
+// built audio-only, so voice survives a host that cannot carry video. Actor only.
+func (cl *call) dropVideo() {
+	cl.vidWanted = false
+	sl := cl.takeShareIf(nil)
+	if sl == nil {
+		return
+	}
+	go sl.stop()
+	_ = cl.c.send(proto.TypeShareStop, proto.ShareStop{})
+	cl.c.emitNB(Event{Err: fmt.Errorf("%w: video negotiation failed", ErrShareUnsupported)})
 }
 
 // VideoEncodeErrors returns how many frames failed to encode so far.

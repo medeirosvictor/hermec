@@ -170,6 +170,34 @@ func TestShareStartFailureReportsAndReleases(t *testing.T) {
 	}
 }
 
+// A host without screen share ends the share in the client; the button must
+// return to "share" and the status must say why.
+func TestShareUnsupportedEventReleasesButton(t *testing.T) {
+	g, s := shareGame(t)
+	cp := twoMonitors()
+	rec := &recorder{}
+	g.shareOps = rec.ops(cp, true)
+	g.openShareMenu(g.geom())
+	g.menu.items[0].act()
+	settle(t, g)
+	if !g.share.on {
+		t.Fatal("share did not start")
+	}
+	ev := client.Event{Err: client.ErrShareUnsupported}
+	s.st.Apply(ev, true)
+	g.noteEvent(s, ev)
+	settle(t, g)
+	if g.share.on || g.shareLabel() != "share" {
+		t.Fatalf("share still on after the host refused it (label %q)", g.shareLabel())
+	}
+	if want := "this server does not support screen share (host needs v0.5.0+)"; s.st.Status != want {
+		t.Fatalf("status = %q, want %q", s.st.Status, want)
+	}
+	if !cp.closed.Load() {
+		t.Fatal("capture source leaked")
+	}
+}
+
 func TestShareButtonDimOffWindows(t *testing.T) {
 	g, _ := shareGame(t)
 	rec := &recorder{}
@@ -379,6 +407,24 @@ func TestShareQualityRowCycles(t *testing.T) {
 	g.activateSetting(rowShare)
 	if g.set.ShareQualityID() != "720p" {
 		t.Fatalf("after two cycles = %q", g.set.ShareQuality)
+	}
+}
+
+// Changing the quality mid-share does not touch the running stream; the status
+// line says so.
+func TestShareQualityChangeDuringShareSaysNextShare(t *testing.T) {
+	g := testGame(t)
+	g.sess = map[string]*session{}
+	g.none = newSession("", "", "")
+	g.settingsPath = t.TempDir() + "/settings.toml"
+	g.activateSetting(rowShare)
+	if got := g.cur().st.Status; got == "applies to your next share" {
+		t.Fatalf("status %q set while not sharing", got)
+	}
+	g.share = shareState{on: true}
+	g.activateSetting(rowShare)
+	if got := g.cur().st.Status; got != "applies to your next share" {
+		t.Fatalf("status = %q, want the next-share notice", got)
 	}
 }
 

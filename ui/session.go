@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -321,6 +322,15 @@ func (g *game) applyJoin(r joinResult) {
 	g.logf("joined %s on %s", r.channel, s.url)
 }
 
+// noteEvent reacts to client events beyond what state.Apply records. A host
+// that cannot carry screen share has already ended our share in the client, so
+// the button must go back to "share".
+func (g *game) noteEvent(s *session, ev client.Event) {
+	if errors.Is(ev.Err, client.ErrShareUnsupported) && g.share.on && g.share.c == s.c {
+		g.stopShare()
+	}
+}
+
 // drainEvents applies up to maxEventsPerTick events of s. A closed stream
 // marks s disconnected.
 func (g *game) drainEvents(s *session) {
@@ -339,6 +349,7 @@ func (g *game) drainEvents(s *session) {
 				return
 			}
 			s.st.Apply(ev, true)
+			g.noteEvent(s, ev)
 		default:
 			return
 		}

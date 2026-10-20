@@ -52,6 +52,14 @@ type Config struct {
 	// This breaks remote peers, so it is for tests only; not exposed in the
 	// TOML file.
 	AllowLoopbackICE bool
+	// LegacyHost makes the server behave like a pre-v0.5 host: Opus-only media
+	// (no VP8 in its MediaEngine) and share_start, share_stop and watch
+	// answered as unsupported message types. For compatibility tests only; not
+	// exposed in the TOML file.
+	LegacyHost bool
+	// NoVP8 drops only the VP8 codec from the MediaEngine (share messages stay
+	// supported). For tests only; not exposed in the TOML file.
+	NoVP8 bool
 	// MsgRate and MsgBurst are the post-auth inbound websocket message
 	// limit per connection (messages/sec sustained, bucket size). Either
 	// being 0 disables post-auth limiting. DefaultConfig sets 30 and 60.

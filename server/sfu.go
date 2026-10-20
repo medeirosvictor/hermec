@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -221,14 +222,16 @@ func (s *Server) newVoiceSession(ch string) *voiceSession {
 // servers.
 func (s *Server) newRTCAPI() *webrtc.API {
 	me := &webrtc.MediaEngine{}
-	_ = me.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{
-			MimeType:     webrtc.MimeTypeVP8,
-			ClockRate:    90000,
-			RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}},
-		},
-		PayloadType: 96,
-	}, webrtc.RTPCodecTypeVideo)
+	if !s.cfg.NoVP8 && !s.cfg.LegacyHost {
+		_ = me.RegisterCodec(webrtc.RTPCodecParameters{
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType:     webrtc.MimeTypeVP8,
+				ClockRate:    90000,
+				RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}},
+			},
+			PayloadType: 96,
+		}, webrtc.RTPCodecTypeVideo)
+	}
 	_ = me.RegisterCodec(webrtc.RTPCodecParameters{
 		RTPCodecCapability: webrtc.RTPCodecCapability{
 			MimeType:    webrtc.MimeTypeOpus,
@@ -628,8 +631,37 @@ func (vs *voiceSession) handleOffer(p *peer, sdp string) {
 		fail("cannot answer rtc_offer")
 		return
 	}
+	if videoRefused(sdp, pc.LocalDescription().SDP) {
+		// The peer sends video this host has no codec for. Keeping the PC would
+		// leave a dead m-line that pion can never renegotiate around; reset so
+		// the peer's next (audio-only) offer starts clean.
+		fail(msgNoVideoCodec)
+		return
+	}
 	vs.reply(p, proto.TypeRTCAnswer, proto.RTCAnswer{SDP: pc.LocalDescription().SDP})
 	vs.syncTracks(p) // attach everyone else's audio; renegotiates if any
+}
+
+// msgNoVideoCodec contains the fixed reset hint (docs/protocol.md 4.13), so
+// clients recover by sending a new rtc_offer.
+const msgNoVideoCodec = "no common video codec; media reset, send a new rtc_offer"
+
+// videoRefused reports whether offer has a video section that answer rejects.
+func videoRefused(offer, answer string) bool {
+	if !strings.Contains(offer, "m=video") {
+		return false
+	}
+	desc := webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer}
+	parsed, err := desc.Unmarshal()
+	if err != nil {
+		return false
+	}
+	for _, m := range parsed.MediaDescriptions {
+		if m.MediaName.Media == "video" && m.MediaName.Port.Value == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (vs *voiceSession) handleAnswer(p *peer, sdp string) {

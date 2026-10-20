@@ -23,15 +23,22 @@ import (
 
 const voiceCh = "lobby"
 
-func startVoiceServer(t *testing.T) string {
+func startVoiceServer(t *testing.T) string { return startVoiceServerWith(t, nil) }
+
+// startVoiceServerWith starts a loopback voice server; mod may adjust its config.
+func startVoiceServerWith(t *testing.T, mod func(*server.Config)) string {
 	t.Helper()
-	s := server.New(server.Config{
+	cfg := server.Config{
 		Addr:             "127.0.0.1:0",
 		Roles:            roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
 		Channels:         []string{"general"},
 		VoiceChannels:    []string{voiceCh},
 		AllowLoopbackICE: true,
-	})
+	}
+	if mod != nil {
+		mod(&cfg)
+	}
+	s := server.New(cfg)
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}

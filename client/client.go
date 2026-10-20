@@ -67,6 +67,7 @@ type Client struct {
 	call    *call // active voice call, if any
 
 	loopbackICE atomic.Bool
+	audioOnly   atomic.Bool
 
 	started  time.Time // Dial time; baseline of the first VideoStats window
 	vstats   videoStats
