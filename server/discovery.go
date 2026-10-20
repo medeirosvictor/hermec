@@ -105,7 +105,7 @@ func (d *discoverer) handle(pc net.PacketConn, pkt []byte, from net.Addr) bool {
 // exactly the probe magic (including oversized datagrams) is dropped silently.
 func (s *Server) discoverLoop(pc net.PacketConn, d *discoverer) {
 	buf := make([]byte, discover.MaxPacket+1)
-	errRun := 0
+	var pace readPacer
 	for {
 		n, from, err := pc.ReadFrom(buf)
 		if err != nil {
@@ -114,13 +114,12 @@ func (s *Server) discoverLoop(pc net.PacketConn, d *discoverer) {
 			}
 			// Other errors (e.g. Windows reports an oversized datagram as
 			// an error); drop that datagram and keep serving. Back off if
-			// the errors persist so a broken socket cannot hot-spin.
-			if errRun++; errRun >= 3 {
-				time.Sleep(50 * time.Millisecond)
-			}
+			// a long run of errors persists so a broken socket cannot
+			// hot-spin (never for ones that consumed a datagram).
+			pace.failed(err)
 			continue
 		}
-		errRun = 0
+		pace.reset()
 		d.handle(pc, buf[:n], from)
 	}
 }

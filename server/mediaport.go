@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"strconv"
-	"time"
 
 	"github.com/pion/ice/v4"
 )
@@ -18,14 +17,16 @@ var ErrMediaBind = errors.New("media port bind failed")
 // socket on any non-timeout read error, and on Windows a single oversized
 // datagram (WSAEMSGSIZE) is such an error, so one unauthenticated packet
 // could kill media for good. ReadFrom therefore swallows every error except
-// close and timeouts, with a backoff so a persistent error cannot spin. When d
+// close and timeouts. It never sleeps on an error that consumed a datagram
+// (sleeping lets the socket buffer overflow under a flood); only a long run of
+// other errors earns a short backoff (readPacer). When d
 // is set (shared discovery+media socket) discovery probes are answered inline
 // and never reach the mux. ReadFrom is only called from the mux's single
 // reader goroutine, which is what makes the lock-free state safe.
 type mediaConn struct {
 	net.PacketConn
-	d      *discoverer
-	errRun int
+	d    *discoverer
+	pace readPacer
 }
 
 func (c *mediaConn) ReadFrom(p []byte) (int, net.Addr, error) {
@@ -33,15 +34,17 @@ func (c *mediaConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		n, from, err := c.PacketConn.ReadFrom(p)
 		if err != nil {
 			var ne net.Error
-			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || (errors.As(err, &ne) && ne.Timeout()) {
+			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {
 				return n, from, err
 			}
-			if c.errRun++; c.errRun >= 3 {
-				time.Sleep(50 * time.Millisecond)
+			if errors.As(err, &ne) && ne.Timeout() {
+				c.pace.reset()
+				return n, from, err
 			}
+			c.pace.failed(err)
 			continue
 		}
-		c.errRun = 0
+		c.pace.reset()
 		if c.d != nil && c.d.handle(c.PacketConn, p[:n], from) {
 			continue
 		}
