@@ -233,11 +233,13 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 	a := newVoiceClient(t, url, "alice", 0xA1)
 	b := newVoiceClient(t, url, "bob", 0xB2)
 	c := newVoiceClient(t, url, "carol", 0xC3)
+	d := newVoiceClient(t, url, "dave", 0xD4)
 	cv := newRecVideo()
 	c.c.SetVideoSink(cv)
 	a.join(t)
 	b.join(t)
 	c.join(t)
+	d.join(t)
 
 	sizeA, sizeB := [2]int{320, 240}, [2]int{256, 192}
 	if err := a.c.StartShare(&synthSource{}, sizeA[0], sizeA[1], shareFPS, shareKbps); err != nil {
@@ -252,6 +254,30 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, 15*time.Second, "frames from A", func() bool { return cv.n(a.fp) >= 5 })
+
+	// Dave flips between the sharers around Carol's switch. Every flip makes
+	// the server ask the new source for a keyframe, so A keeps emitting
+	// keyframes while Carol's old packets are still in flight: the exact
+	// condition under which A frames used to be decoded and labelled B.
+	eventually(t, 10*time.Second, "D sees both sharing", func() bool { return d.sharing(a.fp) && d.sharing(b.fp) })
+	stopFlip := make(chan struct{})
+	flipDone := make(chan struct{})
+	go func() {
+		defer close(flipDone)
+		for i := 0; ; i++ {
+			fp := a.fp
+			if i%2 == 1 {
+				fp = b.fp
+			}
+			_ = d.c.Watch(fp)
+			select {
+			case <-stopFlip:
+				return
+			case <-time.After(15 * time.Millisecond):
+			}
+		}
+	}()
+	defer func() { close(stopFlip); <-flipDone }()
 
 	start := time.Now()
 	if err := c.c.Watch(b.fp); err != nil {

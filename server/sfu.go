@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math/rand"
 	"net"
 	"strings"
 	"sync"
@@ -117,6 +118,7 @@ type peer struct {
 	vsender *webrtc.RTPSender
 	vfwd    *forwarder // the video forwarder currently feeding vsender
 	vout    *outStream // keeps vsender's seq/timestamps continuous across switches
+	vrw     *rewrite   // numbering of the source currently feeding vsender
 
 	sharing atomic.Bool // this peer is sharing (set by the actor, read by forwarders)
 }
@@ -129,25 +131,56 @@ type outStream struct {
 	ts      uint32
 }
 
-// rewrite maps one forwarder's packets onto an outStream. Its offsets are
-// chosen on the first packet so a new source continues where the previous one
-// stopped.
+// rewrite maps one forwarder's packets onto an outStream. The numbering its
+// first packet gets (bseq, bts) is fixed when the rewrite is created, so the
+// viewer can be told the boundary before any packet exists; the offsets are
+// derived from it on the first packet. Creating a new rewrite retires the
+// previous one, so packets of the old source still in a forwarder's snapshot
+// are dropped instead of being numbered after the boundary.
 type rewrite struct {
-	out    *outStream
-	synced bool
-	seqOff uint16
-	tsOff  uint32
+	out     *outStream
+	bseq    uint16
+	bts     uint32
+	retired bool
+	synced  bool
+	seqOff  uint16
+	tsOff   uint32
 }
 
+// attach (re)starts the stream for a new source: it retires old (may be nil)
+// and returns the rewrite for the new source. Its first packet will be
+// numbered rw.bseq.
+func (o *outStream) attach(old *rewrite) *rewrite {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if old != nil {
+		old.retired = true
+	}
+	if !o.started {
+		o.started = true
+		o.seq, o.ts = uint16(rand.Uint32()), rand.Uint32()
+	}
+	return &rewrite{out: o, bseq: o.seq + 1, bts: o.ts + 3000}
+}
+
+// retire stops r from numbering any further packet.
+func (r *rewrite) retire() {
+	r.out.mu.Lock()
+	r.retired = true
+	r.out.mu.Unlock()
+}
+
+// apply numbers pkt, or returns nil when r was retired.
 func (r *rewrite) apply(pkt *rtp.Packet) *rtp.Packet {
 	r.out.mu.Lock()
 	defer r.out.mu.Unlock()
+	if r.retired {
+		return nil
+	}
 	if !r.synced {
 		r.synced = true
-		if r.out.started {
-			r.seqOff = r.out.seq + 1 - pkt.SequenceNumber
-			r.tsOff = r.out.ts + 3000 - pkt.Timestamp
-		}
+		r.seqOff = r.bseq - pkt.SequenceNumber
+		r.tsOff = r.bts - pkt.Timestamp
 	}
 	c := &rtp.Packet{Header: pkt.Header.Clone(), Payload: pkt.Payload}
 	c.SequenceNumber += r.seqOff
@@ -868,6 +901,13 @@ func (vs *voiceSession) syncVideo(q *peer) bool {
 		// The sender keeps its stale local track but nothing writes to it.
 		q.vfwd.removeSink(q)
 		q.vfwd = nil
+		if q.vrw != nil {
+			q.vrw.retire()
+			q.vrw = nil
+		}
+		if want == nil {
+			vs.sendVideoSource(q, "", 0)
+		}
 	}
 	if want == nil {
 		return false
@@ -899,8 +939,28 @@ func (vs *voiceSession) syncVideo(q *peer) bool {
 		vs.requestKeyframe(want.pub, true) // already negotiated: bound now
 	}
 	q.vfwd = want
-	want.addSink(q, local, q.pc, &rewrite{out: q.vout})
+	// Fix the boundary, tell the viewer, and only then let the new source's
+	// packets reach the sender: the forwarder writes to q only through its
+	// sink, which is added last. attach also retires the previous source's
+	// rewrite, so none of its in-flight packets can be numbered at or after
+	// the boundary. The WebSocket and RTP paths are independent, so the
+	// message can still arrive after the first packets; the client copes.
+	q.vrw = q.vout.attach(q.vrw)
+	vs.sendVideoSource(q, fp, q.vrw.bseq)
+	want.addSink(q, local, q.pc, q.vrw)
 	return changed
+}
+
+// sendVideoSource (actor) tells q which source its video track carries from
+// seq on ("" = detached).
+func (vs *voiceSession) sendVideoSource(q *peer, fp string, seq uint16) {
+	raw, err := proto.Encode(proto.TypeVideoSource, proto.VideoSource{Fingerprint: fp, Seq: seq})
+	if err != nil {
+		return
+	}
+	if !q.c.enqueue(raw) {
+		dropSlow([]*conn{q.c})
+	}
 }
 
 // releaseMedia (actor) tears down p's PeerConnection and everything attached
@@ -924,7 +984,7 @@ func (vs *voiceSession) releaseMedia(p *peer) {
 	}
 	// A fresh PC gets a fresh video transceiver; syncVideo re-arms kfWanted
 	// when it re-attaches a watched stream.
-	p.vsender, p.vfwd, p.vout, p.kfInOffer = nil, nil, nil, false
+	p.vsender, p.vfwd, p.vout, p.vrw, p.kfInOffer = nil, nil, nil, nil, false
 	if pc != nil {
 		_ = pc.Close()
 	}
@@ -960,7 +1020,9 @@ func (vs *voiceSession) runForwarder(f *forwarder) {
 		for _, s := range snap {
 			out := pkt
 			if s.rw != nil {
-				out = s.rw.apply(pkt)
+				if out = s.rw.apply(pkt); out == nil {
+					continue // retired: the viewer moved to another source
+				}
 			}
 			if err := s.t.WriteRTP(out); err != nil {
 				// Only a closed/failed subscriber is pruned; other write

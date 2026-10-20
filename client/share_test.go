@@ -11,6 +11,7 @@ import (
 	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
 
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/video"
 )
 
@@ -319,5 +320,113 @@ func TestPLIForcesKeyframe(t *testing.T) {
 			t.Fatal("PLI did not force a keyframe")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// bFrames packetizes n frames starting at sequence number seq0. The first is a
+// keyframe when key is set; the rest are delta frames. ts0 spaces them 3000
+// ticks apart.
+func bFrames(seq0 uint16, ts0 uint32, n int, key bool) []*rtp.Packet {
+	pay := &codecs.VP8Payloader{}
+	var out []*rtp.Packet
+	seq := seq0
+	for i := 0; i < n; i++ {
+		data := make([]byte, 900)
+		data[0] = 1 // delta frame
+		if i == 0 && key {
+			data[0] = 0
+		}
+		chunks := pay.Payload(400, data)
+		for j, c := range chunks {
+			out = append(out, &rtp.Packet{
+				Header:  rtp.Header{Version: 2, SequenceNumber: seq, Timestamp: ts0 + uint32(i)*3000, Marker: j == len(chunks)-1},
+				Payload: c,
+			})
+			seq++
+		}
+	}
+	return out
+}
+
+func feedGate(g *srcGate, pkts []*rtp.Packet) (frames [][]byte) {
+	for _, p := range pkts {
+		fs, _, _ := g.push(p)
+		frames = append(frames, fs...)
+	}
+	return
+}
+
+// Packets of the previous source that arrive after the switch (sequence
+// numbers before the boundary), keyframe included, must never produce a frame;
+// the new source's packets from the boundary on must.
+func TestSrcGateDropsPreBoundaryKeyframe(t *testing.T) {
+	for _, boundary := range []uint16{1000, 65530} { // the second wraps the sequence space
+		var g srcGate
+		g.start(boundary)
+		// Source A: a keyframe and deltas, all numbered before the boundary.
+		old := bFrames(boundary-40, 0, 8, true)
+		if last := old[len(old)-1].SequenceNumber; !seqBefore(last, boundary) {
+			t.Fatalf("test setup: A ends at %d, not before %d", last, boundary)
+		}
+		if got := feedGate(&g, old); len(got) != 0 {
+			t.Fatalf("boundary %d: %d frames from the old source were released", boundary, len(got))
+		}
+		// Source B from the boundary on, a keyframe first.
+		got := feedGate(&g, bFrames(boundary, 1<<20, 8, true))
+		if len(got) < 6 {
+			t.Fatalf("boundary %d: only %d frames from the new source", boundary, len(got))
+		}
+		if !isVP8Key(got[0]) {
+			t.Fatalf("boundary %d: first released frame is not a keyframe", boundary)
+		}
+	}
+}
+
+// Before the boundary is known the gate is closed, and after it nothing is
+// released until a keyframe arrives.
+func TestSrcGateNeedsKeyframe(t *testing.T) {
+	var g srcGate
+	if got := feedGate(&g, bFrames(1, 0, 8, true)); len(got) != 0 {
+		t.Fatalf("%d frames released before any boundary", len(got))
+	}
+	g.start(500)
+	var needKey bool
+	var released int
+	deltas := bFrames(500, 0, 6, false)
+	for _, p := range deltas { // deltas only
+		fs, _, nk := g.push(p)
+		released += len(fs)
+		needKey = needKey || nk
+	}
+	if released != 0 || !needKey {
+		t.Fatalf("deltas without a keyframe: released=%d needKey=%v", released, needKey)
+	}
+	if got := feedGate(&g, bFrames(deltas[len(deltas)-1].SequenceNumber+1, 1<<20, 6, true)); len(got) == 0 || !isVP8Key(got[0]) {
+		t.Fatalf("no keyframe-led frames after a keyframe arrived (%d)", len(got))
+	}
+}
+
+func TestSeqBefore(t *testing.T) {
+	cases := []struct {
+		a, b uint16
+		want bool
+	}{{1, 2, true}, {2, 1, false}, {5, 5, false}, {65535, 0, true}, {0, 65535, false}, {65530, 3, true}}
+	for _, c := range cases {
+		if got := seqBefore(c.a, c.b); got != c.want {
+			t.Errorf("seqBefore(%d,%d)=%v want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestOnVideoSourceIgnoresStale(t *testing.T) {
+	c := &Client{}
+	c.watchFP, c.watchGen = "B", 2
+	c.onVideoSource(proto.VideoSource{Fingerprint: "A", Seq: 9})
+	if w := c.watchSnapshot(); w.have {
+		t.Fatal("video_source for a sharer we are not watching was accepted")
+	}
+	c.onVideoSource(proto.VideoSource{Fingerprint: "B", Seq: 77})
+	if w := c.watchSnapshot(); !w.have || w.seq != 77 {
+		t.Fatalf("video_source for the watched sharer not recorded: %+v", w)
 	}
 }

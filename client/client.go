@@ -84,6 +84,10 @@ type Client struct {
 	watchMu  sync.Mutex
 	watchFP  string // sharer we asked to watch ("" = none)
 	watchGen uint64 // bumped by every Watch call
+	watchAt  time.Time
+	srcHave  bool   // a video_source for watchFP arrived since the last Watch
+	srcSeq   uint16 // first RTP sequence number of that source
+	srcID    uint64 // bumped by every accepted video_source
 
 	evMu     sync.RWMutex // guards closing events against emitNB
 	evClosed bool
@@ -431,6 +435,11 @@ func (c *Client) readLoop() {
 			c.emit(Event{Roster: &r})
 		case proto.TypeRTCOffer, proto.TypeRTCAnswer, proto.TypeRTCCandidate:
 			c.onRTC(env)
+		case proto.TypeVideoSource:
+			var vsrc proto.VideoSource
+			if json.Unmarshal(env.Data, &vsrc) == nil {
+				c.onVideoSource(vsrc)
+			}
 		case proto.TypeError:
 			var em proto.ErrorMsg
 			_ = json.Unmarshal(env.Data, &em)

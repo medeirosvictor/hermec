@@ -403,6 +403,25 @@ Media:
   sharer from its own `watch` request, never from the track's stream id or
   msid, and should expect a keyframe after each switch (the server requests
   it from the new sharer). Clients must handle server offers at any time.
+- `video_source` (S): `{"fingerprint": string, "seq": uint16}`. Because the
+  source behind a viewer's single track changes without renegotiation, and
+  packets of the old source can still be in flight, the server marks the
+  boundary explicitly. Whenever it attaches a source to a viewer's video
+  (first attach or a switch), it sends `video_source` with that sharer's
+  fingerprint and the RTP sequence number, exactly as the viewer receives it,
+  of the new source's first packet. The server numbers the viewer's packets
+  itself (continuous across switches) and sends no further packet of the
+  previous source once the boundary is fixed. The message is queued before any
+  packet of the new source is written, but the WebSocket and RTP travel
+  separately, so it may arrive after the first packets. A client therefore
+  waits for it after each `watch`, discards packets whose sequence number is
+  before `seq` (16-bit serial-number order), restarts its depacketizer and
+  decoder at `seq`, waits for a keyframe, and labels frames with `fingerprint`.
+  When a viewer's source is detached (`watch` with `""`, or the sharer
+  stopped) the server sends `{"fingerprint": "", "seq": 0}`; clients may
+  ignore it. Older clients ignore the unknown type. A client that gets no
+  `video_source` for about 2 seconds after `watch` may fall back to restarting
+  on the first packet it receives.
 - A server refuses an `rtc_offer` that contains a video section it has no
   codec for with `error` `bad_request` "no common video codec; media reset,
   send a new rtc_offer", and the client recovers as in section 4.13.

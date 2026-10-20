@@ -45,6 +45,8 @@ const (
 	TypeShareStart = "share_start"
 	TypeShareStop  = "share_stop"
 	TypeWatch      = "watch"
+	// TypeVideoSource (S) marks the boundary of a viewer's video stream.
+	TypeVideoSource = "video_source"
 )
 
 // CodeNotSharing is the error code for a watch whose target is not sharing in
@@ -135,6 +137,16 @@ type ShareStop struct{}
 // stops watching. A viewer watches one stream at a time.
 type Watch struct {
 	Fingerprint string `json:"fingerprint"`
+}
+
+// VideoSource tells a viewer which sharer the packets on its (single) video
+// track belong to from now on. Seq is the RTP sequence number, as the viewer
+// receives it, of that source's first packet; every packet before it (serial
+// number order) belongs to the previous source. Fingerprint "" means the
+// viewer's video was detached (Seq is 0 and unused).
+type VideoSource struct {
+	Fingerprint string `json:"fingerprint"`
+	Seq         uint16 `json:"seq"`
 }
 
 // VoiceState is the full participant list of a voice channel.

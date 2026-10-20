@@ -3,6 +3,7 @@ package client
 import (
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -80,6 +81,56 @@ func (r *videoRx) push(pkt *rtp.Packet) (frames [][]byte, lost bool) {
 		frames = append(frames, s.Data)
 	}
 	return frames, lost
+}
+
+// videoSourceWait is how long a viewer waits for the server's video_source
+// after Watch before falling back to starting on the first packet.
+const videoSourceWait = 2 * time.Second
+
+// srcGate sits in front of a videoRx and enforces the source boundary the
+// server announced with video_source: packets before the boundary belong to
+// the previous source and are discarded, and no frame is released before the
+// first keyframe at or after the boundary, so the decoder never sees a stream
+// it has no reference for.
+type srcGate struct {
+	rx       *videoRx
+	active   bool
+	boundary uint16
+	keyed    bool
+}
+
+func (g *srcGate) start(seq uint16) {
+	g.rx, g.active, g.boundary, g.keyed = newVideoRx(), true, seq, false
+}
+
+func (g *srcGate) stop() { g.rx, g.active = nil, false }
+
+// seqBefore reports whether a precedes b in 16-bit serial-number order
+// (RFC 1982).
+func seqBefore(a, b uint16) bool { return a != b && int16(a-b) < 0 }
+
+// isVP8Key reports whether a VP8 frame is a keyframe (bit 0 of the frame tag
+// is clear).
+func isVP8Key(d []byte) bool { return len(d) > 0 && d[0]&1 == 0 }
+
+// push returns the frames to decode. needKey is true when delta frames were
+// held back for lack of a keyframe.
+func (g *srcGate) push(pkt *rtp.Packet) (frames [][]byte, lost, needKey bool) {
+	if !g.active || seqBefore(pkt.SequenceNumber, g.boundary) {
+		return nil, false, false
+	}
+	all, lost := g.rx.push(pkt)
+	for _, d := range all {
+		if !g.keyed {
+			if !isVP8Key(d) {
+				needKey = true
+				continue
+			}
+			g.keyed = true
+		}
+		frames = append(frames, d)
+	}
+	return frames, lost, needKey
 }
 
 // newEncoder builds the VP8 encoder (a variable so tests can substitute one).
@@ -384,19 +435,60 @@ func (c *Client) Watch(fp string) error {
 		return ErrNotInVoice
 	}
 	c.watchMu.Lock()
-	c.watchFP = fp
-	c.watchGen++
+	// Re-watching the sharer we already have a boundary for changes nothing
+	// (the server ignores it too and sends no new video_source).
+	if fp == "" || fp != c.watchFP || !c.srcHave {
+		c.watchFP = fp
+		c.watchGen++
+		c.watchAt = time.Now()
+		c.srcHave = false
+	}
 	c.watchMu.Unlock()
 	return c.send(proto.TypeWatch, proto.Watch{Fingerprint: fp})
 }
 
-// watchTarget returns the sharer we asked to watch and a counter that changes
-// on every Watch call. The server keeps one video transceiver per viewer and
-// swaps its source, so the track's own stream id only names the first sharer.
-func (c *Client) watchTarget() (string, uint64) {
+// onVideoSource records the server's source boundary. Messages for a sharer
+// we are not (or no longer) watching are stale and ignored; "" means the
+// server detached our video.
+func (c *Client) onVideoSource(m proto.VideoSource) {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
-	return c.watchFP, c.watchGen
+	if m.Fingerprint == "" {
+		c.srcHave = false
+		return
+	}
+	if m.Fingerprint != c.watchFP {
+		return
+	}
+	c.srcHave, c.srcSeq = true, m.Seq
+	c.srcID++
+}
+
+// watchState is a consistent snapshot of the watch target and source boundary.
+type watchState struct {
+	fp   string
+	gen  uint64 // changes on every Watch call
+	have bool   // the server announced the source (video_source)
+	seq  uint16 // first sequence number of the source
+	id   uint64 // changes on every announcement
+	at   time.Time
+}
+
+// watchSnapshot returns the watch state. The server keeps one video
+// transceiver per viewer and swaps its source, so the track's own stream id
+// only names the first sharer; the target and boundary come from Watch and
+// the server's video_source.
+func (c *Client) watchSnapshot() watchState {
+	c.watchMu.Lock()
+	defer c.watchMu.Unlock()
+	return watchState{c.watchFP, c.watchGen, c.srcHave, c.srcSeq, c.srcID, c.watchAt}
+}
+
+// watchTarget returns the sharer we asked to watch and a counter that changes
+// on every Watch call.
+func (c *Client) watchTarget() (string, uint64) {
+	w := c.watchSnapshot()
+	return w.fp, w.gen
 }
 
 // SetVideoSink sets the receiver of decoded video (nil discards video).
@@ -633,35 +725,64 @@ func (cl *call) readVideo(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote)
 	// The first keyframe may have been sent before this track was bound.
 	pli(true)
 
-	rx := newVideoRx()
-	fp, gen := cl.c.watchTarget()
+	// start (re)opens the gate at a source boundary: fresh sample builder and
+	// decoder, so nothing of an earlier stream is ever decoded as this one,
+	// and the new source is asked for a keyframe.
+	var g srcGate
+	start := func(seq uint16) bool {
+		g.start(seq)
+		lf.clear()
+		dec.Close()
+		nd, err := video.NewDecoder()
+		if err != nil {
+			cl.c.emitNB(Event{Err: err})
+			return false
+		}
+		dec = nd
+		pli(true)
+		return true
+	}
+	w := cl.c.watchSnapshot()
+	fp, gen := w.fp, w.gen
+	var lastID uint64
+	warned := false
 	for {
 		pkt, _, err := remote.ReadRTP()
 		if err != nil {
 			return
 		}
 		cl.c.vstats.recvBytes.Add(uint64(len(pkt.Payload)))
-		if nfp, ngen := cl.c.watchTarget(); ngen != gen {
-			// The server swapped the source under this one track: start over
-			// so nothing of the old stream is decoded as the new one, and ask
-			// the new source for a keyframe.
-			fp, gen = nfp, ngen
-			rx = newVideoRx()
+		w = cl.c.watchSnapshot()
+		if w.gen != gen {
+			// Watch changed the target: deliver nothing until the server
+			// announces where the new source starts.
+			fp, gen = w.fp, w.gen
+			g.stop()
 			lf.clear()
-			dec.Close()
-			nd, err := video.NewDecoder()
-			if err != nil {
-				cl.c.emitNB(Event{Err: err})
-				return
-			}
-			dec = nd
-			pli(true)
 		}
 		if fp == "" {
 			continue // not watching anyone
 		}
-		frames, lost := rx.push(pkt)
-		if lost {
+		if w.have && w.id != lastID {
+			lastID = w.id
+			if !start(w.seq) {
+				return
+			}
+		} else if !g.active {
+			if w.have || time.Since(w.at) < videoSourceWait {
+				continue // boundary unknown (or already handled): this packet cannot be placed
+			}
+			// No video_source from this server: start on the first packet.
+			if !warned {
+				warned = true
+				log.Printf("client: no video_source from the server %s after watch; starting on the first packet", videoSourceWait)
+			}
+			if !start(pkt.SequenceNumber) {
+				return
+			}
+		}
+		frames, lost, needKey := g.push(pkt)
+		if lost || needKey {
 			pli(false) // NACK did not repair it: only a keyframe resyncs the decoder
 		}
 		for _, data := range frames {
