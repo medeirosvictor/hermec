@@ -118,15 +118,28 @@ func (e *Encoder) Close() { e.enc.Close() }
 // Decoder decodes raw VP8 payloads into I420 frames.
 type Decoder struct {
 	dec *govpx.VP8Decoder
+	// decode feeds one packet to the codec (a field so tests can make it panic).
+	decode func(pkt []byte) error
 }
 
-// NewDecoder creates a VP8 decoder.
+// MaxDecodeWidth and MaxDecodeHeight bound the pictures a Decoder accepts. The
+// header of a key frame comes off the network and claims its own size, so
+// without a cap one sharer could make every viewer allocate gigabytes.
+const (
+	MaxDecodeWidth  = 3840
+	MaxDecodeHeight = 2160
+)
+
+// NewDecoder creates a VP8 decoder that rejects pictures larger than
+// MaxDecodeWidth x MaxDecodeHeight.
 func NewDecoder() (*Decoder, error) {
-	d, err := govpx.NewVP8Decoder(govpx.DecoderOptions{Threads: decThreads})
+	d, err := govpx.NewVP8Decoder(govpx.DecoderOptions{
+		Threads: decThreads, MaxWidth: MaxDecodeWidth, MaxHeight: MaxDecodeHeight,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("video: vp8 decoder: %w", err)
 	}
-	return &Decoder{dec: d}, nil
+	return &Decoder{dec: d, decode: d.Decode}, nil
 }
 
 // Close releases the decoder.
@@ -135,8 +148,15 @@ func (d *Decoder) Close() { d.dec.Close() }
 // Decode decodes one packet. The returned frame is newly allocated and owned
 // by the caller (safe to hand to another goroutine); it is nil when no
 // visible frame is ready.
-func (d *Decoder) Decode(pkt []byte) (*Frame, error) {
-	if err := d.dec.Decode(pkt); err != nil {
+func (d *Decoder) Decode(pkt []byte) (f *Frame, err error) {
+	// The packet is attacker-controlled: a codec panic must cost one frame,
+	// not the whole app.
+	defer func() {
+		if r := recover(); r != nil {
+			f, err = nil, fmt.Errorf("video: vp8 decode panic: %v", r)
+		}
+	}()
+	if err := d.decode(pkt); err != nil {
 		return nil, fmt.Errorf("video: vp8 decode: %w", err)
 	}
 	img, ok := d.dec.NextFrame()
