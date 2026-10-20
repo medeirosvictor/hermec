@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pion/rtcp"
+	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
@@ -56,6 +57,29 @@ const (
 func newVideoSampleBuilder() *samplebuilder.SampleBuilder {
 	return samplebuilder.New(maxPacketLate, &codecs.VP8Packet{}, videoClock,
 		samplebuilder.WithMaxTimeDelay(maxFrameDelay))
+}
+
+// videoRx turns the RTP packets of one remote VP8 stream into frames. It does
+// not ask for keyframes on a sequence gap: NACK normally repairs those, and a
+// PLI before the retransmission arrives costs a keyframe for nothing (on a
+// lossy link that is near-constant keyframes). Loss only counts once the
+// sample builder has given up on the packets.
+type videoRx struct{ sb *samplebuilder.SampleBuilder }
+
+func newVideoRx() *videoRx { return &videoRx{sb: newVideoSampleBuilder()} }
+
+// push adds pkt (in any order, late retransmissions included) and returns the
+// frames that are now complete. lost is true when packets before one of those
+// frames were dropped unrepaired, so the decoder lost its reference.
+func (r *videoRx) push(pkt *rtp.Packet) (frames [][]byte, lost bool) {
+	r.sb.Push(pkt)
+	for s := r.sb.Pop(); s != nil; s = r.sb.Pop() {
+		if s.PrevDroppedPackets > 0 {
+			lost = true
+		}
+		frames = append(frames, s.Data)
+	}
+	return frames, lost
 }
 
 // newEncoder builds the VP8 encoder (a variable so tests can substitute one).
@@ -578,9 +602,7 @@ func (cl *call) readVideo(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote)
 	// The first keyframe may have been sent before this track was bound.
 	pli(true)
 
-	sb := newVideoSampleBuilder()
-	var lastSeq uint16
-	haveSeq := false
+	rx := newVideoRx()
 	fp, gen := cl.c.watchTarget()
 	for {
 		pkt, _, err := remote.ReadRTP()
@@ -593,8 +615,7 @@ func (cl *call) readVideo(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote)
 			// so nothing of the old stream is decoded as the new one, and ask
 			// the new source for a keyframe.
 			fp, gen = nfp, ngen
-			sb = newVideoSampleBuilder()
-			haveSeq = false
+			rx = newVideoRx()
 			lf.clear()
 			dec.Close()
 			nd, err := video.NewDecoder()
@@ -608,21 +629,15 @@ func (cl *call) readVideo(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote)
 		if fp == "" {
 			continue // not watching anyone
 		}
-		if haveSeq {
-			if d := int16(pkt.SequenceNumber - lastSeq); d > 1 {
-				pli(false) // a gap: NACK may repair it, the PLI is the fallback
-			} else if d <= 0 {
-				sb.Push(pkt)
-				continue // late retransmission: keep the high-water mark
-			}
+		frames, lost := rx.push(pkt)
+		if lost {
+			pli(false) // NACK did not repair it: only a keyframe resyncs the decoder
 		}
-		lastSeq, haveSeq = pkt.SequenceNumber, true
-		sb.Push(pkt)
-		for s := sb.Pop(); s != nil; s = sb.Pop() {
+		for _, data := range frames {
 			if cl.c.videoSink() == nil {
 				continue
 			}
-			f, err := dec.Decode(s.Data)
+			f, err := dec.Decode(data)
 			if err != nil {
 				pli(false)
 				continue

@@ -129,6 +129,69 @@ func TestSampleBuilderRecoversFromLoss(t *testing.T) {
 	}
 }
 
+// feed pushes pkts through a videoRx and reports the frames and whether any
+// push saw unrecovered loss.
+func feed(rx *videoRx, pkts []*rtp.Packet) (frames int, lost bool) {
+	for _, p := range pkts {
+		fs, l := rx.push(p)
+		frames += len(fs)
+		lost = lost || l
+	}
+	return
+}
+
+// A gap that NACK repairs (the packet shows up late or reordered) must not
+// ask the sharer for a keyframe.
+func TestVideoRxFilledGapIsNotLoss(t *testing.T) {
+	frames := vp8Frames(40, 1200)
+	if len(frames[2]) < 3 {
+		t.Fatal("test frame must span several packets")
+	}
+	var order []*rtp.Packet
+	var held *rtp.Packet
+	for i, f := range frames {
+		for j, p := range f {
+			if i == 2 && j == 1 {
+				held = p // arrives 3 frames late, as a NACK retransmission would
+				continue
+			}
+			order = append(order, p)
+		}
+		if i == 5 {
+			order = append(order, held)
+		}
+	}
+	got, lost := feed(newVideoRx(), order)
+	if lost {
+		t.Fatal("a repaired gap was reported as unrecovered loss")
+	}
+	if got < 39 { // the builder holds the newest frame until a later one arrives
+		t.Fatalf("decoded %d of 40 frames", got)
+	}
+}
+
+// A packet that never arrives is reported once the builder gives up on it, so
+// the viewer can ask for a keyframe.
+func TestVideoRxPermanentLossIsReported(t *testing.T) {
+	frames := vp8Frames(40, 1200)
+	var order []*rtp.Packet
+	for i, f := range frames {
+		for j, p := range f {
+			if i == 2 && j == 1 {
+				continue // lost for good
+			}
+			order = append(order, p)
+		}
+	}
+	got, lost := feed(newVideoRx(), order)
+	if !lost {
+		t.Fatal("permanent loss was not reported")
+	}
+	if got < 30 {
+		t.Fatalf("only %d of 40 frames after one lost packet", got)
+	}
+}
+
 func TestStartShareOnClosedCall(t *testing.T) {
 	c := &Client{}
 	cl := &call{c: c}
