@@ -24,7 +24,7 @@ const (
 
 // authFail tracks failed authentications from one remote IP.
 type authFail struct {
-	n     int       // failures in the current run
+	n int // failures in the current run
 	// until is when the block imposed by the latest failure ends. The run
 	// (failure count) is forgotten once a further quiet minute has passed
 	// after until, i.e. authWindow after the IP was last refused or failed.
@@ -161,4 +161,3 @@ func (s *Server) noteAuthSuccess(ip string) {
 	delete(s.fails, ip)
 	s.failMu.Unlock()
 }
-

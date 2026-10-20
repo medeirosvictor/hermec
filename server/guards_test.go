@@ -181,4 +181,3 @@ func TestAuthBackoffSchedule(t *testing.T) {
 		t.Fatalf("delay after quiet minute = %v, want 0", d)
 	}
 }
-
