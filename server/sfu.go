@@ -739,7 +739,11 @@ func (vs *voiceSession) renegotiate(p *peer) {
 	raw, err := proto.Encode(proto.TypeRTCOffer, proto.RTCOffer{SDP: p.pc.LocalDescription().SDP})
 	if err != nil || len(raw) > vs.srv.offerLimit() {
 		// A dropped offer would wedge negotiation, so reset instead.
-		vs.srv.logf("voice %q: rtc_offer for %s is %d bytes (max %d); resetting its media", vs.channel, p.c.fingerprint, len(raw), vs.srv.offerLimit())
+		if err != nil {
+			vs.srv.logf("voice %q: cannot encode rtc_offer for %s: %v; resetting its media", vs.channel, p.c.fingerprint, err)
+		} else {
+			vs.srv.logf("voice %q: rtc_offer for %s is %d bytes (max %d); resetting its media", vs.channel, p.c.fingerprint, len(raw), vs.srv.offerLimit())
+		}
 		p.c.sendError("bad_request", "rtc_offer too large; media reset, send a new rtc_offer")
 		vs.releaseMedia(p)
 		return
@@ -824,6 +828,9 @@ func (vs *voiceSession) syncTracks(q *peer) {
 	// Pion never frees a transceiver, and reusing an audio line would keep the
 	// previous speaker's stream id (clients attribute audio by it), so bound
 	// the growth by rebuilding this peer's PC once enough lines are retired.
+	// The rebuild also restarts the member's own published audio and any
+	// screen share they send (viewers see a brief freeze), and because
+	// releaseMedia re-syncs everyone else, the room tends to reset together.
 	if q.retired > maxInactiveLines {
 		vs.srv.logf("voice %q: %s has %d inactive audio lines; resetting its media", vs.channel, q.c.fingerprint, q.retired)
 		q.c.sendError("bad_request", "too many retired audio lines; media reset, send a new rtc_offer")

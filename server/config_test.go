@@ -138,7 +138,10 @@ func TestLoadConfigMaxVoice(t *testing.T) {
 	if err != nil || cfg.MaxVoice != 3 {
 		t.Fatalf("set: %d, %v", cfg.MaxVoice, err)
 	}
-	for _, body := range []string{"max_voice = 0\n", "max_voice = -1\n"} {
+	if cfg, err = LoadConfig(writeTOML(t, "max_voice = 50\n")); err != nil || cfg.MaxVoice != 50 {
+		t.Fatalf("50: %d, %v", cfg.MaxVoice, err)
+	}
+	for _, body := range []string{"max_voice = 0\n", "max_voice = -1\n", "max_voice = 51\n"} {
 		if _, err := LoadConfig(writeTOML(t, body)); err == nil {
 			t.Errorf("%q: expected error", body)
 		}

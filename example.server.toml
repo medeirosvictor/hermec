@@ -42,6 +42,7 @@ voice_channels = ["voice"]
 
 # Most participants in one voice channel; a further voice_join is refused with
 # "voice_full". Default 25.
+# Maximum 50 (larger rooms would overflow the signaling message size limit).
 # max_voice = 25
 
 # Most authenticated sessions at once; a further client is refused with

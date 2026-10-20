@@ -16,6 +16,9 @@ import (
 // DefaultAddr is the listen address used when none is configured.
 const DefaultAddr = ":7697"
 
+// MaxVoiceLimit is the largest accepted max_voice (see LoadConfig).
+const MaxVoiceLimit = 50
+
 // fileConfig is the on-disk TOML shape of Config.
 type fileConfig struct {
 	Addr          string              `toml:"addr"`
@@ -131,6 +134,13 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if md.IsDefined("max_clients") {
 		cfg.MaxClients = fc.MaxClients
+	}
+	// Ceiling: the server's rtc_offer carries one audio line per other member
+	// (~0.8 KB live, ~0.55 KB retired, plus video) and must fit
+	// proto.MaxMessageSize; beyond ~60 members the first offer after a media
+	// rebuild is itself oversize and the room would reset forever.
+	if fc.MaxVoice > MaxVoiceLimit {
+		return Config{}, fmt.Errorf("server: load config: max_voice must be at most %d", MaxVoiceLimit)
 	}
 	if md.IsDefined("max_voice") {
 		cfg.MaxVoice = fc.MaxVoice
