@@ -125,6 +125,7 @@ func (g *game) escPressed() bool {
 // spent: the hit registry is cleared so no later handler acts on it, like a
 // desktop context menu swallowing its dismissing click.
 func (g *game) menuPress(x, y float64) {
+	g.menuSpent = true
 	if h, ok := g.hitFor(x, y); ok && h.Kind == state.HitMenuItem && h.ID >= 0 && h.ID < len(g.menu.items) {
 		g.menu.items[h.ID].act() // closes the menu
 	} else {

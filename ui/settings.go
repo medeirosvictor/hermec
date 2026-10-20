@@ -28,6 +28,7 @@ const (
 	rowCurvature
 	rowInput
 	rowOutput
+	rowShare
 	rowUpdate
 	rowLogs
 	rowHelp
@@ -433,6 +434,10 @@ func (g *game) activateSetting(row int) {
 		g.cycleOutput()
 	case rowSize:
 		g.cycleSize()
+	case rowShare:
+		g.set.ShareQuality = state.NextShareQuality(g.set.ShareQuality)
+		g.logf("share quality: %s", g.set.ShareQuality)
+		g.persistSettings()
 	case rowUpdate:
 		g.activateUpdateRow()
 	case rowLogs:
@@ -484,6 +489,7 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 		"curvature: " + curv,
 		"input:     " + deviceLabel(g.set.InputDevice, g.devIn),
 		"output:    " + deviceLabel(g.set.OutputDevice, g.devOut),
+		"share quality: " + g.set.ShareQualityID(),
 		updateRowLabel(g.updStatus, g.update, g.version()),
 		"logs:      open folder ›",
 		"help:      how hermec works ›",

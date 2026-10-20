@@ -25,6 +25,9 @@ const (
 	HitAddChoice                    // Add a Server choice; ID 0 = Create my own, 1 = Join a server
 	HitCreateField                  // create-form field (text cursor); ID 0 name, 1 port
 	HitCreateBtn                    // the Create button
+	HitBarShare                     // call-bar share / stop share button
+	HitLive                         // LIVE tag on a sharing occupant; Key is their fingerprint
+	HitVideo                        // the watch view (double-click toggles fullscreen)
 )
 
 // Hit is one click target: the half-open rect [X0,X1) x [Y0,Y1).

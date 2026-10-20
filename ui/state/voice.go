@@ -40,6 +40,7 @@ type Row struct {
 	Name    string // RowOccupant: member name
 	FP      string // RowOccupant: member fingerprint
 	Muted   bool   // RowOccupant
+	Sharing bool   // RowOccupant: sharing their screen (shows a LIVE tag)
 }
 
 // Rows lays out the channel pane: text channels, then (if the server has any)
@@ -56,7 +57,7 @@ func (s *State) Rows() []Row {
 	for _, ch := range s.VoiceChannels {
 		rows = append(rows, Row{Kind: RowVoice, Channel: ch})
 		for _, m := range s.Voice[ch] {
-			rows = append(rows, Row{Kind: RowOccupant, Channel: ch, Name: m.Name, FP: m.Fingerprint, Muted: m.Muted})
+			rows = append(rows, Row{Kind: RowOccupant, Channel: ch, Name: m.Name, FP: m.Fingerprint, Muted: m.Muted, Sharing: m.Sharing})
 		}
 	}
 	return rows

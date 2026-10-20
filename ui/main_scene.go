@@ -143,11 +143,17 @@ func (g *game) addMainHits(gm geometry) {
 			g.hits.Add(state.Hit{X0: gm.chanR.x0, Y0: y, X1: gm.chanR.x1, Y1: y + gm.lh, Kind: state.HitChannel, ID: r.Index})
 		case state.RowVoice:
 			g.hits.Add(state.Hit{X0: gm.chanR.x0, Y0: y, X1: gm.chanR.x1, Y1: y + gm.lh, Kind: state.HitVoice, Key: r.Channel})
+		case state.RowOccupant:
+			if r.Sharing {
+				lr := g.liveRect(gm, y, r.Muted)
+				g.hits.Add(state.Hit{X0: lr.x0, Y0: lr.y0, X1: lr.x1, Y1: lr.y1, Kind: state.HitLive, Key: r.FP})
+			}
 		}
 		y += gm.lh
 	}
 	g.hits.Add(state.Hit{X0: gm.inputR.x0, Y0: gm.inputR.y0, X1: gm.inputR.x1, Y1: gm.inputR.y1, Kind: state.HitText})
 	g.hits.Add(state.Hit{X0: gm.toggleR.x0, Y0: gm.toggleR.y0, X1: gm.toggleR.x1, Y1: gm.toggleR.y1, Kind: state.HitMembersToggle})
+	g.addVideoHit(gm)
 	g.addBarHits(gm)
 	g.addSignalHits(gm) // last: the open panel wins over anything under it
 }
@@ -245,6 +251,8 @@ func (g *game) updateMain() {
 				g.selectChannel(h.ID)
 			case state.HitVoice:
 				g.clickVoice(h.Key)
+			case state.HitLive:
+				g.clickLive(h)
 			case state.HitMembersToggle:
 				g.clickMembersToggle(h)
 			case state.HitSignal:
@@ -265,6 +273,9 @@ func (g *game) updateMain() {
 			s.st.Input.Backspace()
 		} else if d := inpututil.KeyPressDuration(ebiten.KeyBackspace); d > 30 && d%3 == 0 {
 			s.st.Input.Backspace()
+		}
+		if !g.q.open {
+			g.videoEsc(g.escPressed())
 		}
 		g.mainEsc(s, g.escPressed())
 		if enterPressed() {
@@ -404,7 +415,13 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	g.drawHeader(screen, gm)
 	g.drawChannels(screen, gm)
 	g.drawCallBar(screen, gm)
-	g.drawScrollback(screen, gm)
+	if g.videoActive() {
+		title := "watching " + g.watch.name + "  (Esc: chat, double-click: fullscreen)"
+		dst := clip(screen, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1)
+		g.drawText(dst, state.Ellipsize(title, gm.cols), gm.rightX, gm.headY, th.Bright)
+	} else {
+		g.drawScrollback(screen, gm)
+	}
 	g.drawInput(screen, gm)
 	g.drawQualityPanel(screen, gm)
 }
@@ -529,10 +546,18 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 			}
 			name := row.Name
 			room := gm.lcols - 2 - 3
+			if row.Sharing {
+				room -= liveCols
+			}
 			if r := []rune(name); room > 0 && len(r) > room {
 				name = string(r[:room])
 			}
 			g.drawText(dst, name, ox, y, col)
+			if row.Sharing {
+				lr := g.liveRect(gm, y, row.Muted)
+				vector.FillRect(dst, float32(lr.x0), float32(lr.y0), float32(lr.x1-lr.x0), float32(lr.y1-lr.y0), liveRed, false)
+				g.drawText(dst, "LIVE", lr.x0+pad/2, y, th.BG)
+			}
 			if row.Muted {
 				drawMic(dst, float32(cx0+channelPaneW-pad-gm.lh), float32(y), float32(gm.lh), th.Dim, true)
 			}

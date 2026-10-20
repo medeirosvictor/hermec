@@ -96,7 +96,12 @@ func (g *game) stepHealth(now time.Time) {
 	}
 	g.nextHealth = now.Add(healthEvery)
 	rtt, ok := g.rttOf()
-	g.logf("%s", healthLine(rtt, ok, g.q.parts))
+	line := healthLine(rtt, ok, g.q.parts)
+	if (g.share.on || g.watch.fp != "") && s.c != nil {
+		send, recv, fps := s.c.VideoStats()
+		line += videoStatsSuffix(g.share.on, g.watch.fp != "", send, recv, fps)
+	}
+	g.logf("%s", line)
 }
 
 // openLogFolder opens the log directory in the file manager.

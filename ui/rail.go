@@ -276,6 +276,8 @@ func (g *game) stepTooltip(h state.Hit, ok bool, now time.Time) {
 		id = h.ID
 	case ok && h.Kind == state.HitFingerprint:
 		id = fpTipID
+	case ok && h.Kind == state.HitBarShare && !g.shareSupported():
+		id = shareTipID
 	}
 	held := g.hover.Step(id, now)
 	g.tip = tooltipState{idx: id, show: held && !g.menu.open && g.dlg.mode == dlgNone, anchor: h}
@@ -286,6 +288,9 @@ func (g *game) stepTooltip(h state.Hit, ok bool, now time.Time) {
 func (g *game) tooltipText() (string, bool) {
 	if g.tip.show && g.tip.idx == fpTipID {
 		return fingerprintTip, true
+	}
+	if g.tip.show && g.tip.idx == shareTipID {
+		return shareNoSupport, !g.shareSupported()
 	}
 	if !g.tip.show || g.tip.idx < 0 || g.tip.idx >= len(g.servers) {
 		return "", false
@@ -304,7 +309,7 @@ func (g *game) drawTooltip(screen *ebiten.Image) {
 	if !ok {
 		return
 	}
-	if g.tip.idx == fpTipID {
+	if g.tip.idx == fpTipID || g.tip.idx == shareTipID {
 		g.drawFingerprintTip(screen, s)
 		return
 	}

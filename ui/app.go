@@ -158,6 +158,13 @@ type game struct {
 	checkFn   func(context.Context, string) (update.Available, bool, error) // nil = update.Latest
 	openFn    func(string)                                                  // nil = openURL
 
+	shareOps  shareOps   // seams for capture, client and window; zero = real
+	share     shareState // our own screen share
+	watch     watchState // the stream being watched
+	vid       videoView  // newest frame for the watch view
+	vsink     videoSink  // receives decoded frames from the clients
+	menuSpent bool       // a menu press already took this tick's click
+
 	helpOpen   bool    // the settings help view is showing
 	helpScroll int     // first visible help line
 	helpCarry  float64 // fractional wheel remainder
@@ -369,6 +376,7 @@ func (g *game) Update() error {
 	}
 	g.tickBackground(time.Now())
 	g.escSpent = false
+	g.menuSpent = false
 	g.closeMenuOnEsc(inpututil.IsKeyJustPressed(ebiten.KeyEscape)) // first taker of Esc
 	if !g.settingsOpen && !g.modal {
 		g.updateKey()
@@ -428,6 +436,7 @@ func (g *game) Update() error {
 	if !g.modal {
 		g.updateBar(g.geom()) // the call may be on another server: any scene but settings
 	}
+	g.updateVideo(!g.modal && !g.settingsOpen)
 	return nil
 }
 
@@ -445,6 +454,7 @@ func (g *game) Draw(screen *ebiten.Image) {
 	bh := int(g.barH())
 	if !g.crtOn && bh == 0 {
 		g.drawScene(screen)
+		g.drawVideo(screen, image.Point{})
 		return
 	}
 	// The scene renders into an offscreen of the scene size (screen minus the
@@ -468,6 +478,7 @@ func (g *game) Draw(screen *ebiten.Image) {
 	} else {
 		blit(area, off)
 	}
+	g.drawVideo(screen, image.Pt(b.Min.X, b.Min.Y+bh)) // flat, after the CRT pass
 	g.drawTitleBar(screen)
 }
 

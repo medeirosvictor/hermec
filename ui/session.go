@@ -298,6 +298,7 @@ func (g *game) applyDial(r dialResult) {
 	}
 	g.logf("connected to %s, channels %v", s.url, r.c.Channels())
 	s.c = r.c
+	s.c.SetVideoSink(&g.vsink)
 	s.st.SetConnected(r.c.Channels(), r.c.Fingerprint())
 	s.ms = newMainScene()
 	s.everUp = true
