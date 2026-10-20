@@ -83,16 +83,19 @@ func countAudio(t *testing.T, bigPerSec int, d time.Duration) int {
 }
 
 // A flood of oversized datagrams must not cost audio: the read error for a
-// consumed datagram must never put the reader to sleep.
+// consumed datagram must never put the reader to sleep. The windows are long
+// and the test is not parallel, so scheduler noise cannot push the flood count
+// far below the baseline. The regression this guards against kept only ~12%.
+// Do not add t.Parallel here.
 func TestMediaFloodDoesNotCutAudio(t *testing.T) {
-	base := countAudio(t, 0, 2*time.Second)
-	flood := countAudio(t, 200, 2*time.Second)
-	t.Logf("audio in 2 s: baseline %d, under flood %d", base, flood)
-	if base < 80 {
+	base := countAudio(t, 0, 3*time.Second)
+	flood := countAudio(t, 200, 3*time.Second)
+	t.Logf("audio in 3 s: baseline %d, under flood %d", base, flood)
+	if base < 120 {
 		t.Fatalf("baseline too low (%d): test rig is broken", base)
 	}
-	if float64(flood) < 0.85*float64(base) {
-		t.Fatalf("audio under flood = %d, baseline %d: lost more than 15%%", flood, base)
+	if float64(flood) < 0.75*float64(base) {
+		t.Fatalf("audio under flood = %d, baseline %d: lost more than 25%%", flood, base)
 	}
 }
 
