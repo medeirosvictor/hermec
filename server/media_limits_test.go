@@ -28,9 +28,25 @@ func startServerS(t *testing.T, cfg Config) (*Server, string) {
 	return s, "ws://" + s.Addr()
 }
 
+// waitSession returns the voice session for ch, waiting for the server to
+// create it. Joins are processed asynchronously, so a lookup right after
+// join() can see no session yet.
+func waitSession(t *testing.T, s *Server, ch string) *voiceSession {
+	t.Helper()
+	var vs *voiceSession
+	eventually(t, 10*time.Second, "voice session "+ch+" created", func() bool {
+		vs = sessionFor(s, ch)
+		return vs != nil
+	})
+	return vs
+}
+
 // onActor runs f on the session actor and waits for it.
 func onActor(t *testing.T, vs *voiceSession, f func()) {
 	t.Helper()
+	if vs == nil {
+		t.Fatal("onActor: nil voice session (session not created yet?)")
+	}
 	done := make(chan struct{})
 	vs.post(func() { f(); close(done) })
 	select {
@@ -86,7 +102,7 @@ func TestSecondAudioTrackIgnored(t *testing.T) {
 	t.Cleanup(func() { close(stop) })
 	pumpAudio(stop, a.audio, extra)
 
-	vs := sessionFor(s, "lounge")
+	vs := waitSession(t, s, "lounge")
 	count := func() int {
 		n := 0
 		onActor(t, vs, func() {
@@ -111,13 +127,7 @@ func TestAudioTransceiversStayBoundedOverChurn(t *testing.T) {
 	s, url := startServerS(t, shareCfg())
 	stay := newTestPeer(t, url, false)
 	stay.join()
-	// The lounge session is created when the server processes the join, which
-	// is asynchronous to join(); wait for it rather than reading nil.
-	var vs *voiceSession
-	eventually(t, 10*time.Second, "lounge session created", func() bool {
-		vs = sessionFor(s, "lounge")
-		return vs != nil
-	})
+	vs := waitSession(t, s, "lounge")
 	max := 0
 	for i := 0; i < 50; i++ {
 		c := newTestPeer(t, url, false)
@@ -177,7 +187,7 @@ func TestOversizeOfferResetsPeer(t *testing.T) {
 	if !strings.Contains(got, "send a new rtc_offer") {
 		t.Fatalf("error = %q, want the media-reset hint", got)
 	}
-	vs := sessionFor(s, "lounge")
+	vs := waitSession(t, s, "lounge")
 	onActor(t, vs, func() {
 		if p := peerByFP(vs, b.fp); p == nil || p.pc != nil || p.negotiating {
 			t.Errorf("peer media not reset: %+v", p)
