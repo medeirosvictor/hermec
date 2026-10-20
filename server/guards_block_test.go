@@ -46,9 +46,9 @@ func TestAuthBlockOnWire(t *testing.T) {
 	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
 	url := "ws://" + s.Addr()
 
-	// Five failures do not block the IP; the 6th is replied to at once too,
+	// Four failures do not block the IP; the 5th is replied to at once too,
 	// then the IP is blocked for 1 s.
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 5; i++ {
 		start := time.Now()
 		c, env := authAs(t, url, mustID(t), "wrong")
 		requireAuthFailed(t, c, env)
@@ -69,8 +69,8 @@ func TestAuthBlockOnWire(t *testing.T) {
 	if env.Type != proto.TypeAuthOK {
 		t.Fatalf("after window: type %q", env.Type)
 	}
-	// Success reset the run: five more failures are free again.
-	for i := 0; i < 5; i++ {
+	// Success reset the run: four more failures are free again.
+	for i := 0; i < 4; i++ {
 		c, env := authAs(t, url, mustID(t), "wrong")
 		requireAuthFailed(t, c, env)
 	}

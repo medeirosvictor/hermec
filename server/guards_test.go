@@ -150,14 +150,15 @@ func TestAuthBackoffSchedule(t *testing.T) {
 	s := New(chatCfg())
 	s.clock = clk.Now
 	const ip = "203.0.113.9"
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= 4; i++ {
 		if d := s.noteAuthFailure(ip); d != 0 {
 			t.Fatalf("failure %d delay = %v, want 0", i, d)
 		}
 	}
+	// The 5th failure starts the 1 s block, then it doubles up to 60 s.
 	for i, want := range []time.Duration{1, 2, 4, 8, 16, 32, 60, 60} {
 		if d := s.noteAuthFailure(ip); d != want*time.Second {
-			t.Fatalf("failure %d delay = %v, want %v", 6+i, d, want*time.Second)
+			t.Fatalf("failure %d delay = %v, want %v", 5+i, d, want*time.Second)
 		}
 	}
 	// Another address is unaffected.
@@ -169,13 +170,14 @@ func TestAuthBackoffSchedule(t *testing.T) {
 	if d := s.noteAuthFailure(ip); d != 0 {
 		t.Fatalf("delay after success = %v, want 0", d)
 	}
-	// A quiet minute (past the last delay) forgets old failures.
-	for i := 0; i < 4; i++ {
+	// Failures 1-4 of the new run are free; the 5th starts the 1 s block.
+	for i := 0; i < 3; i++ {
 		s.noteAuthFailure(ip)
 	}
 	if d := s.noteAuthFailure(ip); d != time.Second {
 		t.Fatalf("delay = %v, want 1s", d)
 	}
+	// A quiet minute (past the last delay) forgets old failures.
 	clk.Advance(2*time.Minute + time.Second)
 	if d := s.noteAuthFailure(ip); d != 0 {
 		t.Fatalf("delay after quiet minute = %v, want 0", d)

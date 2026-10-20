@@ -74,8 +74,11 @@ type voiceSession struct {
 var answerTimeout = 15 * time.Second
 
 // maxInactiveLines is how many retired (inactive) audio m-lines a subscriber
-// PeerConnection may accumulate before its media is rebuilt from scratch.
-const maxInactiveLines = 16
+// PeerConnection may accumulate before its media is rebuilt from scratch. At
+// the max_voice cap of 50 an offer carrying 32 retired lines plus the live
+// ones stays under proto.MaxMessageSize (64 KiB); at the default 25 it is
+// about 38 KB. A higher value rebuilds the room less often.
+const maxInactiveLines = 32
 
 // errOfferPending is the fixed glare message: a client rtc_offer arrived while
 // a server offer is outstanding. See docs/protocol.md 4.13.

@@ -15,7 +15,8 @@ const (
 	// maxPreAuth caps connections that have upgraded but not yet authenticated.
 	maxPreAuth = 64
 
-	// authFreeFailures is how many failures per IP are answered at once.
+	// authFreeFailures is the failure count at which blocking starts: failures
+	// 1-4 of a run pass, and the 5th starts the first block.
 	authFreeFailures = 5
 	authWindow       = time.Minute
 	authBaseDelay    = time.Second
@@ -120,8 +121,9 @@ func (s *Server) releaseClient() {
 }
 
 // noteAuthFailure records a failed authentication from ip and returns how
-// long to wait before replying: nothing for the first five failures in a run,
-// then 1 s doubling up to 60 s. A run ends after a quiet minute.
+// long the IP is refused: nothing for failures 1-4 of a run, then the 5th
+// starts a 1 s block, doubling with each further failure up to 60 s. A run
+// ends after a quiet minute.
 func (s *Server) noteAuthFailure(ip string) time.Duration {
 	now := s.clock()
 	s.failMu.Lock()
@@ -138,10 +140,11 @@ func (s *Server) noteAuthFailure(ip string) time.Duration {
 		f = &authFail{}
 		s.fails[ip] = f
 	}
+	n := f.n + 1 // failures in this run, counting this one
 	var d time.Duration
-	if f.n >= authFreeFailures {
+	if n >= authFreeFailures {
 		d = authMaxDelay
-		if k := f.n - authFreeFailures; k < 6 {
+		if k := n - authFreeFailures; k < 6 {
 			d = authBaseDelay << k
 		}
 		if d > authMaxDelay {

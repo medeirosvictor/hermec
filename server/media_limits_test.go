@@ -143,7 +143,8 @@ func TestAudioTransceiversStayBoundedOverChurn(t *testing.T) {
 			return gone
 		})
 	}
-	// own receive line + live line + inactive lines up to the rebuild threshold.
+	// own receive line + live lines + inactive lines up to the rebuild threshold
+	// (bound = live + maxInactiveLines + slack).
 	if bound := 2 + maxInactiveLines + 1; max > bound {
 		t.Fatalf("staying member's PC grew to %d transceivers over 50 join/leave cycles, want <= %d", max, bound)
 	}
