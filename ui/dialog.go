@@ -122,6 +122,11 @@ func (g *game) dialogCancel() { g.dlg = dialog{} }
 // dialogKey applies one tick of keyboard input to the open dialog. Esc cancels
 // (and is spent), Enter confirms, typed runes edit the rename field.
 func (g *game) dialogKey(esc, enter bool, typed []rune, backspace bool) {
+	g.dialogKeys(esc, enter, editKeys{backspace: backspace}, typed)
+}
+
+// dialogKeys is dialogKey with the full set of editing keys.
+func (g *game) dialogKeys(esc, enter bool, k editKeys, typed []rune) {
 	if !g.dialogOpen() {
 		return
 	}
@@ -131,14 +136,7 @@ func (g *game) dialogKey(esc, enter bool, typed []rune, backspace bool) {
 		return
 	}
 	if g.dlg.mode == dlgRename {
-		for _, r := range typed {
-			if r >= ' ' && r != 0x7f && len(g.dlg.nick.runes) < state.MaxNickRunes {
-				g.dlg.nick.runes = append(g.dlg.nick.runes, r)
-			}
-		}
-		if backspace {
-			g.dlg.nick.backspace()
-		}
+		g.dlg.nick.edit(k, typed, state.MaxNickRunes, nil, false)
 	}
 	if enter {
 		g.dialogConfirm()
@@ -171,11 +169,7 @@ func (g *game) updateDialog() bool {
 	if !g.dialogOpen() {
 		return false
 	}
-	bs := inpututil.IsKeyJustPressed(ebiten.KeyBackspace)
-	if d := inpututil.KeyPressDuration(ebiten.KeyBackspace); d > 30 && d%3 == 0 {
-		bs = true
-	}
-	g.dialogKey(g.escPressed(), enterPressed(), ebiten.AppendInputChars(nil), bs)
+	g.dialogKeys(g.escPressed(), enterPressed(), readEditKeys(), ebiten.AppendInputChars(nil))
 	if g.dialogOpen() && inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		g.dialogPress(g.cursor())
 	}
@@ -245,17 +239,12 @@ func (g *game) drawDialog(screen *ebiten.Image) {
 	if g.dlg.mode == dlgRename {
 		g.drawText(screen, state.Ellipsize(g.dlg.title(e), cols), x, y, th.Bright)
 		y += lh + pad
-		in := g.dlg.nick.runes
+		in, c := g.dlg.nick.runes, g.dlg.nick.caret()
 		room := max(cols-3, 1) // prompt and cursor
-		if len(in) > room {
-			in = in[len(in)-room:]
-		}
-		line := "> " + string(in)
-		g.drawText(screen, line, x, y, th.FG)
-		if (g.frame/30)%2 == 0 {
-			cx := x + float64(len([]rune(line)))*g.glyphW()
-			vector.FillRect(screen, float32(cx), float32(y+2), float32(g.glyphW()), float32(g.fontSize()), th.Bright, false)
-		}
+		st := window(len(in), c, room)
+		in = in[st:min(len(in), st+room)]
+		g.drawText(screen, "> "+string(in), x, y, th.FG)
+		g.drawCaret(screen, x, y, "> "+string(g.dlg.nick.runes[st:c]))
 		y += lh + pad/2
 		g.drawTextF(screen, g.faceS, state.Ellipsize(renameHint, int(float64(cols)/smallScale)), x, y, th.Dim)
 	} else {

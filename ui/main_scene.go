@@ -264,16 +264,10 @@ func (g *game) updateMain() {
 	}
 
 	if in {
-		for _, r := range ebiten.AppendInputChars(nil) {
-			if r >= ' ' && r != 0x7f && len([]rune(s.st.Input.String())) < maxInputRunes {
-				s.st.Input.AppendRunes([]rune{r})
-			}
-		}
-		if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) {
-			s.st.Input.Backspace()
-		} else if d := inpututil.KeyPressDuration(ebiten.KeyBackspace); d > 30 && d%3 == 0 {
-			s.st.Input.Backspace()
-		}
+		txt, c := s.st.Input.Runes()
+		tf := textField{text: txt, caret: c, max: maxInputRunes}
+		tf.update(readEditKeys(), ebiten.AppendInputChars(nil), clipboardRead)
+		s.st.Input.Set(tf.text, tf.caret)
 		if !g.q.open {
 			g.videoEsc(g.escPressed())
 		}
@@ -699,20 +693,15 @@ func (g *game) renderScrollback(dst *ebiten.Image, gm geometry, ox, oy float64) 
 func (g *game) drawInput(screen *ebiten.Image, gm geometry) {
 	th := g.th
 	dst := clip(screen, gm.rightX, gm.inputR.y0, gm.rightX+gm.rightW, gm.inputR.y1)
-	in := []rune(g.cur().st.Input.String())
+	all, c := g.cur().st.Input.Runes()
 	room := int(gm.rightW/gm.adv) - 3 // prompt + cursor
 	if room < 1 {
 		room = 1
 	}
-	if len(in) > room {
-		in = in[len(in)-room:]
-	}
-	s := "> " + string(in)
-	g.drawText(dst, s, gm.rightX, gm.inputY, th.FG)
-	if (g.frame/30)%2 == 0 {
-		cx := gm.rightX + float64(len([]rune(s)))*gm.adv
-		vector.FillRect(dst, float32(cx), float32(gm.inputY+2), float32(gm.adv), float32(g.fontSize()), th.Bright, false)
-	}
+	st := window(len(all), c, room)
+	in := all[st:min(len(all), st+room)]
+	g.drawText(dst, "> "+string(in), gm.rightX, gm.inputY, th.FG)
+	g.drawCaret(dst, gm.rightX, gm.inputY, "> "+string(all[st:c]))
 }
 
 // mainEsc handles an Esc press in the main scene: it closes the quality panel,

@@ -25,6 +25,7 @@ func connectFieldsTop(lh float64) float64 {
 
 type field struct {
 	runes []rune
+	back  int // caret distance from the end of runes; 0 = at the end
 }
 
 func (f *field) String() string { return string(f.runes) }
@@ -108,7 +109,7 @@ func (f *connectForm) click(h state.Hit, dialing bool) (url, name string, submit
 		if i < 0 || i >= len(f.disc) {
 			return "", "", false, true // stale target: the list changed since the registry was built
 		}
-		f.server.runes = []rune(f.disc[i].URL)
+		f.server.setText(f.disc[i].URL)
 		if n := f.name.String(); n != "" && !dialing {
 			f.sel = i
 			return f.disc[i].URL, n, true, true // one click = join
@@ -139,7 +140,7 @@ func (f *connectForm) click(h state.Hit, dialing bool) (url, name string, submit
 func (f *connectForm) moveSel(d int) {
 	f.sel = state.MoveSel(f.sel, d, len(f.disc))
 	if f.sel >= 0 && f.sel < len(f.disc) {
-		f.server.runes = []rune(f.disc[f.sel].URL)
+		f.server.setText(f.disc[f.sel].URL)
 	}
 }
 
@@ -179,20 +180,11 @@ func (f *connectForm) update(dialing bool, at func() (state.Hit, bool)) (url, na
 		cur = &f.server
 	}
 	if !dialing && f.sel < 0 {
-		for _, r := range ebiten.AppendInputChars(nil) {
-			if r >= ' ' && r != 0x7f && len(cur.runes) < maxFieldRunes {
-				cur.runes = append(cur.runes, r)
-			}
-		}
-		if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) {
-			cur.backspace()
-		} else if d := inpututil.KeyPressDuration(ebiten.KeyBackspace); d > 30 && d%3 == 0 {
-			cur.backspace()
-		}
+		cur.edit(readEditKeys(), ebiten.AppendInputChars(nil), maxFieldRunes, nil, cur == &f.server)
 	}
 	if !dialing && (inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeyNumpadEnter)) {
 		if f.sel >= 0 && f.sel < len(f.disc) {
-			f.server.runes = []rune(f.disc[f.sel].URL)
+			f.server.setText(f.disc[f.sel].URL)
 		}
 		if n := f.name.String(); n != "" && f.server.String() != "" {
 			return f.server.String(), n, true
@@ -223,24 +215,19 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 	g.drawTextF(screen, g.faceT, "HERMEC", x, y, th.Bright)
 	y += lh * 2.5
 
-	cursor := ""
-	if (g.frame/30)%2 == 0 {
-		cursor = "_"
-	}
 	row := func(label string, fl *field, active, disabled bool) {
 		col := th.FG
 		if disabled {
 			col = th.Dim
 		}
-		val := fl.String()
-		if active && !g.cur().dialing {
-			val += cursor
-		}
 		marker := "  "
 		if active {
 			marker = "> "
 		}
-		g.drawText(screen, marker+label+val, x, y, col)
+		g.drawText(screen, marker+label+fl.String(), x, y, col)
+		if active && !g.cur().dialing {
+			g.drawCaret(screen, x, y, marker+label+string(fl.runes[:fl.caret()]))
+		}
 		y += lh
 	}
 	row("name:   ", &f.name, f.focus == 0, false)

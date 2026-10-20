@@ -394,21 +394,7 @@ func (g *game) updateSettings() {
 	switch g.setRow {
 	case rowName:
 		f := &g.connect.name
-		changed := false
-		for _, r := range ebiten.AppendInputChars(nil) {
-			if r >= ' ' && r != 0x7f && len(f.runes) < maxFieldRunes {
-				f.runes = append(f.runes, r)
-				changed = true
-			}
-		}
-		if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) {
-			f.backspace()
-			changed = true
-		} else if d := inpututil.KeyPressDuration(ebiten.KeyBackspace); d > 30 && d%3 == 0 {
-			f.backspace()
-			changed = true
-		}
-		if changed {
+		if f.edit(readEditKeys(), ebiten.AppendInputChars(nil), maxFieldRunes, nil, false) {
 			g.nameDirty = true
 		}
 	default:
@@ -475,14 +461,7 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 	if g.set.CurvatureEnabled() {
 		curv = "on"
 	}
-	cursor := ""
-	if (g.frame/30)%2 == 0 {
-		cursor = "_"
-	}
 	nameVal := g.connect.name.String()
-	if g.setRow == rowName {
-		nameVal += cursor
-	}
 	rows := [settingsRows]string{
 		"name:      " + nameVal,
 		"palette:   " + pal,
@@ -505,6 +484,10 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 			marker = "> "
 		}
 		g.drawText(screen, marker+s, x, y, th.FG)
+		if i == g.setRow && i == rowName {
+			nm := &g.connect.name
+			g.drawCaret(screen, x, y, marker+"name:      "+string(nm.runes[:nm.caret()]))
+		}
 		y += lh
 	}
 	y += lh
