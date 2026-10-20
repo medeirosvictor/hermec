@@ -5,6 +5,7 @@ package screencap
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -189,6 +190,11 @@ func (s *gdiSource) Capture(m Monitor, dst *BGRA) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// A window DC belongs to the thread that got it: keep this goroutine on
+	// one OS thread from GetDC to ReleaseDC (deferred first, so it runs last).
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	screenDC, _, _ := procGetDC.Call(0)
 	if screenDC == 0 {

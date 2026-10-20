@@ -438,6 +438,9 @@ func (g *game) activateSetting(row int) {
 		g.set.ShareQuality = state.NextShareQuality(g.set.ShareQuality)
 		g.logf("share quality: %s", g.set.ShareQuality)
 		g.persistSettings()
+		if g.share.on { // the running stream keeps its profile
+			g.cur().st.Status = "applies to your next share"
+		}
 	case rowUpdate:
 		g.activateUpdateRow()
 	case rowLogs:
