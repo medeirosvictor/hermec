@@ -67,8 +67,7 @@ func (s *Server) presenceLocked(ch string) []byte {
 		members = append(members, m.member())
 	}
 	sortMembers(members)
-	raw, _ := proto.Encode(proto.TypePresence, proto.Presence{Channel: ch, Members: members})
-	return raw
+	return encodePresence(ch, members)
 }
 
 // sortMembers orders members by name, then fingerprint.
@@ -108,7 +107,27 @@ func encodeRoster(members []proto.Member, total int) []byte {
 	if err != nil {
 		return nil
 	}
-	size := len(base)
+	keep := fitMembers(len(base), members)
+	raw, _ := proto.Encode(proto.TypeRoster, proto.Roster{Members: members[:keep], Total: total})
+	return raw
+}
+
+// encodePresence is encodeRoster for one channel's presence frame, trimmed to
+// the same size budget; Total is the real member count.
+func encodePresence(ch string, members []proto.Member) []byte {
+	base, err := proto.Encode(proto.TypePresence, proto.Presence{Channel: ch, Members: []proto.Member{}, Total: len(members)})
+	if err != nil {
+		return nil
+	}
+	keep := fitMembers(len(base), members)
+	raw, _ := proto.Encode(proto.TypePresence, proto.Presence{Channel: ch, Members: members[:keep], Total: len(members)})
+	return raw
+}
+
+// fitMembers returns how many leading members fit in MaxMessageSize on top of
+// a frame already baseLen bytes long with an empty member list.
+func fitMembers(baseLen int, members []proto.Member) int {
+	size := baseLen
 	keep := 0
 	for _, m := range members {
 		n, err := encodedLen(m)
@@ -124,8 +143,7 @@ func encodeRoster(members []proto.Member, total int) []byte {
 		size += n
 		keep++
 	}
-	raw, _ := proto.Encode(proto.TypeRoster, proto.Roster{Members: members[:keep], Total: total})
-	return raw
+	return keep
 }
 
 // encodedLen is the length of v's JSON as the proto package writes it (no HTML

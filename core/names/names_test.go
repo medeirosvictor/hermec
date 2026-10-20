@@ -12,9 +12,9 @@ func TestClean(t *testing.T) {
 		want string
 	}{
 		{"  bob  ", 10, "bob"},
-		{"a‮b\x00c d e", 10, "abcde"},
+		{"a\u202eb\x00c\u2028d\u2029e", 10, "abcde"},
 		{strings.Repeat("x", 1000), 64, strings.Repeat("x", 64)},
-		{"‮\x07", 10, ""},
+		{"\u202e\x07", 10, ""},
 	}
 	for _, c := range cases {
 		if got := Clean(c.in, c.max); got != c.want {

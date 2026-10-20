@@ -15,10 +15,10 @@ import (
 func TestAuthNameCleanedAndCapped(t *testing.T) {
 	url := startServer(t, chatCfg())
 	cases := []struct{ in, want string }{
-		{"al‮ic\x00e ", "alice"},
+		{"al\u202eic\x00e\u2028", "alice"},
 		{strings.Repeat("x", 1000), strings.Repeat("x", discover.MaxNameRunes)},
 		{"", "anon"},
-		{" ‮\x07 ", "anon"},
+		{" \u202e\x07 ", "anon"},
 	}
 	for _, c := range cases {
 		conn := authNamed(t, url, mustID(t), c.in)

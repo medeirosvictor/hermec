@@ -49,7 +49,11 @@ func (c *conn) enqueue(raw []byte) bool {
 	if len(raw) > proto.MaxMessageSize {
 		// Clients refuse frames this large (and would drop us); one oversize
 		// frame must not take its recipient down, so drop it and report ok.
-		c.srv.logf("server: dropping %d-byte outbound frame (max %d)", len(raw), proto.MaxMessageSize)
+		var head struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(raw, &head)
+		c.srv.logf("server: dropping %d-byte %q frame for %s (max %d)", len(raw), head.Type, c.fingerprint, proto.MaxMessageSize)
 		return true
 	}
 	c.sendMu.Lock()

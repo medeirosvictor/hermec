@@ -9,7 +9,7 @@ import (
 )
 
 func TestDisplayNamesCleaned(t *testing.T) {
-	bad := "al‮ic\x00e"
+	bad := "al\u202eic\x00e"
 	s := New()
 	s.SetConnected(chans("general"), "me")
 

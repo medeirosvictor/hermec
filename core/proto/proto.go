@@ -174,6 +174,9 @@ type Member struct {
 type Presence struct {
 	Channel string   `json:"channel"`
 	Members []Member `json:"members"`
+	// Total is the real member count; Members may be a prefix of the list
+	// when the full frame would not fit MaxMessageSize. Zero from old servers.
+	Total int `json:"total,omitempty"`
 }
 
 // Roster lists the connected members server-wide, sorted by name then

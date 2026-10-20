@@ -20,7 +20,7 @@ import (
 )
 
 func TestHostedConfigRoundTrip(t *testing.T) {
-	cfg := hostedConfig("  My‮Server ", "pw", 7697, "FP")
+	cfg := hostedConfig("  My\u202eServer ", "pw", 7697, "FP")
 	path := filepath.Join(t.TempDir(), "sub", "hosted.toml")
 	if err := saveHosted(path, cfg); err != nil {
 		t.Fatal(err)

@@ -89,6 +89,15 @@ func (s *State) SetConnected(channels []proto.ChannelInfo, fingerprint string) {
 	s.Status = ""
 }
 
+// cleanMembers copies ms with every name cleaned (a v0.4 server sends them raw).
+func cleanMembers(ms []proto.Member) []proto.Member {
+	out := append([]proto.Member(nil), ms...)
+	for i := range out {
+		out[i].Name = CleanName(out[i].Name, MaxServerNameRunes)
+	}
+	return out
+}
+
 // Apply reduces one client event. open=false means the Events channel closed.
 func (s *State) Apply(ev client.Event, open bool) {
 	if !open {
@@ -112,9 +121,9 @@ func (s *State) Apply(ev client.Event, open bool) {
 			s.Unread[c.Channel] = true
 		}
 	case ev.Presence != nil:
-		s.Members[ev.Presence.Channel] = append([]proto.Member(nil), ev.Presence.Members...)
+		s.Members[ev.Presence.Channel] = cleanMembers(ev.Presence.Members)
 	case ev.Roster != nil:
-		s.Roster = append([]proto.Member(nil), ev.Roster.Members...)
+		s.Roster = cleanMembers(ev.Roster.Members)
 		s.RosterTotal = ev.Roster.Total
 		s.HasRoster = true
 	case ev.Voice != nil:
