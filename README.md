@@ -53,8 +53,9 @@ rest.
 This repository currently ships a Go server with Ed25519 key-based
 authentication, roles, channels, presence and text chat, plus a headless client
 library, a desktop GUI client, and integration tests. Voice chat now works in
-the GUI, with audio relayed through the self-hosted server. Screenshare, camera
-video, and the direct peer-to-peer opt-in remain unimplemented. The
+the GUI, with audio relayed through the self-hosted server. Screen share works
+too (sharing from Windows, watching on any system). Camera video and the
+direct peer-to-peer opt-in remain unimplemented. The
 wire protocol for what exists is specified in [docs/protocol.md](docs/protocol.md).
 
 ## Install
@@ -161,8 +162,9 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Click "+" tile**: Add a server
 - **Click the signal bars** (status line, or the call bar in a call): Show connection quality (ping, jitter, per-participant concealment); Esc or a second click closes it
 - **Click voice channel in the pane**: Join or leave voice call
+- **Click share** (call bar): Share a screen, see [Screen share](#screen-share). **Click LIVE** next to a person in the voice list to watch them. **Esc** goes back to chat; **double-click** the video for fullscreen.
 - **Title bar** (Windows): a Discord-style app bar replaces the default frame. Drag it to move the window (double-click to maximize or restore), use the buttons on the right to minimize, maximize and close, and drag the window edges and corners to resize.
-- **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, text size as a percentage, update status, a help section; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono, and existing settings files keep VT323.
+- **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, text size as a percentage, share quality (720p or 1080p), logs (open folder), update status, a help section; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono, and existing settings files keep VT323.
 
 Bundled fonts (all monospace, under the SIL Open Font License 1.1, licences in `ui/theme/`): VT323, JetBrains Mono, IBM Plex Mono and Geist Mono.
 
@@ -334,6 +336,70 @@ and, for firewall policy, note that all media uses one UDP port (the server's
 port number by default; `media_port` overrides it, and `udp_port_min`/
 `udp_port_max` select the older random-port range instead). See
 [example.server.toml](example.server.toml) for details.
+
+### Screen share
+
+Show your screen to the people in your voice call.
+
+**Share your screen** (Windows only for now):
+
+1. Join a voice channel.
+2. Click **share** on the call bar.
+3. Pick a monitor from the list, like `screen 1 (2560×1440)`.
+4. The button now says **stop share**. Click it to stop.
+
+Leaving the voice call stops your share too.
+
+**Watch someone's screen** (Windows, macOS and Linux):
+
+1. Look at the voice channel list. People who share have a red **LIVE** tag.
+2. Click **LIVE**.
+3. The video replaces the chat.
+4. Press **Esc** to go back to chat.
+5. **Double-click** the video to go fullscreen, and double-click again to leave it.
+
+You can watch one screen at a time. The video is drawn clean, without the CRT
+effects, so text stays readable.
+
+**Quality.** In Settings, the row `share quality` switches between `720p` and
+`1080p`. 720p uses about 1.5 Mbps (15 frames a second). 1080p uses about 3 Mbps.
+
+**Bandwidth.** The server relays the video:
+
+- The sharer uploads one stream.
+- The host uploads one copy for each person watching, about 1.5 Mbps each at 720p.
+- The server only sends a stream to people who are watching it.
+
+So a host with a slow upload should keep the number of watchers small.
+
+**Not yet:** sound from the shared screen, sharing a single window, and sharing
+from macOS or Linux.
+
+**Ports.** Voice and video use one UDP port, the same number as the server
+port (7697). To let shared friends reach only that port, see the Tailscale
+grant in [How safe is this?](#how-safe-is-this-tailscale).
+
+### Logs
+
+Each time you start HERMEC it writes one log file. It helps when something goes
+wrong. The log never contains chat text or keys.
+
+Where the files are:
+
+| System | Folder |
+|---|---|
+| Windows | `%APPDATA%\hermec\logs` |
+| macOS | `~/Library/Application Support/hermec/logs` |
+| Linux | `~/.config/hermec/logs` |
+
+Files are named like `hermec-2026-10-19_21-30-05.log`. HERMEC keeps the newest
+10 and deletes older ones.
+
+To find the folder fast, open Settings and click the row `logs: open folder`.
+It opens the folder and shows the path.
+
+**To send a log to a friend:** open the folder, then attach the newest file
+to a message.
 
 ## Chat with friends
 

@@ -2,8 +2,8 @@
 
 This document specifies the Hermec signaling/chat protocol, version 1. It
 covers the chat subset implemented by the foundation release: authentication,
-channels, presence and text chat, plus voice signaling (section 4.12).
-Screenshare is specified separately, later.
+channels, presence and text chat, plus voice signaling (section 4.12) and
+screen share signaling (section 4.15). Webcam is specified separately, later.
 
 The reference implementation is `core/proto` (types and codec) and `server`
 (behavior). Where this document and the code disagree, that is a bug in one of
@@ -225,7 +225,9 @@ WebRTC (negotiated as in section 4.13). The server acts as an SFU (selective for
 | `rtc_answer`    | C/S | `{"sdp": string}` SDP answer.                                  |
 | `rtc_candidate` | C/S | `{"candidate": string}` one ICE candidate (JSON candidate init). |
 
-`VoiceMember`: `fingerprint` (string), `name` (string), `muted` (bool).
+`VoiceMember`: `fingerprint` (string), `name` (string), `muted` (bool),
+`sharing` (bool, omitted when false; true while the member shares their
+screen, see section 4.15).
 
 Semantics:
 
@@ -316,6 +318,48 @@ Semantics:
   dropped). They also ignore `auth_ok` `server_name`, since receivers ignore
   unknown fields (section 7).
 
+### 4.15 Screen share messages
+
+A member of a voice call can share their screen. Signaling rides the same
+WebSocket; the video travels over the same WebRTC connection as the audio
+(negotiated as in section 4.13).
+
+| Type          | Dir | Payload                                                          |
+|---------------|-----|------------------------------------------------------------------|
+| `share_start` | C   | `{}` the sender starts sharing their screen.                     |
+| `share_stop`  | C   | `{}` the sender stops sharing.                                   |
+| `watch`       | C   | `{"fingerprint": string}` watch that member's share. `""` stops watching. |
+
+Semantics:
+
+- `share_start` and `share_stop` only work while the sender is in a voice
+  call; outside a call they are silently ignored. Each one changes the
+  sender's `sharing` flag and the server re-broadcasts `voice_state`
+  (section 4.12) to everyone.
+- `watch` outside a call yields `error` `not_joined`.
+- Leaving the call (or disconnecting) stops the share.
+- `watch` names a member by fingerprint. The target must be sharing in the
+  same voice channel as the sender, or the server answers `error`
+  `not_sharing`. A client watches at most one share at a time; a new `watch`
+  replaces the old one. `watch` with an empty fingerprint stops watching.
+- A watch ends by itself when the sharer stops or leaves, or when the watcher
+  leaves the call.
+- Both the sharer and the watchers need the usual `join_channel` permission
+  for the voice channel; there is no separate permission.
+
+Media:
+
+- Video is **VP8**, RTP payload type **96**, with RTCP `nack` and `pli`
+  feedback. The sharer sends one video track to the server.
+- The server forwards a sharer's video **only to the members watching it**.
+  Members who are not watching receive no video packets.
+- When someone starts watching, the server asks the sharer for a keyframe
+  (PLI), so the new watcher can start decoding quickly.
+- Adding or removing video tracks changes the call's topology, so the server
+  renegotiates with `rtc_offer` as in section 4.13. Clients must handle these
+  server offers at any time.
+- Hermec does not send audio from the shared screen.
+
 ## 5. Errors
 
 | Code          | Meaning                                                              |
@@ -324,6 +368,7 @@ Semantics:
 | `forbidden`   | The role lacks the required permission (`join_channel`, `send_chat`). |
 | `bad_request` | Malformed message, unknown channel, or unsupported message type.     |
 | `not_joined`  | The operation needs channel membership the client does not have.     |
+| `not_sharing` | `watch` named a member who is not sharing in the sender's voice channel. |
 | `rate_limited`| The client is sending too fast; the connection is closed after this message. |
 
 Except for `auth_failed` and `rate_limited`, errors do not close the connection.
@@ -365,6 +410,11 @@ version number.
 The following were added later and are purely additive, so v1 clients ignore
 them: the `auth_ok` `server_name` field (section 4.3) and the `roster` message
 (section 4.14).
+
+The screen share release added the `share_start`, `share_stop` and `watch`
+messages, the `not_sharing` error and the `VoiceMember` `sharing` field
+(section 4.15). They are additive: older clients ignore the `sharing` field
+and never send the new messages.
 
 ## 8. Discovery
 
