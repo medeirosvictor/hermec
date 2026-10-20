@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"math"
 	"testing"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -32,7 +33,7 @@ func TestCursorBarrelUsesSceneSize(t *testing.T) {
 	g.crtOn = true
 	x, y := g.sceneAt(40, 40+int(g.barH()))
 	wx, wy := state.Barrel(40.5, 40.5, 960, 568, 0.015)
-	if x != wx || y != wy {
+	if math.Abs(x-wx) > 1e-9 || math.Abs(y-wy) > 1e-9 {
 		t.Fatalf("got %v,%v want %v,%v", x, y, wx, wy)
 	}
 }

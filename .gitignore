@@ -13,3 +13,12 @@ Thumbs.db
 
 # SDD workspace dirs must never be committed
 .superpowers/
+.claude/
+
+# Local secrets and server configs
+*.key
+*.pem
+*.server.toml
+!example.server.toml
+server.toml
+hosted.toml

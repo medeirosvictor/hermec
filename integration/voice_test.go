@@ -365,8 +365,9 @@ func TestVoiceJoinTimeoutKeepsChatUsable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Far too short for ICE + DTLS: the negotiation cannot finish.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	// An already-expired deadline: the negotiation cannot finish, regardless
+	// of how fast this machine connects.
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
 	err := a.c.JoinVoice(ctx, voiceCh, a.src, a.sink)
 	if !errors.Is(err, context.DeadlineExceeded) {
