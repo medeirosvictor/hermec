@@ -98,6 +98,9 @@ sha256sum -c SHA256SUMS.txt --ignore-missing
 chmod +x hermec-server-linux-amd64
 ```
 
+On macOS, use `shasum -a 256 -c SHA256SUMS.txt --ignore-missing` instead
+(macOS has no `sha256sum` by default).
+
 On Windows, `certutil -hashfile hermec-server-windows-amd64.exe SHA256` prints
 the hash to compare with the line in `SHA256SUMS.txt`.
 

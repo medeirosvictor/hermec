@@ -84,7 +84,7 @@ Client                                   Server
 Any message other than `auth` before authentication is an authentication
 failure. Timeout or disconnect before `auth` simply closes the connection.
 
-**Failed logins.** After 5 failed logins from one IP within a minute, that IP
+**Failed logins.** After 5 failed logins in a row from one IP (forgotten after a quiet minute), that IP
 is refused for 1 s. Each further failure doubles the wait, up to 60 s. A
 successful login resets the count. While an IP is refused, its connection
 attempts get HTTP 503 instead of a WebSocket.
