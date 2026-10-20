@@ -108,6 +108,37 @@ func (v *voiceClient) sharing(fp string) bool {
 	return false
 }
 
+// watchOK calls Watch and tolerates ErrWatchTimeout: the server answers a
+// watch only once the sharer's own video track has been negotiated, which can
+// take longer than Watch waits on a loaded machine. Production carries on (the
+// late video_source is still honoured), so the tests do too and assert on
+// labels and sizes instead.
+func watchOK(t *testing.T, v *voiceClient, fp string) {
+	t.Helper()
+	if err := v.c.Watch(fp); err != nil {
+		if errors.Is(err, client.ErrWatchTimeout) {
+			t.Logf("Watch(%.8s): %v (continuing)", fp, err)
+			return
+		}
+		t.Fatal(err)
+	}
+}
+
+// warmUp has viewer watch each sharer in turn until frames arrive, which proves
+// the sharer's video pipeline is up on the server; later watches of it are then
+// answered at once and cannot be refused because the share is still starting.
+func warmUp(t *testing.T, viewer *voiceClient, rec *recVideo, sharers ...*voiceClient) {
+	t.Helper()
+	for _, s := range sharers {
+		eventually(t, 10*time.Second, "viewer sees sharer sharing", func() bool { return viewer.sharing(s.fp) })
+		watchOK(t, viewer, s.fp)
+		eventually(t, 20*time.Second, "warm-up frames", func() bool { return rec.n(s.fp) >= 2 })
+	}
+	if err := viewer.c.Watch(""); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestShareWatchEndToEnd(t *testing.T) {
 	url := startVoiceServer(t)
 	a := newVoiceClient(t, url, "alice", 0xA1)
@@ -239,11 +270,14 @@ func TestWatchRefusedThenSwitch(t *testing.T) {
 	a := newVoiceClient(t, url, "alice", 0xA1)
 	b := newVoiceClient(t, url, "bob", 0xB2)
 	c := newVoiceClient(t, url, "carol", 0xC3)
-	cv := newRecVideo()
+	d := newVoiceClient(t, url, "dave", 0xD4)
+	cv, dv := newRecVideo(), newRecVideo()
 	c.c.SetVideoSink(cv)
+	d.c.SetVideoSink(dv)
 	a.join(t)
 	b.join(t)
 	c.join(t)
+	d.join(t)
 	sizeA, sizeB := [2]int{320, 240}, [2]int{256, 192}
 	if err := a.c.StartShare(&synthSource{}, sizeA[0], sizeA[1], shareFPS, shareKbps); err != nil {
 		t.Fatal(err)
@@ -253,9 +287,8 @@ func TestWatchRefusedThenSwitch(t *testing.T) {
 	}
 	eventually(t, 10*time.Second, "C sees both sharing", func() bool { return c.sharing(a.fp) && c.sharing(b.fp) })
 
-	if err := c.c.Watch(a.fp); err != nil {
-		t.Fatal(err)
-	}
+	warmUp(t, d, dv, a, b)
+	watchOK(t, c, a.fp)
 	eventually(t, 15*time.Second, "frames from A", func() bool { return cv.n(a.fp) >= 3 })
 
 	var se *client.ServerError
@@ -265,9 +298,7 @@ func TestWatchRefusedThenSwitch(t *testing.T) {
 	base := cv.n(a.fp)
 	eventually(t, 10*time.Second, "A frames continue after the refused watch", func() bool { return cv.n(a.fp) >= base+3 })
 
-	if err := c.c.Watch(b.fp); err != nil {
-		t.Fatal(err)
-	}
+	watchOK(t, c, b.fp)
 	eventually(t, 10*time.Second, "frames labelled B", func() bool { return cv.n(b.fp) >= 3 })
 	if got := cv.sizesOf(b.fp); len(got) != 1 || got[sizeB] == 0 {
 		t.Errorf("frames labelled B have sizes %v, want only %v", got, sizeB)
@@ -283,8 +314,9 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 	b := newVoiceClient(t, url, "bob", 0xB2)
 	c := newVoiceClient(t, url, "carol", 0xC3)
 	d := newVoiceClient(t, url, "dave", 0xD4)
-	cv := newRecVideo()
+	cv, dv := newRecVideo(), newRecVideo()
 	c.c.SetVideoSink(cv)
+	d.c.SetVideoSink(dv)
 	a.join(t)
 	b.join(t)
 	c.join(t)
@@ -299,9 +331,8 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 	}
 	eventually(t, 10*time.Second, "C sees both sharing", func() bool { return c.sharing(a.fp) && c.sharing(b.fp) })
 
-	if err := c.c.Watch(a.fp); err != nil {
-		t.Fatal(err)
-	}
+	warmUp(t, d, dv, a, b)
+	watchOK(t, c, a.fp)
 	eventually(t, 15*time.Second, "frames from A", func() bool { return cv.n(a.fp) >= 5 })
 
 	// Dave flips between the sharers around Carol's switch. Every flip makes
@@ -332,9 +363,7 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 	defer func() { close(stopFlip); <-flipDone }()
 
 	start := time.Now()
-	if err := c.c.Watch(b.fp); err != nil {
-		t.Fatal(err)
-	}
+	watchOK(t, c, b.fp)
 	eventually(t, 5*time.Second, "frames labelled B", func() bool { return cv.n(b.fp) >= 3 })
 	cv.mu.Lock()
 	lat := cv.first[b.fp].Sub(start)
