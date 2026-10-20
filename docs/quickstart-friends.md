@@ -87,8 +87,22 @@ each other's IPs, because media is relayed through the server by default.
 
 ## What the host runs
 
-The server is pure Go and cross-compiles, so you can build it for the machine
-that will host it:
+Easiest: download the server for your machine from the
+[Releases page](https://github.com/medeirosvictor/hermec/releases)
+(`hermec-server-linux-amd64`, `hermec-server-linux-arm64` or
+`hermec-server-windows-amd64.exe`). Check it against `SHA256SUMS.txt` from the
+same release before you run it. On Linux:
+
+```sh
+sha256sum -c SHA256SUMS.txt --ignore-missing
+chmod +x hermec-server-linux-amd64
+```
+
+On Windows, `certutil -hashfile hermec-server-windows-amd64.exe SHA256` prints
+the hash to compare with the line in `SHA256SUMS.txt`.
+
+Or build it yourself. The server is pure Go and cross-compiles, so you can
+build it for the machine that will host it:
 
 ```sh
 GOOS=linux GOARCH=amd64 go build ./cmd/hermec-server
@@ -121,7 +135,7 @@ The host sends each friend the Releases link:
 <https://github.com/medeirosvictor/hermec/releases>. Friends download
 `hermec-windows-amd64.zip` (or the arm64 zip on a Windows ARM laptop), unzip it
 anywhere, and run `hermec.exe`. It is one file. No toolchain and no DLLs are
-needed. Mac friends build from source; see
+needed. Mac friends build from source with `scripts/build-mac.sh`; see
 [macOS: run from Terminal](../README.md#macos-run-from-terminal).
 
 *Fallback:* if a friend cannot reach GitHub, the host can send them their own
@@ -138,7 +152,8 @@ Notes:
 - **SmartScreen:** the exe is unsigned, so Windows may warn. Click
   **More info**, then **Run anyway**.
 - **Update check:** the app checks GitHub for a newer release at startup and
-  shows a banner if there is one. It can be turned off in Settings.
+  shows a banner if there is one. Release builds always run this check; it
+  cannot be turned off. The old `update_check` setting is ignored.
 - **Use headphones.** Hermec has no echo cancellation; speakers feed other
   people's voices back into your mic.
 - **Your identity key:** the first run creates your identity key at

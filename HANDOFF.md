@@ -5,6 +5,29 @@
 >
 > **Round B decomposition (agreed 2026-10-11):** B.1 sessions = items (a)+(b) below; B.2 server identity/management = (d), (e), then (c) roster; B.3 = (f) icon editor. B.1 decisions: every server opened this session stays connected (no startup auto-dial), right-click tile → Disconnect, unread = rail dot + bright channels, one `session` struct per server. README gained a plain-language "how people reach each other" section (4ec31a6).
 
+## v0.5.0 hardening (lead entry)
+
+Part of the v0.5.0 round (screen share plus hardening), on branch `worktree-hermec-screenshare`. Spec `docs/superpowers/specs/2026-10-19-hermec-hardening-design.md`.
+
+**Shipped:**
+- Server limits: `max_voice` (default 25, max 50; a full channel refuses with `voice_full`), `max_clients` (default 256; `server_full`), `max_per_ip` (default 16; raise it for LAN parties), and at most 64 connections waiting for auth.
+- Connection guards: upgrades that carry a browser `Origin` are refused. Failed logins slow down per IP; a success resets it.
+- Names are cleaned and capped at 64 characters on the server. Chat text is capped at 4096 bytes (`message too long`). No frame goes over 64 KiB, and `presence.total` gives the real member count when a list is trimmed.
+- Paste (Ctrl+V, Cmd+V on macOS) and caret editing (Left, Right, Home, End, Delete) in every text field. The Join address field keeps its `ws://` and a pasted full address replaces it.
+- Client: a late ping reply no longer counts twice. Auth failures stop automatic retry (manual ↻ still works). The update link must point at this repo's releases. The tailscale path also works inside Tailscale.app on macOS.
+- macOS builds: `scripts/build-mac.sh` checks out the latest release tag and builds with the version stamped in, so the update banner works. It leaves a detached HEAD; `git checkout main` goes back.
+- CI runs tests on macOS and arm64. Releases publish only when the tagged commit is on `main` and vet and tests pass. `.gitignore` covers keys and server configs.
+- Docs: README (paste, Linux clipboard tools, macOS script, safety notes), quickstart (server downloads with `SHA256SUMS.txt`, update check wording), `docs/protocol.md` (section 3.3 and the error codes).
+
+**Deferred (not in v0.5.0):**
+- Auth bound to server identity (needs server keys and a protocol version bump).
+- Discovery table eviction and hiding the version in replies.
+- macOS shortcuts.
+- Mic-silence warning.
+- Server config validation and logging.
+- Auto-rejoin voice after a reconnect.
+- Homebrew tap.
+
 ## Start here (fresh session)
 
 1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and the memory note `hermec-project`.

@@ -94,6 +94,8 @@ The exe is unsigned, so Windows SmartScreen may warn: click **More info**, then
 3. Run `./hermec`.
 
 You need a desktop with X11 or Wayland, and PulseAudio or PipeWire for sound.
+Copy and paste need one of `xclip`, `xsel` or `wl-clipboard` (for example,
+`sudo apt install xclip`).
 
 **Servers and checks:** each release also ships servers (`hermec-server-linux-amd64`,
 `hermec-server-linux-arm64`, `hermec-server-windows-amd64.exe`) and a
@@ -149,6 +151,7 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 ### Keys
 
 - **Enter**: Connect to server or send message
+- **Ctrl+V** (Cmd+V on macOS): Paste into any text field. **Left**, **Right**, **Home**, **End** and **Delete** move and edit at the caret. On Linux, copy and paste need `xclip`, `xsel` or `wl-clipboard`.
 - **Tab** or **Ctrl+Up/Down**: Switch channel
 - **PgUp/PgDn** or **mouse wheel**: Scroll chat
 - **F1**: Toggle CRT effect
@@ -211,15 +214,19 @@ So you build it yourself. It takes a few minutes.
 3. Install Go and git: `brew install go git`
 4. Get the code:
    `git clone https://github.com/medeirosvictor/hermec.git && cd hermec`
-5. Build it: `go build -o hermec ./cmd/hermec`
+5. Build the latest release: `scripts/build-mac.sh`
+   The script fetches the release tags, checks out the newest one, and builds
+   `./hermec` with its version number set, so the update banner works.
    The first build downloads Go 1.27 automatically if Homebrew's Go is older.
 6. Run it: `./hermec`
 7. The first time you use voice, macOS asks to let Terminal use the microphone.
    Allow it. You can change it later in System Settings → Privacy & Security →
    Microphone.
 
-To update, run `git pull`, then the build line again
-(`go build -o hermec ./cmd/hermec`).
+To update: run `scripts/build-mac.sh` again.
+
+The script checks out a release tag, so the repo is on a detached HEAD. To go
+back to the development branch, run `git checkout main`.
 
 ## Join a friend's server
 
@@ -232,8 +239,10 @@ Any OS, once HERMEC is running:
    server tile's right-click menu). It looks like `ws://100.x.x.x:7697/`.
 3. Optional check (macOS/Linux Terminal): `nc -vz 100.x.x.x 7697` should say
    "succeeded".
-4. In HERMEC click **+**, then **Join**. Paste the address, including `ws://`,
-   and press Enter.
+4. In HERMEC click **+**, then **Join**. The address field already starts with
+   `ws://`. Paste the full address (Ctrl+V, or Cmd+V on a Mac), or type the
+   rest after the `ws://`, then press Enter. Pasting a full `ws://` address
+   replaces the prefilled text, so you never get `ws://ws://`.
 5. Put on headphones (there is no echo cancellation yet) and click a voice channel.
 
 ## How safe is this? (Tailscale)
@@ -273,8 +282,10 @@ Any OS, once HERMEC is running:
    needs HERMEC v0.5.0 or newer on the host. If you run on another port, use
    that port number instead of 7697; `media_port` in the server config picks a
    different media port if you need one.
-2. **No password or invite list.** Anyone who can reach your server's port can
-   join. That includes other devices on your home Wi-Fi.
+2. **No password or invite list in the app.** Anyone who can reach your
+   server's port can join, including other devices on your home Wi-Fi. The
+   server config already has `password` and `allowed_keys` (see
+   [example.server.toml](example.server.toml)); the app cannot set them yet.
 3. **Windows Firewall on public Wi-Fi.** If you allowed HERMEC on "Public"
    networks, your server is reachable on any café Wi-Fi your PC joins. To allow
    only Tailscale and your home network, run PowerShell as admin (use your own
@@ -288,12 +299,17 @@ Any OS, once HERMEC is running:
 
    Drop `,LocalSubnet` to allow Tailscale only.
 4. **The host can read everything.** Chat and voice pass through the host's
-   server. Only join servers run by people you trust.
+   server. Only join servers run by people you trust. A host could also pretend
+   to be you on other servers you use, until server identity keys land
+   (planned).
 5. **Names are not verified.** Anyone can pick any name. The fingerprint (hover
    a server or person) is the real identity.
-6. **Not ready for the open internet.** HERMEC uses plain `ws://` without TLS.
+6. **Not ready for the open internet.** HERMEC uses plain `ws://` unless you
+   set `tls_cert` and `tls_key` in the server config (both are in
+   [example.server.toml](example.server.toml); the server then serves `wss://`).
    Only reach servers through Tailscale or your LAN. Hosting on a rented server
-   for strangers needs TLS and invite links first (on the roadmap).
+   for strangers needs invite links and server identity keys first (on the
+   roadmap).
 
 ## Run
 

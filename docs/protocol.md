@@ -18,6 +18,9 @@ them; please report it.
 - Maximum message size: **65536 bytes (64 KiB)**, measured on the raw frame.
   The server's WebSocket read limit is set to this value, so a larger frame
   terminates the connection. `proto.Decode` also rejects larger input.
+  Servers never send a frame over this limit: an outbound frame that would be
+  too large is dropped and logged, not sent. Lists that could grow past it
+  (`presence`, `roster`) are trimmed to fit, see sections 4.7 and 4.14.
 - Keepalive: the server sends a WebSocket ping every 15 seconds and closes the
   connection on the tick after two consecutive unanswered pings (about 45
   seconds after the last pong), without sending a third. Clients must
@@ -81,6 +84,11 @@ Client                                   Server
 Any message other than `auth` before authentication is an authentication
 failure. Timeout or disconnect before `auth` simply closes the connection.
 
+**Failed logins.** After 5 failed logins from one IP within a minute, that IP
+is refused for 1 s. Each further failure doubles the wait, up to 60 s. A
+successful login resets the count. While an IP is refused, its connection
+attempts get HTTP 503 instead of a WebSocket.
+
 **Fingerprint.** A key's identity is its fingerprint: the lowercase RFC 4648
 base32 (no padding) encoding of the first 10 bytes of `SHA-256(pubkey)`,
 split into hyphen-separated groups of four characters, for example
@@ -92,6 +100,21 @@ The client may send `join`, `leave` and `chat_send`. The server sends
 `presence` and `chat_message` for channels the client has joined. A
 connection that sends anything else receives `error` (`bad_request`).
 Disconnecting leaves all channels; remaining members receive a new `presence`.
+
+### 3.3 Connection and name limits
+
+- **Browser origins.** An upgrade request that carries an `Origin` header is
+  refused. Native clients send none.
+- **Connection caps.** The server allows at most 64 connections waiting for
+  `auth`, `max_per_ip` concurrent connections per remote IP (default 16; raise
+  it for a LAN party), and `max_clients` authenticated sessions (default 256).
+  A new connection over the pre-auth or per-IP cap is refused with HTTP 503,
+  before any WebSocket opens. A client over `max_clients` gets `server_full`
+  (section 5).
+- **Names.** The server cleans every `auth` name: it removes format, control
+  and line or paragraph separator characters, trims spaces, and keeps at most
+  64 characters. A name that is empty after cleaning becomes `anon`.
+  `presence`, `roster` and `chat_message` carry the cleaned name.
 
 ## 4. Messages
 
@@ -108,7 +131,7 @@ Direction: C is client to server, S is server to client.
 | Field      | Type   | Required | Description                               |
 |------------|--------|----------|-------------------------------------------|
 | `pubkey`   | base64 | yes      | 32-byte Ed25519 public key.               |
-| `name`     | string | yes      | Display name.                             |
+| `name`     | string | yes      | Display name, cleaned and capped by the server (see 3.3). |
 | `sig`      | base64 | yes      | Ed25519 signature of the challenge nonce. |
 | `password` | string | no       | Server password, if one is configured.    |
 
@@ -164,8 +187,12 @@ If the client was not in the channel the server replies `error` `not_joined`.
 |-----------|----------|--------------------------------------------------|
 | `channel` | string   | Channel name.                                    |
 | `members` | Member[] | Full current member list, sorted by name then fingerprint. |
+| `total`   | int      | Optional. The real member count. Omitted when zero, and absent from older servers. |
 
-`presence` always carries the complete member list, not a delta. A `Member`:
+`presence` always carries the complete member list, not a delta. If the list
+would not fit in one frame (section 1), `members` holds only the first members
+that fit, and `total` still gives the real count, so a client can show
+"and N more". A `Member`:
 
 | Field         | Type     | Description                       |
 |---------------|----------|-----------------------------------|
@@ -181,8 +208,9 @@ If the client was not in the channel the server replies `error` `not_joined`.
 | `text`    | string | Message body (UTF-8 text).   |
 
 The sender must be a member of the channel (`not_joined` otherwise) and hold
-the `send_chat` permission (`forbidden` otherwise). The only length limit on
-`text` is the 64 KiB message size limit.
+the `send_chat` permission (`forbidden` otherwise). `text` may be at most
+**4096 bytes** (UTF-8). A longer text is refused with `bad_request` and the
+message `message too long`.
 
 ### 4.9 `chat_message` (S)
 
@@ -233,6 +261,8 @@ Semantics:
 
 - `voice_join` targets a channel whose `type` is `voice`; unknown or non-voice
   channels yield `bad_request`. It requires the `join_channel` permission.
+  A channel already at its participant cap (`max_voice`, default 25, maximum
+  50) refuses the join with `voice_full`.
 - **One call at a time.** A connection is in at most one voice channel.
   Sending `voice_join` for another channel while in a call moves the client:
   it leaves the old channel (whose members get a fresh `voice_state`) and
@@ -384,7 +414,7 @@ Media:
 |---------------|----------------------------------------------------------------------|
 | `auth_failed` | Authentication failed; the connection is closed after this message. |
 | `forbidden`   | The role lacks the required permission (`join_channel`, `send_chat`). |
-| `bad_request` | Malformed message, unknown channel, or unsupported message type.     |
+| `bad_request` | Malformed message, unknown channel, unsupported message type, or chat text over 4096 bytes (`message too long`). |
 | `not_joined`  | The operation needs channel membership the client does not have.     |
 | `not_sharing` | `watch` named a member who is not sharing in the sender's voice channel. |
 | `voice_full`  | `voice_join` named a channel already at its participant cap (`max_voice`, default 25). |
