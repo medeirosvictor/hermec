@@ -27,13 +27,18 @@ Part of the v0.5.0 round (screen share plus hardening), on branch `worktree-herm
 - Server config validation and logging.
 - Auto-rejoin voice after a reconnect.
 - Homebrew tap.
+- Discovery probing cost: the Join list probes while it is visible, plus one `tailscale status --json` call; probing should run only while the Join list is visible.
+- Release-workflow extras: draft releases and a protected environment, SHA-pinned actions, Dependabot, govulncheck, build attestations, and a concurrency group.
+- Per-key rate limits.
+- Full-length fingerprints for allowlists and grants.
+- Release note: a v0.5 `hosted.toml` written before the default-omitting fix may contain `max_voice`, `max_clients` or `max_per_ip` keys, which an older app (v0.4) rejects.
 
 ## Start here (fresh session)
 
 1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and the memory note `hermec-project`.
-2. Repo state: `main` == `origin/main` (Add a Server page merged, tagged v0.3.0). Clean apart from untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`), which are never committed. The four `.claude/worktrees/agent-*` worktrees are old, from earlier rounds, and left alone.
+2. Repo state: `main` == `origin/main`, with the portable-builds round (PR #5, v0.4.0 tagged) and the Add a Server page (v0.3.0) on it. **v0.5.0 is pending:** branch `worktree-hermec-screenshare` (PR #6) still needs merging and tagging. Clean apart from untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`), which are never committed. The four `.claude/worktrees/agent-*` worktrees are old, from earlier rounds, and left alone.
 3. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload: `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In the owner's real settings, **CRT and curvature are currently off**: F1 toggles CRT, F3 toggles curvature, F2 cycles themes.
-4. Order of work: Victor's real-mouse checklists (pipeline item 0, plus the Add a Server checklist in its spec section 6) and the friend test of v0.3.0, then screen share real test (pipeline item 0a), then the always-on round, then webcam, then friends adjustments, then B.3 (icon editor). Untested risks for the friend test: voice over a Tailscale *shared* node (shared nodes can't initiate connections to the recipient) and building the GUI on macOS since Round A (no Mac release asset exists by design; friend builds from source per README "macOS: run from Terminal").
+4. Order after the v0.5.0 release: Victor's real test (screen share checklist, pipeline item 0a), then the always-on round, then webcam, then friends adjustments; B.3 (icon editor) stays open after those. Untested risks for the friend test: voice over a Tailscale *shared* node (shared nodes can't initiate connections to the recipient) and building the GUI on macOS since Round A (no Mac release asset exists by design; friend builds from source per README "macOS: run from Terminal").
 5. Never run the GUI from an agent against `%APPDATA%\hermec` (see Gotchas). Build the separate-config-dir flag first if automated GUI runs are needed.
 
 ## Where things stand
