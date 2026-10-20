@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/medeirosvictor/hermec/client"
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
 )
 
@@ -295,7 +296,7 @@ func (g *game) applyDial(r dialResult) {
 		}
 		s.st.ConnectErr = s.lastErr // stays PhaseDisconnected
 		var se *client.ServerError
-		if errors.As(r.err, &se) && se.Code == "auth_failed" {
+		if errors.As(r.err, &se) && se.Code == proto.CodeAuthFailed {
 			s.retryAt = time.Time{} // retrying cannot help; the tile's ↻ still can
 			return
 		}

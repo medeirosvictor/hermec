@@ -97,6 +97,20 @@ func (r *rttTracker) get() (time.Duration, bool) {
 // the first pong arrives. It is cheap and never blocks on I/O.
 func (c *Client) RTT() (rtt time.Duration, ok bool) { return c.rtt.get() }
 
+// pingOnce samples a timeout and sends one ping. The timeout check runs before
+// (and independent of) writeMu, so a data write stalled for up to writeTimeout
+// cannot delay it. The ping itself is stamped while holding writeMu, so time
+// spent queued behind a slow write is not counted as network latency; that
+// wait only delays this ping, not the next timeout sample.
+func (c *Client) pingOnce(timeout time.Duration, now func() time.Time) {
+	c.rtt.check(now(), timeout)
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	t := now()
+	payload := c.rtt.sent(t)
+	_ = c.ws.WriteControl(websocket.PingMessage, []byte(payload), t.Add(pingWrite))
+}
+
 // startPinger sends a ping immediately and then every interval until the
 // client closes or the read loop exits. Pongs are handled by the pong handler
 // installed in Dial (on the read goroutine). The server's own pings are still
@@ -107,14 +121,7 @@ func (c *Client) startPinger(interval, timeout time.Duration, now func() time.Ti
 		tick := time.NewTicker(interval)
 		defer tick.Stop()
 		for {
-			// Stamp the ping while holding writeMu: waiting behind a slow
-			// data write must not count as network latency.
-			c.writeMu.Lock()
-			t := now()
-			c.rtt.check(t, timeout)
-			payload := c.rtt.sent(t)
-			_ = c.ws.WriteControl(websocket.PingMessage, []byte(payload), t.Add(pingWrite))
-			c.writeMu.Unlock()
+			c.pingOnce(timeout, now)
 			select {
 			case <-c.done:
 				return

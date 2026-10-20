@@ -40,7 +40,7 @@ func tailscaleBin() (string, bool) {
 		return bin, true
 	}
 	if goos == "darwin" {
-		if fi, err := statFn(macAppTailscale); err == nil && !fi.IsDir() && fi.Mode().Perm()&0o111 != 0 {
+		if fi, err := statFn(macAppTailscale); err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o111 != 0 {
 			noTailscale.Store(false)
 			return macAppTailscale, true
 		}

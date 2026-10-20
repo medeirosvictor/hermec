@@ -59,6 +59,10 @@ const CodeVoiceFull = "voice_full"
 // server is at its authenticated-session cap (server config max_clients).
 const CodeServerFull = "server_full"
 
+// CodeAuthFailed is the error code for a rejected authentication (bad
+// signature, wrong password, banned key). Retrying cannot succeed.
+const CodeAuthFailed = "auth_failed"
+
 // Reserved for future end-to-end encryption. They have no handler in v1.
 const (
 	TypeE2EEKeyExchange = "e2ee_key_exchange"

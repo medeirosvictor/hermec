@@ -290,7 +290,7 @@ func (g *game) drawConnect(screen *ebiten.Image) {
 		}
 		g.drawTextF(screen, g.faceS, hint, x, y, th.Dim)
 		if discover.TailscaleMissing() {
-			g.drawTextF(screen, g.faceS, "Tailscale not found — type your friend's invite address", x, y+lh, th.Dim)
+			g.drawTextF(screen, g.faceS, "Tailscale not found - type your friend's invite address", x, y+lh, th.Dim)
 		}
 	}
 }
