@@ -30,9 +30,11 @@ type FrameSource interface {
 var ErrNoFrame = errors.New("client: no new frame")
 
 // VideoSink receives decoded frames of the sharer being watched. It is called
-// from one goroutine per watched stream with the newest decoded frame only
-// (older undelivered frames are dropped); it may take its time but a slow sink
-// just loses frames. The sink owns f.
+// from an internal goroutine (one per watched stream, which survives a switch
+// of the watched sharer) with the newest decoded frame only: older undelivered
+// frames are dropped. It must not block for long. Calls may overlap briefly
+// around a Watch change, so the sink must be safe for concurrent use. fp is
+// the sharer being watched when the frame was decoded. The sink owns f.
 type VideoSink interface {
 	WriteVideoFrame(fp string, f *video.Frame)
 }
@@ -42,10 +44,28 @@ var ErrAlreadySharing = errors.New("client: already sharing")
 
 const (
 	videoClock    = 90000
-	maxPacketLate = 512         // packets the sample builder waits for before skipping
-	pliInterval   = time.Second // at most one viewer PLI per second
+	maxPacketLate = 128                    // packets the sample builder buffers before skipping
+	maxFrameDelay = 400 * time.Millisecond // RTP-time a frame waits for a missing packet
+	pliInterval   = time.Second            // at most one viewer PLI per second
 	statsMinSpan  = 250 * time.Millisecond
 )
+
+// newVideoSampleBuilder assembles VP8 frames. WithMaxTimeDelay matters:
+// without it one unrepaired loss blocks every later frame until the buffer
+// overflows.
+func newVideoSampleBuilder() *samplebuilder.SampleBuilder {
+	return samplebuilder.New(maxPacketLate, &codecs.VP8Packet{}, videoClock,
+		samplebuilder.WithMaxTimeDelay(maxFrameDelay))
+}
+
+// newEncoder builds the VP8 encoder (a variable so tests can substitute one).
+var newEncoder = func(w, h, fps, kbps int) (frameEncoder, error) {
+	e, err := video.NewEncoder(w, h, fps, kbps)
+	if err != nil {
+		return nil, err
+	}
+	return e, nil
+}
 
 // frameEncoder is video.Encoder, abstracted so tests can slow it down.
 type frameEncoder interface {
@@ -68,6 +88,8 @@ type shareLoop struct {
 	write func(pkt []byte, d time.Duration) error
 	// onFail is called (once, from the grab goroutine) when the source fails.
 	onFail func(error)
+	// onEncodeErr is called for each failed Encode.
+	onEncodeErr func(error)
 
 	mu    sync.Mutex
 	slot  *video.Frame // newest unencoded frame
@@ -193,9 +215,19 @@ func (sl *shareLoop) encodeLoop() {
 		f := sl.cur
 		sl.mu.Unlock()
 
-		pkt, _, err := sl.enc.Encode(f, sl.forceKey.Swap(false))
-		if err != nil || len(pkt) == 0 {
+		key := sl.forceKey.Swap(false)
+		pkt, _, err := sl.enc.Encode(f, key)
+		if err != nil {
+			if key {
+				sl.forceKey.Store(true) // the request must survive a failed encode
+			}
+			if sl.onEncodeErr != nil {
+				sl.onEncodeErr(err)
+			}
 			continue
+		}
+		if len(pkt) == 0 {
+			continue // rate control dropped it; the encoder carries a pending key over
 		}
 		now := time.Now()
 		d := time.Second / time.Duration(sl.fps)
@@ -220,7 +252,10 @@ func (c *Client) StartShare(src FrameSource, w, h, fps, kbps int) error {
 	if src == nil {
 		return errors.New("client: nil frame source")
 	}
-	enc, err := video.NewEncoder(w, h, fps, kbps)
+	if w <= 0 || h <= 0 || fps < 1 || fps > 60 || kbps <= 0 {
+		return fmt.Errorf("client: invalid share parameters %dx%d @%d fps, %d kbps", w, h, fps, kbps)
+	}
+	enc, err := newEncoder(w, h, fps, kbps)
 	if err != nil {
 		return err
 	}
@@ -231,26 +266,40 @@ func (c *Client) StartShare(src FrameSource, w, h, fps, kbps int) error {
 	})
 	sl.onFail = func(err error) {
 		c.emitNB(Event{Err: fmt.Errorf("client: screen share ended: %w", err)})
-		go func() { _ = c.StopShare() }()
+		go func() { _ = c.stopShare(cl, sl) }() // only this share, not a later one
+	}
+	sl.onEncodeErr = func(err error) {
+		if c.vstats.encodeErrors.Add(1) == 1 {
+			c.emitNB(Event{Err: fmt.Errorf("client: screen share encode: %w", err)})
+		}
 	}
 	cl.smu.Lock()
+	if cl.sclosed { // the call is being torn down: nobody would ever stop this loop
+		cl.smu.Unlock()
+		enc.Close()
+		return ErrNotInVoice
+	}
 	if cl.share != nil {
 		cl.smu.Unlock()
 		enc.Close()
 		return ErrAlreadySharing
 	}
 	cl.share = sl
+	sl.start() // under smu: teardown's takeShare then always finds a started loop to stop
 	cl.smu.Unlock()
 
 	if err := c.send(proto.TypeShareStart, proto.ShareStart{}); err != nil {
-		cl.dropShare(sl)
-		sl.stop()
+		if cl.dropShare(sl) {
+			sl.stop()
+		}
 		return err
 	}
 	cl.post(cl.ensureVideo) // adds the video sender (one renegotiation) the first time
-	sl.start()
 	return nil
 }
+
+// VideoEncodeErrors returns how many frames failed to encode so far.
+func (c *Client) VideoEncodeErrors() uint64 { return c.vstats.encodeErrors.Load() }
 
 // StopShare stops sharing and tells the server. It is a no-op when not sharing.
 func (c *Client) StopShare() error {
@@ -258,7 +307,12 @@ func (c *Client) StopShare() error {
 	if cl == nil {
 		return nil
 	}
-	sl := cl.takeShare()
+	return c.stopShare(cl, nil)
+}
+
+// stopShare stops cl's share (only sl if non-nil) and tells the server.
+func (c *Client) stopShare(cl *call, only *shareLoop) error {
+	sl := cl.takeShareIf(only)
 	if sl == nil {
 		return nil
 	}
@@ -274,7 +328,20 @@ func (c *Client) Watch(fp string) error {
 	if c.getCall() == nil {
 		return ErrNotInVoice
 	}
+	c.watchMu.Lock()
+	c.watchFP = fp
+	c.watchGen++
+	c.watchMu.Unlock()
 	return c.send(proto.TypeWatch, proto.Watch{Fingerprint: fp})
+}
+
+// watchTarget returns the sharer we asked to watch and a counter that changes
+// on every Watch call. The server keeps one video transceiver per viewer and
+// swaps its source, so the track's own stream id only names the first sharer.
+func (c *Client) watchTarget() (string, uint64) {
+	c.watchMu.Lock()
+	defer c.watchMu.Unlock()
+	return c.watchFP, c.watchGen
 }
 
 // SetVideoSink sets the receiver of decoded video (nil discards video).
@@ -294,6 +361,7 @@ func (c *Client) videoSink() VideoSink {
 type videoStats struct {
 	sentBytes, recvBytes   atomic.Uint64
 	sentFrames, recvFrames atomic.Uint64
+	encodeErrors           atomic.Uint64
 
 	mu                             sync.Mutex
 	at                             time.Time
@@ -333,20 +401,32 @@ func (c *Client) VideoStats() (sendKbps, recvKbps, fps float64) {
 
 // ---- call side (actor and goroutines) ----
 
-func (cl *call) takeShare() *shareLoop {
+// closeShare is the teardown path: it takes the current share and forbids
+// any later StartShare on this call.
+func (cl *call) closeShare() *shareLoop {
 	cl.smu.Lock()
 	defer cl.smu.Unlock()
+	cl.sclosed = true
 	sl := cl.share
 	cl.share = nil
 	return sl
 }
 
-func (cl *call) dropShare(sl *shareLoop) {
+// takeShareIf detaches the current share if it is only (or any, when only is nil).
+func (cl *call) takeShareIf(only *shareLoop) *shareLoop {
 	cl.smu.Lock()
-	if cl.share == sl {
-		cl.share = nil
+	defer cl.smu.Unlock()
+	sl := cl.share
+	if sl == nil || (only != nil && sl != only) {
+		return nil
 	}
-	cl.smu.Unlock()
+	cl.share = nil
+	return sl
+}
+
+// dropShare detaches sl if it is still the current share.
+func (cl *call) dropShare(sl *shareLoop) bool {
+	return cl.takeShareIf(sl) != nil
 }
 
 func (cl *call) curShare() *shareLoop {
@@ -421,12 +501,14 @@ func (cl *call) addVideoSender(pc *webrtc.PeerConnection) error {
 type latestFrame struct {
 	mu   sync.Mutex
 	f    *video.Frame
+	fp   string
+	gen  uint64
 	wake chan struct{}
 }
 
-func (l *latestFrame) put(f *video.Frame) {
+func (l *latestFrame) put(f *video.Frame, fp string, gen uint64) {
 	l.mu.Lock()
-	l.f = f
+	l.f, l.fp, l.gen = f, fp, gen
 	l.mu.Unlock()
 	select {
 	case l.wake <- struct{}{}:
@@ -434,12 +516,18 @@ func (l *latestFrame) put(f *video.Frame) {
 	}
 }
 
-func (l *latestFrame) take() *video.Frame {
+func (l *latestFrame) take() (*video.Frame, string, uint64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	f := l.f
+	f, fp, gen := l.f, l.fp, l.gen
 	l.f = nil
-	return f
+	return f, fp, gen
+}
+
+func (l *latestFrame) clear() {
+	l.mu.Lock()
+	l.f = nil
+	l.mu.Unlock()
 }
 
 // readVideo receives one remote VP8 track: depacketize, decode, hand the
@@ -447,13 +535,12 @@ func (l *latestFrame) take() *video.Frame {
 // the track does.
 func (cl *call) readVideo(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote) {
 	defer cl.wg.Done()
-	fp := remote.StreamID()
 	dec, err := video.NewDecoder()
 	if err != nil {
 		cl.c.emitNB(Event{Err: err})
 		return
 	}
-	defer dec.Close()
+	defer func() { dec.Close() }()
 
 	lf := &latestFrame{wake: make(chan struct{}, 1)}
 	done := make(chan struct{})
@@ -465,7 +552,11 @@ func (cl *call) readVideo(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote)
 			case <-done:
 				return
 			case <-lf.wake:
-				if f := lf.take(); f != nil {
+				if f, fp, gen := lf.take(); f != nil {
+					// A frame decoded before a Watch change must not outlive it.
+					if _, cur := cl.c.watchTarget(); cur != gen {
+						continue
+					}
 					if sink := cl.c.videoSink(); sink != nil {
 						sink.WriteVideoFrame(fp, f)
 					}
@@ -487,15 +578,36 @@ func (cl *call) readVideo(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote)
 	// The first keyframe may have been sent before this track was bound.
 	pli(true)
 
-	sb := samplebuilder.New(maxPacketLate, &codecs.VP8Packet{}, videoClock)
+	sb := newVideoSampleBuilder()
 	var lastSeq uint16
 	haveSeq := false
+	fp, gen := cl.c.watchTarget()
 	for {
 		pkt, _, err := remote.ReadRTP()
 		if err != nil {
 			return
 		}
 		cl.c.vstats.recvBytes.Add(uint64(len(pkt.Payload)))
+		if nfp, ngen := cl.c.watchTarget(); ngen != gen {
+			// The server swapped the source under this one track: start over
+			// so nothing of the old stream is decoded as the new one, and ask
+			// the new source for a keyframe.
+			fp, gen = nfp, ngen
+			sb = newVideoSampleBuilder()
+			haveSeq = false
+			lf.clear()
+			dec.Close()
+			nd, err := video.NewDecoder()
+			if err != nil {
+				cl.c.emitNB(Event{Err: err})
+				return
+			}
+			dec = nd
+			pli(true)
+		}
+		if fp == "" {
+			continue // not watching anyone
+		}
 		if haveSeq {
 			if d := int16(pkt.SequenceNumber - lastSeq); d > 1 {
 				pli(false) // a gap: NACK may repair it, the PLI is the fallback
@@ -519,7 +631,7 @@ func (cl *call) readVideo(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote)
 				continue
 			}
 			cl.c.vstats.recvFrames.Add(1)
-			lf.put(f)
+			lf.put(f, fp, gen)
 		}
 	}
 }

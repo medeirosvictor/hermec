@@ -68,10 +68,13 @@ type Client struct {
 
 	loopbackICE atomic.Bool
 
-	started time.Time // Dial time; baseline of the first VideoStats window
-	vstats  videoStats
-	vsinkMu sync.RWMutex
-	vsink   VideoSink
+	started  time.Time // Dial time; baseline of the first VideoStats window
+	vstats   videoStats
+	vsinkMu  sync.RWMutex
+	vsink    VideoSink
+	watchMu  sync.Mutex
+	watchFP  string // sharer we asked to watch ("" = none)
+	watchGen uint64 // bumped by every Watch call
 
 	evMu     sync.RWMutex // guards closing events against emitNB
 	evClosed bool

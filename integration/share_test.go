@@ -41,10 +41,22 @@ type recVideo struct {
 	count map[string]int
 	first map[string]time.Time
 	size  map[string][2]int
+	sizes map[string]map[[2]int]int // every decoded size seen per label
 }
 
 func newRecVideo() *recVideo {
-	return &recVideo{count: map[string]int{}, first: map[string]time.Time{}, size: map[string][2]int{}}
+	return &recVideo{count: map[string]int{}, first: map[string]time.Time{}, size: map[string][2]int{},
+		sizes: map[string]map[[2]int]int{}}
+}
+
+func (r *recVideo) sizesOf(fp string) map[[2]int]int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := map[[2]int]int{}
+	for k, v := range r.sizes[fp] {
+		out[k] = v
+	}
+	return out
 }
 
 func (r *recVideo) WriteVideoFrame(fp string, f *video.Frame) {
@@ -57,6 +69,10 @@ func (r *recVideo) WriteVideoFrame(fp string, f *video.Frame) {
 		r.first[fp] = time.Now()
 		r.size[fp] = [2]int{f.W, f.H}
 	}
+	if r.sizes[fp] == nil {
+		r.sizes[fp] = map[[2]int]int{}
+	}
+	r.sizes[fp][[2]int{f.W, f.H}]++
 	r.count[fp]++
 }
 
@@ -209,5 +225,59 @@ func TestStopShareEndsWatch(t *testing.T) {
 	eventually(t, 15*time.Second, "video resumes", func() bool { return bv.n(a.fp) >= before+5 })
 	if errs := b.errStrings(); len(errs) > 0 {
 		t.Errorf("B saw error events: %v", errs)
+	}
+}
+
+func TestWatchSwitchRelabelsAndStops(t *testing.T) {
+	url := startVoiceServer(t)
+	a := newVoiceClient(t, url, "alice", 0xA1)
+	b := newVoiceClient(t, url, "bob", 0xB2)
+	c := newVoiceClient(t, url, "carol", 0xC3)
+	cv := newRecVideo()
+	c.c.SetVideoSink(cv)
+	a.join(t)
+	b.join(t)
+	c.join(t)
+
+	sizeA, sizeB := [2]int{320, 240}, [2]int{256, 192}
+	if err := a.c.StartShare(&synthSource{}, sizeA[0], sizeA[1], shareFPS, shareKbps); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.c.StartShare(&synthSource{}, sizeB[0], sizeB[1], shareFPS, shareKbps); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 10*time.Second, "C sees both sharing", func() bool { return c.sharing(a.fp) && c.sharing(b.fp) })
+
+	if err := c.c.Watch(a.fp); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 15*time.Second, "frames from A", func() bool { return cv.n(a.fp) >= 5 })
+
+	start := time.Now()
+	if err := c.c.Watch(b.fp); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 5*time.Second, "frames labelled B", func() bool { return cv.n(b.fp) >= 3 })
+	cv.mu.Lock()
+	lat := cv.first[b.fp].Sub(start)
+	cv.mu.Unlock()
+	if lat > 1500*time.Millisecond {
+		t.Errorf("first B frame %v after switching, want about 1s", lat)
+	}
+	if got := cv.sizesOf(b.fp); len(got) != 1 || got[sizeB] == 0 {
+		t.Errorf("frames labelled B have sizes %v, want only %v", got, sizeB)
+	}
+	if got := cv.sizesOf(a.fp); len(got) != 1 || got[sizeA] == 0 {
+		t.Errorf("frames labelled A have sizes %v, want only %v", got, sizeA)
+	}
+
+	if err := c.c.Watch(""); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(700 * time.Millisecond)
+	total := cv.total()
+	time.Sleep(900 * time.Millisecond)
+	if after := cv.total(); after != total {
+		t.Errorf("%d frames delivered after Watch(\"\")", after-total)
 	}
 }

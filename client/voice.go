@@ -66,8 +66,9 @@ type call struct {
 	vtrack  *webrtc.TrackLocalStaticSample // VP8 screen share; sender added on first StartShare
 	api     *webrtc.API
 
-	smu   sync.Mutex // guards share
-	share *shareLoop
+	smu     sync.Mutex // guards share
+	share   *shareLoop
+	sclosed bool // teardown has run: StartShare must refuse
 
 	// actor queue
 	qmu   sync.Mutex
@@ -425,7 +426,7 @@ func (cl *call) teardownCtx(ctx context.Context) {
 			cl.tmu.Lock()
 			cl.tclosed = true
 			cl.tmu.Unlock()
-			if sl := cl.takeShare(); sl != nil {
+			if sl := cl.closeShare(); sl != nil {
 				sl.stop()
 			}
 			if cl.pc != nil {
