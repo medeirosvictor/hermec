@@ -289,7 +289,7 @@ func (g *game) applyDial(r dialResult) {
 	s.dialing = false
 	if r.err != nil {
 		g.logf("dial %s failed: %v", s.url, r.err)
-		s.failed, s.lastErr = true, r.err.Error()
+		s.failed, s.lastErr = true, state.DialErrorText(r.err)
 		if !s.everUp {
 			return // keeps its tile and session; the user retries with the badge
 		}

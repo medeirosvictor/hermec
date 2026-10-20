@@ -35,6 +35,7 @@ type fileConfig struct {
 	MsgRate       int                 `toml:"msg_rate"`
 	MsgBurst      int                 `toml:"msg_burst"`
 	MaxVoice      int                 `toml:"max_voice"`
+	MaxClients    int                 `toml:"max_clients,omitempty"`
 	Discoverable  *bool               `toml:"discoverable"`
 	ServerName    string              `toml:"server_name"`
 }
@@ -47,6 +48,7 @@ func DefaultConfig() Config {
 		MsgRate:      DefaultMsgRate,
 		MsgBurst:     DefaultMsgBurst,
 		MaxVoice:     DefaultMaxVoice,
+		MaxClients:   DefaultMaxClients,
 		Discoverable: true,
 		Roles: roles.Config{
 			Roles:        roles.Builtin(),
@@ -124,6 +126,12 @@ func LoadConfig(path string) (Config, error) {
 	if fc.MaxVoice < 0 || (md.IsDefined("max_voice") && fc.MaxVoice == 0) {
 		return Config{}, errors.New("server: load config: max_voice must be at least 1")
 	}
+	if fc.MaxClients < 0 || (md.IsDefined("max_clients") && fc.MaxClients == 0) {
+		return Config{}, errors.New("server: load config: max_clients must be at least 1")
+	}
+	if md.IsDefined("max_clients") {
+		cfg.MaxClients = fc.MaxClients
+	}
 	if md.IsDefined("max_voice") {
 		cfg.MaxVoice = fc.MaxVoice
 	}
@@ -161,6 +169,7 @@ func (c Config) MarshalTOML() ([]byte, error) {
 		MsgRate:       c.MsgRate,
 		MsgBurst:      c.MsgBurst,
 		MaxVoice:      c.MaxVoice,
+		MaxClients:    c.MaxClients,
 		Discoverable:  &c.Discoverable,
 		ServerName:    c.ServerName,
 	}

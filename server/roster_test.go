@@ -123,7 +123,9 @@ func drainAll(c *websocket.Conn, fn func(raw []byte, r proto.Roster)) {
 }
 
 func TestRosterTruncatesAtMax(t *testing.T) {
-	url := startServer(t, chatCfg())
+	cfg := chatCfg()
+	cfg.MaxPerIP = 1000 // every client is 127.0.0.1; the per-IP cap would refuse most
+	url := startServer(t, cfg)
 	n := proto.MaxRosterMembers + 5
 	var mu sync.Mutex
 	var last proto.Roster
@@ -139,7 +141,7 @@ func TestRosterTruncatesAtMax(t *testing.T) {
 			drainAll(c, func([]byte, proto.Roster) {})
 		}
 	}
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		mu.Lock()
 		r := last

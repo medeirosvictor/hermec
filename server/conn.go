@@ -30,6 +30,10 @@ type conn struct {
 	send   chan []byte // closed (under sendMu) when the connection ends
 	closed bool
 
+	ip           string // remote IP
+	leavePreAuth func() // releases the pre-auth slot; idempotent, readLoop only
+	counted      bool   // holds a MaxClients slot; readLoop only
+
 	// Set once authenticated; only touched by readLoop.
 	fingerprint string
 	name        string
@@ -85,6 +89,10 @@ func (c *conn) sendError(code, message string) {
 // queued (e.g. a final error), then closes the socket.
 func (c *conn) finish() {
 	c.srv.unregister(c)
+	if c.counted {
+		c.counted = false
+		c.srv.releaseClient()
+	}
 	c.srv.leaveAll(c)
 	c.sendMu.Lock()
 	if !c.closed {
@@ -109,7 +117,11 @@ func (c *conn) readLoop() {
 	defer c.srv.wg.Done()
 	defer c.finish()
 
-	if err := c.authenticate(); err != nil {
+	err := c.authenticate()
+	if c.leavePreAuth != nil {
+		c.leavePreAuth()
+	}
+	if err != nil {
 		return
 	}
 	_ = c.ws.SetReadDeadline(time.Time{})
@@ -191,6 +203,9 @@ func (c *conn) authenticate() error {
 	}
 
 	fail := func() error {
+		if d := c.srv.noteAuthFailure(c.ip); d > 0 {
+			c.srv.sleep(d)
+		}
 		c.sendError("auth_failed", "authentication failed")
 		return errAuthFailed
 	}
@@ -220,6 +235,13 @@ func (c *conn) authenticate() error {
 			return fail()
 		}
 	}
+
+	c.srv.noteAuthSuccess(c.ip)
+	if !c.srv.reserveClient() {
+		c.sendError(proto.CodeServerFull, "server is full")
+		return errAuthFailed
+	}
+	c.counted = true
 
 	c.fingerprint = fp
 	c.name = names.Clean(auth.Name, discover.MaxNameRunes)

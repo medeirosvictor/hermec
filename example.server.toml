@@ -44,6 +44,11 @@ voice_channels = ["voice"]
 # "voice_full". Default 25.
 # max_voice = 25
 
+# Most authenticated sessions at once; a further client is refused with
+# "server_full". Default 256. (Also fixed: 64 connections awaiting auth, 16
+# connections per remote IP, and failed logins from one IP slow down after 5.)
+# max_clients = 256
+
 # LAN discovery: answer UDP probes on the same port number as addr (default true).
 # Set false to bind no UDP discovery socket at all.
 # discoverable = true

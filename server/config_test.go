@@ -91,6 +91,7 @@ admin = ["join_channel", "send_chat", "manage"]
 		MsgRate:      DefaultMsgRate,
 		MsgBurst:     DefaultMsgBurst,
 		MaxVoice:     DefaultMaxVoice,
+		MaxClients:   DefaultMaxClients,
 		Discoverable: true,
 		Roles: roles.Config{
 			Roles: map[string][]roles.Permission{

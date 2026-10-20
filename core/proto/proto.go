@@ -55,6 +55,10 @@ const CodeNotSharing = "not_sharing"
 // participant cap (server config max_voice).
 const CodeVoiceFull = "voice_full"
 
+// CodeServerFull is the error code for an authentication refused because the
+// server is at its authenticated-session cap (server config max_clients).
+const CodeServerFull = "server_full"
+
 // Reserved for future end-to-end encryption. They have no handler in v1.
 const (
 	TypeE2EEKeyExchange = "e2ee_key_exchange"
@@ -151,7 +155,7 @@ type RTCCandidate struct {
 }
 
 // ErrorMsg reports a failure. Codes: "auth_failed", "forbidden",
-// "bad_request", "not_joined", "rate_limited", "not_sharing", "voice_full".
+// "bad_request", "not_joined", "rate_limited", "not_sharing", "voice_full", "server_full".
 type ErrorMsg struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

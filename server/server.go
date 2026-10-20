@@ -76,6 +76,12 @@ type Config struct {
 	// ServerName is advertised in discovery replies (max 64 runes). Empty
 	// means the listener's host:port.
 	ServerName string
+	// MaxClients caps authenticated sessions; 0 means DefaultMaxClients. A
+	// client over the cap gets error "server_full".
+	MaxClients int
+	// MaxPerIP caps concurrent connections per remote IP; 0 means
+	// DefaultMaxPerIP. Not exposed in the TOML file (tests raise it).
+	MaxPerIP int
 	// Logf receives every server log line; nil means log.Printf.
 	Logf func(format string, args ...any)
 }
@@ -115,6 +121,13 @@ type Server struct {
 
 	// clock is the time source for rate limiting; tests replace it.
 	clock func() time.Time
+	// sleep waits out an auth-failure delay; tests replace it.
+	sleep func(time.Duration)
+	// quit is closed by Shutdown to cut short any pending sleep.
+	quit     chan struct{}
+	quitOnce sync.Once
+
+	guards
 
 	http *http.Server
 	ln   net.Listener
@@ -127,12 +140,18 @@ func New(cfg Config) *Server {
 	s := &Server{
 		cfg:   cfg,
 		clock: time.Now,
+		quit:  make(chan struct{}),
 		conns: make(map[*conn]struct{}),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
+			// Native clients send no Origin; any Origin means a browser page.
+			CheckOrigin: func(r *http.Request) bool { return r.Header.Get("Origin") == "" },
 		},
 	}
+	s.sleep = s.sleepOrQuit
+	s.ipConns = make(map[string]int)
+	s.fails = make(map[string]*authFail)
 	s.initChannels()
 	if len(cfg.AllowedKeys) > 0 {
 		s.allowed = make(map[string]struct{}, len(cfg.AllowedKeys))
@@ -213,6 +232,7 @@ func (s *Server) Addr() string {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.closing = true
+	s.quitOnce.Do(func() { close(s.quit) })
 	open := make([]*conn, 0, len(s.conns))
 	for c := range s.conns {
 		open = append(open, c)
@@ -245,6 +265,24 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Origin") != "" {
+		http.Error(w, "browser origins are not allowed", http.StatusForbidden)
+		return
+	}
+	ip := remoteIP(r)
+	if !s.admit(ip) {
+		http.Error(w, "too many connections", http.StatusServiceUnavailable)
+		return
+	}
+	pre := true
+	leavePreAuth := func() {
+		if pre {
+			pre = false
+			s.dropPreAuth()
+		}
+	}
+	defer func() { leavePreAuth(); s.dropIP(ip) }()
+
 	ws, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return // Upgrade has already replied to the client
@@ -252,6 +290,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	ws.SetReadLimit(proto.MaxMessageSize)
 
 	c := newConn(s, ws)
+	c.ip, c.leavePreAuth = ip, leavePreAuth
 	if !s.register(c) {
 		ws.Close()
 		return

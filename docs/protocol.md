@@ -388,9 +388,10 @@ Media:
 | `not_joined`  | The operation needs channel membership the client does not have.     |
 | `not_sharing` | `watch` named a member who is not sharing in the sender's voice channel. |
 | `voice_full`  | `voice_join` named a channel already at its participant cap (`max_voice`, default 25). |
+| `server_full` | Authentication was refused because the server is at its `max_clients` cap (default 256); the connection is closed after this message. |
 | `rate_limited`| The client is sending too fast; the connection is closed after this message. |
 
-Except for `auth_failed` and `rate_limited`, errors do not close the connection.
+Except for `auth_failed`, `server_full` and `rate_limited`, errors do not close the connection.
 
 **Known v1 limitation: no error correlation.** Messages carry no request or
 correlation ID, so an `error` cannot be tied to the request that caused it.
