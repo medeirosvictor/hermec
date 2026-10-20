@@ -344,8 +344,17 @@ Semantics:
   replaces the old one. `watch` with an empty fingerprint stops watching.
 - A watch ends by itself when the sharer stops or leaves, or when the watcher
   leaves the call.
-- Both the sharer and the watchers need the usual `join_channel` permission
-  for the voice channel; there is no separate permission.
+- Sharing and watching need no permission beyond being in the call (which
+  itself needs the usual `join_channel` permission); there is no separate
+  share permission.
+- A server older than v0.5.0 does not know these types and answers
+  `share_start` with `error` `bad_request` "unsupported message type
+  share_start". A client treats that as "this server does not support screen
+  share": it stops the share locally (without sending `share_stop`, which such
+  a server would also reject) and tells the user. A client also adds its video
+  track to the call only after the server's `voice_state` shows the client's
+  own `sharing: true`, which an older server never sends, so a failed share
+  never puts an unanswerable video section into the call's negotiation.
 
 Media:
 
@@ -355,9 +364,18 @@ Media:
   Members who are not watching receive no video packets.
 - When someone starts watching, the server asks the sharer for a keyframe
   (PLI), so the new watcher can start decoding quickly.
-- Adding or removing video tracks changes the call's topology, so the server
-  renegotiates with `rtc_offer` as in section 4.13. Clients must handle these
-  server offers at any time.
+- Each viewer has one video transceiver. The server renegotiates with
+  `rtc_offer` (section 4.13) only the first time a viewer gets video; after
+  that it swaps the source on the same media section without renegotiating
+  (when a viewer switches to another sharer, or the sharer stops and starts
+  again). The stream id of the track (`video-<fingerprint>`) therefore names
+  only the first sharer that viewer received. A client must identify the
+  sharer from its own `watch` request, never from the track's stream id or
+  msid, and should expect a keyframe after each switch (the server requests
+  it from the new sharer). Clients must handle server offers at any time.
+- A server refuses an `rtc_offer` that contains a video section it has no
+  codec for with `error` `bad_request` "no common video codec; media reset,
+  send a new rtc_offer", and the client recovers as in section 4.13.
 - Hermec does not send audio from the shared screen.
 
 ## 5. Errors

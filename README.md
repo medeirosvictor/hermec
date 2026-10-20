@@ -54,7 +54,7 @@ This repository currently ships a Go server with Ed25519 key-based
 authentication, roles, channels, presence and text chat, plus a headless client
 library, a desktop GUI client, and integration tests. Voice chat now works in
 the GUI, with audio relayed through the self-hosted server. Screen share works
-too (sharing from Windows, watching on any system). Camera video and the
+too (sharing from Windows, watching on Windows, macOS or Linux). Camera video and the
 direct peer-to-peer opt-in remain unimplemented. The
 wire protocol for what exists is specified in [docs/protocol.md](docs/protocol.md).
 
