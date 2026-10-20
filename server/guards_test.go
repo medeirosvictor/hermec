@@ -1,10 +1,8 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
-	"sync"
 	"testing"
 	"time"
 
@@ -184,31 +182,3 @@ func TestAuthBackoffSchedule(t *testing.T) {
 	}
 }
 
-// TestAuthBackoffOnWire checks the delay is applied before the auth_failed reply.
-func TestAuthBackoffOnWire(t *testing.T) {
-	cfg := chatCfg()
-	cfg.Password = "secret"
-	cfg.Addr = "127.0.0.1:0"
-	var mu sync.Mutex
-	var slept []time.Duration
-	s := New(cfg)
-	s.sleep = func(d time.Duration) {
-		mu.Lock()
-		slept = append(slept, d)
-		mu.Unlock()
-	}
-	if err := s.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
-	url := "ws://" + s.Addr()
-	for i := 0; i < 7; i++ {
-		c, env := authAs(t, url, mustID(t), "wrong")
-		requireAuthFailed(t, c, env)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(slept) != 2 || slept[0] != time.Second || slept[1] != 2*time.Second {
-		t.Fatalf("slept = %v, want [1s 2s]", slept)
-	}
-}

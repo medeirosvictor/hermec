@@ -25,7 +25,20 @@ const (
 // authFail tracks failed authentications from one remote IP.
 type authFail struct {
 	n     int       // failures in the current run
-	until time.Time // when the delay imposed by the latest failure ends
+	// until is when the block imposed by the latest failure ends. The run
+	// (failure count) is forgotten once a further quiet minute has passed
+	// after until, i.e. authWindow after the IP was last refused or failed.
+	until time.Time
+}
+
+// authBlocked reports whether new connections from ip are refused because of
+// recent failed authentications. Lock order: Server.mu, then failMu.
+func (s *Server) authBlocked(ip string) bool {
+	now := s.clock()
+	s.failMu.Lock()
+	defer s.failMu.Unlock()
+	f := s.fails[ip]
+	return f != nil && now.Before(f.until)
 }
 
 // guards holds connection-limit and auth-backoff state.
@@ -64,6 +77,9 @@ func (s *Server) maxPerIP() int {
 func (s *Server) admit(ip string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.authBlocked(ip) {
+		return false
+	}
 	if s.closing || s.preAuth >= maxPreAuth || s.ipConns[ip] >= s.maxPerIP() {
 		return false
 	}
@@ -146,12 +162,3 @@ func (s *Server) noteAuthSuccess(ip string) {
 	s.failMu.Unlock()
 }
 
-// sleepOrQuit waits d, or until the server shuts down.
-func (s *Server) sleepOrQuit(d time.Duration) {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-	case <-s.quit:
-	}
-}

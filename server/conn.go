@@ -203,9 +203,7 @@ func (c *conn) authenticate() error {
 	}
 
 	fail := func() error {
-		if d := c.srv.noteAuthFailure(c.ip); d > 0 {
-			c.srv.sleep(d)
-		}
+		c.srv.noteAuthFailure(c.ip) // blocks further connects from this IP; the reply is not delayed
 		c.sendError("auth_failed", "authentication failed")
 		return errAuthFailed
 	}

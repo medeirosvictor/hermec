@@ -39,6 +39,7 @@ type fileConfig struct {
 	MsgBurst      int                 `toml:"msg_burst"`
 	MaxVoice      int                 `toml:"max_voice"`
 	MaxClients    int                 `toml:"max_clients,omitempty"`
+	MaxPerIP      int                 `toml:"max_per_ip,omitempty"`
 	Discoverable  *bool               `toml:"discoverable"`
 	ServerName    string              `toml:"server_name"`
 }
@@ -52,6 +53,7 @@ func DefaultConfig() Config {
 		MsgBurst:     DefaultMsgBurst,
 		MaxVoice:     DefaultMaxVoice,
 		MaxClients:   DefaultMaxClients,
+		MaxPerIP:     DefaultMaxPerIP,
 		Discoverable: true,
 		Roles: roles.Config{
 			Roles:        roles.Builtin(),
@@ -132,6 +134,12 @@ func LoadConfig(path string) (Config, error) {
 	if fc.MaxClients < 0 || (md.IsDefined("max_clients") && fc.MaxClients == 0) {
 		return Config{}, errors.New("server: load config: max_clients must be at least 1")
 	}
+	if fc.MaxPerIP < 0 || (md.IsDefined("max_per_ip") && fc.MaxPerIP == 0) {
+		return Config{}, errors.New("server: load config: max_per_ip must be at least 1")
+	}
+	if md.IsDefined("max_per_ip") {
+		cfg.MaxPerIP = fc.MaxPerIP
+	}
 	if md.IsDefined("max_clients") {
 		cfg.MaxClients = fc.MaxClients
 	}
@@ -180,6 +188,7 @@ func (c Config) MarshalTOML() ([]byte, error) {
 		MsgBurst:      c.MsgBurst,
 		MaxVoice:      c.MaxVoice,
 		MaxClients:    c.MaxClients,
+		MaxPerIP:      c.MaxPerIP,
 		Discoverable:  &c.Discoverable,
 		ServerName:    c.ServerName,
 	}
