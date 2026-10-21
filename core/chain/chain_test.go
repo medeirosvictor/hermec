@@ -133,3 +133,59 @@ func TestVerifyRejectsTampering(t *testing.T) {
 		}
 	}
 }
+
+func TestAppendPersistFailureTruncates(t *testing.T) {
+	f := newID(t)
+	b := newBuilder(t, f)
+	path := filepath.Join(t.TempDir(), "chain.jsonl")
+	if err := b.c.SetPath(path); err != nil {
+		t.Fatal(err)
+	}
+	b.must(f, OpConfig, ConfigBody{Name: "ok"})
+	before, _ := os.ReadFile(path)
+	head := b.c.Head().Hash()
+
+	old := writeFile
+	writeFile = func(fl *os.File, p []byte) (int, error) {
+		n, _ := fl.Write(p[:len(p)/2]) // torn write
+		return n, errors.New("disk full")
+	}
+	err := b.add(f, OpConfig, ConfigBody{Name: "fails"})
+	writeFile = old
+	if err == nil {
+		t.Fatal("want persist error")
+	}
+	if b.c.Head().Hash() != head {
+		t.Fatal("head changed")
+	}
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(before, after) {
+		t.Fatal("torn line left on disk")
+	}
+	c2, err := Load(path)
+	if err != nil || c2.Head().Hash() != head {
+		t.Fatalf("load after failure: %v", err)
+	}
+	// A later append succeeds and the file still loads.
+	b.must(f, OpConfig, ConfigBody{Name: "again"})
+	if c3, err := Load(path); err != nil || c3.Head().Hash() != b.c.Head().Hash() {
+		t.Fatalf("load after retry: %v", err)
+	}
+}
+
+func TestLoadCapsReads(t *testing.T) {
+	f := newID(t)
+	b := newBuilder(t, f)
+	path := filepath.Join(t.TempDir(), "chain.jsonl")
+	if err := b.c.SetPath(path); err != nil {
+		t.Fatal(err)
+	}
+	b.must(f, OpConfig, ConfigBody{Name: "a"})
+	b.must(f, OpConfig, ConfigBody{Name: "b"})
+	old := maxEntries
+	maxEntries = 2
+	defer func() { maxEntries = old }()
+	if _, err := Load(path); !errors.Is(err, ErrFull) {
+		t.Fatalf("want ErrFull, got %v", err)
+	}
+}

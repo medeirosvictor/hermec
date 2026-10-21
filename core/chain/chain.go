@@ -123,7 +123,12 @@ func Load(path string) (*Chain, error) {
 	var es []Entry
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64<<10), maxBytes+4096)
+	total := 0
 	for sc.Scan() {
+		total += len(sc.Bytes()) + 1
+		if total > maxBytes || len(es) >= maxEntries {
+			return nil, ErrFull
+		}
 		if len(bytes.TrimSpace(sc.Bytes())) == 0 {
 			continue
 		}
@@ -160,22 +165,47 @@ func (c *Chain) Append(e Entry) error {
 	}
 	if c.path != "" {
 		line, _ := marshalLine(e)
-		f, err := os.OpenFile(c.path, os.O_APPEND|os.O_WRONLY, 0o600)
-		if err != nil {
-			return err
-		}
-		_, err = f.Write(line)
-		if serr := f.Sync(); err == nil {
-			err = serr
-		}
-		if cerr := f.Close(); err == nil {
-			err = cerr
-		}
-		if err != nil {
+		if err := appendLine(c.path, line); err != nil {
 			return err
 		}
 	}
 	c.entries, c.size, c.state = trial.entries, trial.size, trial.state
+	return nil
+}
+
+// writeFile is the single write of an appended line; tests replace it to
+// simulate torn writes.
+var writeFile = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
+
+// appendLine appends line in one write and fsyncs. On any failure it
+// truncates the file back to its previous size so no torn line remains.
+func appendLine(path string, line []byte) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return err
+	}
+	size := st.Size()
+	if _, err = f.Seek(size, 0); err == nil {
+		_, err = writeFile(f, line)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if err != nil {
+		f.Truncate(size)
+		f.Sync()
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		os.Truncate(path, size)
+		return err
+	}
 	return nil
 }
 
