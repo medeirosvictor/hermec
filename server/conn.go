@@ -192,8 +192,33 @@ var (
 	errBadHandshake = errors.New("malformed handshake message")
 )
 
-// authenticate runs the one-shot challenge-response handshake. On failure it
-// queues auth_failed and returns an error; the connection is then closed.
+// joinLive registers c for broadcasts and sends it the chain entries after
+// seq, the head the handshake sent, so its copy has no gap.
+func (c *conn) joinLive(seq uint64) error {
+	s := c.srv
+	s.chainMu.Lock()
+	defer s.chainMu.Unlock()
+	s.markAuthed(c)
+	missed := s.chain.Since(seq)
+	if len(missed) == 0 {
+		return nil
+	}
+	frames, err := chainFrames(missed)
+	if err != nil {
+		return err
+	}
+	for _, f := range frames {
+		if !c.enqueue(f) {
+			return errAuthFailed
+		}
+	}
+	return nil
+}
+
+// authenticate runs the v2 mutual handshake: the client asks the host to prove
+// itself (host_proof_req), the host sends its chain and a signature over both
+// nonces and the server ID, then the client authenticates (auth). On failure
+// it queues an error and returns it; the connection is then closed.
 func (c *conn) authenticate() error {
 	pre := newBucket(preAuthMsgRate, preAuthMsgBurst, c.srv.clock())
 	nonce := make([]byte, nonceSize)
@@ -265,7 +290,9 @@ func (c *conn) authenticate() error {
 
 	// Prove this host to the client before it sends anything secret.
 	id := c.srv.chain.ID()
-	frames, err := chainFrames(c.srv.chain.Entries())
+	sent := c.srv.chain.Entries()
+	sentSeq := sent[len(sent)-1].Seq
+	frames, err := chainFrames(sent)
 	if err != nil {
 		return err
 	}
@@ -336,7 +363,12 @@ func (c *conn) authenticate() error {
 		ServerID:    id.String(),
 	})
 	// Registered after auth_ok is queued so voice_state never precedes it.
-	c.srv.markAuthed(c)
+	// Under chainMu, so no append can broadcast in between: entries added
+	// since the handshake sent the chain are caught up here, and every later
+	// one reaches this connection through the broadcast.
+	if err := c.joinLive(sentSeq); err != nil {
+		return err
+	}
 	// A ban appended between the check above and markAuthed missed this
 	// connection (kick only reaches authed ones).
 	if c.srv.banned(fp) {
