@@ -42,7 +42,7 @@
 **Interfaces:**
 - Produces:
   - `type Op string` with constants `OpGenesis="genesis"`, `OpConfig="config"`, `OpGrant="grant"`, `OpRevoke="revoke"`, `OpBan="ban"`, `OpUnban="unban"`, `OpHostAdd="host_add"`, `OpHostRemove="host_remove"`.
-  - `type Entry struct { Seq uint64 \`json:"seq"\`; Prev []byte \`json:"prev,omitempty"\`; Time int64 \`json:"time"\` /* unix ms */; Author []byte \`json:"author"\` /* 32-byte pubkey */; Op Op \`json:"op"\`; Body json.RawMessage \`json:"body"\`; Sig []byte \`json:"sig"\` }`
+  - `type Entry struct { Seq uint64 \`json:"seq"\`; Prev []byte \`json:"prev,omitempty"\`; Time int64 \`json:"time"\` /* unix ms */; Author []byte \`json:"author"\` /* 32-byte pubkey */; Op Op \`json:"op"\`; Body []byte \`json:"body"\` /* compact JSON, base64 on the wire, so no encoder can alter it */; Sig []byte \`json:"sig"\` }`; `func (e Entry) DecodeBody(v any) error`
   - `func (e Entry) SignedBytes() []byte` — domain prefix + compact JSON of every field except `Sig`, HTML escaping off (same as `proto.marshalNoEscape`).
   - `func (e Entry) Hash() [32]byte` — `sha256(SignedBytes() || Sig)`.
   - `func NewEntry(id *identity.Identity, prev *Entry, op Op, body any, now time.Time) (Entry, error)` — sets Seq (prev.Seq+1, or 0), Prev (prev.Hash(), or nil), Time, Author, compact Body, Sig.
