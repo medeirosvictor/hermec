@@ -43,10 +43,13 @@ func TestEntrySignVerify(t *testing.T) {
 func TestEntryTamperFails(t *testing.T) {
 	id := newID(t)
 	tampers := map[string]func(*Entry){
-		"body": func(e *Entry) { e.Body = json.RawMessage(`{"name":"x","founder":"","salt":""}`) },
-		"time": func(e *Entry) { e.Time++ },
-		"seq":  func(e *Entry) { e.Seq++ },
-		"op":   func(e *Entry) { e.Op = OpConfig },
+		"body":   func(e *Entry) { e.Body = []byte(`{"name":"x","founder":"","salt":""}`) },
+		"time":   func(e *Entry) { e.Time++ },
+		"seq":    func(e *Entry) { e.Seq++ },
+		"op":     func(e *Entry) { e.Op = OpConfig },
+		"author": func(e *Entry) { e.Author = append([]byte(nil), e.Author...); e.Author[0] ^= 1 },
+		"prev":   func(e *Entry) { e.Prev = bytes.Repeat([]byte{7}, 32) },
+		"sig":    func(e *Entry) { e.Sig = append([]byte(nil), e.Sig...); e.Sig[0] ^= 1 },
 	}
 	for name, f := range tampers {
 		e := genesis(t, id)
@@ -69,6 +72,29 @@ func TestEntryNonCompactBodyFails(t *testing.T) {
 	e.Sig = id.Sign(e.SignedBytes())
 	if e.VerifySig() {
 		t.Fatal("non-compact body verified")
+	}
+}
+
+func TestEntryStdJSONRoundTrip(t *testing.T) {
+	id := newID(t)
+	e, err := NewEntry(id, nil, OpGenesis, GenesisBody{Name: "<R&D>", Founder: id.PublicKey()}, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Entry
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.VerifySig() || got.Hash() != e.Hash() {
+		t.Fatal("std json round trip changed entry")
+	}
+	var gb GenesisBody
+	if err := got.DecodeBody(&gb); err != nil || gb.Name != "<R&D>" {
+		t.Fatalf("DecodeBody: %v %q", err, gb.Name)
 	}
 }
 
@@ -113,6 +139,17 @@ func TestIDStringRoundTrip(t *testing.T) {
 	}
 	if _, err := ParseID("abc"); err == nil {
 		t.Fatal("bad id parsed")
+	}
+	s := id.String()
+	if _, err := ParseID(strings.ToUpper(s)); err == nil {
+		t.Fatal("uppercase parsed")
+	}
+	// The last char carries 1 data bit and 4 padding bits; change only padding.
+	const alphabet = "abcdefghijklmnopqrstuvwxyz234567"
+	last := strings.IndexByte(alphabet, s[51])
+	alt := s[:51] + string(alphabet[last^1])
+	if _, err := ParseID(alt); err == nil {
+		t.Fatal("non-canonical alias parsed")
 	}
 }
 

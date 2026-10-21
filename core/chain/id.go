@@ -31,6 +31,9 @@ func ParseID(s string) (ID, error) {
 		return id, fmt.Errorf("chain: bad server id")
 	}
 	copy(id[:], raw)
+	if id.String() != s {
+		return ID{}, fmt.Errorf("chain: server id not canonical")
+	}
 	return id, nil
 }
 

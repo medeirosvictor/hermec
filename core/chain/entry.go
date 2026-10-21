@@ -33,13 +33,13 @@ const (
 
 // Entry is one signed link of the chain.
 type Entry struct {
-	Seq    uint64          `json:"seq"`
-	Prev   []byte          `json:"prev,omitempty"`
-	Time   int64           `json:"time"` // unix milliseconds
-	Author []byte          `json:"author"`
-	Op     Op              `json:"op"`
-	Body   json.RawMessage `json:"body"`
-	Sig    []byte          `json:"sig"`
+	Seq    uint64 `json:"seq"`
+	Prev   []byte `json:"prev,omitempty"`
+	Time   int64  `json:"time"` // unix milliseconds
+	Author []byte `json:"author"`
+	Op     Op     `json:"op"`
+	Body   []byte `json:"body"` // compact JSON of the body struct; base64 on the wire, so immune to HTML escaping
+	Sig    []byte `json:"sig"`
 }
 
 // GenesisBody is the body of the first entry.
@@ -95,12 +95,12 @@ func marshalNoEscape(v any) ([]byte, error) {
 // the entry cannot be encoded (for example an invalid Body).
 func (e Entry) SignedBytes() []byte {
 	unsigned := struct {
-		Seq    uint64          `json:"seq"`
-		Prev   []byte          `json:"prev,omitempty"`
-		Time   int64           `json:"time"`
-		Author []byte          `json:"author"`
-		Op     Op              `json:"op"`
-		Body   json.RawMessage `json:"body"`
+		Seq    uint64 `json:"seq"`
+		Prev   []byte `json:"prev,omitempty"`
+		Time   int64  `json:"time"`
+		Author []byte `json:"author"`
+		Op     Op     `json:"op"`
+		Body   []byte `json:"body"`
 	}{e.Seq, e.Prev, e.Time, e.Author, e.Op, e.Body}
 	data, err := marshalNoEscape(unsigned)
 	if err != nil {
@@ -109,7 +109,11 @@ func (e Entry) SignedBytes() []byte {
 	return append([]byte(domain), data...)
 }
 
-// Hash returns sha256(SignedBytes || Sig).
+// DecodeBody unmarshals the entry body into v.
+func (e Entry) DecodeBody(v any) error { return json.Unmarshal(e.Body, v) }
+
+// Hash returns sha256(SignedBytes || Sig). It is only meaningful for entries
+// whose SignedBytes is non-nil, i.e. whose Body is valid JSON.
 func (e Entry) Hash() [32]byte {
 	h := sha256.New()
 	h.Write(e.SignedBytes())
@@ -143,6 +147,9 @@ func NewEntry(id *identity.Identity, prev *Entry, op Op, body any, now time.Time
 // VerifySig reports whether the signature is valid under Author and Body is
 // compact JSON.
 func (e Entry) VerifySig() bool {
+	if !json.Valid(e.Body) {
+		return false
+	}
 	var buf bytes.Buffer
 	if err := json.Compact(&buf, e.Body); err != nil || !bytes.Equal(buf.Bytes(), e.Body) {
 		return false
