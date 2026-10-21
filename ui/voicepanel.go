@@ -17,12 +17,31 @@ import (
 
 const disconnectLabel = "disconnect"
 
-// voicePanelShown reports whether the panel is wanted: a settled call exists.
-// geom additionally drops it when the channel pane is too short to hold it.
-func (g *game) voicePanelShown() bool { return g.inCall() }
+// voicePanelShown reports whether the panel is wanted: a call exists or a join
+// or leave is in flight (the panel keeps its place so the channel list does not
+// jump). Its buttons are live only in a settled call (inCall).
+func (g *game) voicePanelShown() bool { return g.inCall() || g.vc.busy }
 
-// voicePanelH is the panel height: three text lines with pad/2 above and below.
-func voicePanelH(lh float64) float64 { return 3*lh + pad }
+// voiceTextW is the width of the panel's content for a channel pane.
+func voiceTextW(chanR rectF) float64 { return chanR.x1 - chanR.x0 - 2*pad }
+
+// voiceStacked reports whether "disconnect" and "stop share" (the wider share
+// label, so the layout does not change when sharing starts) do not fit side by
+// side in textW at the real font; each button then gets its own row.
+func (g *game) voiceStacked(textW float64) bool {
+	need := text.Advance(disconnectLabel, g.face) + text.Advance(shareLabelOn, g.face) + 3*pad
+	return need > textW
+}
+
+// voicePanelH is the panel height: title, channel line and the button row(s),
+// with pad/2 above and below.
+func (g *game) voicePanelH(lh, textW float64) float64 {
+	rows := 3.0
+	if g.voiceStacked(textW) {
+		rows = 4
+	}
+	return rows*lh + pad
+}
 
 // voicePanelRect is the panel inside chanR, or the zero rect when it is not
 // wanted or the pane cannot hold it above a header and two channel rows.
@@ -30,7 +49,7 @@ func (g *game) voicePanelRect(chanR rectF, lh float64) rectF {
 	if !g.voicePanelShown() {
 		return rectF{}
 	}
-	h := voicePanelH(lh)
+	h := g.voicePanelH(lh, voiceTextW(chanR))
 	r := rectF{chanR.x0 + pad/2, chanR.y1 - pad/2 - h, chanR.x1 - pad/2, chanR.y1 - pad/2}
 	if r.y0 < chanR.y0+pad+3*lh+pad { // header row plus two rows above it
 		return rectF{}
@@ -40,30 +59,34 @@ func (g *game) voicePanelRect(chanR rectF, lh float64) rectF {
 
 // voiceLayout is the pixel layout of the panel, shared by hits and draw.
 type voiceLayout struct {
-	line1Y, line2Y, btnY, btnH float64
-	textX, textW               float64
-	leaveX0, leaveX1           float64
-	shareX0, shareX1           float64
-	signalX                    float64 // left edge of the signal bars on line 1
+	line1Y, line2Y   float64
+	leaveY, shareY   float64 // button row tops
+	btnH             float64
+	textX, textW     float64
+	leaveX0, leaveX1 float64
+	shareX0, shareX1 float64
+	signalX          float64 // left edge of the signal bars on line 1
 }
 
 func (g *game) voiceLayout(gm geometry) voiceLayout {
 	r := gm.voiceR
 	l := voiceLayout{line1Y: r.y0 + pad/2, btnH: gm.lh}
 	l.line2Y = l.line1Y + gm.lh
-	l.btnY = l.line2Y + gm.lh
+	l.leaveY = l.line2Y + gm.lh
 	l.textX = r.x0 + pad/2
 	l.textW = r.x1 - pad/2 - l.textX
 	l.signalX = r.x1 - pad/2 - signalW(gm.lh)
 
-	// Two buttons side by side; when their labels do not fit the pane they
-	// share the row equally (the text is clipped to the button).
 	gap := float64(pad) / 2
+	if g.voiceStacked(l.textW) {
+		l.shareY = l.leaveY + gm.lh
+		l.leaveX0, l.leaveX1 = l.textX, l.textX+l.textW
+		l.shareX0, l.shareX1 = l.leaveX0, l.leaveX1
+		return l
+	}
+	l.shareY = l.leaveY
 	wl := text.Advance(disconnectLabel, g.face) + pad
 	ws := text.Advance(g.shareLabel(), g.face) + pad
-	if avail := l.textW - gap; wl+ws > avail {
-		wl, ws = avail/2, avail/2
-	}
 	l.leaveX0, l.leaveX1 = l.textX, l.textX+wl
 	l.shareX0, l.shareX1 = l.leaveX1+gap, l.leaveX1+gap+ws
 	return l
@@ -73,6 +96,12 @@ func (g *game) voiceLayout(gm geometry) voiceLayout {
 func (g *game) voicePanelLine() string {
 	s := g.callSess()
 	if s == nil {
+		switch {
+		case g.vc.joining != "":
+			return "joining " + g.vc.joining + "..."
+		case g.vc.busy:
+			return "leaving..."
+		}
 		return ""
 	}
 	name := serverTitle(g.servers, g.callKey)
@@ -92,12 +121,12 @@ func (g *game) voicePingText() string {
 
 // addVoicePanelHits registers the panel buttons.
 func (g *game) addVoicePanelHits(gm geometry) {
-	if gm.voiceR.y1 <= gm.voiceR.y0 {
+	if gm.voiceR.y1 <= gm.voiceR.y0 || !g.inCall() { // inert while a join or leave is in flight
 		return
 	}
 	l := g.voiceLayout(gm)
-	g.hits.Add(state.Hit{X0: l.leaveX0, Y0: l.btnY, X1: l.leaveX1, Y1: l.btnY + l.btnH, Kind: state.HitVoiceLeave})
-	g.hits.Add(state.Hit{X0: l.shareX0, Y0: l.btnY, X1: l.shareX1, Y1: l.btnY + l.btnH, Kind: state.HitVoiceShare})
+	g.hits.Add(state.Hit{X0: l.leaveX0, Y0: l.leaveY, X1: l.leaveX1, Y1: l.leaveY + l.btnH, Kind: state.HitVoiceLeave})
+	g.hits.Add(state.Hit{X0: l.shareX0, Y0: l.shareY, X1: l.shareX1, Y1: l.shareY + l.btnH, Kind: state.HitVoiceShare})
 }
 
 func (g *game) drawVoicePanel(screen *ebiten.Image, gm geometry) {
@@ -111,17 +140,24 @@ func (g *game) drawVoicePanel(screen *ebiten.Image, gm geometry) {
 	vector.StrokeLine(dst, float32(r.x0), float32(r.y0), float32(r.x1), float32(r.y0), 1, th.Dim, false)
 
 	// Line 1: the title, then ping and the signal bars at the right.
+	live := g.inCall()
 	right := l.signalX
-	g.drawSignal(dst, l.signalX, l.line1Y, gm.lh, g.q.grade)
-	if p := g.voicePingText(); p != "" {
+	if live {
+		g.drawSignal(dst, l.signalX, l.line1Y, gm.lh, g.q.grade)
+	}
+	if p := g.voicePingText(); live && p != "" {
 		pw := text.Advance(p, g.face)
 		if x := l.signalX - pad/2 - pw; x > l.textX+text.Advance("voice", g.face) {
 			g.drawText(dst, p, x, l.line1Y, th.Dim)
 			right = x
 		}
 	}
-	title := state.Ellipsize("voice connected", int((right-pad/2-l.textX)/gm.adv))
-	g.drawText(dst, title, l.textX, l.line1Y, th.Bright)
+	titleText, titleCol := "voice connected", th.Bright
+	if !live {
+		titleText, titleCol = "voice", th.Dim
+	}
+	title := state.Ellipsize(titleText, int((right-pad/2-l.textX)/gm.adv))
+	g.drawText(dst, title, l.textX, l.line1Y, titleCol)
 
 	g.drawText(dst, state.Ellipsize(g.voicePanelLine(), int(l.textW/gm.adv)), l.textX, l.line2Y, th.FG)
 
@@ -132,8 +168,12 @@ func (g *game) drawVoicePanel(screen *ebiten.Image, gm geometry) {
 	case g.share.on:
 		shareCol = th.Bright
 	}
-	g.drawVoiceButton(dst, l.leaveX0, l.leaveX1, l.btnY, gm.lh, disconnectLabel, th.FG)
-	g.drawVoiceButton(dst, l.shareX0, l.shareX1, l.btnY, gm.lh, g.shareLabel(), shareCol)
+	leaveCol := th.FG
+	if !live {
+		leaveCol, shareCol = th.Dim, th.Dim
+	}
+	g.drawVoiceButton(dst, l.leaveX0, l.leaveX1, l.leaveY, gm.lh, disconnectLabel, leaveCol)
+	g.drawVoiceButton(dst, l.shareX0, l.shareX1, l.shareY, gm.lh, g.shareLabel(), shareCol)
 }
 
 func (g *game) drawVoiceButton(dst *ebiten.Image, x0, x1, y, h float64, label string, col color.RGBA) {

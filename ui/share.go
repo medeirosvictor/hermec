@@ -171,7 +171,11 @@ func (g *game) clickBar(h state.Hit) {
 		if g.share.on {
 			g.stopShare()
 		} else if g.shareSupported() {
-			g.openShareMenu(g.geom())
+			if h.Kind == state.HitVoiceShare {
+				g.openShareMenuAt(h.X0, h.Y0-pad/2)
+			} else {
+				g.openShareMenu(g.geom())
+			}
 		}
 	}
 }
@@ -179,6 +183,13 @@ func (g *game) clickBar(h state.Hit) {
 // openShareMenu lists the monitors above the share button. Capture is only
 // touched once the game loop runs (this is a click handler).
 func (g *game) openShareMenu(gm geometry) {
+	l := g.barLayout(gm)
+	g.openShareMenuAt(l.shareX0, gm.barR.y0-pad/2)
+}
+
+// openShareMenuAt is openShareMenu with the menu's bottom-left corner at
+// (x, bottom): above the button that was clicked.
+func (g *game) openShareMenuAt(x, bottom float64) {
 	s := g.callSess()
 	if s == nil {
 		return
@@ -198,9 +209,8 @@ func (g *game) openShareMenu(gm geometry) {
 	for i, m := range mons {
 		items[i] = menuItem{label: m.Name, act: func() { g.closeMenu(); g.pickScreen(m) }}
 	}
-	l := g.barLayout(gm)
 	w, h := g.menuSize(items)
-	x, y := state.MenuOrigin(l.shareX0, gm.barR.y0-h-pad/2, w, h, float64(g.w), float64(g.h))
+	x, y := state.MenuOrigin(x, bottom-h, w, h, float64(g.w), float64(g.h))
 	g.menu = ctxMenu{open: true, key: "share", x: x, y: y, items: items}
 }
 
