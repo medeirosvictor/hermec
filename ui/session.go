@@ -132,16 +132,20 @@ func (g *game) dial(s *session) {
 	s.dialGen++
 	s.st.ConnectErr = ""
 	g.logf("dialing %s as %q", s.url, s.name)
-	pass := ""
+	pass, pin := "", ""
+	if e, ok := g.entryFor(s.key); ok {
+		pin = e.ServerID
+	}
 	if s.key == hostedKey && g.hosted != nil {
 		pass = g.hosted.cfg.Password
+		pin = g.hosted.id
 	}
-	go func(s *session, key, url, name, pass string, gen int) { // reads no session field
+	go func(s *session, key, url, name, pass, pin string, gen int) { // reads no session field
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		c, err := client.Dial(ctx, url, g.id, name, pass)
+		c, err := client.DialPinned(ctx, url, g.id, name, pass, pin)
 		g.dialCh <- dialResult{key: key, s: s, gen: gen, c: c, err: err}
-	}(s, s.key, s.url, s.name, pass, s.dialGen)
+	}(s, s.key, s.url, s.name, pass, pin, s.dialGen)
 }
 
 // closeClient closes a client no session owns (a stale dial result).
@@ -279,6 +283,16 @@ func (g *game) pumpSessions() {
 	}
 }
 
+// noRetryCode reports whether a server error code means retrying cannot help.
+func noRetryCode(code string) bool {
+	switch code {
+	case proto.CodeAuthFailed, proto.CodeServerIDMismatch, proto.CodeHostNotAuthorized,
+		proto.CodeBadChain, proto.CodeServerOutdated, proto.CodeUpdateRequired, proto.CodeBanned:
+		return true
+	}
+	return false
+}
+
 func (g *game) applyDial(r dialResult) {
 	s := g.sess[r.key]
 	if s == nil || s != r.s || r.gen != s.dialGen || !s.dialing || s.c != nil { // stale: the session is gone, replaced, redialed or moved on
@@ -296,7 +310,7 @@ func (g *game) applyDial(r dialResult) {
 		}
 		s.st.ConnectErr = s.lastErr // stays PhaseDisconnected
 		var se *client.ServerError
-		if errors.As(r.err, &se) && se.Code == proto.CodeAuthFailed {
+		if errors.As(r.err, &se) && noRetryCode(se.Code) {
 			s.retryAt = time.Time{} // retrying cannot help; the tile's ↻ still can
 			return
 		}

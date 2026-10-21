@@ -26,6 +26,9 @@ import (
 type Config struct {
 	// Addr is the listen address; use "127.0.0.1:0" in tests.
 	Addr string
+	// ServerID is the machine-local ID of the chain this config belongs to (as
+	// chain.ID.String()); the app stores it in hosted.toml. Unused by Server.
+	ServerID string
 	// Password, when non-empty, must be presented by every client.
 	Password string
 	// AllowedKeys are permitted fingerprints. Empty means an open server.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/audio"
 	"github.com/medeirosvictor/hermec/client"
+	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/server"
@@ -27,7 +28,16 @@ func startServer(t *testing.T, addr string) (*server.Server, string) {
 // startServerNamed is startServer with the given server display name.
 func startServerNamed(t *testing.T, addr, name string) (*server.Server, string) {
 	t.Helper()
+	return startServerChain(t, addr, name, nil, nil)
+}
+
+// startServerChain is startServerNamed with a fixed host key and chain, so a
+// restarted server keeps its server ID. Nil key and chain generate fresh ones.
+func startServerChain(t *testing.T, addr, name string, key *identity.Identity, c *chain.Chain) (*server.Server, string) {
+	t.Helper()
 	srv := server.New(server.Config{
+		HostKey:       key,
+		Chain:         c,
 		Addr:          addr,
 		Discoverable:  false,
 		ServerName:    name,
@@ -362,7 +372,18 @@ func TestDisconnectThenReopenIgnoresOldDial(t *testing.T) {
 
 func TestReconnectAfterServerRestart(t *testing.T) {
 	g := newTestGame(t)
-	srv, url := startServer(t, "127.0.0.1:0")
+	hostKey, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, _, err := server.OpenChain(filepath.Join(t.TempDir(), "c.jsonl"), hostKey, server.Config{
+		ServerName: "test", Channels: []string{"general", "random"}, VoiceChannels: []string{"voice"},
+		Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, url := startServerChain(t, "127.0.0.1:0", "test", hostKey, ch)
 	addr := srv.Addr()
 	s := g.openSession(url, "me")
 	g.view(s.key)
@@ -383,7 +404,7 @@ func TestReconnectAfterServerRestart(t *testing.T) {
 		t.Fatalf("attempt = %d, want 1", s.attempt)
 	}
 
-	startServer(t, addr)
+	startServerChain(t, addr, "test", hostKey, ch)
 	// A far-future now skips the real backoff wait.
 	pumpUntil(t, g, func() bool {
 		g.tickReconnect(time.Now().Add(time.Hour))

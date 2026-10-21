@@ -76,7 +76,7 @@ func (g *game) labelFor(key, real string) string {
 	case key == localKey:
 		return "local"
 	case key == hostedKey && g.hosted != nil:
-		return g.hosted.cfg.ServerName
+		return g.hosted.name()
 	}
 	return state.HostPort(real)
 }
@@ -116,6 +116,7 @@ func (g *game) saveServer(s *session, channel string) {
 	label := g.labelFor(s.key, s.url)
 	live := func(u string) bool { _, ok := g.sess[u]; return ok }
 	g.servers = state.Touch(g.servers, s.key, label, serverNameOf(s.c), channel, live)
+	g.servers = state.PinID(g.servers, s.key, s.c.ServerID())
 	if err := state.SaveServers(g.serversPath, g.servers); err != nil {
 		g.notice = fmt.Sprintf("save servers: %v", err)
 		s.st.Status = g.notice

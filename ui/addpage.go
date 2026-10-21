@@ -87,7 +87,7 @@ func (f *createForm) validate() (name string, port int, err string) {
 // leaves the form up with the reason in err.
 func (g *game) submitCreate() {
 	if g.hosted != nil {
-		g.cf.err = "already hosting " + g.hosted.cfg.ServerName
+		g.cf.err = "already hosting " + g.hosted.name()
 		return
 	}
 	name, port, msg := g.cf.validate()
@@ -112,7 +112,7 @@ func (g *game) addPageShown() bool {
 // createChoiceHint is the one-line hint under the Create my own choice.
 func (g *game) createChoiceHint() string {
 	if g.hosted != nil {
-		return "already hosting " + g.hosted.cfg.ServerName
+		return "already hosting " + g.hosted.name()
 	}
 	return "host a server on this computer"
 }
