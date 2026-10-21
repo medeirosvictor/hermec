@@ -196,8 +196,8 @@ roles.
 ### 5.6 Split-brain
 
 Each active host retries the other known hosts every 30 s. When two active
-hosts meet, the one with fewer voice members yields (ties: fewer clients, then
-higher priority number, then fingerprint order). The loser sends its chat
+hosts meet, the one with fewer voice members yields (ties: fewer clients
+yields, then the lower-priority host yields; priority 1 is highest). The loser sends its chat
 history to the winner (merged by `id`) and sends its clients `move` to the
 winner. The winner's chain is kept; entries the loser appended after the fork
 are dropped, and their authors get a notice: "your change was lost during a
