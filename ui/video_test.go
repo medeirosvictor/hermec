@@ -1,11 +1,11 @@
 package ui
 
 import (
-	"github.com/medeirosvictor/hermec/client"
-	"github.com/medeirosvictor/hermec/core/proto"
 	"testing"
 	"time"
 
+	"github.com/medeirosvictor/hermec/client"
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/video"
 )
@@ -207,16 +207,17 @@ func TestVideoStripVisibility(t *testing.T) {
 
 func stripCenter(g *game, kind state.HitKind) (float64, float64) {
 	r := g.stripLayout(g.geom())
-	var b rectF
-	switch kind {
-	case state.HitVideoChat:
-		b = r.chat
-	case state.HitVideoFull:
+	b := r.stop
+	if kind == state.HitVideoFull {
 		b = r.full
-	default:
-		b = r.stop
 	}
 	return (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2
+}
+
+// press builds the hit registry, as the update tick does, then presses.
+func press(g *game, x, y float64, now time.Time) {
+	g.buildHits()
+	g.videoPress(x, y, now)
 }
 
 func TestVideoStripHitsAndActions(t *testing.T) {
@@ -228,7 +229,7 @@ func TestVideoStripHitsAndActions(t *testing.T) {
 	}
 	p := g.videoPane(g.geom())
 	g.trackVideoMouse(p.x0+5, p.y0+5, *now)
-	for _, k := range []state.HitKind{state.HitVideoChat, state.HitVideoFull, state.HitVideoStop} {
+	for _, k := range []state.HitKind{state.HitVideoFull, state.HitVideoStop} {
 		x, y := stripCenter(g, k)
 		g.buildHits()
 		if h, ok := g.hits.At(x, y); !ok || h.Kind != k {
@@ -236,41 +237,65 @@ func TestVideoStripHitsAndActions(t *testing.T) {
 		}
 	}
 
-	// full: toggles fullscreen, keeps watching, and the press is no double-click.
+	// full: sets fullscreen, keeps watching, and the press is no double-click.
 	x, y := stripCenter(g, state.HitVideoFull)
-	g.videoPress(x, y, *now)
-	g.videoPress(x, y, now.Add(100*time.Millisecond))
-	if rec.fullscrns != 2 || !g.videoActive() {
-		t.Fatalf("toggles = %d active = %v", rec.fullscrns, g.videoActive())
+	press(g, x, y, *now)
+	if !g.fullscreen || rec.fullscrns != 1 || !g.videoActive() {
+		t.Fatalf("toggles = %d fullscreen = %v active = %v", rec.fullscrns, g.fullscreen, g.videoActive())
 	}
 	g.fullscreen = false
 	rec.fullscrns = 0
-	g.videoPress(p.x0+5, p.y0+5, *now) // a picture click, then a strip click, then a picture click
-	g.videoPress(x, y, *now)
-	g.videoPress(p.x0+5, p.y0+5, *now)
+	x, y = stripCenter(g, state.HitVideoFull)
+	press(g, p.x0+5, p.y0+5, *now) // a picture click, then a strip click, then a picture click
+	press(g, x, y, *now)
+	g.fullscreen = false
+	press(g, p.x0+5, p.y0+5, *now)
 	if rec.fullscrns != 1 { // only the strip button toggled
 		t.Fatalf("strip press counted toward double-click: %d", rec.fullscrns)
 	}
 
-	// stop watching
+	// close
 	g.fullscreen = false
 	x, y = stripCenter(g, state.HitVideoStop)
-	g.videoPress(x, y, *now)
+	press(g, x, y, *now)
 	if g.videoActive() || g.watch.fp != "" {
-		t.Fatal("stop did not end the watch")
+		t.Fatal("close did not end the watch")
 	}
 }
 
-func TestVideoStripBackToChatLeavesFullscreen(t *testing.T) {
+func TestVideoStripCloseLeavesFullscreen(t *testing.T) {
 	g, _, rec, now := watchingGame(t)
 	g.fullscreen = true
 	p := g.videoPane(g.geom())
 	g.trackVideoMouse(p.x0+5, p.y1-3, *now)
-	x, y := stripCenter(g, state.HitVideoChat)
-	g.videoPress(x, y, *now)
+	x, y := stripCenter(g, state.HitVideoStop)
+	press(g, x, y, *now)
 	g.syncFullscreen()
 	if g.videoActive() || g.fullscreen || rec.fullscrns != 1 {
-		t.Fatalf("active %v fullscreen %v toggles %d", g.videoActive(), g.fullscreen, rec.fullscrns)
+		t.Fatalf("active %v fullscreen %v calls %d", g.videoActive(), g.fullscreen, rec.fullscrns)
+	}
+}
+
+func TestVideoStripYieldsToOccluder(t *testing.T) {
+	g, _, rec, now := watchingGame(t)
+	p := g.videoPane(g.geom())
+	g.trackVideoMouse(p.x0+5, p.y0+5, *now)
+	x, y := stripCenter(g, state.HitVideoStop)
+	g.buildHits()
+	g.hits.Add(state.Hit{X0: x - 5, Y0: y - 5, X1: x + 5, Y1: y + 5, Kind: state.HitSignal})
+	g.videoPress(x, y, *now)
+	if !g.videoActive() || rec.fullscrns != 0 {
+		t.Fatal("a press on an overlapping panel reached the strip")
+	}
+}
+
+func TestVideoStripShowsAtBottomWithoutMove(t *testing.T) {
+	g, _, _, now := watchingGame(t)
+	g.fullscreen = true
+	p := g.videoPane(g.geom())
+	g.vid.mx, g.vid.my = (p.x0+p.x1)/2, p.y1-3 // resting there, moveAt unset
+	if !g.stripVisible(*now) {
+		t.Fatal("strip hidden for a cursor resting in the bottom 15%")
 	}
 }
 

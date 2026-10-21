@@ -166,22 +166,20 @@ func (g *game) clock() time.Time {
 	return time.Now()
 }
 
-// toggleFullscreen flips the window's fullscreen. Update re-syncs g.fullscreen
+// setFullscreen sets the window's fullscreen. Update re-syncs g.fullscreen
 // from the window each tick.
-func (g *game) toggleFullscreen() {
-	if g.shareOps.fullscreen != nil {
-		g.shareOps.fullscreen()
+func (g *game) setFullscreen(on bool) {
+	if g.shareOps.setFullscreen != nil {
+		g.shareOps.setFullscreen(on)
 	} else {
-		ebiten.SetFullscreen(!ebiten.IsFullscreen())
+		ebiten.SetFullscreen(on)
 	}
-	g.fullscreen = !g.fullscreen
+	g.fullscreen = on
 }
 
-func (g *game) exitFullscreen() {
-	if g.fullscreen {
-		g.toggleFullscreen()
-	}
-}
+func (g *game) toggleFullscreen() { g.setFullscreen(!g.fullscreen) }
+
+func (g *game) exitFullscreen() { g.setFullscreen(false) }
 
 // syncFullscreen is the one place that decides whether the window may be
 // fullscreen: only while the video view is on. Every way the view can end
@@ -208,8 +206,7 @@ const stripWait = 2 * time.Second
 const stripBottom = 0.15
 
 const (
-	stripChatLabel = "back to chat"
-	stripStopLabel = "stop watching"
+	stripStopLabel = "close (Esc)"
 	stripFullLabel = "fullscreen"
 	stripExitLabel = "exit fullscreen"
 )
@@ -227,20 +224,20 @@ func (g *game) trackVideoMouse(x, y float64, now time.Time) {
 // the pane and moved in the last stripWait, or (fullscreen) rests in the
 // bottom stripBottom of the pane.
 func (g *game) stripVisible(now time.Time) bool {
-	if !g.videoActive() || g.vid.moveAt.IsZero() {
+	if !g.videoActive() {
 		return false
 	}
 	p := g.videoPane(g.geom())
 	if !state.InRect(g.vid.mx, g.vid.my, p.x0, p.y0, p.x1, p.y1) {
 		return false
 	}
-	if now.Sub(g.vid.moveAt) <= stripWait {
+	if !g.vid.moveAt.IsZero() && now.Sub(g.vid.moveAt) <= stripWait {
 		return true
 	}
 	return g.fullscreen && g.vid.my >= p.y1-(p.y1-p.y0)*stripBottom
 }
 
-type stripRects struct{ chat, full, stop rectF }
+type stripRects struct{ full, stop rectF }
 
 func (g *game) fullLabel() string {
 	if g.fullscreen {
@@ -253,10 +250,9 @@ func (g *game) fullLabel() string {
 // hits and drawing all use it.
 func (g *game) stripLayout(gm geometry) stripRects {
 	p := g.videoPane(gm)
-	wc := text.Advance(stripChatLabel, g.face) + pad*2
 	wf := text.Advance(g.fullLabel(), g.face) + pad*2
 	ws := text.Advance(stripStopLabel, g.face) + pad*2
-	total := wc + wf + ws + pad*2
+	total := wf + ws + pad
 	h := gm.lh + pad
 	x := (p.x0+p.x1)/2 - total/2
 	if x < p.x0 {
@@ -265,8 +261,6 @@ func (g *game) stripLayout(gm geometry) stripRects {
 	y1 := p.y1 - pad*2
 	y0 := y1 - h
 	var r stripRects
-	r.chat = rectF{x, y0, x + wc, y1}
-	x += wc + pad
 	r.full = rectF{x, y0, x + wf, y1}
 	x += wf + pad
 	r.stop = rectF{x, y0, x + ws, y1}
@@ -282,7 +276,7 @@ func (g *game) stripHitAt(x, y float64, now time.Time) (state.HitKind, bool) {
 	for _, b := range []struct {
 		r rectF
 		k state.HitKind
-	}{{r.chat, state.HitVideoChat}, {r.full, state.HitVideoFull}, {r.stop, state.HitVideoStop}} {
+	}{{r.full, state.HitVideoFull}, {r.stop, state.HitVideoStop}} {
 		if state.InRect(x, y, b.r.x0, b.r.y0, b.r.x1, b.r.y1) {
 			return b.k, true
 		}
@@ -294,18 +288,20 @@ func (g *game) stripHitAt(x, y float64, now time.Time) (state.HitKind, bool) {
 // button acts (and is no part of a double-click), the picture counts toward the
 // double-click.
 func (g *game) videoPress(x, y float64, now time.Time) {
-	if k, ok := g.stripHitAt(x, y, now); ok {
-		g.vid.lastClk = time.Time{}
-		switch k {
-		case state.HitVideoChat, state.HitVideoStop:
-			g.stopWatching() // syncFullscreen leaves fullscreen this tick
-		case state.HitVideoFull:
-			g.toggleFullscreen()
-		}
+	// The registry says what is on top: the quality panel (or anything else
+	// registered later) keeps its clicks.
+	h, ok := g.hits.At(x, y)
+	if !ok {
 		return
 	}
-	p := g.videoPane(g.geom())
-	if state.InRect(x, y, p.x0, p.y0, p.x1, p.y1) {
+	switch h.Kind {
+	case state.HitVideoStop:
+		g.vid.lastClk = time.Time{}
+		g.stopWatching() // syncFullscreen leaves fullscreen this tick
+	case state.HitVideoFull:
+		g.vid.lastClk = time.Time{}
+		g.toggleFullscreen()
+	case state.HitVideo:
 		g.videoClick(now)
 	}
 }
@@ -365,7 +361,6 @@ func (g *game) addVideoHit(gm geometry) {
 	g.hits.Add(state.Hit{X0: p.x0, Y0: p.y0, X1: p.x1, Y1: p.y1, Kind: state.HitVideo})
 	if g.stripVisible(g.clock()) { // after the pane: the buttons win
 		r := g.stripLayout(gm)
-		g.hits.Add(state.Hit{X0: r.chat.x0, Y0: r.chat.y0, X1: r.chat.x1, Y1: r.chat.y1, Kind: state.HitVideoChat})
 		g.hits.Add(state.Hit{X0: r.full.x0, Y0: r.full.y0, X1: r.full.x1, Y1: r.full.y1, Kind: state.HitVideoFull})
 		g.hits.Add(state.Hit{X0: r.stop.x0, Y0: r.stop.y0, X1: r.stop.x1, Y1: r.stop.y1, Kind: state.HitVideoStop})
 	}
@@ -383,7 +378,7 @@ func (g *game) drawStrip(screen *ebiten.Image, ox, oy float64) {
 		r     rectF
 		k     state.HitKind
 		label string
-	}{{r.chat, state.HitVideoChat, stripChatLabel}, {r.full, state.HitVideoFull, g.fullLabel()}, {r.stop, state.HitVideoStop, stripStopLabel}} {
+	}{{r.full, state.HitVideoFull, g.fullLabel()}, {r.stop, state.HitVideoStop, stripStopLabel}} {
 		bg, fg := color.RGBA{0, 0, 0, 190}, g.th.FG
 		if hot == b.k {
 			bg, fg = color.RGBA{0x2E, 0x30, 0x35, 230}, g.th.Bright
