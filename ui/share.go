@@ -127,15 +127,19 @@ func (g *game) shareLabel() string {
 // copies the scaled frame (the grab loop reuses dst) into the video sink, where
 // the newest frame wins. It never blocks the encoder.
 func (g *game) previewTap(fp string) func(*video.Frame) {
+	gen := g.tapGen.Load()
 	return func(f *video.Frame) {
-		if !g.previewOn.Load() {
+		if !g.previewOn.Load() || g.tapGen.Load() != gen {
 			return
 		}
-		cp := video.NewFrame(f.W, f.H)
+		cp := g.vsink.spare(f.W, f.H)
 		copy(cp.Y, f.Y)
 		copy(cp.U, f.U)
 		copy(cp.V, f.V)
-		g.vsink.WriteVideoFrame(fp, cp)
+		// The generation is re-checked under the sink lock: a frame from a
+		// share that has since ended or changed screen cannot land after the
+		// reset.
+		g.vsink.writeIf(fp, cp, func() bool { return g.tapGen.Load() == gen })
 	}
 }
 
@@ -215,7 +219,6 @@ func (g *game) pickScreen(m screencap.Monitor) {
 	g.startShare(m)
 	if self && g.share.on {
 		g.watch = watchState{fp: g.fp, self: true}
-		g.previewOn.Store(true)
 	}
 }
 
@@ -228,6 +231,7 @@ func (g *game) startShare(m screencap.Monitor) {
 	p := state.ShareProfileFor(g.set.ShareQualityID())
 	w, h := video.FitSize(m.W, m.H, p.MaxW, p.MaxH)
 	src := newCaptureSource(g.newCapture(), m)
+	g.tapGen.Add(1)
 	src.tap = g.previewTap(g.fp)
 	start := g.shareOps.start
 	if start == nil {
@@ -264,6 +268,7 @@ func (g *game) stopShare() {
 		return
 	}
 	sh.src.muted.Store(true)
+	g.tapGen.Add(1)    // before the reset below: in-flight frames are dropped at the sink
 	g.endSelfPreview() // no stale frame outlives the share
 	g.logf("stopped sharing %s", sh.mon)
 	stop := g.shareOps.stop

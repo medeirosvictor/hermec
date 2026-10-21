@@ -67,12 +67,22 @@ func TestSelfPreviewFramesComeFromTap(t *testing.T) {
 		t.Fatal("tap fed the sink with no preview open")
 	}
 	g.clickLive(state.Hit{Kind: state.HitLive, Key: "mefp"})
+	g.stepVideo() // the tick turns the tap on
 	if err := src.Next(f); err != nil {
 		t.Fatal(err)
 	}
 	g.stepVideo()
 	if !g.vid.pending || g.vid.w != 4 || g.vid.h != 2 {
 		t.Fatalf("frame not staged: pending=%v %dx%d", g.vid.pending, g.vid.w, g.vid.h)
+	}
+	// The consumed frame is recycled: the next tap frame reuses its planes.
+	spare := g.vsink.spare(4, 2)
+	g.vsink.recycle(spare)
+	if err := src.Next(f); err != nil {
+		t.Fatal(err)
+	}
+	if _, got := g.vsink.take(); got != spare {
+		t.Fatal("tap did not reuse the recycled frame")
 	}
 	if len(rec.watches) != 0 {
 		t.Fatal("network watch used for the preview")
@@ -151,6 +161,28 @@ func TestSelfStripButtons(t *testing.T) {
 	settle(t, g)
 	if g.share.on || g.videoActive() || rec.stops != 2 {
 		t.Fatalf("share=%v active=%v stops=%d", g.share.on, g.videoActive(), rec.stops)
+	}
+}
+
+// A frame already past the old source's checks when the screen changes must
+// not land in the new preview.
+func TestSelfChangeScreenDropsInFlightFrame(t *testing.T) {
+	g, _, _, _ := selfGame(t)
+	g.clickLive(state.Hit{Kind: state.HitLive, Key: "mefp"})
+	g.stepVideo()
+	oldTap := g.share.src.tap
+	g.pickScreen(twoMonitors().mons[1])
+	settle(t, g)
+	g.stepVideo() // previewOn follows the restored preview
+	oldTap(video.NewFrame(4, 2))
+	g.stepVideo()
+	if g.vid.pending {
+		t.Fatal("in-flight frame of the old screen reached the new preview")
+	}
+	g.share.src.tap(video.NewFrame(4, 2)) // the new source still works
+	g.stepVideo()
+	if !g.vid.pending {
+		t.Fatal("new screen's frame was dropped")
 	}
 }
 

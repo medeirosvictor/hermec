@@ -25,6 +25,40 @@ type videoSink struct {
 	mu sync.Mutex
 	fp string
 	f  *video.Frame
+
+	// free is a spare frame for the self-preview tap. A frame is in exactly
+	// one place: free, the slot, or the UI; only preview frames are recycled.
+	free *video.Frame
+}
+
+// spare returns a w x h frame for the tap to fill: the recycled one when the
+// size matches, else a new one.
+func (v *videoSink) spare(w, h int) *video.Frame {
+	v.mu.Lock()
+	f := v.free
+	v.free = nil
+	v.mu.Unlock()
+	if f == nil || f.W != w || f.H != h {
+		return video.NewFrame(w, h)
+	}
+	return f
+}
+
+// recycle hands back a frame the UI is done with.
+func (v *videoSink) recycle(f *video.Frame) {
+	v.mu.Lock()
+	v.free = f
+	v.mu.Unlock()
+}
+
+// writeIf stores the frame only if ok() holds while the sink is locked, so a
+// reset (which also locks) cannot interleave between the check and the write.
+func (v *videoSink) writeIf(fp string, f *video.Frame, ok func() bool) {
+	v.mu.Lock()
+	if ok() {
+		v.fp, v.f = fp, f
+	}
+	v.mu.Unlock()
 }
 
 func (v *videoSink) WriteVideoFrame(fp string, f *video.Frame) {
@@ -151,7 +185,6 @@ func (g *game) clickSelf(s *session) {
 	g.stopWatching() // a remote watch ends first
 	g.resetVideo()
 	g.watch = watchState{fp: g.fp, self: true}
-	g.previewOn.Store(true)
 }
 
 // endSelfPreview drops the preview of our own share (no client call: none was
@@ -159,7 +192,6 @@ func (g *game) clickSelf(s *session) {
 func (g *game) endSelfPreview() {
 	if g.watch.self {
 		g.watch = watchState{}
-		g.previewOn.Store(false)
 		g.resetVideo()
 	}
 }
@@ -171,7 +203,6 @@ func (g *game) stopWatching() {
 	}
 	self := g.watch.self
 	g.watch = watchState{}
-	g.previewOn.Store(false)
 	g.resetVideo()
 	if self {
 		return
@@ -393,7 +424,7 @@ func (g *game) videoClick(now time.Time) {
 // stepVideo moves the newest decoded frame into the RGBA staging image. Frames
 // of any sharer but the watched one are dropped.
 func (g *game) stepVideo() {
-	g.previewOn.Store(g.watch.self)
+	g.previewOn.Store(g.watch.self) // the one place previewOn is set
 	fp, f := g.vsink.take()
 	if f == nil || fp != g.watch.fp || g.watch.fp == "" || f.W <= 0 || f.H <= 0 {
 		return
@@ -402,6 +433,9 @@ func (g *game) stepVideo() {
 		g.vid.rgba = image.NewRGBA(image.Rect(0, 0, f.W, f.H))
 	}
 	f.RGBA(g.vid.rgba)
+	if g.watch.self && fp == g.fp {
+		g.vsink.recycle(f) // never a remote frame: its decoder may still own it
+	}
 	g.vid.w, g.vid.h, g.vid.pending = f.W, f.H, true
 }
 
