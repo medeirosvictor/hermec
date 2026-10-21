@@ -142,7 +142,7 @@ func newChain(key *identity.Identity, cfg Config) (*chain.Chain, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ApplyTOML(c, key, cfg); err != nil {
+	if _, err := ApplyTOML(c, key, cfg, groupKeys); err != nil {
 		return nil, err
 	}
 	head := c.Head()
@@ -157,19 +157,26 @@ func newChain(key *identity.Identity, cfg Config) (*chain.Chain, error) {
 	return c, nil
 }
 
-// ApplyTOML appends to c the entries that bring its state in line with cfg's
-// group fields: a config entry when they differ (always when the chain has no
-// config yet), then a grant or revoke per differing fingerprint. It returns the
-// number of entries appended and refuses with a *chain.RuleError when key may
+// ApplyTOML appends to c the entries that bring its state in line with the
+// group fields of cfg named in set (the keys the TOML file defines; see
+// GroupFieldsSet). Fields not in set keep the chain's current values. A config
+// entry is appended when a set field differs (always when the chain has no
+// config yet); grant and revoke entries are produced only when "grants" is in
+// set. It returns one description per appended entry ("config",
+// "grant <fp>", "revoke <fp>") and refuses with a *chain.RuleError when key may
 // not change the config.
-func ApplyTOML(c *chain.Chain, key *identity.Identity, cfg Config) (n int, err error) {
+func ApplyTOML(c *chain.Chain, key *identity.Identity, cfg Config, set []string) (applied []string, err error) {
 	st := c.State()
 	fp := identity.Fingerprint(key.PublicKey())
 	if !st.Can(fp, chain.OpConfig) {
-		return 0, &chain.RuleError{Reason: fmt.Sprintf("%s may not change the server config", fp)}
+		return nil, &chain.RuleError{Reason: fmt.Sprintf("%s may not change the server config", fp)}
+	}
+	isSet := make(map[string]bool, len(set))
+	for _, k := range set {
+		isSet[k] = true
 	}
 	now := time.Now()
-	add := func(op chain.Op, body any) error {
+	add := func(desc string, op chain.Op, body any) error {
 		head := c.Head()
 		e, err := chain.NewEntry(key, &head, op, body, now)
 		if err != nil {
@@ -178,15 +185,50 @@ func ApplyTOML(c *chain.Chain, key *identity.Identity, cfg Config) (n int, err e
 		if err := c.Append(e); err != nil {
 			return err
 		}
-		n++
+		applied = append(applied, desc)
 		return nil
 	}
 
-	want := configBody(cfg)
-	if !st.HasConfig || !reflect.DeepEqual(want, normConfig(st.Config)) {
-		if err := add(chain.OpConfig, want); err != nil {
-			return n, err
+	cfgBody := configBody(cfg)
+	want := cfgBody
+	if st.HasConfig {
+		want = normConfig(st.Config)
+		if isSet["server_name"] {
+			want.Name = cfgBody.Name
 		}
+		if isSet["channels"] {
+			want.Channels = cfgBody.Channels
+		}
+		if isSet["voice_channels"] {
+			want.VoiceChannels = cfgBody.VoiceChannels
+		}
+		if isSet["max_voice"] {
+			want.MaxVoice = cfgBody.MaxVoice
+		}
+		if isSet["max_clients"] {
+			want.MaxClients = cfgBody.MaxClients
+		}
+		if isSet["max_per_ip"] {
+			want.MaxPerIP = cfgBody.MaxPerIP
+		}
+		if isSet["allowed_keys"] {
+			want.AllowedKeys = cfgBody.AllowedKeys
+		}
+		if isSet["roles"] {
+			want.Roles = cfgBody.Roles
+		}
+		if isSet["default_roles"] {
+			want.DefaultRoles = cfgBody.DefaultRoles
+		}
+		want = normConfig(want)
+	}
+	if !st.HasConfig || !reflect.DeepEqual(want, normConfig(st.Config)) {
+		if err := add("config", chain.OpConfig, want); err != nil {
+			return applied, err
+		}
+	}
+	if !isSet["grants"] {
+		return applied, nil
 	}
 
 	fps := make([]string, 0, len(cfg.Roles.Grants))
@@ -198,8 +240,8 @@ func ApplyTOML(c *chain.Chain, key *identity.Identity, cfg Config) (n int, err e
 		if cur, ok := st.Grants[f]; ok && sameStrings(cur, cfg.Roles.Grants[f]) {
 			continue
 		}
-		if err := add(chain.OpGrant, chain.GrantBody{Fingerprint: f, Roles: cfg.Roles.Grants[f]}); err != nil {
-			return n, err
+		if err := add("grant "+f, chain.OpGrant, chain.GrantBody{Fingerprint: f, Roles: cfg.Roles.Grants[f]}); err != nil {
+			return applied, err
 		}
 	}
 	var stale []string
@@ -210,11 +252,11 @@ func ApplyTOML(c *chain.Chain, key *identity.Identity, cfg Config) (n int, err e
 	}
 	sort.Strings(stale)
 	for _, f := range stale {
-		if err := add(chain.OpRevoke, chain.FPBody{Fingerprint: f}); err != nil {
-			return n, err
+		if err := add("revoke "+f, chain.OpRevoke, chain.FPBody{Fingerprint: f}); err != nil {
+			return applied, err
 		}
 	}
-	return n, nil
+	return applied, nil
 }
 
 // groupState is the server's view of its chain, kept current by refresh. All
@@ -241,10 +283,12 @@ func (s *Server) banned(fp string) bool {
 
 // refreshGroup re-reads roles and bans from the chain.
 func (s *Server) refreshGroup() {
-	st := s.chain.State()
+	// State is read under the lock so concurrent refreshes cannot store an
+	// older snapshot last.
 	s.group.mu.Lock()
+	defer s.group.mu.Unlock()
+	st := s.chain.State()
 	s.group.roles, s.group.bans = st.Roles(), st.Bans
-	s.group.mu.Unlock()
 }
 
 // chainCfg returns cfg with its group fields replaced by the chain's. A chain

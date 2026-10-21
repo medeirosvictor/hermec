@@ -91,28 +91,28 @@ func TestApplyTOMLAppendsDiffOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, err := ApplyTOML(c, key, cfg); err != nil || n != 0 {
+	if n, err := applyN(c, key, cfg, groupKeys); err != nil || n != 0 {
 		t.Fatalf("unchanged cfg: n = %d, err = %v", n, err)
 	}
 	before := len(c.Entries())
 	cfg.Channels = []string{"general", "dev", "ops"}
-	if n, err := ApplyTOML(c, key, cfg); err != nil || n != 1 {
+	if n, err := applyN(c, key, cfg, groupKeys); err != nil || n != 1 {
 		t.Fatalf("changed channels: n = %d, err = %v", n, err)
 	}
 	if es := c.Entries(); len(es) != before+1 || es[len(es)-1].Op != chain.OpConfig {
 		t.Errorf("entries = %d, last op %q", len(es), es[len(es)-1].Op)
 	}
-	if n, err := ApplyTOML(c, key, cfg); err != nil || n != 0 {
+	if n, err := applyN(c, key, cfg, groupKeys); err != nil || n != 0 {
 		t.Fatalf("second apply: n = %d, err = %v", n, err)
 	}
 	// Grant differences: add one, then drop it.
 	x := identity.Fingerprint(mustID(t).PublicKey())
 	cfg.Roles.Grants = map[string][]string{x: {"admin"}}
-	if n, err := ApplyTOML(c, key, cfg); err != nil || n != 1 {
+	if n, err := applyN(c, key, cfg, groupKeys); err != nil || n != 1 {
 		t.Fatalf("add grant: n = %d, err = %v", n, err)
 	}
 	cfg.Roles.Grants = nil
-	if n, err := ApplyTOML(c, key, cfg); err != nil || n != 1 {
+	if n, err := applyN(c, key, cfg, groupKeys); err != nil || n != 1 {
 		t.Fatalf("revoke grant: n = %d, err = %v", n, err)
 	}
 	if st := c.State(); len(st.Grants) != 0 {
@@ -129,7 +129,7 @@ func TestApplyTOMLNoAuthority(t *testing.T) {
 	}
 	before := len(c.Entries())
 	cfg.Channels = []string{"other"}
-	_, err = ApplyTOML(c, mustID(t), cfg)
+	_, err = ApplyTOML(c, mustID(t), cfg, groupKeys)
 	var re *chain.RuleError
 	if !errors.As(err, &re) {
 		t.Fatalf("err = %v, want RuleError", err)
@@ -205,5 +205,74 @@ func TestGroupFieldsSet(t *testing.T) {
 	}
 	if want := []string{"server_name", "channels", "max_voice", "grants"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func applyN(c *chain.Chain, key *identity.Identity, cfg Config, set []string) (int, error) {
+	a, err := ApplyTOML(c, key, cfg, set)
+	return len(a), err
+}
+
+func TestApplyTOMLOnlyTouchesSetKeys(t *testing.T) {
+	key := mustID(t)
+	x := identity.Fingerprint(mustID(t).PublicKey())
+	y := identity.Fingerprint(mustID(t).PublicKey())
+	cfg := chainTestCfg(map[string][]string{x: {"admin"}})
+	c, _, err := OpenChain(filepath.Join(t.TempDir(), "chain.jsonl"), key, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// TOML without grants: the chain-made grant survives, and defaults for
+	// unset keys do not overwrite the chain's name.
+	other := DefaultConfig()
+	other.Channels = []string{"only"}
+	a, err := ApplyTOML(c, key, other, []string{"channels"})
+	if err != nil || len(a) != 1 || a[0] != "config" {
+		t.Fatalf("applied = %v, err = %v", a, err)
+	}
+	st := c.State()
+	if !reflect.DeepEqual(st.Grants[x], []string{"admin"}) {
+		t.Errorf("grant for X lost: %v", st.Grants)
+	}
+	if st.Config.Name != "primos" || !reflect.DeepEqual(st.Config.Channels, []string{"only"}) ||
+		!reflect.DeepEqual(st.Config.VoiceChannels, []string{"lounge"}) {
+		t.Errorf("config = %+v", st.Config)
+	}
+
+	// TOML setting grants without X revokes X and grants Y.
+	other.Roles.Grants = map[string][]string{y: {"bot"}}
+	a, err = ApplyTOML(c, key, other, []string{"grants"})
+	if err != nil || len(a) != 2 || a[0] != "grant "+y || a[1] != "revoke "+x {
+		t.Fatalf("applied = %v, err = %v", a, err)
+	}
+	if g := c.State().Grants; len(g) != 1 || !reflect.DeepEqual(g[y], []string{"bot"}) {
+		t.Errorf("grants = %v", g)
+	}
+}
+
+func TestReopenWithDifferentTOMLLeavesChain(t *testing.T) {
+	key := mustID(t)
+	path := filepath.Join(t.TempDir(), "chain.jsonl")
+	c, _, err := OpenChain(path, key, chainTestCfg(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := len(c.Entries())
+	diff := DefaultConfig()
+	diff.ServerName, diff.Channels = "elsewhere", []string{"zzz"}
+	c2, created, err := OpenChain(path, key, diff)
+	if err != nil || created || len(c2.Entries()) != n {
+		t.Fatalf("created %v, err %v, entries %d want %d", created, err, len(c2.Entries()), n)
+	}
+	diff.HostKey, diff.Chain = key, c2
+	url := startServer(t, diff)
+	_, env := authAs(t, url, mustID(t), "")
+	var ok proto.AuthOK
+	if err := json.Unmarshal(env.Data, &ok); err != nil {
+		t.Fatal(err)
+	}
+	if ok.ServerName != "primos" || len(ok.Channels) != 3 || ok.Channels[0].Name != "general" {
+		t.Errorf("served %q %v", ok.ServerName, ok.Channels)
 	}
 }

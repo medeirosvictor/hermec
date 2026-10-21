@@ -27,6 +27,9 @@ func main() {
 	chainPath := flag.String("chain", "", "server chain file (default chain.jsonl next to -config)")
 	applyConfig := flag.Bool("apply-config", false, "append the config file's group fields to the chain, print the count, and exit")
 	flag.Parse()
+	if *applyConfig && *configPath == "" {
+		log.Fatal("-apply-config requires -config")
+	}
 
 	cfg := server.DefaultConfig()
 	if *configPath != "" {
@@ -68,13 +71,24 @@ func main() {
 		log.Fatal(err)
 	}
 	if *applyConfig {
-		n := len(c.Entries()) // a fresh chain was just built from cfg
-		if !created {
-			if n, err = server.ApplyTOML(c, key, cfg); err != nil {
+		var applied []string
+		if created { // a fresh chain was just built from the config
+			for _, e := range c.Entries() {
+				applied = append(applied, string(e.Op))
+			}
+		} else {
+			set, err := server.GroupFieldsSet(*configPath)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if applied, err = server.ApplyTOML(c, key, cfg, set); err != nil {
 				log.Fatal(err)
 			}
 		}
-		fmt.Printf("appended %d entries to %s\n", n, *chainPath)
+		for _, a := range applied {
+			fmt.Println(a)
+		}
+		fmt.Printf("appended %d entries to %s\n", len(applied), *chainPath)
 		return
 	}
 	cfg.HostKey, cfg.Chain = key, c
