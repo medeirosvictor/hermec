@@ -345,6 +345,28 @@ Semantics:
   dropped). They also ignore `auth_ok` `server_name`, since receivers ignore
   unknown fields (section 7).
 
+### 4.14a `chain_append` (C) and live `chain` (S)
+
+`chain_append` carries one signed chain entry (`{entry}`, the entry as it
+appears in a `chain` frame). The server requires the entry's author to be the
+connection's own key, then appends it under the chain's rules. On success it
+sends a `chain` frame holding just that entry (`more` unset) to every
+authenticated connection, the author included; clients append it to their
+verified copy, and a client that cannot do so ends the connection with
+`bad_chain`. Refusals are `error` messages: `chain_conflict` (the entry does not
+extend the head; fetch the new head and retry), `chain_full`, `forbidden`
+(author mismatch or a rule refusal; the message is the reason) and
+`bad_request` (malformed or otherwise rejected). Like other errors they carry no
+correlation id (section 5).
+
+Effects of an accepted entry: `grant`, `revoke` and the roles/default roles of
+`config` apply to the next permission check; `allowed_keys` of a `config`
+applies to the next authentication (members already connected stay); `ban`
+sends every connection of that key `error {banned}`, removes it from voice and
+closes it, and later authentications are refused with `banned`. The server name,
+channels and limits of a `config` entry are read at start-up and apply from the
+next start.
+
 ### 4.15 Screen share messages
 
 A member of a voice call can share their screen. Signaling rides the same
@@ -448,6 +470,9 @@ Media:
 | `not_sharing` | `watch` named a member who is not sharing in the sender's voice channel. |
 | `voice_full`  | `voice_join` named a channel already at its participant cap (`max_voice`, default 25). |
 | `server_full` | Authentication was refused because the server is at its `max_clients` cap (default 256); the connection is closed after this message. |
+| `chain_conflict` | `chain_append` did not extend the chain head. |
+| `chain_full`  | `chain_append` would exceed the chain's size cap. |
+| `banned`      | The key is banned; sent on authentication and to a live member when banned, then the connection is closed. |
 | `rate_limited`| The client is sending too fast; the connection is closed after this message. |
 
 Except for `auth_failed`, `server_full` and `rate_limited`, errors do not close the connection.

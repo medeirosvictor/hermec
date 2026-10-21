@@ -109,7 +109,7 @@ type Server struct {
 	cfg      Config
 	chain    *chain.Chain
 	group    groupState
-	allowed  map[string]struct{}
+	chainMu  sync.Mutex // serializes chain_append: append, refresh, broadcast, kick
 	upgrader websocket.Upgrader
 
 	mu      sync.Mutex
@@ -169,12 +169,6 @@ func New(cfg Config) *Server {
 	s.fails = make(map[string]*authFail)
 	s.refreshGroup()
 	s.initChannels()
-	if len(cfg.AllowedKeys) > 0 {
-		s.allowed = make(map[string]struct{}, len(cfg.AllowedKeys))
-		for _, fp := range cfg.AllowedKeys {
-			s.allowed[fp] = struct{}{}
-		}
-	}
 	return s
 }
 

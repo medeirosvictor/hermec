@@ -39,6 +39,7 @@ type Event struct {
 	Presence *proto.Presence
 	Voice    *proto.VoiceState
 	Roster   *proto.Roster // full member list, re-sent on every connect/disconnect
+	Chain    *chain.Entry  // a new entry, already applied to Client.Chain()
 	Err      error
 }
 
@@ -58,14 +59,19 @@ const (
 	CodeForbidden  = "forbidden"   // 403: the request carried an Origin header
 )
 
+// joinWaiter is a pending request answered in FIFO order: a Join (channel set)
+// or a ChainAppend (sig set, resolved when that entry comes back).
 type joinWaiter struct {
 	channel string
+	sig     []byte
 	res     chan error // buffered(1)
 }
 
 // Client is an authenticated connection to a Hermec server.
 type Client struct {
 	ws          *websocket.Conn
+	id          *identity.Identity
+	chainCallMu sync.Mutex // serializes ChainAppend calls
 	fingerprint string
 	roles       []string
 	channels    []proto.ChannelInfo
@@ -186,6 +192,7 @@ func DialPinned(ctx context.Context, url string, id *identity.Identity, name, pa
 
 	c := &Client{
 		ws:          ws,
+		id:          id,
 		fingerprint: res.ok.Fingerprint,
 		roles:       res.ok.Roles,
 		channels:    res.ok.Channels,
@@ -572,6 +579,10 @@ func (c *Client) readLoop() {
 				continue
 			}
 			c.emit(Event{Roster: &r})
+		case proto.TypeChain:
+			if !c.onChain(env) {
+				return
+			}
 		case proto.TypeRTCOffer, proto.TypeRTCAnswer, proto.TypeRTCCandidate:
 			c.onRTC(env)
 		case proto.TypeVideoSource:
@@ -600,7 +611,7 @@ func (c *Client) resolveJoins(channel string) {
 	var hit []*joinWaiter
 	rest := c.waiters[:0]
 	for _, w := range c.waiters {
-		if w.channel == channel {
+		if w.sig == nil && w.channel == channel {
 			hit = append(hit, w)
 		} else {
 			rest = append(rest, w)

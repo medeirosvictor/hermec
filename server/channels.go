@@ -289,6 +289,8 @@ func (c *conn) route(env proto.Envelope) {
 		case "forbidden":
 			c.sendError("forbidden", "not permitted to send chat")
 		}
+	case proto.TypeChainAppend:
+		c.handleChainAppend(env)
 	default:
 		if c.routeVoice(env) {
 			return

@@ -100,6 +100,13 @@ func (c *conn) finish() {
 		c.srv.releaseClient()
 	}
 	c.srv.leaveAll(c)
+	c.closeSend()
+}
+
+// closeSend stops accepting outbound messages; safe from any goroutine and
+// idempotent. The writer drains the queue and closes the socket, which ends the
+// read loop.
+func (c *conn) closeSend() {
 	c.sendMu.Lock()
 	if !c.closed {
 		c.closed = true
@@ -305,10 +312,8 @@ func (c *conn) authenticate() error {
 		return fail()
 	}
 	fp := identity.Fingerprint(pub)
-	if c.srv.allowed != nil {
-		if _, ok := c.srv.allowed[fp]; !ok {
-			return fail()
-		}
+	if !c.srv.keyAllowed(fp) {
+		return fail()
 	}
 
 	c.srv.noteAuthSuccess(c.ip)
@@ -332,5 +337,11 @@ func (c *conn) authenticate() error {
 	})
 	// Registered after auth_ok is queued so voice_state never precedes it.
 	c.srv.markAuthed(c)
+	// A ban appended between the check above and markAuthed missed this
+	// connection (kick only reaches authed ones).
+	if c.srv.banned(fp) {
+		c.sendError(proto.CodeBanned, "you are banned from this server")
+		return errAuthFailed
+	}
 	return nil
 }
