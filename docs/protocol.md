@@ -1,9 +1,9 @@
-# Hermec Wire Protocol, version 1
+# Hermec Wire Protocol, version 2
 
-This document specifies the Hermec signaling/chat protocol, version 1. It
-covers authentication, channels, presence, text chat, the server roster, voice
-signaling (section 4.12) and screen share signaling (section 4.15). Webcam is
-not specified yet.
+This document specifies the Hermec signaling/chat protocol, version 2. It
+covers the mutual handshake, the server chain (section 9), channels, presence,
+text chat, the server roster, voice signaling (section 4.12) and screen share
+signaling (section 4.15). Webcam is not specified yet.
 
 The reference implementation is `core/proto` (types and codec) and `server`
 (behavior). Where this document and the code disagree, that is a bug in one of
@@ -30,17 +30,17 @@ them; please report it.
 ## 2. Envelope
 
 ```json
-{"v": 1, "type": "chat_send", "data": {"channel": "general", "text": "hi"}}
+{"v": 2, "type": "chat_send", "data": {"channel": "general", "text": "hi"}}
 ```
 
 | Field  | Type    | Description                                              |
 |--------|---------|----------------------------------------------------------|
-| `v`    | integer | Protocol version. Must be `1`.                           |
+| `v`    | integer | Protocol version. Must be `2`, except for the `challenge` and the `update_required` error, which are sent as `1` (section 7). |
 | `type` | string  | Message type, non-empty. See section 4.                  |
 | `data` | object  | Type-specific payload. Omitted when the payload is empty. |
 
 A message is malformed if it exceeds the size limit, is not valid JSON, has
-`v` other than 1, or has an empty `type`.
+an unsupported `v`, or has an empty `type`.
 
 Conventions:
 
@@ -54,9 +54,13 @@ Conventions:
 ```
 Client                                   Server
   | -------- WebSocket upgrade --------> |
-  | <-------------- challenge ---------- |   random 32-byte nonce
-  | ---------------- auth -------------> |   pubkey, name, sig(nonce), password?
-  | <-------------- auth_ok ------------ |   or error(auth_failed) + close
+  | <-------------- challenge ---------- |   (1) server nonce, 32 bytes (v1 envelope)
+  | ----------- host_proof_req --------> |   (2) client nonce, 32 bytes
+  | <--------------- chain ------------- |   (3) the signed chain, in 1+ frames
+  | <------------- host_proof ---------- |       host key's proof over both nonces
+  |   client verifies the host           |   (4) before anything secret is sent
+  | ---------------- auth -------------> |   (5) pubkey, name, sig, password?
+  | <-------------- auth_ok ------------ |   (6) or error + close
   |                                      |
   | ---------------- join -------------> |
   | <------------- presence ------------ |   broadcast to all channel members
@@ -64,25 +68,57 @@ Client                                   Server
   | <----------- chat_message ---------- |   broadcast to all channel members
 ```
 
-### 3.1 Authentication
+### 3.1 Handshake
 
-1. Immediately after the upgrade the server sends `challenge` with a fresh
-   32-byte random nonce.
-2. The client must reply within **10 seconds** with `auth`:
-   - `pubkey`: its 32-byte Ed25519 public key.
-   - `sig`: an Ed25519 signature over the raw nonce bytes.
-   - `name`: a display name (not unique, not authenticated).
-   - `password`: required only if the server has a password configured.
-3. The server verifies, in this order: the message is a well-formed `auth`;
-   `pubkey` is 32 bytes; the signature is valid; the password (constant-time
-   comparison) if one is configured; the key's fingerprint is on the allow
-   list if one is configured.
-4. On success the server sends `auth_ok`. On any failure it sends a single
-   `error` with code `auth_failed` and closes the connection. The error never
-   reveals which check failed.
+The host proves it belongs to the server before the client sends its password.
+Nonces are 32 random bytes. The whole handshake must finish within **10
+seconds** of the upgrade. `server_id` is the raw 32 bytes of the server ID
+(section 9.1) in both signed strings. Each signed string starts with its own
+domain prefix, ending in a NUL byte (`\x00`), so a signature made for one
+purpose cannot be replayed as another.
 
-Any message other than `auth` before authentication is an authentication
-failure. Timeout or disconnect before `auth` simply closes the connection.
+1. **`challenge`** (S). Right after the upgrade the server sends a fresh server
+   nonce. The challenge is a version 1 envelope (section 7); every other
+   handshake message is version 2.
+2. **`host_proof_req`** (C), carrying the client's own nonce.
+3. **`chain`** and **`host_proof`** (S). The server sends its whole chain as
+   one or more `chain` frames (section 4.2a), then `host_proof`: the host key
+   and its Ed25519 signature over
+
+   ```
+   "hermec-host-proof\x00" || client_nonce || server_nonce || server_id
+   ```
+4. **The client verifies the host.** The chain's every entry and link must
+   verify (section 9), its genesis hash must equal the server ID the client
+   has pinned (a client with no pin trusts and records the first one it sees),
+   the proving key must be on the chain's host list, and the proof signature
+   must be valid. A failure ends the connection before `auth` is sent, with
+   `server_id_mismatch`, `host_not_authorized` or `bad_chain` (section 5);
+   clients do not retry these automatically.
+5. **`auth`** (C). The client signs
+
+   ```
+   "hermec-client-auth\x00" || server_nonce || client_nonce || server_id
+   ```
+
+   Binding the server ID stops a host from replaying the signature to log in as
+   the client on another server. `auth` also carries the public key, a display
+   name and, if the server has one, the password.
+6. **`auth_ok`** (S), or one `error` and a close. `auth_ok` carries the
+   `server_id`; the client checks it against the ID it verified in step 4 and
+   ends the connection with `server_id_mismatch` if it differs.
+
+The server checks `auth` in this order: it is a well-formed version 2 `auth`
+with a 32-byte `pubkey`; the signature is valid; the key is not banned; the
+password (constant-time comparison) if one is configured; the key's fingerprint
+is on the allow list if one is configured. A bad signature, wrong password or
+unlisted key gets a single `error` with code `auth_failed` and the connection
+closes; the error never reveals which check failed. A banned key, once its
+signature has proven it holds the key, gets `error` `banned` instead.
+
+Any message other than `host_proof_req` and `auth`, in that order, is an
+authentication failure. Timeout or disconnect before `auth` simply closes the
+connection.
 
 **Failed logins.** After 5 failed logins in a row from one IP (forgotten after a quiet minute), that IP
 is refused for 1 s. Each further failure doubles the wait, up to 60 s. A
@@ -124,7 +160,7 @@ Direction: C is client to server, S is server to client.
 
 | Field   | Type   | Description                        |
 |---------|--------|------------------------------------|
-| `nonce` | base64 | 32 random bytes to be signed.      |
+| `nonce` | base64 | The 32-byte server nonce. Sent as a version 1 envelope (section 7). |
 
 ### 4.2 `auth` (C)
 
@@ -132,8 +168,28 @@ Direction: C is client to server, S is server to client.
 |------------|--------|----------|-------------------------------------------|
 | `pubkey`   | base64 | yes      | 32-byte Ed25519 public key.               |
 | `name`     | string | yes      | Display name, cleaned and capped by the server (see 3.3). |
-| `sig`      | base64 | yes      | Ed25519 signature of the challenge nonce. |
+| `sig`      | base64 | yes      | Ed25519 signature over the client-auth string of section 3.1. |
 | `password` | string | no       | Server password, if one is configured.    |
+
+### 4.2a `host_proof_req` (C), `chain` (S) and `host_proof` (S)
+
+`host_proof_req` is `{nonce}`: the client's 32-byte nonce, base64.
+
+`chain` carries chain entries in order:
+
+| Field     | Type     | Description                                           |
+|-----------|----------|-------------------------------------------------------|
+| `entries` | Entry[]  | Chain entries, each as in section 9.2.                |
+| `more`    | bool     | Optional. True when further `chain` frames of the same transfer follow. |
+
+In the handshake the server sends the whole chain from genesis, split into
+frames that each hold under 60 KiB of entries (so the frame stays under the
+64 KiB limit). A client that receives anything but `chain` frames and then
+`host_proof` ends the handshake. After authentication a `chain` frame carries
+newly appended entries (section 4.14a).
+
+`host_proof` is `{pubkey, sig}`: the host's 32-byte Ed25519 public key and its
+signature over the host-proof string of section 3.1.
 
 ### 4.3 `auth_ok` (S)
 
@@ -142,7 +198,8 @@ Direction: C is client to server, S is server to client.
 | `fingerprint` | string        | The authenticated key's fingerprint. |
 | `roles`       | string[]      | Roles assigned to this fingerprint.  |
 | `channels`    | ChannelInfo[] | All channels on the server.          |
-| `server_name` | string        | Optional. The host's configured `server_name`; omitted when the host set none. Untrusted: clients strip control and format characters and cap it at 64 runes before display. A server that omits it (older servers) means "no name". |
+| `server_name` | string        | Optional. The host's configured `server_name`; omitted when the host set none. Untrusted: clients strip control and format characters and cap it at 64 runes before display. Omitted means "no name". |
+| `server_id`   | string        | The server ID (section 9.1) in its 52-character lowercase base32 form. Must equal the ID the client verified in the handshake. |
 
 `channels` is an array of `ChannelInfo` objects:
 
@@ -184,7 +241,7 @@ If the client was not in the channel the server replies `error` `not_joined`.
 |-----------|----------|--------------------------------------------------|
 | `channel` | string   | Channel name.                                    |
 | `members` | Member[] | Full current member list, sorted by name then fingerprint. |
-| `total`   | int      | Optional. The real member count. Omitted when zero, and absent from older servers. |
+| `total`   | int      | Optional. The real member count. Omitted when zero. |
 
 `presence` always carries the complete member list, not a delta. If the list
 would not fit in one frame (section 1), `members` holds only the first members
@@ -224,16 +281,15 @@ history; members who join later do not receive earlier messages.
 
 ### 4.10 `channel_list`
 
-Defined in `core/proto` but not used by v1 servers or clients: the channel
-list is delivered in `auth_ok`. Reserved for dynamic channel lists. v1
-servers must not send it, and a v1 server that receives it treats it as an
-unsupported type (`bad_request`).
+Defined in `core/proto` but not used: the channel list is delivered in
+`auth_ok`. Reserved for dynamic channel lists. Servers must not send it, and a
+server that receives it treats it as an unsupported type (`bad_request`).
 
 ### 4.11 Reserved: `e2ee_key_exchange` and `e2ee_frame`
 
-Reserved for future end-to-end encryption. In v1 these types are **reserved,
-v1 servers must reject**: a v1 server answers with `error`
-`bad_request` and does not relay them. They are never to be sent by v1 clients.
+Reserved for future end-to-end encryption. These types are **reserved and
+servers must reject them**: a server answers with `error` `bad_request` and
+does not relay them. Clients never send them.
 
 ### 4.12 Voice messages
 
@@ -341,14 +397,13 @@ Semantics:
   show "and N more" when `total` exceeds the number of listed members.
 - Names in `roster` are capped at 64 runes (by runes, not bytes) so one long
   name cannot crowd the others out; `presence` and chat carry names unchanged.
-- v1 clients that predate this message ignore it (unknown message types are
-  dropped). They also ignore `auth_ok` `server_name`, since receivers ignore
-  unknown fields (section 7).
 
 ### 4.14a `chain_append` (C) and live `chain` (S)
 
 `chain_append` carries one signed chain entry (`{entry}`, the entry as it
-appears in a `chain` frame). The server requires the entry's author to be the
+appears in a `chain` frame, section 9.2), built on the head the sender holds.
+It needs the authority the chain rules give the author for that op (section
+9.3). The server requires the entry's author to be the
 connection's own key, then appends it under the chain's rules. On success it
 sends a `chain` frame holding just that entry (`more` unset) to every
 authenticated connection, the author included; clients append it to their
@@ -396,13 +451,8 @@ Semantics:
 - Sharing and watching need no permission beyond being in the call (which
   itself needs the usual `join_channel` permission); there is no separate
   share permission.
-- A server older than v0.5.0 does not know these types and answers
-  `share_start` with `error` `bad_request` "unsupported message type
-  share_start". A client treats that as "this server does not support screen
-  share": it stops the share locally (without sending `share_stop`, which such
-  a server would also reject) and tells the user. A client also adds its video
-  track to the call only after the server's `voice_state` shows the client's
-  own `sharing: true`, which an older server never sends, so a failed share
+- A client adds its video track to the call only after the server's
+  `voice_state` shows the client's own `sharing: true`, so a refused share
   never puts an unanswerable video section into the call's negotiation.
 
 Media:
@@ -451,7 +501,7 @@ Media:
   restores) its previous target.
   When a viewer's source is detached (`watch` with `""`, or the sharer
   stopped) the server sends `{"fingerprint": "", "seq": 0}`; clients may
-  ignore it. Older clients ignore the unknown type. A client that gets no
+  ignore it. A client that gets no
   `video_source` for about 3 seconds after `watch` may fall back to restarting
   on the first packet it receives.
 - A server refuses an `rtc_offer` that contains a video section it has no
@@ -464,6 +514,11 @@ Media:
 | Code          | Meaning                                                              |
 |---------------|----------------------------------------------------------------------|
 | `auth_failed` | Authentication failed; the connection is closed after this message. |
+| `update_required` | Sent by a server to a version 1 client (section 7); the connection is closed. |
+| `server_outdated` | Raised by a client that finds the host speaks an older protocol version. Never sent on the wire. |
+| `server_id_mismatch` | Raised by a client when the host's genesis hash is not the server ID it has pinned, or `auth_ok.server_id` differs from the verified one. Never sent on the wire. |
+| `host_not_authorized` | Raised by a client when the host's key is not on the chain's host list or its proof signature is invalid. Never sent on the wire. |
+| `bad_chain` | Raised by a client when the chain it received does not verify (handshake or a live frame). Never sent on the wire. |
 | `forbidden`   | The role lacks the required permission (`join_channel`, `send_chat`). |
 | `bad_request` | Malformed message, unknown channel, unsupported message type, or chat text over 4096 bytes (`message too long`). |
 | `not_joined`  | The operation needs channel membership the client does not have.     |
@@ -475,9 +530,12 @@ Media:
 | `banned`      | The key is banned; sent on authentication and to a live member when banned, then the connection is closed. |
 | `rate_limited`| The client is sending too fast; the connection is closed after this message. |
 
-Except for `auth_failed`, `server_full` and `rate_limited`, errors do not close the connection.
+Except for `auth_failed`, `update_required`, `banned`, `server_full` and
+`rate_limited`, errors do not close the connection. `server_outdated`,
+`server_id_mismatch`, `host_not_authorized` and `bad_chain` end the attempt on
+the client side; clients do not retry them automatically.
 
-**Known v1 limitation: no error correlation.** Messages carry no request or
+**Known limitation: no error correlation.** Messages carry no request or
 correlation ID, so an `error` cannot be tied to the request that caused it.
 Clients attribute each error to their oldest pending request (FIFO), which is
 correct only because the server processes a connection's messages in order
@@ -487,14 +545,14 @@ version may add optional request IDs.
 
 ## 6. Roles and permissions
 
-Servers map fingerprints to roles and roles to permissions. The v1 permissions
+Servers map fingerprints to roles and roles to permissions. The permissions
 are:
 
 | Permission     | Grants                       |
 |----------------|------------------------------|
 | `join_channel` | Sending `join`.              |
 | `send_chat`    | Sending `chat_send`.         |
-| `manage`       | Reserved for administration. |
+| `manage`       | Appending `config`, `grant`, `revoke`, `ban` and `unban` chain entries (section 9.3). |
 
 Builtin roles: `admin` (all three), `user` and `bot` (`join_channel`,
 `send_chat`). A fingerprint with no explicit grant receives the server's
@@ -503,17 +561,26 @@ each request. Unknown role names grant nothing.
 
 ## 7. Versioning
 
-The envelope carries `v`. A server that receives an unsupported version treats
-the message as malformed (`bad_request`). Within a version, new optional
-fields may be added to payloads and receivers must ignore unknown fields and
-unknown message types. The protocol is pre-release: version 1 may still change
-incompatibly without a new version number, and clients and servers should be
-updated together. Once it is frozen, an incompatible change needs a new version
-number.
+The envelope carries `v`. The current version is 2. A server that
+receives an unsupported version treats the message as malformed
+(`bad_request`). Within a version, new optional fields may be added to payloads
+and receivers must ignore unknown fields and unknown message types. An
+incompatible change needs a new version number.
 
-Older clients ignore the `auth_ok` `server_name` field, the `roster` message,
-the `VoiceMember` `sharing` field and `video_source`. A server older than
-v0.5.0 answers the screen share messages with `bad_request` (section 4.15).
+Version 1 peers are handled during the handshake only:
+
+- The `challenge` is always sent as a version 1 envelope, so a version 1 client
+  can read it. A version 1 client answers with `auth` (version 1); the server
+  replies with one version 1 `error` `update_required` ("update HERMEC to
+  connect to this server") and closes. Anything else sent as version 1 is an
+  ordinary authentication failure.
+- A version 2 client that meets a version 1 host gets no version 2 `chain`
+  frame after `host_proof_req`; it ends the attempt with `server_outdated`
+  ("the host runs an older HERMEC").
+- A server accepts version 1 envelopes only for that first handshake message.
+  After it, every message must be version 2.
+
+Every member of a group therefore needs a release that speaks version 2.
 
 ## 8. Discovery
 
@@ -560,3 +627,68 @@ at most 64 characters; default is the server's listen `host:port`). The
 responder binds after the TCP listener, to the same port number and on the same interface as the server address (a
 loopback server answers only on loopback; only a wildcard server address binds
 the responder to all interfaces).
+
+## 9. Server chain
+
+A server's identity and group configuration live in a signed, append-only
+chain. The reference implementation is `core/chain`.
+
+### 9.1 Server ID
+
+The server ID is the SHA-256 hash of the genesis entry (section 9.2). Its
+string form is the 32 bytes in lowercase RFC 4648 base32 without padding (52
+characters); that form is what `auth_ok.server_id` and client pins carry. Apps
+show a short form, `srv-` plus the first 10 bytes in hyphenated groups of four,
+like a fingerprint. In the handshake signatures the ID is the raw 32 bytes.
+
+### 9.2 Entries
+
+An entry is a JSON object:
+
+| Field    | Type    | Description                                              |
+|----------|---------|----------------------------------------------------------|
+| `seq`    | integer | 0 for genesis, then 1, 2, and so on.                     |
+| `prev`   | base64  | Hash of the previous entry; omitted in genesis.          |
+| `time`   | integer | Unix milliseconds.                                       |
+| `author` | base64  | The signer's 32-byte Ed25519 public key.                 |
+| `op`     | string  | The operation, see section 9.3.                          |
+| `body`   | base64  | The compact JSON of the op's body struct, base64 encoded, so the exact bytes that were signed survive any re-encoding. |
+| `sig`    | base64  | Ed25519 signature by `author` over the signed bytes.     |
+
+The **signed bytes** are `"hermec-chain-v1\x00"` followed by the compact JSON
+(no whitespace, no HTML escaping) of the entry's fields except `sig`, in the
+order `seq`, `prev`, `time`, `author`, `op`, `body`. The **entry hash** is
+SHA-256 over the signed bytes followed by `sig`; `prev` is the hash of the
+previous entry. An entry must carry a valid signature and a `body` that is
+compact JSON. Anyone can verify the whole chain from the genesis entry alone.
+
+### 9.3 Operations
+
+Authority is checked against the chain state just before the entry. The founder
+(the genesis author) may sign every op after genesis. A banned key may sign
+nothing.
+
+| Op            | Body                                                         | Who may sign |
+|---------------|--------------------------------------------------------------|--------------|
+| `genesis`     | `name`, `founder` (the author's key), `salt` (random bytes)  | the founder; entry 0 only |
+| `config`      | the full group config: `name`, `channels`, `voice_channels`, `max_voice`, `max_clients`, `max_per_ip`, `allowed_keys`, `roles`, `default_roles` | founder, or a key with `manage` |
+| `grant`       | `fingerprint`, `roles`; replaces that key's roles            | founder, or `manage` |
+| `revoke`      | `fingerprint`; removes that key's grant. The founder cannot be revoked | founder, or `manage` |
+| `ban`         | `fingerprint`. The founder cannot be banned                  | founder, or `manage` |
+| `unban`       | `fingerprint`                                                | founder, or `manage` |
+| `host_add`    | `pub_key`, `priority` (at least 1); re-adding a key updates its priority | founder only |
+| `host_remove` | `fingerprint` of a listed host                               | founder only |
+
+The latest `config` wins; it is the whole config, not a diff. The password is
+never in the chain: the chain is sent to every client before it authenticates.
+The state after replaying the chain also holds the grants, the ban list and the
+host list (ordered by priority, then fingerprint).
+
+### 9.4 Caps
+
+A chain holds at most 2048 entries (genesis included) and 512 KiB (the sum of
+the entries' encoded JSON lines, newline included). An append past either cap
+is refused with `chain_full`, and a received chain that exceeds them is
+rejected. The handshake sends the chain in frames of under 60 KiB of entries.
+Before it has proven itself, a host may send a client at most 64 chain frames
+and 2 MiB of entries; beyond that the client ends the attempt with `bad_chain`.

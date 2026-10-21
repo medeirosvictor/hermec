@@ -11,14 +11,15 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and
    the memory note `hermec-project`.
 2. Repo state: `main` == `origin/main`, released through **v0.5.1**. The
-   worktree `.claude/worktrees/hermec-portable` is on branch `hermec-next`.
+   worktree `.claude/worktrees/hermec-portable` is on branch `always-on`.
    Untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.
 3. **Current round: always-on.** Spec (approved design):
    `docs/superpowers/specs/2026-10-21-hermec-always-on-design.md`. Three PRs:
    identity and chain, chat history, host link with warm standby and failover.
-   After always-on and webcam, Victor moves to stress testing and use-case
+   **PR 1 (identity and chain) is done** (branch `always-on`, protocol v2); next
+   is PR 2, chat history. After always-on and webcam, Victor moves to stress testing and use-case
    scenarios (most main features done by then).
 4. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload:
    `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In Victor's real settings,
@@ -175,9 +176,6 @@ server. Agents must not run the GUI against the real `%APPDATA%\hermec`.
 Lists checked against the code on 2026-10-21; items already fixed were dropped.
 
 **Hardening and server:**
-- Auth bound to server identity (always-on). The auth signature is over the raw
-  nonce only; decide domain separation (`"hermec-auth-v1" || nonce`) before
-  protocol v1 is frozen.
 - Wire correlation IDs for `rtc_*` messages and errors (retires the 300 ms glare
   heuristic and error misattribution); SFU PeerConnection rebuild past N dead
   m-lines (long-call SDP growth); client packet-loss concealment on RTP gaps;
@@ -282,12 +280,13 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
   webcams about 27 Mbps, so about 45 Mbps.
 - **Security roadmap ("make it safe"):** a "Tailscale only" listen option for
   hosted servers; invite links and allowlists in the app; TLS for public hosting;
-  key pinning; kick and ban by fingerprint (server-owned state dir, probably chat
-  commands first; ban-evasion barriers to pick from: invite gating, proof-of-work
-  key minting, invite trees).
-- **Plan A, trust layer:** server identity keypair; founder-signed append-only
-  membership and config chain; unique signed invite links (revocable, invite
-  tree); bans and roles as signed ops. Subsumes the old moderation plan.
+  an app UI for bans (the chain and protocol have them; ban-evasion barriers to
+  pick from: invite gating, proof-of-work key minting, invite trees). Known gap:
+  the v2 handshake does not bind the connection, so on plain `ws://` a path
+  attacker can relay a host's proof and read the password; TLS or Tailscale
+  closes it.
+- **Plan A, trust layer (rest):** unique signed invite links (revocable, invite
+  tree). The identity chain, bans and roles as signed ops are built.
 - **Plan B, member hosting:** see always-on above.
 - **Plan C, synced encrypted history:** a gossip append-only log with a group key
   rotated on ban; end-to-end encryption arrives first at rest. Interest in
@@ -316,8 +315,10 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
 ## How it works and where to find things
 
 - **Packages:** `core/proto` (wire types and codec), `core/identity`,
-  `core/roles`, `core/names`; `server` (WebSocket server, SFU in `sfu.go` and
-  `voice.go`, limits in `guards.go`, UDP media mux in `mediaport.go`, discovery
+  `core/roles`, `core/names`, `core/chain` (signed server chain: entries,
+  state, server ID); `server` (WebSocket server, handshake in `conn.go` and
+  `handshake.go`, chain bootstrap, `-apply-config` and live chain updates in
+  `chain.go`, SFU in `sfu.go` and `voice.go`, limits in `guards.go`, UDP media mux in `mediaport.go`, discovery
   responder in `discovery.go`); `client` (headless library: connect, voice,
   share, RTT); `audio` (malgo capture and playback, jitter buffer, gopus);
   `video` (VP8 via govpx, letterbox); `screencap` (Windows GDI capture, stub

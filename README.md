@@ -259,6 +259,17 @@ Any OS, once HERMEC is running:
   Revoke invite.
 - **Keys, not passwords.** Every person has a key file. The server checks a
   signature from that key when they connect.
+- **The host proves itself first.** Before your app sends anything secret
+  (including the server password), the host sends the server's signed chain and
+  proves it holds a key that the chain approves as a host. A machine that
+  merely copied the address cannot pass.
+- **Your app remembers the server.** Each server has an ID (the hash of the
+  first entry of its chain). The app pins it the first time you connect and, if
+  the ID ever changes, refuses to connect, tells you so and does not retry. Your
+  login signature also covers the server ID, so one host cannot replay it to
+  log in as you on another server.
+- **Bans stick.** Admins can ban a key; a banned key is disconnected at once and
+  refused when it comes back.
 
 **Known gaps (we are working on these):**
 
@@ -300,17 +311,21 @@ Any OS, once HERMEC is running:
 
    Drop `,LocalSubnet` to allow Tailscale only.
 4. **The host can read everything.** Chat and voice pass through the host's
-   server. Only join servers run by people you trust. A host could also pretend
-   to be you on other servers you use, until server identity keys land
-   (planned).
+   server. Only join servers run by people you trust.
 5. **Names are not verified.** Anyone can pick any name. The fingerprint (hover
    a server or person) is the real identity.
-6. **Not ready for the open internet.** HERMEC uses plain `ws://` unless you
-   set `tls_cert` and `tls_key` in the server config (both are in
-   [example.server.toml](example.server.toml); the server then serves `wss://`).
-   Only reach servers through Tailscale or your LAN. Hosting on a rented server
-   for strangers needs invite links and server identity keys first (on the
-   roadmap).
+6. **The handshake does not bind the connection.** On plain `ws://`, someone
+   on the network path between you and the host could relay a real host's
+   proof and so read the password you send. Use TLS (set `tls_cert` and
+   `tls_key` in the server config; both are in
+   [example.server.toml](example.server.toml); the server then serves `wss://`)
+   or a network that is already encrypted. Tailscale is, and it is what this
+   friend group uses. Without one of them, treat the password as visible to
+   anyone on the path.
+7. **Not ready for strangers on the open internet.** There are no invite links
+   yet, so a public server cannot tell welcome visitors from unwelcome ones
+   (`allowed_keys` and bans help, but only after the fact). Reach servers
+   through Tailscale or your LAN.
 
 ## Run
 
@@ -318,7 +333,31 @@ Any OS, once HERMEC is running:
 ./hermec-server                                # defaults: ws on :7697, channel "general"
 ./hermec-server -config example.server.toml    # with a config file
 ./hermec-server -config server.toml -print-config   # show effective config and exit
+./hermec-server -config server.toml -apply-config   # append the TOML's group settings to the chain and exit
 ```
+
+The server's identity lives in a signed chain. On first start the server
+creates the chain from its config, with its own key as founder: `-key` is the
+host key file (default `hermec-server.key` next to the config, generated when
+missing) and `-chain` is the chain file (default `chain.jsonl` next to the
+config). Back both up; the key is what lets you change the group later.
+
+Once a chain exists, the group settings in the TOML (`server_name`, `channels`,
+`voice_channels`, `max_voice`, `max_clients`, `max_per_ip`, `allowed_keys`,
+`roles`, `default_roles` and `[grants]`) are ignored, and the server logs a
+warning when it sees them. To change them from the file, edit the TOML and run
+`hermec-server -config server.toml -apply-config`. It needs `-config`, appends
+only the group keys the TOML actually sets (grants are compared only when
+`[grants]` is set), signed by the server's key, then prints what it appended
+and exits. For entries that reach a running server (grants, bans, a new
+config), `allowed_keys`, roles and bans apply at once; the name, channels and
+limits from a later config apply at the next start. The password,
+port, TLS and the other machine settings stay in the TOML and never go into the
+chain.
+
+Everyone in a group needs HERMEC v0.6 or newer: an older app is told to update
+HERMEC, and a v0.6 app that meets an older server reports that the host runs an
+older version.
 
 Servers announce themselves on the LAN and on Tailscale (if the `tailscale` CLI
 is on PATH), so friends see them in the app's DISCOVERED list. To label your
@@ -443,7 +482,10 @@ for joining. The app starts the server on your computer, opens it as a
 tile, and shows an invite address (your Tailscale address if you have one,
 otherwise your LAN address) that friends paste into **Join a server**. Windows
 asks once to allow HERMEC on your network; choose Allow so friends can connect.
-The server runs while the app is open.
+The server runs while the app is open. Its signed chain (the server's identity
+and group settings, with you as founder) is kept in a `chains` folder next to
+`hosted.toml`; a server created before v0.6 gets its chain the first time v0.6
+starts it.
 
 ## Use as a library
 
@@ -474,6 +516,9 @@ for ev := range c.Events() {
   network or a trusted LAN, as in the
   [friends quickstart](docs/quickstart-friends.md)). Plain `ws://` over the
   public internet means an on-path observer can read everything, including chat.
+- **The handshake does not bind the connection.** On plain `ws://`, someone on
+  the network path could relay a real host's proof and read your password. Use
+  TLS (`wss://`) or an encrypted network such as Tailscale.
 - **The host is trusted by design.** The room host can read all chat and
   relayed traffic, the same way a TeamSpeak host can. Choose hosts like you
   choose group admins. The host also sees who connects and when.

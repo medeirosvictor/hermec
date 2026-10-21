@@ -3,6 +3,14 @@
 # default_roles are the defaults. Unknown keys are rejected.
 # Run with:  hermec-server -config example.server.toml
 # Inspect the effective config with:  hermec-server -config ... -print-config
+#
+# Group settings (server_name, channels, voice_channels, max_voice, max_clients,
+# max_per_ip, allowed_keys, roles, default_roles, [grants]) seed the server's
+# chain on first start. Once the chain exists they are ignored with a warning;
+# to change them, edit them here and run:
+#   hermec-server -config example.server.toml -apply-config
+# which appends only the group keys this file sets, then exits. The password,
+# addr, TLS and the other machine settings always come from this file.
 
 # Listen address (host:port). ":7697" listens on all interfaces.
 addr = ":7697"
