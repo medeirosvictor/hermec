@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/medeirosvictor/hermec/client"
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/video"
 )
@@ -80,5 +82,227 @@ func TestVideoDoubleClickTogglesFullscreen(t *testing.T) {
 	g.videoClick(t0.Add(2 * time.Second))
 	if rec.fullscrns != 1 {
 		t.Fatalf("slow clicks toggled: %d", rec.fullscrns)
+	}
+}
+
+// watchingGame is shareGame with ann's stream being watched and a fake clock.
+func watchingGame(t *testing.T) (*game, *session, *recorder, *time.Time) {
+	t.Helper()
+	g, s := shareGame(t)
+	rec := &recorder{}
+	g.shareOps = rec.ops(twoMonitors(), true)
+	now := time.Unix(1000, 0)
+	g.shareOps.now = func() time.Time { return now }
+	g.clickLive(state.Hit{Kind: state.HitLive, Key: "annfp"})
+	settle(t, g)
+	return g, s, rec, &now
+}
+
+func TestEscInFullscreenLeavesFullscreenOnly(t *testing.T) {
+	g, _, rec, _ := watchingGame(t)
+	g.fullscreen = true
+	if !g.videoEsc(true) {
+		t.Fatal("Esc not taken")
+	}
+	if rec.fullscrns != 1 || g.fullscreen {
+		t.Fatalf("fullscreen toggles = %d, fullscreen = %v", rec.fullscrns, g.fullscreen)
+	}
+	if !g.videoActive() || !g.escSpent {
+		t.Fatal("first Esc must keep watching and be spent")
+	}
+	g.escSpent = false
+	g.videoEsc(true)
+	if g.videoActive() {
+		t.Fatal("second Esc did not return to chat")
+	}
+	if rec.fullscrns != 1 {
+		t.Fatalf("second Esc toggled fullscreen: %d", rec.fullscrns)
+	}
+}
+
+func TestVideoEndWhileFullscreenLeavesFullscreen(t *testing.T) {
+	ends := map[string]func(g *game, s *session){
+		"stop watching": func(g *game, s *session) { g.stopWatching() },
+		"sharer stops": func(g *game, s *session) {
+			s.st.Apply(client.Event{Voice: &proto.VoiceState{Channel: "voice", Members: []proto.VoiceMember{
+				{Fingerprint: "annfp", Name: "ann"}, {Fingerprint: "bobfp", Name: "bob"},
+			}}}, true)
+			g.stepShare()
+		},
+		"leave call":    func(g *game, s *session) { g.endCallMedia(); g.callKey = "" },
+		"settings open": func(g *game, s *session) { g.settingsOpen = true },
+		"switch server": func(g *game, s *session) { g.curKey = "other" },
+	}
+	for name, end := range ends {
+		t.Run(name, func(t *testing.T) {
+			g, s, rec, _ := watchingGame(t)
+			g.fullscreen = true
+			g.syncFullscreen()
+			if rec.fullscrns != 0 {
+				t.Fatal("left fullscreen while the video is still on")
+			}
+			end(g, s)
+			g.syncFullscreen()
+			if rec.fullscrns != 1 || g.fullscreen {
+				t.Fatalf("toggles = %d fullscreen = %v", rec.fullscrns, g.fullscreen)
+			}
+			g.syncFullscreen()
+			if rec.fullscrns != 1 {
+				t.Fatal("toggled again when already windowed")
+			}
+		})
+	}
+}
+
+func TestF11TogglesOnlyWhileWatching(t *testing.T) {
+	g, _, rec, _ := watchingGame(t)
+	g.videoF11(true)
+	if rec.fullscrns != 1 || !g.fullscreen {
+		t.Fatalf("F11: toggles = %d fullscreen = %v", rec.fullscrns, g.fullscreen)
+	}
+	g.videoF11(false)
+	if rec.fullscrns != 1 {
+		t.Fatal("toggled without a press")
+	}
+	g.stopWatching()
+	g.videoF11(true)
+	if rec.fullscrns != 1 {
+		t.Fatal("F11 acted outside the video view")
+	}
+}
+
+func TestVideoStripVisibility(t *testing.T) {
+	g, _, _, now := watchingGame(t)
+	p := g.videoPane(g.geom())
+	cx, top := (p.x0+p.x1)/2, p.y0+10
+	if g.stripVisible(*now) {
+		t.Fatal("strip visible before the mouse moved")
+	}
+	g.trackVideoMouse(cx, top, *now)
+	if !g.stripVisible(*now) || !g.stripVisible(now.Add(1900*time.Millisecond)) {
+		t.Fatal("strip hidden right after a move")
+	}
+	if g.stripVisible(now.Add(2100 * time.Millisecond)) {
+		t.Fatal("strip still visible after 2 s idle")
+	}
+	// Fullscreen: stays while the mouse rests in the bottom 15%.
+	g.fullscreen = true
+	if g.stripVisible(now.Add(5 * time.Second)) {
+		t.Fatal("fullscreen: strip visible with the mouse at the top")
+	}
+	g.trackVideoMouse(cx, p.y1-5, *now)
+	if !g.stripVisible(now.Add(time.Minute)) {
+		t.Fatal("fullscreen: strip hidden in the bottom 15%")
+	}
+	g.fullscreen = false
+	if g.stripVisible(now.Add(time.Minute)) {
+		t.Fatal("windowed: bottom resting kept the strip")
+	}
+	// Mouse outside the pane: hidden.
+	g.trackVideoMouse(p.x0-5, p.y0+5, *now)
+	if g.stripVisible(*now) {
+		t.Fatal("strip visible with the mouse off the pane")
+	}
+}
+
+func stripCenter(g *game, kind state.HitKind) (float64, float64) {
+	r := g.stripLayout(g.geom())
+	b := r.stop
+	if kind == state.HitVideoFull {
+		b = r.full
+	}
+	return (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2
+}
+
+// press builds the hit registry, as the update tick does, then presses.
+func press(g *game, x, y float64, now time.Time) {
+	g.buildHits()
+	g.videoPress(x, y, now)
+}
+
+func TestVideoStripHitsAndActions(t *testing.T) {
+	g, _, rec, now := watchingGame(t)
+	g.buildHits()
+	cx, cy := stripCenter(g, state.HitVideoStop)
+	if h, ok := g.hits.At(cx, cy); !ok || h.Kind != state.HitVideo {
+		t.Fatalf("hidden strip registered hits: %+v", h)
+	}
+	p := g.videoPane(g.geom())
+	g.trackVideoMouse(p.x0+5, p.y0+5, *now)
+	for _, k := range []state.HitKind{state.HitVideoFull, state.HitVideoStop} {
+		x, y := stripCenter(g, k)
+		g.buildHits()
+		if h, ok := g.hits.At(x, y); !ok || h.Kind != k {
+			t.Fatalf("hit at %v = %+v, want %v", k, h, k)
+		}
+	}
+
+	// full: sets fullscreen, keeps watching, and the press is no double-click.
+	x, y := stripCenter(g, state.HitVideoFull)
+	press(g, x, y, *now)
+	if !g.fullscreen || rec.fullscrns != 1 || !g.videoActive() {
+		t.Fatalf("toggles = %d fullscreen = %v active = %v", rec.fullscrns, g.fullscreen, g.videoActive())
+	}
+	g.fullscreen = false
+	rec.fullscrns = 0
+	x, y = stripCenter(g, state.HitVideoFull)
+	press(g, p.x0+5, p.y0+5, *now) // a picture click, then a strip click, then a picture click
+	press(g, x, y, *now)
+	g.fullscreen = false
+	press(g, p.x0+5, p.y0+5, *now)
+	if rec.fullscrns != 1 { // only the strip button toggled
+		t.Fatalf("strip press counted toward double-click: %d", rec.fullscrns)
+	}
+
+	// close
+	g.fullscreen = false
+	x, y = stripCenter(g, state.HitVideoStop)
+	press(g, x, y, *now)
+	if g.videoActive() || g.watch.fp != "" {
+		t.Fatal("close did not end the watch")
+	}
+}
+
+func TestVideoStripCloseLeavesFullscreen(t *testing.T) {
+	g, _, rec, now := watchingGame(t)
+	g.fullscreen = true
+	p := g.videoPane(g.geom())
+	g.trackVideoMouse(p.x0+5, p.y1-3, *now)
+	x, y := stripCenter(g, state.HitVideoStop)
+	press(g, x, y, *now)
+	g.syncFullscreen()
+	if g.videoActive() || g.fullscreen || rec.fullscrns != 1 {
+		t.Fatalf("active %v fullscreen %v calls %d", g.videoActive(), g.fullscreen, rec.fullscrns)
+	}
+}
+
+func TestVideoStripYieldsToOccluder(t *testing.T) {
+	g, _, rec, now := watchingGame(t)
+	p := g.videoPane(g.geom())
+	g.trackVideoMouse(p.x0+5, p.y0+5, *now)
+	x, y := stripCenter(g, state.HitVideoStop)
+	g.buildHits()
+	g.hits.Add(state.Hit{X0: x - 5, Y0: y - 5, X1: x + 5, Y1: y + 5, Kind: state.HitSignal})
+	g.videoPress(x, y, *now)
+	if !g.videoActive() || rec.fullscrns != 0 {
+		t.Fatal("a press on an overlapping panel reached the strip")
+	}
+}
+
+func TestVideoStripShowsAtBottomWithoutMove(t *testing.T) {
+	g, _, _, now := watchingGame(t)
+	g.fullscreen = true
+	p := g.videoPane(g.geom())
+	g.vid.mx, g.vid.my = (p.x0+p.x1)/2, p.y1-3 // resting there, moveAt unset
+	if !g.stripVisible(*now) {
+		t.Fatal("strip hidden for a cursor resting in the bottom 15%")
+	}
+}
+
+func TestTitleBarNotShownFullscreen(t *testing.T) {
+	g, _ := shareGame(t)
+	g.fullscreen = true
+	if g.titleBarShown() || g.barH() != 0 {
+		t.Fatal("title bar shown in fullscreen")
 	}
 }

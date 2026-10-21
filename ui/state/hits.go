@@ -28,6 +28,11 @@ const (
 	HitBarShare                     // call-bar share / stop share button
 	HitLive                         // LIVE tag on a sharing occupant; Key is their fingerprint
 	HitVideo                        // the watch view (double-click toggles fullscreen)
+	HitVideoFull                    // on-video strip: toggle fullscreen
+	HitVideoStop                    // on-video strip: stop watching (stop sharing in the self preview)
+	HitVideoChange                  // on-video strip, self preview: change screen
+	HitVoiceLeave                   // voice panel: disconnect
+	HitVoiceShare                   // voice panel: share / stop share
 )
 
 // Hit is one click target: the half-open rect [X0,X1) x [Y0,Y1).

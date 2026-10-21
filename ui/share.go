@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"image/color"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
@@ -26,12 +28,14 @@ const (
 // shareOps are the seams between the UI and the outside world (screen capture,
 // the client, the window). A zero field means the real thing.
 type shareOps struct {
-	newCap     func() screencap.Source
-	supported  func() bool
-	start      func(c *client.Client, src client.FrameSource, w, h, fps, kbps int) error
-	stop       func(c *client.Client) // may block; callers run it off the game goroutine
-	watch      func(c *client.Client, fp string)
-	fullscreen func()
+	newCap        func() screencap.Source
+	supported     func() bool
+	start         func(c *client.Client, src client.FrameSource, w, h, fps, kbps int) error
+	stop          func(c *client.Client) // may block; callers run it off the game goroutine
+	keyframe      func(c *client.Client) // asks the running share for a keyframe
+	watch         func(c *client.Client, fp string)
+	setFullscreen func(on bool)    // sets the window's fullscreen
+	now           func() time.Time // clock of the video view
 }
 
 // shareState is the local side of an active screen share.
@@ -45,12 +49,18 @@ type shareState struct {
 // captureSource adapts a screencap.Source to client.FrameSource. Next is called
 // from the client's grab goroutine; Close may come from another, so both hold mu.
 type captureSource struct {
-	mu     sync.Mutex
-	src    screencap.Source
-	mon    screencap.Monitor
-	buf    screencap.BGRA
-	closed bool
-	err    error
+	mu      sync.Mutex
+	src     screencap.Source
+	mon     screencap.Monitor
+	buf     screencap.BGRA
+	scratch *video.Frame // letterbox work frame
+	closed  bool
+	err     error
+
+	// tap, when set, sees each scaled frame after capture (the share preview).
+	// It runs on the client's grab goroutine and must not block.
+	tap   func(*video.Frame)
+	muted atomic.Bool // set when the share ends: late frames must not reach the tap
 }
 
 func newCaptureSource(src screencap.Source, mon screencap.Monitor) *captureSource {
@@ -70,8 +80,29 @@ func (c *captureSource) Next(dst *video.Frame) error {
 		c.err = err
 		return err
 	}
-	video.FromBGRA(dst, c.buf.Pix, c.buf.W, c.buf.H, c.buf.Stride)
+	c.scratch = video.FromBGRALetterbox(dst, c.buf.Pix, c.buf.W, c.buf.H, c.buf.Stride, c.scratch)
+	if c.tap != nil && !c.muted.Load() {
+		c.tap(dst)
+	}
 	return nil
+}
+
+// switchTo swaps the captured monitor in the running source: the next Next
+// reads src/mon and the output size (set by the client) is unchanged, with
+// FromBGRA scaling into it. It returns once the old source is closed. On a
+// closed capture the new source is closed instead.
+func (c *captureSource) switchTo(src screencap.Source, mon screencap.Monitor, tap func(*video.Frame)) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		_ = src.Close()
+		return
+	}
+	old := c.src
+	c.src, c.mon, c.tap = src, mon, tap
+	c.buf = screencap.BGRA{}
+	c.mu.Unlock()
+	_ = old.Close()
 }
 
 // failure is the capture error that ended the source, if any.
@@ -112,6 +143,26 @@ func (g *game) shareLabel() string {
 	return shareLabelOff
 }
 
+// previewTap is the capture source's tap: while the self preview is on it
+// copies the scaled frame (the grab loop reuses dst) into the video sink, where
+// the newest frame wins. It never blocks the encoder.
+func (g *game) previewTap(fp string) func(*video.Frame) {
+	gen := g.tapGen.Load()
+	return func(f *video.Frame) {
+		if !g.previewOn.Load() || g.tapGen.Load() != gen {
+			return
+		}
+		cp := g.vsink.spare(f.W, f.H)
+		copy(cp.Y, f.Y)
+		copy(cp.U, f.U)
+		copy(cp.V, f.V)
+		// The generation is re-checked under the sink lock: a frame from a
+		// share that has since ended or changed screen cannot land after the
+		// reset.
+		g.vsink.writeIf(fp, cp, func() bool { return g.tapGen.Load() == gen })
+	}
+}
+
 // liveCols is the width, in columns, the LIVE tag takes from an occupant name.
 const liveCols = 5
 
@@ -134,13 +185,17 @@ func (g *game) clickBar(h state.Hit) {
 	switch h.Kind {
 	case state.HitBarMute:
 		g.toggleMute()
-	case state.HitBarLeave:
+	case state.HitBarLeave, state.HitVoiceLeave:
 		g.leaveCall()
-	case state.HitBarShare:
+	case state.HitBarShare, state.HitVoiceShare:
 		if g.share.on {
 			g.stopShare()
 		} else if g.shareSupported() {
-			g.openShareMenu(g.geom())
+			if h.Kind == state.HitVoiceShare {
+				g.openShareMenuAt(h.X0, h.Y0-pad/2)
+			} else {
+				g.openShareMenu(g.geom())
+			}
 		}
 	}
 }
@@ -148,6 +203,13 @@ func (g *game) clickBar(h state.Hit) {
 // openShareMenu lists the monitors above the share button. Capture is only
 // touched once the game loop runs (this is a click handler).
 func (g *game) openShareMenu(gm geometry) {
+	l := g.barLayout(gm)
+	g.openShareMenuAt(l.shareX0, gm.barR.y0-pad/2)
+}
+
+// openShareMenuAt is openShareMenu with the menu's bottom-left corner at
+// (x, bottom): above the button that was clicked.
+func (g *game) openShareMenuAt(x, bottom float64) {
 	s := g.callSess()
 	if s == nil {
 		return
@@ -165,12 +227,45 @@ func (g *game) openShareMenu(gm geometry) {
 	g.closeMenu()
 	items := make([]menuItem, len(mons))
 	for i, m := range mons {
-		items[i] = menuItem{label: m.Name, act: func() { g.closeMenu(); g.startShare(m) }}
+		items[i] = menuItem{label: m.Name, act: func() { g.closeMenu(); g.pickScreen(m) }}
 	}
-	l := g.barLayout(gm)
 	w, h := g.menuSize(items)
-	x, y := state.MenuOrigin(l.shareX0, gm.barR.y0-h-pad/2, w, h, float64(g.w), float64(g.h))
+	x, y := state.MenuOrigin(x, bottom-h, w, h, float64(g.w), float64(g.h))
 	g.menu = ctxMenu{open: true, key: "share", x: x, y: y, items: items}
+}
+
+// pickScreen starts a share of m, or while sharing switches the share to m. A
+// self preview in view carries over to the new screen.
+func (g *game) pickScreen(m screencap.Monitor) {
+	if !g.share.on {
+		g.startShare(m)
+		return
+	}
+	if g.share.mon == m.Name {
+		return
+	}
+	// The share keeps running (viewers stay): only the captured monitor
+	// changes, inside the same source, so the encoder size is unchanged and the
+	// capture is scaled into it. The old screen's in-flight frame is dropped.
+	sh := g.share
+	g.share.mon = m.Name
+	g.tapGen.Add(1)
+	if g.watch.self {
+		g.resetVideo()
+	}
+	tap := g.previewTap(g.fp)
+	ns := g.newCapture()
+	g.logf("sharing %s instead of %s", m.Name, sh.mon)
+	keyframe := g.shareOps.keyframe
+	if keyframe == nil {
+		keyframe = func(c *client.Client) { c.ShareKeyframe() }
+	}
+	g.media.do(func() {
+		sh.src.switchTo(ns, m, tap)
+		if sh.c != nil {
+			keyframe(sh.c) // viewers get a clean picture of the new screen
+		}
+	})
 }
 
 // startShare begins sharing monitor m on the call's client.
@@ -182,6 +277,8 @@ func (g *game) startShare(m screencap.Monitor) {
 	p := state.ShareProfileFor(g.set.ShareQualityID())
 	w, h := video.FitSize(m.W, m.H, p.MaxW, p.MaxH)
 	src := newCaptureSource(g.newCapture(), m)
+	g.tapGen.Add(1)
+	src.tap = g.previewTap(g.fp)
 	start := g.shareOps.start
 	if start == nil {
 		start = func(c *client.Client, src client.FrameSource, w, h, fps, kbps int) error {
@@ -216,6 +313,9 @@ func (g *game) stopShare() {
 	if !sh.on {
 		return
 	}
+	sh.src.muted.Store(true)
+	g.tapGen.Add(1)    // before the reset below: in-flight frames are dropped at the sink
+	g.endSelfPreview() // no stale frame outlives the share
 	g.logf("stopped sharing %s", sh.mon)
 	stop := g.shareOps.stop
 	if stop == nil {
@@ -240,6 +340,7 @@ func (g *game) endCallMedia() {
 // stepShare runs every tick: it ends a share whose capture failed, and the
 // watch when the call is gone or the sharer stopped sharing or left.
 func (g *game) stepShare() {
+	defer func() { g.previewOn.Store(g.watch.self && g.videoActive()) }() // the one place previewOn is set
 	g.media.pump()
 	s := g.callSess()
 	if g.share.on {
@@ -251,6 +352,12 @@ func (g *game) stepShare() {
 		}
 	}
 	if g.watch.fp == "" {
+		return
+	}
+	if g.watch.self { // our own preview: it lives as long as the share and the call
+		if !g.share.on || s == nil || s.st.InCall == "" {
+			g.endSelfPreview()
+		}
 		return
 	}
 	if s == nil || s.st.InCall == "" {

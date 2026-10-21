@@ -97,9 +97,8 @@ func TestAudioOnlyClientInCallWithShare(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, 10*time.Second, "C sees A sharing", func() bool { return c.sharing(a.fp) })
-	if err := c.c.Watch(a.fp); err != nil {
-		t.Fatal(err)
-	}
+	warmUp(t, c, cv, a)
+	watchOK(t, c, a.fp)
 	eventually(t, 15*time.Second, "C receives video", func() bool { return cv.n(a.fp) >= 10 })
 
 	audioFlowsBothWays(t, a, old, 2*time.Second, 60)
