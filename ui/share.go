@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image/color"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
@@ -53,6 +54,11 @@ type captureSource struct {
 	buf    screencap.BGRA
 	closed bool
 	err    error
+
+	// tap, when set, sees each scaled frame after capture (the share preview).
+	// It runs on the client's grab goroutine and must not block.
+	tap   func(*video.Frame)
+	muted atomic.Bool // set when the share ends: late frames must not reach the tap
 }
 
 func newCaptureSource(src screencap.Source, mon screencap.Monitor) *captureSource {
@@ -73,6 +79,9 @@ func (c *captureSource) Next(dst *video.Frame) error {
 		return err
 	}
 	video.FromBGRA(dst, c.buf.Pix, c.buf.W, c.buf.H, c.buf.Stride)
+	if c.tap != nil && !c.muted.Load() {
+		c.tap(dst)
+	}
 	return nil
 }
 
@@ -112,6 +121,22 @@ func (g *game) shareLabel() string {
 		return shareLabelOn
 	}
 	return shareLabelOff
+}
+
+// previewTap is the capture source's tap: while the self preview is on it
+// copies the scaled frame (the grab loop reuses dst) into the video sink, where
+// the newest frame wins. It never blocks the encoder.
+func (g *game) previewTap(fp string) func(*video.Frame) {
+	return func(f *video.Frame) {
+		if !g.previewOn.Load() {
+			return
+		}
+		cp := video.NewFrame(f.W, f.H)
+		copy(cp.Y, f.Y)
+		copy(cp.U, f.U)
+		copy(cp.V, f.V)
+		g.vsink.WriteVideoFrame(fp, cp)
+	}
 }
 
 // liveCols is the width, in columns, the LIVE tag takes from an occupant name.
@@ -167,12 +192,31 @@ func (g *game) openShareMenu(gm geometry) {
 	g.closeMenu()
 	items := make([]menuItem, len(mons))
 	for i, m := range mons {
-		items[i] = menuItem{label: m.Name, act: func() { g.closeMenu(); g.startShare(m) }}
+		items[i] = menuItem{label: m.Name, act: func() { g.closeMenu(); g.pickScreen(m) }}
 	}
 	l := g.barLayout(gm)
 	w, h := g.menuSize(items)
 	x, y := state.MenuOrigin(l.shareX0, gm.barR.y0-h-pad/2, w, h, float64(g.w), float64(g.h))
 	g.menu = ctxMenu{open: true, key: "share", x: x, y: y, items: items}
+}
+
+// pickScreen starts a share of m, or while sharing switches the share to m. A
+// self preview in view carries over to the new screen.
+func (g *game) pickScreen(m screencap.Monitor) {
+	if !g.share.on {
+		g.startShare(m)
+		return
+	}
+	if g.share.mon == m.Name {
+		return
+	}
+	self := g.watch.self
+	g.stopShare() // ends the preview and drops its frame
+	g.startShare(m)
+	if self && g.share.on {
+		g.watch = watchState{fp: g.fp, self: true}
+		g.previewOn.Store(true)
+	}
 }
 
 // startShare begins sharing monitor m on the call's client.
@@ -184,6 +228,7 @@ func (g *game) startShare(m screencap.Monitor) {
 	p := state.ShareProfileFor(g.set.ShareQualityID())
 	w, h := video.FitSize(m.W, m.H, p.MaxW, p.MaxH)
 	src := newCaptureSource(g.newCapture(), m)
+	src.tap = g.previewTap(g.fp)
 	start := g.shareOps.start
 	if start == nil {
 		start = func(c *client.Client, src client.FrameSource, w, h, fps, kbps int) error {
@@ -218,6 +263,8 @@ func (g *game) stopShare() {
 	if !sh.on {
 		return
 	}
+	sh.src.muted.Store(true)
+	g.endSelfPreview() // no stale frame outlives the share
 	g.logf("stopped sharing %s", sh.mon)
 	stop := g.shareOps.stop
 	if stop == nil {
@@ -253,6 +300,12 @@ func (g *game) stepShare() {
 		}
 	}
 	if g.watch.fp == "" {
+		return
+	}
+	if g.watch.self { // our own preview: it lives as long as the share and the call
+		if !g.share.on || s == nil || s.st.InCall == "" {
+			g.endSelfPreview()
+		}
 		return
 	}
 	if s == nil || s.st.InCall == "" {

@@ -411,6 +411,9 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	g.drawCallBar(screen, gm)
 	if g.videoActive() {
 		title := "watching " + g.watch.name + "  (Esc: chat, double-click: fullscreen)"
+		if g.watch.self {
+			title = "your stream (preview)  (Esc: chat, double-click: fullscreen)"
+		}
 		dst := clip(screen, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1)
 		g.drawText(dst, state.Ellipsize(title, gm.cols), gm.rightX, gm.headY, th.Bright)
 	} else {

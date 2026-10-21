@@ -45,6 +45,7 @@ func (v *videoSink) take() (string, *video.Frame) {
 // watchState is the stream being watched (one at a time).
 type watchState struct {
 	fp, name string
+	self     bool // the preview of our own share: no network watch
 }
 
 // videoView is the game-goroutine side of the picture: the newest frame
@@ -114,7 +115,11 @@ func (g *game) clickLive(h state.Hit) {
 		s.st.Status = "join voice to watch a screen"
 		return
 	}
-	if h.Key == "" || h.Key == g.fp {
+	if h.Key == "" {
+		return
+	}
+	if h.Key == g.fp {
+		g.clickSelf(s)
 		return
 	}
 	if !g.inCall() || g.curKey != g.callKey {
@@ -126,10 +131,37 @@ func (g *game) clickLive(h state.Hit) {
 		s.st.Status = "that person is not sharing in your channel"
 		return
 	}
+	g.endSelfPreview()
 	g.resetVideo()
 	g.watchRefused.Store(nil) // a refusal of an earlier target is moot now
 	g.watch = watchState{fp: h.Key, name: name}
 	g.watchFn(s.c, h.Key)
+}
+
+// clickSelf opens the preview of our own outgoing stream. It is client-side
+// only: the server refuses a self-watch and none is sent.
+func (g *game) clickSelf(s *session) {
+	if !g.share.on || !g.inCall() || g.curKey != g.callKey {
+		s.st.Status = "you are not sharing a screen"
+		return
+	}
+	if g.watch.self {
+		return
+	}
+	g.stopWatching() // a remote watch ends first
+	g.resetVideo()
+	g.watch = watchState{fp: g.fp, self: true}
+	g.previewOn.Store(true)
+}
+
+// endSelfPreview drops the preview of our own share (no client call: none was
+// made). Tap frames are ignored until a preview starts again.
+func (g *game) endSelfPreview() {
+	if g.watch.self {
+		g.watch = watchState{}
+		g.previewOn.Store(false)
+		g.resetVideo()
+	}
 }
 
 // stopWatching leaves the watch view and tells the client to stop the stream.
@@ -137,8 +169,13 @@ func (g *game) stopWatching() {
 	if g.watch.fp == "" {
 		return
 	}
+	self := g.watch.self
 	g.watch = watchState{}
+	g.previewOn.Store(false)
 	g.resetVideo()
+	if self {
+		return
+	}
 	if s := g.callSess(); s != nil && s.c != nil {
 		g.watchFn(s.c, "")
 	}
@@ -207,6 +244,8 @@ const stripBottom = 0.15
 
 const (
 	stripStopLabel = "close (Esc)"
+	stripSelfStop  = "stop sharing"
+	stripChange    = "change screen"
 	stripFullLabel = "fullscreen"
 	stripExitLabel = "exit fullscreen"
 )
@@ -237,7 +276,14 @@ func (g *game) stripVisible(now time.Time) bool {
 	return g.fullscreen && g.vid.my >= p.y1-(p.y1-p.y0)*stripBottom
 }
 
-type stripRects struct{ full, stop rectF }
+type stripRects struct{ full, stop, change rectF }
+
+func (g *game) stopLabel() string {
+	if g.watch.self {
+		return stripSelfStop
+	}
+	return stripStopLabel
+}
 
 func (g *game) fullLabel() string {
 	if g.fullscreen {
@@ -251,8 +297,13 @@ func (g *game) fullLabel() string {
 func (g *game) stripLayout(gm geometry) stripRects {
 	p := g.videoPane(gm)
 	wf := text.Advance(g.fullLabel(), g.face) + pad*2
-	ws := text.Advance(stripStopLabel, g.face) + pad*2
+	ws := text.Advance(g.stopLabel(), g.face) + pad*2
 	total := wf + ws + pad
+	wc := 0.0
+	if g.watch.self {
+		wc = text.Advance(stripChange, g.face) + pad*2
+		total += wc + pad
+	}
 	h := gm.lh + pad
 	x := (p.x0+p.x1)/2 - total/2
 	if x < p.x0 {
@@ -264,7 +315,26 @@ func (g *game) stripLayout(gm geometry) stripRects {
 	r.full = rectF{x, y0, x + wf, y1}
 	x += wf + pad
 	r.stop = rectF{x, y0, x + ws, y1}
+	if g.watch.self {
+		x += ws + pad
+		r.change = rectF{x, y0, x + wc, y1}
+	}
 	return r
+}
+
+type stripButton struct {
+	r     rectF
+	k     state.HitKind
+	label string
+}
+
+// stripButtons lists the buttons that exist now, left to right.
+func (g *game) stripButtons(r stripRects) []stripButton {
+	b := []stripButton{{r.full, state.HitVideoFull, g.fullLabel()}, {r.stop, state.HitVideoStop, g.stopLabel()}}
+	if g.watch.self {
+		b = append(b, stripButton{r.change, state.HitVideoChange, stripChange})
+	}
+	return b
 }
 
 // stripHitAt is the strip button under a scene point, if the strip is up.
@@ -273,10 +343,7 @@ func (g *game) stripHitAt(x, y float64, now time.Time) (state.HitKind, bool) {
 		return 0, false
 	}
 	r := g.stripLayout(g.geom())
-	for _, b := range []struct {
-		r rectF
-		k state.HitKind
-	}{{r.full, state.HitVideoFull}, {r.stop, state.HitVideoStop}} {
+	for _, b := range g.stripButtons(r) {
 		if state.InRect(x, y, b.r.x0, b.r.y0, b.r.x1, b.r.y1) {
 			return b.k, true
 		}
@@ -297,7 +364,13 @@ func (g *game) videoPress(x, y float64, now time.Time) {
 	switch h.Kind {
 	case state.HitVideoStop:
 		g.vid.lastClk = time.Time{}
+		if g.watch.self {
+			g.stopShare() // ends the preview with it
+		}
 		g.stopWatching() // syncFullscreen leaves fullscreen this tick
+	case state.HitVideoChange:
+		g.vid.lastClk = time.Time{}
+		g.openShareMenu(g.geom())
 	case state.HitVideoFull:
 		g.vid.lastClk = time.Time{}
 		g.toggleFullscreen()
@@ -320,6 +393,7 @@ func (g *game) videoClick(now time.Time) {
 // stepVideo moves the newest decoded frame into the RGBA staging image. Frames
 // of any sharer but the watched one are dropped.
 func (g *game) stepVideo() {
+	g.previewOn.Store(g.watch.self)
 	fp, f := g.vsink.take()
 	if f == nil || fp != g.watch.fp || g.watch.fp == "" || f.W <= 0 || f.H <= 0 {
 		return
@@ -361,8 +435,9 @@ func (g *game) addVideoHit(gm geometry) {
 	g.hits.Add(state.Hit{X0: p.x0, Y0: p.y0, X1: p.x1, Y1: p.y1, Kind: state.HitVideo})
 	if g.stripVisible(g.clock()) { // after the pane: the buttons win
 		r := g.stripLayout(gm)
-		g.hits.Add(state.Hit{X0: r.full.x0, Y0: r.full.y0, X1: r.full.x1, Y1: r.full.y1, Kind: state.HitVideoFull})
-		g.hits.Add(state.Hit{X0: r.stop.x0, Y0: r.stop.y0, X1: r.stop.x1, Y1: r.stop.y1, Kind: state.HitVideoStop})
+		for _, b := range g.stripButtons(r) {
+			g.hits.Add(state.Hit{X0: b.r.x0, Y0: b.r.y0, X1: b.r.x1, Y1: b.r.y1, Kind: b.k})
+		}
 	}
 }
 
@@ -374,11 +449,7 @@ func (g *game) drawStrip(screen *ebiten.Image, ox, oy float64) {
 	}
 	r := g.stripLayout(g.geom())
 	hot, _ := g.stripHitAt(g.vid.mx, g.vid.my, now)
-	for _, b := range []struct {
-		r     rectF
-		k     state.HitKind
-		label string
-	}{{r.full, state.HitVideoFull, g.fullLabel()}, {r.stop, state.HitVideoStop, stripStopLabel}} {
+	for _, b := range g.stripButtons(r) {
 		bg, fg := color.RGBA{0, 0, 0, 190}, g.th.FG
 		if hot == b.k {
 			bg, fg = color.RGBA{0x2E, 0x30, 0x35, 230}, g.th.Bright

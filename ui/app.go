@@ -167,6 +167,7 @@ type game struct {
 	watchRefused atomic.Pointer[string]
 	vid          videoView   // newest frame for the watch view
 	vsink        videoSink   // receives decoded frames from the clients
+	previewOn    atomic.Bool // the self preview is in view: the capture tap feeds vsink
 	media        mediaWorker // serialized StartShare / StopShare / Watch
 	fullscreen   bool        // window is fullscreen: no custom title bar
 	menuSpent    bool        // a menu press already took this tick's click
