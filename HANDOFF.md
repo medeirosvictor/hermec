@@ -15,10 +15,11 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
    Untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.
-3. **Next round: always-on.** Server identity plus a signed members and config
-   chain, chat history, and a host link with warm standby and failover. The
-   spec is being written at
-   `docs/superpowers/specs/2026-10-21-hermec-always-on-design.md`.
+3. **Current round: always-on.** Spec (approved design):
+   `docs/superpowers/specs/2026-10-21-hermec-always-on-design.md`. Three PRs:
+   identity and chain, chat history, host link with warm standby and failover.
+   After always-on and webcam, Victor moves to stress testing and use-case
+   scenarios (most main features done by then).
 4. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload:
    `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In Victor's real settings,
    CRT and curvature are off: F1 toggles CRT, F3 curvature, F2 cycles themes.
@@ -48,19 +49,9 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 ## Next-session pipeline (Victor's order)
 
-1. **Always-on (now).** Plan A slice plus Plan B, from the ideas below.
-   - Server identity keypair, and a founder-signed append-only members and
-     config chain (a permissioned sigchain: "blockchain minus consensus").
-     Auth bound to server identity (needs a protocol version bump), which also
-     closes the "a host can impersonate you on other servers" gap.
-   - Chat history: a small per-server file with the last 30 days of messages,
-     capped by size, served to anyone who joins (never grows unbounded). The
-     host can read this file. Later, file sharing could ride the same synced
-     store (a capped shared folder). Plan C is the long-term encrypted version.
-   - Host link, any trusted member can host, pick the best host, warm standby
-     and failover. Authorized-hosts list in the chain; discovery by server
-     fingerprint; split-brain rule (discovery-first plus deterministic
-     priority). vitoserver stays parked (Victor: do not bring it back for now).
+1. **Always-on (now).** See the spec. Later idea riding the same synced
+   store: file sharing (a capped shared folder). vitoserver stays parked
+   (Victor: do not bring it back for now).
 2. **Webcam.** Same pipeline as screen share (govpx VP8), camera source,
    call-bar toggle. Camera capture per OS is new work.
 3. **Friends adjustments** (designed in chat 2026-10-19, not yet specced):
@@ -166,11 +157,10 @@ server. Agents must not run the GUI against the real `%APPDATA%\hermec`.
 
 ### Voice, discovery and audio listening gate
 
-- Audio gate (from the audio-quality round, never formally closed): repeat the
-  Mac and desktop call. Speech is clean, no chopping, no rhythmic buzz, and the
-  input and output device rows work. The 2026-10-19 friend call sounded "pretty
-  decent"; Victor should say whether that closes the gate. Headphones are
-  mandatory (no echo cancellation). One-way latency estimate: 110 to 170 ms.
+- Audio gate: quality and delay are OK in real calls (Victor, 2026-10-21). It
+  closes once per-person volume (Discord-style, friends adjustments round)
+  ships and works in a call. Headphones are mandatory (no echo cancellation).
+  One-way latency estimate: 110 to 170 ms.
 - Voice: two instances on one machine need `-key <other file>` for the second.
   Join from both and hear each other, mute shows on both sides, the speaking
   glow tracks, leave and rejoin work, killing one instance mid-call makes it
