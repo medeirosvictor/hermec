@@ -57,7 +57,7 @@ dropped without breaking the chain.
 | Op | Body | Who may sign |
 |---|---|---|
 | `genesis` | name, founder, salt | the founder |
-| `config` | name, channels, voice_channels, limits (`max_voice`, `max_clients`, `max_per_ip`), password as an scrypt hash with salt, `history_days`, `history_mb` | founder or a role with `manage` |
+| `config` | name, channels, voice_channels, limits (`max_voice`, `max_clients`, `max_per_ip`), allowed_keys, roles, default_roles, `history_days`, `history_mb` (PR 2) | founder or a role with `manage` |
 | `grant` / `revoke` | fingerprint, roles | founder or `manage`; the founder cannot be revoked |
 | `ban` / `unban` | fingerprint | founder or `manage` |
 | `host_add` / `host_remove` | fingerprint, priority | founder only |
@@ -65,40 +65,67 @@ dropped without breaking the chain.
 - A `config` entry carries the full group config (the latest one wins), not a
   diff.
 - Authority is checked against the chain state just before the entry.
-- Storage: `<config>/hermec/chains/<server-id>.jsonl` on every host.
+- Storage: the app keeps `<config>/hermec/chains/<server-id>.jsonl`; the
+  headless server takes a `-chain` path (default `chain.jsonl` next to its
+  config) and a `-key` file (generated on first start).
 - Machine-local settings stay in TOML because they differ per host: port, TLS,
-  public IP, media port, discoverable.
-- The password hash uses scrypt from `golang.org/x/crypto` (already in the
-  module graph). The password itself never goes into the chain.
+  public IP, media port, discoverable, and the **password**.
+- The password is not in the chain: the chain is sent to every connecting
+  client before it authenticates, and a password hash there would allow offline
+  guessing. It stays in the host's TOML; PR 3 syncs it between hosts over the
+  authenticated host link.
+- A size cap keeps the pre-auth chain bounded: at most 2048 entries and
+  512 KiB; an append past it is refused with `chain_full`.
 - Admins and the founder change the chain by sending a `chain_append` request
   to the active host, which validates, appends and broadcasts.
 
 ### 3.3 Mutual auth (protocol version 2)
 
-- The server's `challenge` stays. The client's `auth` adds a `nonce` of its
-  own.
-- `auth_ok` adds the host's `pubkey`, a signature over the client's nonce, and
-  the chain (a few KB for a friend group).
-- The client checks: the genesis hash equals the pinned server ID (or pins it
-  on first connect), every entry verifies, and the host's fingerprint is on the
-  current host list. Any failure ends the connection with a clear error and no
-  automatic retry.
+The host proves itself before the client sends its password:
+
+1. S: `challenge {nonce}` (unchanged; still a v1 envelope so old clients can
+   read it).
+2. C: `host_proof_req {nonce}` with the client's own 32-byte nonce.
+3. S: one or more `chain {entries, more}` frames (each under 64 KiB), then
+   `host_proof {pubkey, sig}`, the host key's signature over
+   `"hermec-host-proof\0" || client_nonce || server_nonce || server_id`.
+4. The client checks: the genesis hash equals the pinned server ID (or pins it
+   on first connect), every entry verifies, the host's key is on the current
+   host list, and the proof signature is valid. Failures end the connection
+   with `server_id_mismatch`, `host_not_authorized` or `bad_chain`, and the app
+   does not retry automatically.
+5. C: `auth` as before, but `sig` is now over
+   `"hermec-client-auth\0" || server_nonce || client_nonce || server_id`. Binding
+   the server ID stops a host from relaying your signature to log in as you on
+   another server.
+6. S: `auth_ok` (adds `server_id`).
+
 - Bans are enforced at auth. A ban appended during a session disconnects that
   member.
-- `proto.Version` becomes 2. A v1 envelope gets one v1 `error` frame,
-  "update HERMEC to connect to this server", then the connection closes.
+- `proto.Version` becomes 2. A v1 client's `auth` gets one v1 `error` frame
+  (`update_required`, "update HERMEC to connect to this server"), then the
+  connection closes. A v2 client that meets a v1 host reports
+  `server_outdated` ("the host runs an older HERMEC").
+- Clients keep their copy of the chain: the host sends new entries to every
+  authenticated client as `chain` frames.
+- Admins change the chain with `chain_append {entry}`, an entry they built on
+  the current head and signed; a stale head gets `chain_conflict`.
 
 ### 3.4 Migration
 
 On the first v0.6 launch, an existing `hosted.toml` becomes a genesis with its
-admin as founder, then a `config` entry copied from it (the password is hashed),
-`grant` entries copied from its grants, and `host_add` for the founder at
-priority 1. The group fields leave `hosted.toml`; the machine-local ones stay.
-Friends' saved tiles pin the server ID on their first connect.
+admin as founder, then a `config` entry copied from it, `grant` entries copied
+from its grants, and `host_add` for the founder at priority 1. The group fields
+leave `hosted.toml`; the machine-local ones (and the password) stay, and it
+gains `server_id`. Friends' saved tiles pin the server ID on their first
+connect.
 
 The headless `hermec-server` with a `server.toml` and no chain keeps working as
 a single host: on start it creates a chain from its config the same way, signed
-by its own key as founder.
+by its own key as founder. Once a chain exists, group fields in `server.toml`
+are ignored with a warning; `hermec-server -apply-config` appends a `config`
+entry (and the grant changes) from the TOML, signed by the server's key, and
+exits.
 
 ## 4. Chat history
 
