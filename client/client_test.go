@@ -183,7 +183,7 @@ func TestBadRosterBecomesErrEvent(t *testing.T) {
 			return
 		}
 		send(proto.TypeAuthOK, proto.AuthOK{})
-		_ = ws.WriteMessage(websocket.TextMessage, []byte(`{"v":1,"type":"roster","data":"nope"}`))
+		_ = ws.WriteMessage(websocket.TextMessage, []byte(`{"v":2,"type":"roster","data":"nope"}`))
 		send(proto.TypeRoster, proto.Roster{Total: 7})
 		_, _, _ = ws.ReadMessage() // hold open until the client closes
 	}))

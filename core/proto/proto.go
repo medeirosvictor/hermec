@@ -12,7 +12,10 @@ import (
 
 const (
 	// Version is the protocol version carried in every envelope.
-	Version = 1
+	Version = 2
+	// LegacyVersion is the previous protocol version. Only the handshake
+	// (DecodeHandshake / EncodeV) still speaks it, to tell old peers to update.
+	LegacyVersion = 1
 	// MaxMessageSize is the largest accepted raw message, in bytes.
 	MaxMessageSize = 64 * 1024
 	// MaxRosterMembers caps the members listed in one Roster frame.
@@ -41,7 +44,13 @@ const (
 	TypeRTCAnswer    = "rtc_answer"
 	TypeRTCCandidate = "rtc_candidate"
 
-	// Screen sharing (additive; protocol Version stays 1).
+	// Handshake and signed server chain (protocol version 2).
+	TypeHostProofReq = "host_proof_req"
+	TypeHostProof    = "host_proof"
+	TypeChain        = "chain"
+	TypeChainAppend  = "chain_append"
+
+	// Screen sharing.
 	TypeShareStart = "share_start"
 	TypeShareStop  = "share_stop"
 	TypeWatch      = "watch"
@@ -64,6 +73,41 @@ const CodeServerFull = "server_full"
 // CodeAuthFailed is the error code for a rejected authentication (bad
 // signature, wrong password, banned key). Retrying cannot succeed.
 const CodeAuthFailed = "auth_failed"
+
+// Error codes added with protocol version 2.
+const (
+	CodeUpdateRequired    = "update_required"
+	CodeServerOutdated    = "server_outdated"
+	CodeServerIDMismatch  = "server_id_mismatch"
+	CodeHostNotAuthorized = "host_not_authorized"
+	CodeBadChain          = "bad_chain"
+	CodeChainConflict     = "chain_conflict"
+	CodeChainFull         = "chain_full"
+	CodeBanned            = "banned"
+)
+
+// HostProofReq asks the peer to prove it holds a host key by signing Nonce.
+type HostProofReq struct {
+	Nonce []byte `json:"nonce"`
+}
+
+// HostProof answers a HostProofReq: PubKey is the host key, Sig is over the nonce.
+type HostProof struct {
+	PubKey []byte `json:"pubkey"`
+	Sig    []byte `json:"sig"`
+}
+
+// ChainFrame carries chain entries, in order. Entries stay raw JSON so this
+// package does not depend on core/chain. More is true when further frames follow.
+type ChainFrame struct {
+	Entries []json.RawMessage `json:"entries"`
+	More    bool              `json:"more,omitempty"`
+}
+
+// ChainAppend proposes or announces one new chain entry (raw JSON).
+type ChainAppend struct {
+	Entry json.RawMessage `json:"entry"`
+}
 
 // Reserved for future end-to-end encryption. They have no handler in v1.
 const (
@@ -104,6 +148,8 @@ type AuthOK struct {
 	Channels    []ChannelInfo `json:"channels"`
 	// ServerName is the server's configured display name; empty if unset.
 	ServerName string `json:"server_name,omitempty"`
+	// ServerID is the server's chain identity (chain.ID.String() form).
+	ServerID string `json:"server_id"`
 }
 
 // VoiceJoin requests joining a voice channel.
@@ -178,7 +224,9 @@ type RTCCandidate struct {
 }
 
 // ErrorMsg reports a failure. Codes: "auth_failed", "forbidden",
-// "bad_request", "not_joined", "rate_limited", "not_sharing", "voice_full", "server_full".
+// "bad_request", "not_joined", "rate_limited", "not_sharing", "voice_full",
+// "server_full", "update_required", "server_outdated", "server_id_mismatch",
+// "host_not_authorized", "bad_chain", "chain_conflict", "chain_full", "banned".
 type ErrorMsg struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -238,11 +286,17 @@ type ChatMessage struct {
 
 // Encode wraps payload in a versioned envelope and marshals it.
 func Encode(msgType string, payload any) ([]byte, error) {
+	return EncodeV(Version, msgType, payload)
+}
+
+// EncodeV is Encode with an explicit envelope version, for the handshake
+// frames that must be readable by a peer speaking LegacyVersion.
+func EncodeV(v int, msgType string, payload any) ([]byte, error) {
 	data, err := marshalNoEscape(payload)
 	if err != nil {
 		return nil, fmt.Errorf("proto: marshal payload: %w", err)
 	}
-	return marshalNoEscape(Envelope{V: Version, Type: msgType, Data: data})
+	return marshalNoEscape(Envelope{V: v, Type: msgType, Data: data})
 }
 
 // marshalNoEscape is json.Marshal without HTML escaping: '<', '>' and '&' stay
@@ -262,6 +316,16 @@ func marshalNoEscape(v any) ([]byte, error) {
 // Decode parses and validates a raw envelope. It returns an error on
 // oversized input, invalid JSON, a version mismatch, or an empty type.
 func Decode(raw []byte) (Envelope, error) {
+	return decode(raw, false)
+}
+
+// DecodeHandshake is Decode but also accepts LegacyVersion envelopes, so the
+// handshake can answer an old peer with update_required instead of dropping it.
+func DecodeHandshake(raw []byte) (Envelope, error) {
+	return decode(raw, true)
+}
+
+func decode(raw []byte, allowLegacy bool) (Envelope, error) {
 	if len(raw) > MaxMessageSize {
 		return Envelope{}, fmt.Errorf("proto: message too large (%d > %d bytes)", len(raw), MaxMessageSize)
 	}
@@ -269,7 +333,7 @@ func Decode(raw []byte) (Envelope, error) {
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return Envelope{}, fmt.Errorf("proto: invalid envelope: %w", err)
 	}
-	if env.V != Version {
+	if env.V != Version && !(allowLegacy && env.V == LegacyVersion) {
 		return Envelope{}, fmt.Errorf("proto: unsupported version %d", env.V)
 	}
 	if env.Type == "" {

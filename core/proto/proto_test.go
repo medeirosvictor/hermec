@@ -17,8 +17,8 @@ func TestEncodeDecodeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if env.V != 1 {
-		t.Errorf("V = %d, want 1", env.V)
+	if env.V != Version {
+		t.Errorf("V = %d, want %d", env.V, Version)
 	}
 	if env.Type != TypeChatSend {
 		t.Errorf("Type = %q, want %q", env.Type, TypeChatSend)
@@ -38,8 +38,8 @@ func TestDecodeRejects(t *testing.T) {
 		raw  []byte
 	}{
 		{"not json", []byte("not json")},
-		{"wrong version", []byte(`{"v":2,"type":"x"}`)},
-		{"empty type", []byte(`{"v":1,"type":""}`)},
+		{"wrong version", []byte(`{"v":3,"type":"x"}`)},
+		{"empty type", []byte(`{"v":2,"type":""}`)},
 		{"oversized", []byte(strings.Repeat("a", MaxMessageSize+1))},
 	}
 	for _, tt := range tests {
@@ -139,6 +139,86 @@ func TestRosterRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(in, out) {
 		t.Errorf("got %+v, want %+v", out, in)
 	}
+}
+
+func TestDecodeRejectsV1(t *testing.T) {
+	if _, err := Decode([]byte(`{"v":1,"type":"auth"}`)); err == nil {
+		t.Fatal("Decode accepted v1 envelope")
+	}
+	if Version != 2 || LegacyVersion != 1 {
+		t.Fatalf("Version=%d LegacyVersion=%d", Version, LegacyVersion)
+	}
+}
+
+func TestDecodeHandshakeAcceptsV1AndV2(t *testing.T) {
+	for _, v := range []string{"1", "2"} {
+		if _, err := DecodeHandshake([]byte(`{"v":` + v + `,"type":"auth"}`)); err != nil {
+			t.Errorf("v%s: %v", v, err)
+		}
+	}
+	for _, raw := range []string{`{"v":3,"type":"auth"}`, `{"v":0,"type":"auth"}`, `{"v":2,"type":""}`, `nope`} {
+		if _, err := DecodeHandshake([]byte(raw)); err == nil {
+			t.Errorf("accepted %s", raw)
+		}
+	}
+	if _, err := DecodeHandshake(make([]byte, MaxMessageSize+1)); err == nil {
+		t.Error("accepted oversized")
+	}
+}
+
+func TestEncodeVLegacy(t *testing.T) {
+	raw, err := EncodeV(LegacyVersion, TypeChallenge, Challenge{Nonce: []byte{1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := DecodeHandshake(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.V != 1 {
+		t.Errorf("V = %d, want 1", env.V)
+	}
+}
+
+func TestChainFrameRoundTrip(t *testing.T) {
+	in := ChainFrame{Entries: []json.RawMessage{json.RawMessage(`{"a":"<x>"}`), json.RawMessage(`"b"`)}, More: true}
+	raw, err := Encode(TypeChain, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out ChainFrame
+	if err := json.Unmarshal(env.Data, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.More || len(out.Entries) != 2 || string(out.Entries[0]) != `{"a":"<x>"}` || string(out.Entries[1]) != `"b"` {
+		t.Errorf("round trip mismatch: %+v", out)
+	}
+	raw, _ = Encode(TypeChain, ChainFrame{Entries: []json.RawMessage{}})
+	env, _ = Decode(raw)
+	if string(env.Data) != `{"entries":[]}` {
+		t.Errorf("empty frame data = %s", env.Data)
+	}
+	ap, _ := Encode(TypeChainAppend, ChainAppend{Entry: json.RawMessage(`{"k":1}`)})
+	env, _ = Decode(ap)
+	var a ChainAppend
+	if err := json.Unmarshal(env.Data, &a); err != nil || string(a.Entry) != `{"k":1}` {
+		t.Errorf("append: %v %s", err, a.Entry)
+	}
+	var ok AuthOK
+	if err := json.Unmarshal([]byte(`{"server_id":"abc"}`), &ok); err != nil || ok.ServerID != "abc" {
+		t.Errorf("server_id: %v %q", err, ok.ServerID)
+	}
+	for _, c := range []string{CodeUpdateRequired, CodeServerOutdated, CodeServerIDMismatch, CodeHostNotAuthorized, CodeBadChain, CodeChainConflict, CodeChainFull, CodeBanned} {
+		if c == "" {
+			t.Error("empty code")
+		}
+	}
+	_ = HostProofReq{Nonce: []byte{1}}
+	_ = HostProof{PubKey: []byte{1}, Sig: []byte{2}}
 }
 
 func TestAuthOKServerName(t *testing.T) {
