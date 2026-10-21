@@ -259,6 +259,11 @@ func (g *game) defaultName() string {
 // the server really got, which differs from cfg only for port 0.
 func (g *game) startHosted() error {
 	h := g.hosted
+	if err := server.CheckHost(h.chain, g.id); err != nil {
+		h.srv, h.err = nil, err.Error()
+		g.logf("hosted server not started: %v", err)
+		return err
+	}
 	serverLogf(&h.cfg)
 	cfg := h.cfg
 	cfg.HostKey, cfg.Chain = g.id, h.chain

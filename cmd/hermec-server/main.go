@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/version"
@@ -103,6 +104,9 @@ func main() {
 		fmt.Printf("appended %d entries to %s\n", len(applied), *chainPath)
 		return
 	}
+	if err := checkHostKey(*keyPath, c, key); err != nil {
+		log.Fatal(err)
+	}
 	cfg.HostKey, cfg.Chain = key, c
 	if !created && *configPath != "" {
 		if set, err := server.GroupFieldsSet(*configPath); err != nil {
@@ -138,6 +142,15 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("shutdown: %v", err)
 	}
+}
+
+// checkHostKey refuses to serve a chain with a key it does not list as a host:
+// every client would reject the proof. keyPath only names the file in the error.
+func checkHostKey(keyPath string, c *chain.Chain, key *identity.Identity) error {
+	if err := server.CheckHost(c, key); err != nil {
+		return fmt.Errorf("%s: %w (wrong key file, or the chain belongs to another server)", keyPath, err)
+	}
+	return nil
 }
 
 // checkNotRunning refuses when something already listens on addr, which for

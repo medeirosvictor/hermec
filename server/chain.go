@@ -107,6 +107,17 @@ func sameStrings(a, b []string) bool {
 	return true
 }
 
+// CheckHost reports whether key is on c's host list. A server run with any
+// other key would fail every client's host check, so callers refuse to start.
+func CheckHost(c *chain.Chain, key *identity.Identity) error {
+	st := c.State()
+	if st.IsHost(key.PublicKey()) {
+		return nil
+	}
+	return fmt.Errorf("this key is not an approved host of server %s (key %s)",
+		c.ID().Short(), identity.Fingerprint(key.PublicKey()))
+}
+
 // OpenChain loads the chain at path, or creates it from cfg's group fields
 // when the file does not exist: genesis (founder = key), one config, a grant
 // per cfg.Roles.Grants entry, and host_add for key at priority 1.

@@ -168,6 +168,9 @@ func New(cfg Config) *Server {
 			CheckOrigin: func(r *http.Request) bool { return r.Header.Get("Origin") == "" },
 		},
 	}
+	if err := CheckHost(cfg.Chain, cfg.HostKey); err != nil {
+		s.logf("server: WARNING: %v; clients will refuse this host", err)
+	}
 	s.ipConns = make(map[string]int)
 	s.fails = make(map[string]*authFail)
 	s.refreshGroup()
