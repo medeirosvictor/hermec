@@ -15,10 +15,10 @@ import (
 	"github.com/medeirosvictor/hermec/server"
 )
 
-// TestHostedMigrationEndToEnd starts a server from an old-style config (group
+// TestChainHostedMigrationEndToEnd starts a server from an old-style config (group
 // fields in the config, no chain yet), lets the founder promote a member, has
 // that admin ban a third key, then restarts from the same chain file.
-func TestHostedMigrationEndToEnd(t *testing.T) {
+func TestChainHostedMigrationEndToEnd(t *testing.T) {
 	idA, idB, idC := newID(t), newID(t), newID(t)
 	fpB := identity.Fingerprint(idB.PublicKey())
 	fpC := identity.Fingerprint(idC.PublicKey())

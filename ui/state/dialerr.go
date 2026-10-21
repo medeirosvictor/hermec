@@ -33,7 +33,7 @@ func DialErrorText(err error) string {
 		case proto.CodeServerIDMismatch:
 			return "this server's identity changed — remove and re-add it if you trust it"
 		case proto.CodeHostNotAuthorized:
-			return "this machine is not an approved host for the server"
+			return "the host's machine is not an approved host for this server"
 		case proto.CodeBadChain:
 			return "the server sent an invalid chain"
 		case proto.CodeServerOutdated:

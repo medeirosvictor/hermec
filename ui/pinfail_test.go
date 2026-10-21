@@ -11,7 +11,7 @@ import (
 func TestPinMismatchNoRetry(t *testing.T) {
 	cases := []struct{ code, want string }{
 		{proto.CodeServerIDMismatch, "this server's identity changed — remove and re-add it if you trust it"},
-		{proto.CodeHostNotAuthorized, "this machine is not an approved host for the server"},
+		{proto.CodeHostNotAuthorized, "the host's machine is not an approved host for this server"},
 		{proto.CodeBadChain, "the server sent an invalid chain"},
 		{proto.CodeServerOutdated, "the host runs an older HERMEC — ask them to update"},
 		{proto.CodeUpdateRequired, "update HERMEC to connect to this server"},

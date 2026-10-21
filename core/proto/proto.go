@@ -109,7 +109,7 @@ type ChainAppend struct {
 	Entry json.RawMessage `json:"entry"`
 }
 
-// Reserved for future end-to-end encryption. They have no handler in v1.
+// Reserved for future end-to-end encryption. They have no handler yet.
 const (
 	TypeE2EEKeyExchange = "e2ee_key_exchange"
 	TypeE2EEFrame       = "e2ee_frame"

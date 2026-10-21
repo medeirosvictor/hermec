@@ -266,10 +266,13 @@ Any OS, once HERMEC is running:
 - **Your app remembers the server.** Each server has an ID (the hash of the
   first entry of its chain). The app pins it the first time you connect and, if
   the ID ever changes, refuses to connect, tells you so and does not retry. Your
-  login signature also covers the server ID, so one host cannot replay it to
-  log in as you on another server.
-- **Bans stick.** Admins can ban a key; a banned key is disconnected at once and
-  refused when it comes back.
+  login signature also covers the server ID, so once the real server's ID is
+  pinned, one host cannot replay your login to log in as you on another server.
+  On first use of a server you add, a malicious server could still relay another
+  server's handshake (see known gap 6).
+- **Bans are enforced by the server.** The server and protocol support banning
+  a key: a banned key is disconnected at once and refused when it comes back.
+  There is no app or command-line control for bans yet.
 
 **Known gaps (we are working on these):**
 
@@ -324,7 +327,7 @@ Any OS, once HERMEC is running:
    anyone on the path.
 7. **Not ready for strangers on the open internet.** There are no invite links
    yet, so a public server cannot tell welcome visitors from unwelcome ones
-   (`allowed_keys` and bans help, but only after the fact). Reach servers
+   (`allowed_keys` helps, and bans work after the fact, though the app has no ban control yet). Reach servers
    through Tailscale or your LAN.
 
 ## Run
@@ -333,27 +336,34 @@ Any OS, once HERMEC is running:
 ./hermec-server                                # defaults: ws on :7697, channel "general"
 ./hermec-server -config example.server.toml    # with a config file
 ./hermec-server -config server.toml -print-config   # show effective config and exit
-./hermec-server -config server.toml -apply-config   # append the TOML's group settings to the chain and exit
+./hermec-server -config server.toml -apply-config   # append the TOML's group settings to the chain and exit (server stopped)
 ```
 
 The server's identity lives in a signed chain. On first start the server
-creates the chain from its config, with its own key as founder: `-key` is the
-host key file (default `hermec-server.key` next to the config, generated when
-missing) and `-chain` is the chain file (default `chain.jsonl` next to the
-config). Back both up; the key is what lets you change the group later.
+creates the chain from its config, with its own key as founder. `-key` is the
+host key file and `-chain` is the chain file. Both default to
+`hermec-server.key` and `chain.jsonl` next to the config file, or in the current
+directory without `-config`; the key is generated when missing. Back both up;
+the key is what lets you change the group later. The server refuses to start
+when its key is not an approved host of the chain it loads. If a crash left a
+half-written last entry in the chain file, the server drops it, logs a
+warning and keeps the entries before it.
 
 Once a chain exists, the group settings in the TOML (`server_name`, `channels`,
 `voice_channels`, `max_voice`, `max_clients`, `max_per_ip`, `allowed_keys`,
 `roles`, `default_roles` and `[grants]`) are ignored, and the server logs a
 warning when it sees them. To change them from the file, edit the TOML and run
-`hermec-server -config server.toml -apply-config`. It needs `-config`, appends
-only the group keys the TOML actually sets (grants are compared only when
-`[grants]` is set), signed by the server's key, then prints what it appended
-and exits. For entries that reach a running server (grants, bans, a new
-config), `allowed_keys`, roles and bans apply at once; the name, channels and
-limits from a later config apply at the next start. The password,
-port, TLS and the other machine settings stay in the TOML and never go into the
-chain.
+`hermec-server -config server.toml -apply-config`. Stop the server first: the
+command refuses to run while something listens on the config's port, and the
+changes apply when the server starts. It needs `-config`, appends only the
+group keys the TOML actually sets (grants are compared only when `[grants]` is
+set), signed by the server's key, then prints what it appended and exits.
+Entries that an admin's app sends to a running server with `chain_append`
+(grants, bans, a new config) are different: `allowed_keys`, roles and bans
+apply at once, and the name, channels and limits from a later config apply at
+the next start. The founder always keeps every permission and always passes
+`allowed_keys`, as does every approved host. The password, port, TLS and the
+other machine settings stay in the TOML and never go into the chain.
 
 Everyone in a group needs HERMEC v0.6 or newer: an older app is told to update
 HERMEC, and a v0.6 app that meets an older server reports that the host runs an

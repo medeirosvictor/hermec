@@ -47,7 +47,8 @@ no infrastructure. How the app works is in [README.md](README.md) and
 
 ## Later
 
-- Invite links and allowlists in the app, TLS for public hosting, key pinning.
+- Invite links and allowlists in the app, TLS for public hosting (server ID
+  pinning is done).
 - Noise suppression and echo cancellation (no cgo if possible).
 - Moderation: kick and ban by fingerprint.
 - Screen share from macOS and Linux, window capture, shared-screen audio.

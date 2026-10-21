@@ -3,7 +3,18 @@ package ui
 import (
 	"strings"
 	"testing"
+
+	"github.com/medeirosvictor/hermec/ui/state"
 )
+
+func TestServerIDForHostedPrefersTheChain(t *testing.T) {
+	g := newTestGame(t)
+	g.servers = []state.ServerEntry{{URL: hostedKey, Label: "h", ServerID: "stale-pin"}}
+	g.hosted = &hostedServer{id: "chain-id"}
+	if got := g.serverIDFor(hostedKey); got != "chain-id" {
+		t.Errorf("serverIDFor = %q, want the hosted chain's id", got)
+	}
+}
 
 // Without the host key that the chain lists (an identity file lost and
 // regenerated), the app must not host: it shows why on the tile instead.

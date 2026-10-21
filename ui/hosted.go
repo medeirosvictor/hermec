@@ -34,15 +34,6 @@ func hostedConfig(name, password string, port int, adminFP string) server.Config
 	return cfg
 }
 
-// saveHosted writes cfg atomically; the file holds the password, so 0600.
-func saveHosted(path string, cfg server.Config) error {
-	b, err := cfg.MarshalTOML()
-	if err != nil {
-		return err
-	}
-	return writeHosted(path, b)
-}
-
 // saveHostedLocal writes only the machine-local keys, the password and the
 // server_id; the group fields live in the chain.
 func saveHostedLocal(path string, cfg server.Config) error {
@@ -426,19 +417,19 @@ func (g *game) copyInvite() {
 }
 
 // serverIDFor is the known server ID of the tile at key: the live client's,
-// else the pin saved with the entry, else the hosted server's. Empty when
-// unknown.
+// else (for the hosted tile) the hosted chain's, else the pin saved with the
+// entry. Empty when unknown.
 func (g *game) serverIDFor(key string) string {
 	if s := g.sess[key]; s != nil && s.c != nil {
 		if id := s.c.ServerID(); id != "" {
 			return id
 		}
 	}
-	if e, ok := g.entryFor(key); ok && e.ServerID != "" {
-		return e.ServerID
-	}
 	if key == hostedKey && g.hosted != nil {
 		return g.hosted.id
+	}
+	if e, ok := g.entryFor(key); ok && e.ServerID != "" {
+		return e.ServerID
 	}
 	return ""
 }

@@ -19,8 +19,8 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
    `docs/superpowers/specs/2026-10-21-hermec-always-on-design.md`. Three PRs:
    identity and chain, chat history, host link with warm standby and failover.
    **PR 1 (identity and chain) is done** (branch `always-on`, protocol v2); next
-   is PR 2, chat history. After always-on and webcam, Victor moves to stress testing and use-case
-   scenarios (most main features done by then).
+   is PR 2, chat history. After always-on and webcam, Victor moves to stress
+   testing and use-case scenarios.
 4. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload:
    `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In Victor's real settings,
    CRT and curvature are off: F1 toggles CRT, F3 curvature, F2 cycles themes.
@@ -272,8 +272,8 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
   one active tailnet at a time.
 - **External hosting:** let something else host the server (a paid game server
   or VPS) for better connections and to invite strangers without compromising
-  security. Needs TLS (`wss://`), invite links or an allowlist, and server key
-  pinning. The headless `hermec-server` already runs on Linux and Windows.
+  security. Needs TLS (`wss://`) and invite links or an allowlist (server ID
+  pinning is done). The headless `hermec-server` already runs on Linux and Windows.
 - **Scale target:** screen share plus webcams plus about 10 people in one call is
   the "can home infra do this" test, after best-host and config sync. Rough
   host upload: voice about 4 Mbps, one share watched by 9 about 14 Mbps, 10 small

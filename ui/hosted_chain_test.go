@@ -37,6 +37,16 @@ func TestServerIDMenuRowCopies(t *testing.T) {
 	}
 }
 
+// saveHosted writes cfg in full, group fields included: the pre-chain
+// hosted.toml format that the migration tests start from.
+func saveHosted(path string, cfg server.Config) error {
+	b, err := cfg.MarshalTOML()
+	if err != nil {
+		return err
+	}
+	return writeHosted(path, b)
+}
+
 func chainFileFor(path, id string) string {
 	return filepath.Join(filepath.Dir(path), "chains", id+".jsonl")
 }

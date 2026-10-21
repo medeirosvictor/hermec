@@ -75,7 +75,9 @@ Nonces are 32 random bytes. The whole handshake must finish within **10
 seconds** of the upgrade. `server_id` is the raw 32 bytes of the server ID
 (section 9.1) in both signed strings. Each signed string starts with its own
 domain prefix, ending in a NUL byte (`\x00`), so a signature made for one
-purpose cannot be replayed as another.
+purpose cannot be replayed as another. A version 1 client sends `auth` straight
+after the `challenge`; if that `auth` is well formed the server answers
+`update_required` and closes (section 7).
 
 1. **`challenge`** (S). Right after the upgrade the server sends a fresh server
    nonce. The challenge is a version 1 envelope (section 7); every other
@@ -106,12 +108,16 @@ purpose cannot be replayed as another.
    name and, if the server has one, the password.
 6. **`auth_ok`** (S), or one `error` and a close. `auth_ok` carries the
    `server_id`; the client checks it against the ID it verified in step 4 and
-   ends the connection with `server_id_mismatch` if it differs.
+   ends the connection with `server_id_mismatch` if it differs. If entries were
+   appended after the server sent the chain in step 3, it follows `auth_ok`
+   with one or more `chain` frames holding exactly those entries, so the
+   client's copy has no gap before the first live frame (section 4.14a).
 
 The server checks `auth` in this order: it is a well-formed version 2 `auth`
 with a 32-byte `pubkey`; the signature is valid; the key is not banned; the
 password (constant-time comparison) if one is configured; the key's fingerprint
-is on the allow list if one is configured. A bad signature, wrong password or
+is on the allow list if one is configured (the founder and every listed host
+always pass the allow list). A bad signature, wrong password or
 unlisted key gets a single `error` with code `auth_failed` and the connection
 closes; the error never reveals which check failed. A banned key, once its
 signature has proven it holds the key, gets `error` `banned` instead.
@@ -418,7 +424,11 @@ Effects of an accepted entry: `grant`, `revoke` and the roles/default roles of
 `config` apply to the next permission check; `allowed_keys` of a `config`
 applies to the next authentication (members already connected stay); `ban`
 sends every connection of that key `error {banned}`, removes it from voice and
-closes it, and later authentications are refused with `banned`. The server name,
+closes it, and later authentications are refused with `banned`. A connection
+that logs in while an entry is being appended still receives it: the server
+registers the connection for live frames and sends it every entry after the
+head it sent in the handshake, in one step that no append can interleave with.
+The server name,
 channels and limits of a `config` entry are read at start-up and apply from the
 next start.
 
@@ -672,13 +682,14 @@ nothing.
 |---------------|--------------------------------------------------------------|--------------|
 | `genesis`     | `name`, `founder` (the author's key), `salt` (random bytes)  | the founder; entry 0 only |
 | `config`      | the full group config: `name`, `channels`, `voice_channels`, `max_voice`, `max_clients`, `max_per_ip`, `allowed_keys`, `roles`, `default_roles` | founder, or a key with `manage` |
-| `grant`       | `fingerprint`, `roles`; replaces that key's roles            | founder, or `manage` |
+| `grant`       | `fingerprint`, `roles`; replaces that key's roles. A grant naming the founder is refused unless the founder signs it | founder, or `manage` |
 | `revoke`      | `fingerprint`; removes that key's grant. The founder cannot be revoked | founder, or `manage` |
 | `ban`         | `fingerprint`. The founder cannot be banned                  | founder, or `manage` |
 | `unban`       | `fingerprint`                                                | founder, or `manage` |
 | `host_add`    | `pub_key`, `priority` (at least 1); re-adding a key updates its priority | founder only |
 | `host_remove` | `fingerprint` of a listed host                               | founder only |
 
+A server treats the founder as holding every permission whatever the grants say.
 The latest `config` wins; it is the whole config, not a diff. The password is
 never in the chain: the chain is sent to every client before it authenticates.
 The state after replaying the chain also holds the grants, the ban list and the
