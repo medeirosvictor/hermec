@@ -238,6 +238,10 @@ func (g *game) bootHosted(path string) {
 		g.notice = fmt.Sprintf("hosted chain unreadable: %v", err)
 		return
 	}
+	if n := c.TornTail(); n > 0 {
+		g.logf("hosted chain ended in a torn entry; dropped %d bytes", n)
+		g.notice = "hosted chain: a half-written last entry was dropped (the app closed mid-write)"
+	}
 	g.hosted = &hostedServer{cfg: cfg, path: path, chain: c, id: c.ID().String()}
 	_ = g.startHosted() // the failure is in g.hosted.err and shows on the tile
 	g.openSession(hostedKey, g.defaultName())

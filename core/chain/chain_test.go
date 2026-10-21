@@ -120,7 +120,7 @@ func TestVerifyRejectsTampering(t *testing.T) {
 		"swapped lines": join(lines[0], lines[2], lines[1], lines[3]),
 		"dropped line":  join(lines[0], lines[1], lines[3]),
 		"non-founder":   join(lines[0], lines[1], lines[2], line(t, forged)),
-		"garbage":       join(lines[0], []byte("{not json")),
+		"garbage":       join(lines[0], []byte("{not json"), lines[2]),
 		"empty":         {},
 	}
 	for name, data := range cases {

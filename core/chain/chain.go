@@ -37,6 +37,7 @@ type Chain struct {
 	path    string
 
 	persistErr error // sticky: set when a failed append could not be rolled back
+	tornTail   int   // bytes of a torn final line Load truncated
 }
 
 func marshalLine(e Entry) ([]byte, error) {
@@ -116,42 +117,72 @@ func cloneEntry(e Entry) Entry {
 }
 
 // Load reads a chain file and fully verifies it.
+//
+// A crash in the middle of an append can leave a torn final line (partial,
+// NUL-filled, or missing its newline). Load drops that line, truncates the file
+// back to the last good line and records how many bytes it removed (see
+// TornTail) so the caller can report it. A bad line anywhere before the last
+// is ErrBadChain.
 func Load(path string) (*Chain, error) {
-	f, err := os.Open(path)
+	fi, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	if fi.Size() > int64(maxBytes)+4096 {
+		return nil, ErrFull
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
 	var es []Entry
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64<<10), maxBytes+4096)
-	total := 0
-	for sc.Scan() {
-		if len(bytes.TrimSpace(sc.Bytes())) == 0 {
+	total, pos, goodEnd := 0, 0, 0
+	for pos < len(data) {
+		nl := bytes.IndexByte(data[pos:], '\n')
+		if nl < 0 {
+			break // no trailing newline: torn
+		}
+		line := data[pos : pos+nl]
+		next := pos + nl + 1
+		pos = next
+		if len(bytes.TrimSpace(line)) == 0 {
+			goodEnd = next
 			continue
 		}
-		total += len(sc.Bytes()) + 1
+		total += len(line) + 1
 		if total > maxBytes || len(es) >= maxEntries {
 			return nil, ErrFull
 		}
 		var e Entry
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+		if err := json.Unmarshal(line, &e); err != nil {
+			if next >= len(data) {
+				break // unparseable final line: torn
+			}
 			return nil, fmt.Errorf("%w: line %d: %v", ErrBadChain, len(es)+1, err)
 		}
 		es = append(es, e)
-	}
-	if err := sc.Err(); err != nil {
-		if errors.Is(err, bufio.ErrTooLong) {
-			return nil, ErrFull
-		}
-		return nil, err
+		goodEnd = next
 	}
 	c, err := FromEntries(es)
 	if err != nil {
 		return nil, err
 	}
+	if goodEnd < len(data) {
+		if err := os.Truncate(path, int64(goodEnd)); err != nil {
+			return nil, fmt.Errorf("chain: truncate torn tail: %w", err)
+		}
+		c.tornTail = len(data) - goodEnd
+	}
 	c.path = path
 	return c, nil
+}
+
+// TornTail reports how many bytes of a torn final line Load removed from the
+// file; zero when the file was intact.
+func (c *Chain) TornTail() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.tornTail
 }
 
 // Append verifies e as the next entry and, when a path is set, persists it as

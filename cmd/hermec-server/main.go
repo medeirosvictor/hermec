@@ -70,6 +70,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if n := c.TornTail(); n > 0 {
+		log.Printf("WARNING: %s ended in a torn entry (a crash during a write); dropped %d bytes and kept the %d entries before it",
+			*chainPath, n, len(c.Entries()))
+	}
 	if *applyConfig {
 		var applied []string
 		if created { // a fresh chain was just built from the config
