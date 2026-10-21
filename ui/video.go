@@ -9,6 +9,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
+	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"github.com/medeirosvictor/hermec/client"
@@ -54,11 +55,14 @@ type videoView struct {
 	pending bool // rgba holds a frame not yet uploaded
 	w, h    int  // size of the last frame
 	lastClk time.Time
+	mx, my  float64   // last mouse position over the video view (scene space)
+	moveAt  time.Time // when the mouse last moved
 }
 
 func (v *videoView) reset() {
 	v.pending, v.w, v.h = false, 0, 0
 	v.lastClk = time.Time{}
+	v.moveAt = time.Time{}
 }
 
 // videoActive reports that the watch view replaces the chat on screen.
@@ -146,8 +150,164 @@ func (g *game) videoEsc(pressed bool) bool {
 		return false
 	}
 	g.escSpent = true
+	if g.fullscreen { // first Esc: out of fullscreen, still watching
+		g.exitFullscreen()
+		return true
+	}
 	g.stopWatching()
 	return true
+}
+
+// clock is the video view's time source (a seam for tests).
+func (g *game) clock() time.Time {
+	if g.shareOps.now != nil {
+		return g.shareOps.now()
+	}
+	return time.Now()
+}
+
+// toggleFullscreen flips the window's fullscreen. Update re-syncs g.fullscreen
+// from the window each tick.
+func (g *game) toggleFullscreen() {
+	if g.shareOps.fullscreen != nil {
+		g.shareOps.fullscreen()
+	} else {
+		ebiten.SetFullscreen(!ebiten.IsFullscreen())
+	}
+	g.fullscreen = !g.fullscreen
+}
+
+func (g *game) exitFullscreen() {
+	if g.fullscreen {
+		g.toggleFullscreen()
+	}
+}
+
+// syncFullscreen is the one place that decides whether the window may be
+// fullscreen: only while the video view is on. Every way the view can end
+// (Esc, sharer stops, refusal, leaving the call, switching server, settings)
+// passes through here from the update tick.
+func (g *game) syncFullscreen() {
+	if g.fullscreen && !g.videoActive() {
+		g.exitFullscreen()
+	}
+}
+
+// videoF11 toggles fullscreen on an F11 press while the video view is on.
+func (g *game) videoF11(pressed bool) {
+	if pressed && g.videoActive() {
+		g.toggleFullscreen()
+	}
+}
+
+// stripWait is how long the on-video controls stay after the mouse last moved.
+const stripWait = 2 * time.Second
+
+// stripBottom is the share of the pane height, at the bottom, where the
+// controls stay up while fullscreen.
+const stripBottom = 0.15
+
+const (
+	stripChatLabel = "back to chat"
+	stripStopLabel = "stop watching"
+	stripFullLabel = "fullscreen"
+	stripExitLabel = "exit fullscreen"
+)
+
+// trackVideoMouse records the mouse (scene space) over the video view; a move
+// re-arms the idle timer.
+func (g *game) trackVideoMouse(x, y float64, now time.Time) {
+	if x != g.vid.mx || y != g.vid.my || g.vid.moveAt.IsZero() {
+		g.vid.moveAt = now
+	}
+	g.vid.mx, g.vid.my = x, y
+}
+
+// stripVisible reports whether the on-video controls are up: the mouse is over
+// the pane and moved in the last stripWait, or (fullscreen) rests in the
+// bottom stripBottom of the pane.
+func (g *game) stripVisible(now time.Time) bool {
+	if !g.videoActive() || g.vid.moveAt.IsZero() {
+		return false
+	}
+	p := g.videoPane(g.geom())
+	if !state.InRect(g.vid.mx, g.vid.my, p.x0, p.y0, p.x1, p.y1) {
+		return false
+	}
+	if now.Sub(g.vid.moveAt) <= stripWait {
+		return true
+	}
+	return g.fullscreen && g.vid.my >= p.y1-(p.y1-p.y0)*stripBottom
+}
+
+type stripRects struct{ chat, full, stop rectF }
+
+func (g *game) fullLabel() string {
+	if g.fullscreen {
+		return stripExitLabel
+	}
+	return stripFullLabel
+}
+
+// stripLayout is the three buttons, centred at the bottom of the pane. Update,
+// hits and drawing all use it.
+func (g *game) stripLayout(gm geometry) stripRects {
+	p := g.videoPane(gm)
+	wc := text.Advance(stripChatLabel, g.face) + pad*2
+	wf := text.Advance(g.fullLabel(), g.face) + pad*2
+	ws := text.Advance(stripStopLabel, g.face) + pad*2
+	total := wc + wf + ws + pad*2
+	h := gm.lh + pad
+	x := (p.x0+p.x1)/2 - total/2
+	if x < p.x0 {
+		x = p.x0
+	}
+	y1 := p.y1 - pad*2
+	y0 := y1 - h
+	var r stripRects
+	r.chat = rectF{x, y0, x + wc, y1}
+	x += wc + pad
+	r.full = rectF{x, y0, x + wf, y1}
+	x += wf + pad
+	r.stop = rectF{x, y0, x + ws, y1}
+	return r
+}
+
+// stripHitAt is the strip button under a scene point, if the strip is up.
+func (g *game) stripHitAt(x, y float64, now time.Time) (state.HitKind, bool) {
+	if !g.stripVisible(now) {
+		return 0, false
+	}
+	r := g.stripLayout(g.geom())
+	for _, b := range []struct {
+		r rectF
+		k state.HitKind
+	}{{r.chat, state.HitVideoChat}, {r.full, state.HitVideoFull}, {r.stop, state.HitVideoStop}} {
+		if state.InRect(x, y, b.r.x0, b.r.y0, b.r.x1, b.r.y1) {
+			return b.k, true
+		}
+	}
+	return 0, false
+}
+
+// videoPress handles a left press at a scene point of the video view: a strip
+// button acts (and is no part of a double-click), the picture counts toward the
+// double-click.
+func (g *game) videoPress(x, y float64, now time.Time) {
+	if k, ok := g.stripHitAt(x, y, now); ok {
+		g.vid.lastClk = time.Time{}
+		switch k {
+		case state.HitVideoChat, state.HitVideoStop:
+			g.stopWatching() // syncFullscreen leaves fullscreen this tick
+		case state.HitVideoFull:
+			g.toggleFullscreen()
+		}
+		return
+	}
+	p := g.videoPane(g.geom())
+	if state.InRect(x, y, p.x0, p.y0, p.x1, p.y1) {
+		g.videoClick(now)
+	}
 }
 
 // videoClick counts a press on the video; the second within doubleClick
@@ -155,12 +315,7 @@ func (g *game) videoEsc(pressed bool) bool {
 func (g *game) videoClick(now time.Time) {
 	if !g.vid.lastClk.IsZero() && now.Sub(g.vid.lastClk) <= doubleClick {
 		g.vid.lastClk = time.Time{}
-		if g.shareOps.fullscreen != nil {
-			g.shareOps.fullscreen()
-		} else {
-			ebiten.SetFullscreen(!ebiten.IsFullscreen())
-			g.fullscreen = !g.fullscreen // Update re-syncs it from the window
-		}
+		g.toggleFullscreen()
 		return
 	}
 	g.vid.lastClk = now
@@ -187,15 +342,18 @@ func (g *game) updateVideo(inputOK bool) {
 		g.stopWatching() // refused: back to the chat; the client keeps no watch
 	}
 	g.stepVideo()
-	if !inputOK || !g.videoActive() || g.menuSpent || !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+	if !inputOK || !g.videoActive() {
 		return
 	}
+	now := g.clock()
 	rx, ry := rawCursor()
 	ry -= g.barH()
-	p := g.videoPane(g.geom())
-	if state.InRect(rx, ry, p.x0, p.y0, p.x1, p.y1) {
-		g.videoClick(time.Now())
+	g.trackVideoMouse(rx, ry, now)
+	g.videoF11(inpututil.IsKeyJustPressed(ebiten.KeyF11))
+	if g.menuSpent || !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		return
 	}
+	g.videoPress(rx, ry, now)
 }
 
 // addVideoHit registers the pane so the cursor and tests see it.
@@ -205,6 +363,36 @@ func (g *game) addVideoHit(gm geometry) {
 	}
 	p := g.videoPane(gm)
 	g.hits.Add(state.Hit{X0: p.x0, Y0: p.y0, X1: p.x1, Y1: p.y1, Kind: state.HitVideo})
+	if g.stripVisible(g.clock()) { // after the pane: the buttons win
+		r := g.stripLayout(gm)
+		g.hits.Add(state.Hit{X0: r.chat.x0, Y0: r.chat.y0, X1: r.chat.x1, Y1: r.chat.y1, Kind: state.HitVideoChat})
+		g.hits.Add(state.Hit{X0: r.full.x0, Y0: r.full.y0, X1: r.full.x1, Y1: r.full.y1, Kind: state.HitVideoFull})
+		g.hits.Add(state.Hit{X0: r.stop.x0, Y0: r.stop.y0, X1: r.stop.x1, Y1: r.stop.y1, Kind: state.HitVideoStop})
+	}
+}
+
+// drawStrip draws the on-video controls (flat, like the picture).
+func (g *game) drawStrip(screen *ebiten.Image, ox, oy float64) {
+	now := g.clock()
+	if !g.stripVisible(now) {
+		return
+	}
+	r := g.stripLayout(g.geom())
+	hot, _ := g.stripHitAt(g.vid.mx, g.vid.my, now)
+	for _, b := range []struct {
+		r     rectF
+		k     state.HitKind
+		label string
+	}{{r.chat, state.HitVideoChat, stripChatLabel}, {r.full, state.HitVideoFull, g.fullLabel()}, {r.stop, state.HitVideoStop, stripStopLabel}} {
+		bg, fg := color.RGBA{0, 0, 0, 190}, g.th.FG
+		if hot == b.k {
+			bg, fg = color.RGBA{0x2E, 0x30, 0x35, 230}, g.th.Bright
+		}
+		x, y, w, h := float32(b.r.x0+ox), float32(b.r.y0+oy), float32(b.r.x1-b.r.x0), float32(b.r.y1-b.r.y0)
+		vector.FillRect(screen, x, y, w, h, bg, false)
+		vector.StrokeRect(screen, x, y, w, h, 1, g.th.Dim, false)
+		g.drawText(screen, b.label, b.r.x0+pad+ox, b.r.y0+pad/2+oy, fg)
+	}
 }
 
 // drawVideo draws the watched picture flat, after the CRT pass, so it gets no
@@ -237,6 +425,7 @@ func (g *game) drawVideo(screen *ebiten.Image, off image.Point) {
 	} else {
 		g.drawTextOff(screen, "waiting for video...", p.x0+pad+ox, p.y0+pad+oy)
 	}
+	g.drawStrip(screen, ox, oy)
 	if g.menu.open { // the menu belongs on top of the flat layer too
 		m := g.menu
 		g.menu.x += ox

@@ -27,9 +27,13 @@ var (
 	barCloseHot = color.RGBA{0xDA, 0x37, 0x3C, 0xFF}
 )
 
+// titleBarShown reports that the custom bar is on screen: not under the OS
+// frame and not in fullscreen.
+func (g *game) titleBarShown() bool { return hasCustomBar() && !g.fullscreen }
+
 // barH is the title bar height, 0 where the OS frame is used.
 func (g *game) barH() float64 {
-	if !hasCustomBar() || g.fullscreen {
+	if !g.titleBarShown() {
 		return 0
 	}
 	return titleBarH
@@ -125,7 +129,7 @@ func (g *game) barTitle() string {
 
 // drawTitleBar paints the flat bar over the top of the screen.
 func (g *game) drawTitleBar(screen *ebiten.Image) {
-	if !hasCustomBar() {
+	if !g.titleBarShown() {
 		return
 	}
 	w := float32(g.sw)

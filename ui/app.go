@@ -350,7 +350,8 @@ func Run(opts Options) error {
 func (g *game) Update() error {
 	g.frame++
 	g.fullscreen = ebiten.IsFullscreen()
-	if !g.barInst { // once the window exists: take over the non-client area
+	defer g.syncFullscreen() // the video view decides: no video, no fullscreen
+	if !g.barInst {          // once the window exists: take over the non-client area
 		g.barInst = true
 		ok, info := installBar()
 		g.logf("custom frame: ok=%v %s", ok, info)

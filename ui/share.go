@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image/color"
 	"sync"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
@@ -31,7 +32,8 @@ type shareOps struct {
 	start      func(c *client.Client, src client.FrameSource, w, h, fps, kbps int) error
 	stop       func(c *client.Client) // may block; callers run it off the game goroutine
 	watch      func(c *client.Client, fp string)
-	fullscreen func()
+	fullscreen func()           // toggles the window's fullscreen
+	now        func() time.Time // clock of the video view
 }
 
 // shareState is the local side of an active screen share.
