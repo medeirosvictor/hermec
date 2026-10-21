@@ -53,6 +53,25 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 1. **Always-on (now).** See the spec. Later idea riding the same synced
    store: file sharing (a capped shared folder). vitoserver stays parked
    (Victor: do not bring it back for now).
+   - **For PR 3 (from the PR 1 final review):** persist the last seen chain
+     head per pin (rollback protection: a host could serve an older valid
+     prefix); rate-limit pre-auth chain sends (an unauthenticated peer can
+     re-fetch up to 512 KiB repeatedly); move error-to-request matching off
+     FIFO (errors carry no correlation id); a live grant/revoke does not
+     re-broadcast the roster, so role badges lag until the next join.
+   - **No UI yet** for ban, grant or host changes; the protocol and server
+     enforce them (`chain_append`). PR 3 adds Allow hosting / Stop hosting /
+     Move up; ban/grant UI is still to be placed.
+   - **PR 1 parked minors** (can wait): the client accepts any server nonce
+     length; voice_join has no ban check (a just-banned member can flash back
+     into voice until its socket drains); an oversize single entry would be
+     dropped silently by the frame writer (cannot arise via chain_append);
+     grant role names and permission strings are not validated; a failed or
+     crashed first-run migration orphans a chain file (next boot founds a new
+     ID; nobody pinned the old one); whitespace-only file tails are reported
+     as torn; missing tests for 0600 mode, mutation isolation, the sync/close
+     rollback branches, a replayed host proof, and an `auth_ok.server_id`
+     mismatch.
 2. **Webcam.** Same pipeline as screen share (govpx VP8), camera source,
    call-bar toggle. Camera capture per OS is new work.
 3. **Friends adjustments** (designed in chat 2026-10-19, not yet specced):
