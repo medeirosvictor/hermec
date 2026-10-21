@@ -86,7 +86,7 @@ const maxInactiveLines = 32
 const errOfferPending = "offer pending — answer first"
 
 // statsInterval is how often an active session logs its participant count and
-// relay rate (spec 3.1). A variable so tests can shorten it.
+// relay rate. A variable so tests can shorten it.
 var statsInterval = time.Minute
 
 // peer is one participant's media state. Actor-owned.

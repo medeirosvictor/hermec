@@ -6,11 +6,11 @@ served by lightweight servers that anyone can host. The project owns no
 infrastructure; resilience comes from many small, independently hosted servers
 rather than one central service that can be blocked.
 
-The design is relay-by-default, so participants' IPs stay hidden from each
-other, with direct peer-to-peer media as a per-participant opt-in. Hermec is
-also meant to be a reusable base for communications apps, with a role-gated Go
-core and a versioned, documented wire protocol. See
-[the design spec](docs/specs/2026-10-06-hermec-design.md) and [PLAN.md](PLAN.md).
+Media is relayed by the server, so participants' IPs stay hidden from each
+other. Hermec is also meant to be a reusable base for communications apps, with
+a role-gated Go core and a versioned, documented wire protocol. See
+[PLAN.md](PLAN.md) for the roadmap and [docs/protocol.md](docs/protocol.md) for
+the protocol.
 
 ## How people actually reach each other (plain-language version)
 
@@ -43,20 +43,20 @@ servers automatically by shouting a small "anyone there?" message on the
 network. Across the internet, the easiest option is **Tailscale**: the host
 shares their machine with friends, everyone gets a private address that
 already reaches the host, and the app finds tailnet servers automatically too.
-The last option is the **classic way**: the host opens port 7697 (TCP) and the
-voice UDP ports on their router and sets `public_ip` in the server config. In
+The last option is the **classic way**: the host forwards port 7697 (TCP and
+UDP) on their router and sets `public_ip` in the server config. In
 every case the app only needs to be able to reach the host; the host does the
 rest.
 
 ## Status
 
-This repository currently ships a Go server with Ed25519 key-based
-authentication, roles, channels, presence and text chat, plus a headless client
-library, a desktop GUI client, and integration tests. Voice chat now works in
-the GUI, with audio relayed through the self-hosted server. Screen share works
-too (sharing from Windows, watching on Windows, macOS or Linux). Camera video and the
-direct peer-to-peer opt-in remain unimplemented. The
-wire protocol for what exists is specified in [docs/protocol.md](docs/protocol.md).
+Current release: v0.5.1. This repository ships a Go server with Ed25519
+key-based authentication, roles, channels, presence and text chat, a headless
+client library, a desktop GUI client, and integration tests. Voice works, with
+audio relayed through the self-hosted server. Screen share works too (sharing
+from Windows, watching on Windows, macOS or Linux). Camera video and direct
+peer-to-peer media are not built yet. The wire protocol is specified in
+[docs/protocol.md](docs/protocol.md).
 
 ## Install
 
@@ -164,8 +164,8 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Members button** (top right of the chat): Show or hide the member list of everyone on the server. The list hides itself in narrow windows; your choice is saved in `settings.toml`
 - **Click "+" tile**: Add a server
 - **Click the signal bars** (status line, or the call bar in a call): Show connection quality (ping, jitter, per-participant concealment); Esc or a second click closes it
-- **Click voice channel in the pane**: Join or leave voice call
-- **Click share** (call bar): Share a screen, see [Screen share](#screen-share). **Click LIVE** next to a person in the voice list to watch them. **Esc** goes back to chat; **double-click** the video for fullscreen.
+- **Click a voice channel in the pane**: Join it (moves your call if you are in another one). Clicking the channel you are already in does nothing; leave with the call bar or the "voice connected" panel.
+- **Click share** (call bar or "voice connected" panel): Share a screen, see [Screen share](#screen-share). **Click LIVE** next to a person in the voice list to watch them. **Esc** goes back to chat (out of fullscreen first); **F11** or **double-click** the video toggles fullscreen.
 - **Title bar** (Windows): a Discord-style app bar replaces the default frame. Drag it to move the window (double-click to maximize or restore), use the buttons on the right to minimize, maximize and close, and drag the window edges and corners to resize.
 - **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, text size as a percentage, share quality (720p or 1080p), logs (open folder), update status, a help section; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono, and existing settings files keep VT323.
 
@@ -180,7 +180,8 @@ need no audio libraries and no pkg-config. The GUI client (`cmd/hermec`) still
 needs a C compiler for the audio backend (miniaudio):
 
 - **Windows:** MSYS2 with the UCRT64 gcc only.
-- **Linux:** `gcc`.
+- **Linux:** `gcc`, plus the development headers for the window and sound
+  libraries (on Debian or Ubuntu: `sudo apt install gcc libgl1-mesa-dev xorg-dev libasound2-dev`).
 - **macOS:** Xcode command line tools (`xcode-select --install`).
 
 **Windows (MSYS2):**
@@ -337,11 +338,13 @@ To use voice channels, configure them in your server config:
 voice_channels = ["voice", "private-call"]
 ```
 
-Click a voice channel in the pane to join; the call bar appears at the bottom
-showing the channel name, elapsed time, mute button (Ctrl+M), leave button, and
-your mic level. Participants, occupancy, mute icons, and speaking indicators live
-in the channel pane under each voice channel; empty voice channels show only in
-the list.
+Click a voice channel in the pane to join. The call bar appears at the bottom
+showing the channel name, elapsed time, mute button (Ctrl+M), share button,
+leave button, and your mic level. The "voice connected" panel at the bottom of
+the channel column shows the channel and server, your ping, and buttons to
+disconnect and share; its signal bars open the connection quality panel.
+Participants, occupancy, mute icons, and speaking indicators live in the channel
+pane under each voice channel; empty voice channels show only in the list.
 
 **Important: Hermec does not perform acoustic echo cancellation. Using speakers
 will feed other participants' audio back into your microphone; headsets are
@@ -366,13 +369,22 @@ Show your screen to the people in your voice call.
 
 Leaving the voice call stops your share too.
 
+To see what you are sharing, click your own **LIVE** tag. The preview is drawn
+on your computer, so it costs no bandwidth. While you share, the strip on the
+video has **stop sharing** and **change screen**. Change screen swaps the
+monitor without ending the share; people watching keep watching (the picture is
+letterboxed if the new screen has a different shape).
+
 **Watch someone's screen** (Windows, macOS and Linux):
 
 1. Look at the voice channel list. People who share have a red **LIVE** tag.
 2. Click **LIVE**.
 3. The video replaces the chat.
-4. Press **Esc** to go back to chat.
-5. **Double-click** the video to go fullscreen, and double-click again to leave it.
+4. Move the mouse over the video to show a strip with **fullscreen** and
+   **close**.
+5. Press **Esc** to go back to chat. In fullscreen, the first **Esc** leaves
+   fullscreen and the second goes back to chat.
+6. **F11** or a **double-click** on the video toggles fullscreen.
 
 You can watch one screen at a time. The video is drawn clean, without the CRT
 effects, so text stays readable.
@@ -464,8 +476,11 @@ for ev := range c.Events() {
   public internet means an on-path observer can read everything, including chat.
 - **The host is trusted by design.** The room host can read all chat and
   relayed traffic, the same way a TeamSpeak host can. Choose hosts like you
-  choose group admins. See section 8 of
-  [the design spec](docs/specs/2026-10-06-hermec-design.md).
+  choose group admins. The host also sees who connects and when.
+- **End-to-end encryption is not built.** Voice is encrypted between you and the
+  host (WebRTC), and chat is encrypted only if the server uses TLS or the
+  network layer does. The protocol reserves message types for end-to-end
+  encryption later.
 
 ## Troubleshooting
 
@@ -493,7 +508,7 @@ someone else's server need no inbound exception.
 
 ## Test
 
-CI (`.github/workflows/ci.yml`) runs vet, `-race` tests, a fuzz smoke run and Windows/arm64 cross-builds.
+CI (`.github/workflows/ci.yml`) runs gofmt, vet and `-race` tests on Linux, tests on macOS and Linux ARM, a fuzz smoke run of the protocol decoder, and cross-builds of the pure-Go packages. The release workflow (`release.yml`) also builds all four client assets on every pull request as a dry run.
 
 ```sh
 go vet ./...

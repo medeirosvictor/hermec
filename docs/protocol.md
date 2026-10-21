@@ -1,9 +1,9 @@
 # Hermec Wire Protocol, version 1
 
 This document specifies the Hermec signaling/chat protocol, version 1. It
-covers the chat subset implemented by the foundation release: authentication,
-channels, presence and text chat, plus voice signaling (section 4.12) and
-screen share signaling (section 4.15). Webcam is specified separately, later.
+covers authentication, channels, presence, text chat, the server roster, voice
+signaling (section 4.12) and screen share signaling (section 4.15). Webcam is
+not specified yet.
 
 The reference implementation is `core/proto` (types and codec) and `server`
 (behavior). Where this document and the code disagree, that is a bug in one of
@@ -144,10 +144,7 @@ Direction: C is client to server, S is server to client.
 | `channels`    | ChannelInfo[] | All channels on the server.          |
 | `server_name` | string        | Optional. The host's configured `server_name`; omitted when the host set none. Untrusted: clients strip control and format characters and cap it at 64 runes before display. A server that omits it (older servers) means "no name". |
 
-Changed in the voice release (breaking, protocol version stays 1):
-`channels` was previously an array of channel-name strings and is now an array
-of `ChannelInfo` objects. Clients and servers must be updated together; see
-section 7.
+`channels` is an array of `ChannelInfo` objects:
 
 | Field  | Type   | Description                              |
 |--------|--------|------------------------------------------|
@@ -483,20 +480,15 @@ each request. Unknown role names grant nothing.
 
 The envelope carries `v`. A server that receives an unsupported version treats
 the message as malformed (`bad_request`). Within a version, new optional
-fields may be added to payloads and receivers must ignore unknown fields.
-The voice release added new message types (section 4.12) and changed the
-`auth_ok` `channels` shape (a breaking change) without bumping the version,
-because the protocol is pre-release; future incompatible changes require a new
-version number.
+fields may be added to payloads and receivers must ignore unknown fields and
+unknown message types. The protocol is pre-release: version 1 may still change
+incompatibly without a new version number, and clients and servers should be
+updated together. Once it is frozen, an incompatible change needs a new version
+number.
 
-The following were added later and are purely additive, so v1 clients ignore
-them: the `auth_ok` `server_name` field (section 4.3) and the `roster` message
-(section 4.14).
-
-The screen share release added the `share_start`, `share_stop` and `watch`
-messages, the `not_sharing` error and the `VoiceMember` `sharing` field
-(section 4.15). They are additive: older clients ignore the `sharing` field
-and never send the new messages.
+Older clients ignore the `auth_ok` `server_name` field, the `roster` message,
+the `VoiceMember` `sharing` field and `video_source`. A server older than
+v0.5.0 answers the screen share messages with `bad_request` (section 4.15).
 
 ## 8. Discovery
 

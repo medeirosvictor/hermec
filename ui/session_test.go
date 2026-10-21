@@ -615,7 +615,7 @@ func TestStaleVoiceResultDiscarded(t *testing.T) {
 
 // A join in flight for A when A is disconnected: the late result is for a
 // session that no longer exists, so its devices are closed and nothing
-// changes (spec section 4).
+// changes.
 func TestJoinResultAfterDisconnectDiscarded(t *testing.T) {
 	g := newTestGame(t)
 	_, a, b := twoSessions(t, g)

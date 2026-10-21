@@ -1,137 +1,398 @@
-# Hermec — Session Handoff
+# Hermec: session handoff
 
-> Living brief for picking up work in a fresh Claude session. Update at every milestone.
-> Last updated: 2026-10-21 (latest: **v0.5.1 "call and stream controls" merged as PR #7 and released**; Victor waived the hand test before merge and will test the release instead; **next round: always-on**, see the pipeline) · 2026-10-20 (v0.5.0 hardening, see the lead entry below; v0.5.0 released 2026-10-21) · 2026-10-19 (**Screen-share round built on branch `worktree-hermec-screenshare`, not merged yet**: spec `docs/superpowers/specs/2026-10-19-hermec-screen-share-design.md`, plan `docs/superpowers/plans/2026-10-19-hermec-screen-share.md`. Shipped: session log files (`<config>/hermec/logs/`, one per run, newest 10, `logs: open folder` row); one media UDP port equal to the server port (`media_port`); SFU video (VP8, PT 96, nack/pli, video only to watchers); `share_start`/`share_stop`/`watch` protocol messages, `VoiceMember.sharing`, error `not_sharing`; Windows screen capture + VP8 encode (govpx), `share` button + monitor picker on the call bar, `share quality` 720p/1080p row; red LIVE tag, watch view that replaces the chat (Esc back, double-click fullscreen, no CRT effects). Docs: README "Screen share" and "Logs", `docs/protocol.md` section 4.15. **Deferred:** Mac/Linux sharing, window capture, shared-screen audio, DXGI capture, simulcast. DPI note: capture relies on Ebiten's per-monitor DPI awareness. **Next: Victor's real-test checklist (pipeline item 0a), then merge; then the always-on round, then webcam, then friends adjustments (order unchanged).**) Earlier the same day: 2026-10-19 (later) (**Portable-builds round merged via PR #5 (608b869)**: gopus (pure Go) replaces libopus; the release now builds Windows and Linux for x64 and ARM; PR dry runs added; macOS runs from source (README "macOS: run from Terminal"). Spec `docs/superpowers/specs/2026-10-19-hermec-portable-builds-design.md`. acceptance = Victor's call with a friend (Windows host ↔ Mac friend building from source); Victor dropped the separate ear test on 2026-10-19. v0.4.0 tagged after the final review (ready to release; low findings only). **Next: v0.4.0 release after the gate, then screen share + webcam using govpx (pure Go VP8), not libvpx.**) Earlier the same day: 2026-10-19 (**Add a Server page + in-app hosting merged to main and released as v0.3.0**: spec `docs/superpowers/specs/2026-10-16-hermec-add-server-page-design.md`, plan `docs/superpowers/plans/2026-10-16-hermec-add-server-page.md`; branch `worktree-hermec-modern` also carried bundled fonts + font selector, slate preset, font-size %, help view. Final Opus review = merge after fixes; F1–F3, F5, F7–F9 fixed (ca0b43e, d52a7ef). Deferred from that review: F4 Create page shows the invite address without a copy action (tile menu has copy); F6 `stopHosted` shuts the server down synchronously on the game goroutine (up to 3 s freeze); `g.notice` is drawn only on the connect scene; `update_check=false` is no longer honoured (every launch checks GitHub; Victor to decide); a stale saved `ws://127.0.0.1:<port>/` entry can map to the hosted session as a second tile; self-discovery filter misses second NICs/IPv6. **Next per Victor (2026-10-19): friend test of v0.3.0 (Windows host ↔ Mac friend building from source over Tailscale node sharing), then screen share + webcam.** Previously: 2026-10-16 **B.2 merged to main and pushed at 5b791f3** (branch `worktree-hermec-b2` deleted): spec `docs/superpowers/specs/2026-10-16-hermec-server-names-roster-design.md`, plan `docs/superpowers/plans/2026-10-16-hermec-server-names-roster.md`; Victor's B.2 real-mouse checklist (spec section 5) is queued below next to B.1's, **B.3 (icon editor) and the v0.2.0 release steps (spec section 6) are next**. **B.1 merged to main at 338cc40 (2026-10-12, pushed)**: spec `docs/superpowers/specs/2026-10-11-hermec-concurrent-sessions-design.md`, plan `docs/superpowers/plans/2026-10-11-hermec-concurrent-sessions.md`, all 8 tasks done. Before that: Round B started 2026-10-11, decomposed into B.1/B.2/B.3. Round A merged at a162ac1; audio round still awaiting Victor's listening test).
->
-> **Round B decomposition (agreed 2026-10-11):** B.1 sessions = items (a)+(b) below; B.2 server identity/management = (d), (e), then (c) roster; B.3 = (f) icon editor. B.1 decisions: every server opened this session stays connected (no startup auto-dial), right-click tile → Disconnect, unread = rail dot + bright channels, one `session` struct per server. README gained a plain-language "how people reach each other" section (4ec31a6).
+Compact brief for picking up work in a fresh Claude session. It describes the
+app as it is now. Update it at every milestone and delete what is resolved.
+User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
+[docs/quickstart-friends.md](docs/quickstart-friends.md). Roadmap:
+[PLAN.md](PLAN.md).
 
-## v0.5.0 hardening (lead entry)
+## Start here
 
-Part of the v0.5.0 round (screen share plus hardening), on branch `worktree-hermec-screenshare`. Spec `docs/superpowers/specs/2026-10-19-hermec-hardening-design.md`.
+1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and
+   the memory note `hermec-project`.
+2. Repo state: `main` == `origin/main`, released through **v0.5.1**. The
+   worktree `.claude/worktrees/hermec-portable` is on branch `hermec-next`.
+   Untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
+   never committed. The `.claude/worktrees/agent-*` worktrees are old and left
+   alone.
+3. **Next round: always-on.** Server identity plus a signed members and config
+   chain, chat history, and a host link with warm standby and failover. The
+   spec is being written at
+   `docs/superpowers/specs/2026-10-21-hermec-always-on-design.md`.
+4. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload:
+   `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In Victor's real settings,
+   CRT and curvature are off: F1 toggles CRT, F3 curvature, F2 cycles themes.
+5. Never run the GUI from an agent against `%APPDATA%\hermec` (see Gotchas).
+6. Proven in real use (2026-10-19): voice over Tailscale node sharing (Canada
+   host with Brazil friends) and the macOS from-source build. Known edge: at
+   the `max_voice` cap of 50 the worst-case server offer is about 57 KB of the
+   64 KiB frame limit (video not counted). Fine for the friend group; revisit
+   before big rooms.
 
-**Shipped:**
-- Server limits: `max_voice` (default 25, max 50; a full channel refuses with `voice_full`), `max_clients` (default 256; `server_full`), `max_per_ip` (default 16; raise it for LAN parties), and at most 64 connections waiting for auth.
-- Connection guards: upgrades that carry a browser `Origin` are refused. Failed logins slow down per IP; a success resets it.
-- Names are cleaned and capped at 64 characters on the server. Chat text is capped at 4096 bytes (`message too long`). No frame goes over 64 KiB, and `presence.total` gives the real member count when a list is trimmed.
-- Paste (Ctrl+V, Cmd+V on macOS) and caret editing (Left, Right, Home, End, Delete) in every text field. The Join address field keeps its `ws://` and a pasted full address replaces it.
-- Client: a late ping reply no longer counts twice. Auth failures stop automatic retry (manual ↻ still works). The update link must point at this repo's releases. The tailscale path also works inside Tailscale.app on macOS.
-- macOS builds: `scripts/build-mac.sh` checks out the latest release tag and builds with the version stamped in, so the update banner works. It leaves a detached HEAD; `git checkout main` goes back.
-- CI runs tests on macOS and arm64. Releases publish only when the tagged commit is on `main` and vet and tests pass. `.gitignore` covers keys and server configs.
-- Docs: README (paste, Linux clipboard tools, macOS script, safety notes), quickstart (server downloads with `SHA256SUMS.txt`, update check wording), `docs/protocol.md` (section 3.3 and the error codes).
+## Process conventions
 
-**Deferred (not in v0.5.0):**
-- Auth bound to server identity (needs server keys and a protocol version bump).
-- Discovery table eviction and hiding the version in replies.
-- macOS shortcuts.
-- Mic-silence warning.
-- Server config validation and logging.
-- Auto-rejoin voice after a reconnect.
-- Homebrew tap.
-- Discovery probing cost: the Join list probes while it is visible, plus one `tailscale status --json` call; probing should run only while the Join list is visible.
-- Release-workflow extras: draft releases and a protected environment, SHA-pinned actions, Dependabot, govulncheck, build attestations, and a concurrency group.
-- Per-key rate limits.
-- Full-length fingerprints for allowlists and grants.
-- Release note: a v0.5 `hosted.toml` written before the default-omitting fix may contain `max_voice`, `max_clients` or `max_per_ip` keys, which an older app (v0.4) rejects.
+- Subagent-driven development per plan: a worktree via EnterWorktree, an SDD
+  ledger and pre-flight scan, Sonnet implementers and Haiku small reviews, fix
+  rounds with scoped re-reviews, a final whole-branch review on the most
+  capable model, a merge menu to Victor. The controller tags releases on `main`
+  only.
+- Commit trailer follows whatever the session's attribution instruction says.
+- Victor owns design decisions (vibe-wise learning mode). Brainstorm checkpoints
+  come before architectural work; teach inner workings junior-style on request.
+  State lives in `.vibe-wise/`.
+- Docs hygiene (Victor's rule): when a round finishes, delete its spec and plan
+  and move anything still open into this file. Docs describe the app as it is
+  now; stale text is removed, not annotated.
+- cgo on this machine: PATH needs `C:\msys64\ucrt64\bin`, `CGO_ENABLED=1`;
+  `-race` works locally. The server is pure Go and cross-compiles to a Pi.
 
-## Start here (fresh session)
+## Next-session pipeline (Victor's order)
 
-1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and the memory note `hermec-project`.
-2. Repo state: `main` == `origin/main`, released through **v0.5.1** (PR #7 call and stream controls, on top of PR #6 screen share + hardening = v0.5.0, PR #5 portable builds = v0.4.0, Add a Server page = v0.3.0). The worktree `.claude/worktrees/hermec-portable` is on branch `hermec-next` (used for the v0.5.1 round). Clean apart from untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`), which are never committed. The four `.claude/worktrees/agent-*` worktrees are old, from earlier rounds, and left alone.
-3. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload: `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In the owner's real settings, **CRT and curvature are currently off**: F1 toggles CRT, F3 toggles curvature, F2 cycles themes.
-4. Order after the v0.5.1 release: the always-on round (next), with Victor's real tests (screen share checklist, pipeline item 0a, plus the v0.5.1 controls) running alongside on the released build, then webcam, then friends adjustments; B.3 (icon editor) stays open after those. Still pending alongside, whenever Victor has a mouse handy: his real-mouse checklists (pipeline items 0 and 1, plus the Add a Server checklist and the new fullscreen-video title-bar check). Proven in real use on 2026-10-19: voice over Tailscale node sharing (Canada host ↔ Brazil friends) and the macOS from-source build. Known edge: at the `max_voice` cap of 50 the worst-case server offer is ~57 KB of the 64 KiB limit (video not counted) — fine for the friend group; revisit before big rooms.
-5. Never run the GUI from an agent against `%APPDATA%\hermec` (see Gotchas). Build the separate-config-dir flag first if automated GUI runs are needed.
+1. **Always-on (now).** Plan A slice plus Plan B, from the ideas below.
+   - Server identity keypair, and a founder-signed append-only members and
+     config chain (a permissioned sigchain: "blockchain minus consensus").
+     Auth bound to server identity (needs a protocol version bump), which also
+     closes the "a host can impersonate you on other servers" gap.
+   - Chat history: a small per-server file with the last 30 days of messages,
+     capped by size, served to anyone who joins (never grows unbounded). The
+     host can read this file. Later, file sharing could ride the same synced
+     store (a capped shared folder). Plan C is the long-term encrypted version.
+   - Host link, any trusted member can host, pick the best host, warm standby
+     and failover. Authorized-hosts list in the chain; discovery by server
+     fingerprint; split-brain rule (discovery-first plus deterministic
+     priority). vitoserver stays parked (Victor: do not bring it back for now).
+2. **Webcam.** Same pipeline as screen share (govpx VP8), camera source,
+   call-bar toggle. Camera capture per OS is new work.
+3. **Friends adjustments** (designed in chat 2026-10-19, not yet specced):
+   - Volume: per-person volume (right-click a person, 0 to 200%, saved per
+     fingerprint), a mic gain settings row (0 to 200%), and a soft limiter.
+     Friends were too quiet in both directions. Volume for a shared stream
+     belongs here too.
+   - Live names: a new `profile` client-to-server message (name now, avatars and
+     icon later). The server re-broadcasts roster, presence and voice_state. A
+     client "profile sync" pushes local edits to every connected server and
+     writes server-announced changes into `servers.toml`.
+   - Audio devices: the input and output settings rows become a dropdown, and
+     switching applies immediately, including mid-call. Known cause of "switching
+     does nothing": capture and playback open the device once per voice join
+     (the device open in `audio/capture.go` and `audio/playback.go`), so a
+     change applies only after leave and rejoin.
+   - Bandwidth metrics: upload and download kbps per call and per person (pion
+     stats plus WebSocket bytes) in the quality panel and the log.
+   - Ping: clamp the RTT outlier. An unanswered ping adds a 6 s sample
+     (`pongTimeout` in `client/rtt.go`, recorded by `check`). Victor saw 1400 ms
+     spikes with fine voice. Check Tailscale DERP versus direct
+     (`tailscale ping`, `tailscale status`, `tailscale netcheck`).
+4. **B.3: icon editor.** In-app pixel-art editor for a server icon.
 
-## Where things stand
+## Open checklists
 
-- **Round A merged to main (a162ac1, pushed 2026-10-11)**, pending Victor's eyeball/real-mouse checklist; spec `docs/superpowers/specs/2026-10-11-hermec-visual-refresh-design.md`, plan `docs/superpowers/plans/2026-10-11-hermec-visual-refresh.md`: CRT curvature + scan bar + F3 toggle, parchment theme, soft panels, hand cursor, speaking glow, signal bars + connection-quality panel (`ui/quality.go`, `ui/state/grade.go`), Discord-style title bar via a replaced window procedure (WM_NCCALCSIZE + WM_NCHITTEST), envelope-with-angel-wings icon (`ui/icon`, regenerate with `go run ./cmd/hermec-icon -out assets`), HERMEC_DEV live reload. Also: the tailscale discovery probe no longer flashes a console window on Windows.
-- **Footprint:** ~17% idle CPU on this machine, mostly Present/vsync. The old build measured ~15% the same day. See `docs/footprint.md`.
+Run these on a released build or `go run ./cmd/hermec -local` plus a second
+server. Agents must not run the GUI against the real `%APPDATA%\hermec`.
 
-- **Shipped on main, all reviewed (the old `cross-build` CI failure came from hraban/opus; libopus is gone since the portable-builds round, so re-check CI status):** foundation (chat server + headless client) → GUI (Ebiten, amber CRT, VT323, servers rail, settings) → voice (SFU relay, call bar, occupancy) → discovery (DISCOVERED list: LAN + tailnet + saved) → release & update (**v0.1.0 released**; update banner Ctrl+U; GUI idle CPU 34%→6.5%).
-- **v0.1.0:** https://github.com/medeirosvictor/hermec/releases/tag/v0.1.0 — repo is public (confirmed 2026-10-16), so friends' downloads and the update banner work.
-- **Deployment state:** primos config = `primos.server.toml` (repo root, untracked). vitoserver has the server installed + systemd user service, currently **disabled/parked** (re-enable: `ssh vito "systemctl --user enable --now hermec"`; linger already on). Victor hosts from desktop meanwhile. Desktop firewall: "Hermec Server" Allow-rule installed (he had denied the prompt once — that was the connection-refused bug).
-- **MERGED, PENDING EAR TEST: Audio Quality & Devices plan** (`docs/superpowers/plans/2026-10-07-hermec-audio-quality.md`), on main (b66c73b..bf7f28b, 9 commits; all task reviews + final whole-branch review clean; full suite + -race green). What changed: capture discards stale audio only after a genuine pause ≥100ms (chop fix; hard 80ms latency cap); playback moved oto→malgo with 20ms periods + per-sender jitter buffer (start 2 / target 3 / trim at 5 / Opus PLC budget 3 — buzzsaw fix; latency bounded at 100ms); decode moved off the audio callback's lock; `audio.ListDevices()` + `input_device`/`output_device` settings rows (cycle on click, persist immediately, unknown device → default + notice, never crash); chat input now sits under the chat pane (single-source geometry held). **Acceptance gate = Victor's repeat Mac↔desktop listening test — the plan closes only on his "clean audio" report.** End-to-end one-way latency estimate: 110–170ms.
+### Screen-share real test
 
-## Process conventions (keep these)
+- Share your screen to the Brazil friend over Tailscale.
+- Watch someone else share.
+- Read small text on a shared screen (try both 720p and 1080p).
+- Switch between two sharers.
+- Send each other a log file (Settings, `logs: open folder`).
+- Apply the Tailscale grant (README, "How safe is this?") and confirm voice and
+  video still work.
 
-- Subagent-driven development per plan: worktree via EnterWorktree, SDD ledger + pre-flight scan, Sonnet implementers / Haiku small reviews, fix rounds with scoped re-reviews, final whole-branch review on the most capable model, merge menu to Victor, controller tags releases on main only.
-- Commit trailer follows whatever the session's attribution instruction gives (the visual-refresh round used `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`).
-- cgo env on this machine: PATH needs `C:\msys64\ucrt64\bin` (user PATH has it; shells opened before 2026-10-07 don't), CGO_ENABLED=1; `-race` works locally now. Pure-Go server cross-compiles to Pi.
-- Victor is in vibe-wise learning mode: he owns design decisions; brainstorm checkpoints before architectural work; teach inner workings junior-style on request. State lives in `.vibe-wise/`.
+### v0.5.1 call and stream controls (hand test)
 
-## Next-session pipeline (Victor's queue, in his priority order — reordered 2026-10-07: screenshare before the trust plans)
+- Watch a stream, then leave fullscreen with Esc, F11 and the strip button. In
+  fullscreen the first Esc only leaves fullscreen; the second goes back to chat.
+  The window can always be closed.
+- Mouse over the video shows the strip (fullscreen, close). In fullscreen the
+  strip stays up while the mouse rests in the bottom 15% of the video.
+- Share your own screen, click your own LIVE tag: a preview of your stream
+  opens. It shows `stop sharing` and `change screen`.
+- Change screen while a friend watches: they keep watching; a screen with a
+  different shape is letterboxed.
+- Click the voice channel you are already in: nothing happens (you stay in).
+- The "voice connected" panel at the bottom of the channel column: disconnect,
+  share and stop share, the signal bars opening the quality panel, and the
+  panel while viewing a different server than the call's.
 
-(Standing gate: the audio round closes only on Victor's listening test, see above.)
+### B.1 real-mouse checklist (several servers at once)
 
-**Order set by Victor 2026-10-19 (after the first real friend call: Canada host ↔ Brazil + one more friend over Tailscale node sharing, worked; voice "pretty decent"):**
-- **Next: screen share, then webcam** (item 5 below; use govpx, pure-Go VP8).
-- **Then the "friends adjustments" round** (design drafted in chat 2026-10-19, not yet specced):
-  - session log file: one file per run in `<config>/hermec/logs/`, keep 10, always on (console only with -v), `[server]` lines from the hosted server, 30 s call-health lines, never chat text or keys, settings row "logs: open folder". Victor called this a priority — offered to fold it into the screen-share round.
-  - volume: per-person volume (right-click a person, 0–200%, saved per fingerprint) + mic gain settings row (0–200%) + soft limiter. Friends were too quiet in both directions.
-  - live names: new `profile` client→server message (name now; avatars/icon later), server re-broadcasts roster/presence/voice_state; client "profile sync" pushes local edits to every connected server and writes server-announced changes into servers.toml.
-  - audio devices: input/output settings rows become a dropdown; switching must apply immediately, including mid-call. Known cause of "switching does nothing": capture/playback open the device once per voice join (`audio/capture.go:120-133`, `audio/playback.go:357-369`), so a change only applies after leave + rejoin.
-  - bandwidth metrics: upload/download kbps per call and per person (pion stats + WebSocket bytes) in the quality panel and the log.
-  - ping: clamp the RTT outlier (unanswered ping adds a 6 s sample, `client/rtt.go:75-82`); Victor saw 1400 ms spikes with fine voice; Tailscale DERP-vs-direct check pending (`tailscale ping`/`status`/`netcheck`).
-- **Screen-share round also carries (Victor 2026-10-19):** the session log file task FIRST; and all media on one fixed UDP port (ICE UDP mux) so a Tailscale grant can allow sharees only HERMEC's ports (README "How safe is this?" gap 1).
-- **Round order confirmed by Victor 2026-10-19 (screen share DONE, merged 2026-10-20 as PR #6; a "call and stream controls" round was inserted next, see below):** (1) screen share (+ log file first + one fixed media port), (2) "always-on": Plan A slice (server identity + signed members/config) + Plan B (any trusted member hosts, pick best host, failover), (3) webcam, (4) friends adjustments. vitoserver stays parked (Victor: don't bring it back for now).
-- **DONE 2026-10-21 (v0.5.1, plan `docs/superpowers/plans/2026-10-21-hermec-call-controls.md`): "call and stream controls".** Shipped: Esc/F11/strip exit fullscreen and fullscreen always ends with the video view; on-video strip (fullscreen, close; for your own share: stop sharing, change screen); self-preview of your own share (client-side tap, no protocol change); change screen swaps the monitor in the running share (viewers stay, letterboxed if the aspect differs); own voice channel click does nothing; "voice connected" panel at the bottom of the channel column (disconnect, share, signal bars open the quality panel); compat test flake fixed. Merged as PR #7 and released as v0.5.1 on 2026-10-21; Victor tests the release by hand. Parked (minor): the voice panel takes 3-4 rows from a channel list that cannot scroll (short window/busy server can push rows out of view — the channel list needs scrolling); an open quality panel stays invisible under the video; previewOn is one tick late; a single panel label wider than the pane at large font scale clips; after change screen an old-screen frame can take the forced keyframe (harmless, deltas stay valid); same-aspect even-rounding can leave a 2 px black edge; Task 1 test nits (setFullscreen bool not asserted in the recorder).
-- **Original request for that round (Victor 2026-10-20, after his solo screen-share test): "call and stream controls", Discord-style.**
-  - Bug: in fullscreen stream view the app cannot be closed (no title bar / close button reachable). Fullscreen needs a way out: Esc and the window close keep working, plus an on-video control strip.
-  - Bug: the sharer cannot watch their own stream. Add a self-preview (Discord shows your own stream as a tile you can open).
-  - Stream controls on the video (Discord-like, shown on hover): stop watching, fullscreen toggle, pop back to chat; for the sharer: stop sharing, change source (monitor), quality. Volume for a stream belongs with the per-person volume work.
-  - Bug: clicking the voice channel you are already in disconnects you. It must do nothing (or just open that channel's view), never leave.
-  - "Voice connected" panel where Discord has it (bottom of the left column, above your name): channel + server name, ping, and buttons for disconnect, share screen, (later) camera. Leaving voice and disconnecting from the server both live there / in the call bar, not behind a channel click.
-  - Also in this round: fix the `TestAudioOnlyClientInCallWithShare` macOS flake (`integration/compat_test.go:101`) with the warmUp/watchOK pattern.
-- **Ideas for the always-on / config-sync round (Victor):** chat persistence: a small per-server file with the last 30 days of messages, capped by size, served to anyone who joins (history on join, never grows unbounded); later, file sharing riding the same synced store (a capped shared folder). Plan C (encrypted synced history) is the long-term version; note the host can read this file.
-- **Idea (Victor):** Headscale as an in-app OPTION (self-hosted coordination instead of Tailscale's), for groups beyond the Tailscale free-plan user limit and friend-to-friend reachability. Tailscale clients have one active tailnet at a time (fast user switching).
-- **Scale target (Victor):** screen share + webcams + ~10 people in one call is the "can home infra do this" test, after best-host + config sync. Rough host upload for that: voice ~4 Mbps + one share watched by 9 ~14 Mbps + 10 small webcams ~27 Mbps ≈ 45 Mbps.
-- **Idea (later, Victor):** let something else host the server (e.g. a paid game-server/VPS) for better connections and to invite strangers without compromising security. Needs: TLS (wss://), invite links / allowlist (Plan A), server key pinning. The headless `hermec-server` already runs on Linux/Windows.
-- **Security roadmap ("make it safe", from README "How safe is this?"):** fixed media port + Tailscale grant recipe; optional "Tailscale only" listen for hosted servers; invite links/allowlist; TLS for public hosting; key pinning.
-- **Roadmap, "soon-ish":** noise suppression (RNNoise-class; find a pure-Go or WASM option to keep zero external libs).
-- **Open report:** "other apps can't use the mic at the same time". Our capture uses miniaudio's default shared mode (no exclusive request), so not by design; needs a repro (which app, what it shows, in call or not).
+- Start a call on server A, click server B, chat on B, go back to A: the call
+  was never interrupted.
+- Right-click the tile of the call's server, Disconnect: the call ends.
+- Unread dot on the rail and bright channel name for a channel with new
+  messages (not for your own messages, not for the channel you are reading).
+- The "you are here" bust on the rail tile of the call's server, at 100% and
+  150% DPI.
+- Kill a server process: its tile goes to reconnecting (pulsing), then back.
+- Ctrl+M while viewing another server; the call bar look on the connect scene;
+  rail marks at 100% and 150% DPI; the look of a viewed tile and a reconnecting
+  tile.
 
-0a. **Screen-share real-test checklist (Victor; spec section 5):**
-   - Share your screen to the Brazil friend over Tailscale.
-   - Watch someone else share.
-   - Read small text on a shared screen (try both 720p and 1080p).
-   - Switch between two sharers.
-   - Send each other a log file (settings `logs: open folder`).
-   - Apply the Tailscale grant (README "How safe is this?") and confirm voice and video still work.
+### B.2 real-mouse checklist (names, Leave, member list)
 
-0. **B.1 real-mouse checklist (merged to main; run `go run ./cmd/hermec -local` plus a second server):** spec section 5 (call on A, click B, chat on B, back to A with the call uninterrupted; right-click tile, Disconnect on the call server ends the call; unread dot and bright channel; bust placement; kill a server and watch the tile go reconnecting and back), plus: Ctrl+M while viewing another server, the call bar look on the connect scene, rail marks at 100% and 150% DPI, viewed + reconnecting tile look. Then the **B.2 checklist** (spec section 5, last bullet; merged to main). Also on the B.2 checklist: clicking the dim members toggle in a narrow window turns the saved setting off — decide whether that click should do nothing.
+- Tooltips on rail tiles and the header showing the server name.
+- Rename: save, an empty name resets to the server's name, Esc cancels.
+- Leave Server, with and without a call on it, and on the viewed server.
+- The member list while a second client connects and quits.
+- The members toggle survives a restart; the list hides in a narrow window;
+  check at 150% DPI.
+- Open question for Victor: clicking the dim members toggle in a narrow window
+  turns the saved setting off. Should that click do nothing?
 
-1. **Owner real-mouse checklist for the title bar:** drag, snap, Win+arrows, edge/corner resize, double-click maximize, buttons, maximized layout, 150% DPI. Also the Round A eyeball checks (four presets, glow strength, curvature subtlety).
-2. **Round B (decomposed into B.1/B.2/B.3; status per item):**
-   - (a) DONE in B.1 (merged to main): stay connected across servers (concurrent sessions; switching servers keeps the current call);
-   - (b) DONE in B.1 (merged to main): rail "you are here" bust (top half of a stick figure) on the server where you're in voice;
-   - (c) DONE in B.2 (merged to main): right-side member roster of everyone on the server (needs server-wide presence; protocol change);
-   - (d) DONE in B.2 (merged to main): server names: the server sends its configured `server_name` on connect, and creating/adding a server asks for a name. This fixes the "two lo tiles" confusion (hermec://local "local" + a stale ws://localhost:7697/, both initials "lo");
-   - (e) DONE in B.2 (merged to main): remove/rename saved servers (right-click menu, from the old UI/UX batch);
-   - (f) = B.3, still open: in-app pixel-art editor for a server icon.
-   - DONE (v0.3.0): Add a Server page (Create my own / Join), the app hosts a created server while open (`hosted.toml`, auto-start, Stop/Start, invite address), tiles appear immediately as pending and show ✕/↻ on failure.
-3. **Remaining old UI/UX batch items:** resizable panels, "user X is typing…". (The right-click menu on rail tiles now has Rename, Disconnect and Leave Server, from B.2.)
-4. **Idle CPU:** redraw-on-demand / idle frame cap is the CPU lever (the profile shows ~93% in Present, i.e. vsync-bound; drawing only when something changed, or capping idle frames, is what cuts it).
-5. **Screen sharing + webcam** (Victor-prioritized, unchanged phasing), then Plans A/B/C (unchanged, below).
-   Screenshare detail: Phasing agreed in summary form: (i) SFU video support — codec-agnostic RTP fanout mostly exists; the NEW work is keyframe handling (relay RTCP PLI from new subscribers to the publisher) + bandwidth accounting; integration-testable with synthetic frames. (ii) Windows capture (DXGI duplication) + VP8 encode via govpx (pure Go VP8, NOT libvpx: no second cgo dep, no DLLs to ship; decided 2026-10-19) with v1 caps ~15fps/~2Mbps (host relay cost is ~60× voice — the kbps log matters). (iii) Receive: VP8 decode → Ebiten texture in the GUI's reserved video pane, click-to-enlarge, CRT shader applies free. (iv) Webcam = same pipeline, camera source, call-bar toggle; macOS/Linux capture are follow-ups. Risks: govpx encode speed and quality at screen resolutions, sharer-side encode CPU (measure + cap), PLI = the SFU's first codec-aware logic.
-   - **Plan A — trust layer (adopted design):** server identity keypair; founder-signed append-only membership/config chain (permissioned sigchain — "blockchain minus consensus"); unique signed invite links (revocable, invite-tree); bans/roles as signed ops. SUBSUMES the old moderation plan.
-   - **Plan B — member hosting:** authorized-hosts list in the chain; any trusted member can host; discovery by server fingerprint; split-brain rule (discovery-first + deterministic priority).
-   - **Plan C — synced encrypted history:** gossip append-only log, group key rotated on ban (reopens E2EE as at-rest first).
-6. **Deferred minors from Round A** (triaged by the final Opus review as not blocking merge; the SDD ledger was deleted with the worktree, so this list is the record):
-   - Theme/dev reload: `Presets()` re-parses embedded TOML per call (cache it); `-theme` file edits apply after F2 moved to a preset, and a preset edited while inactive is lost on cycle; dev-reload error in `st.Status` is not cleared after a later successful reload.
-   - CRT/render: glow is 3 full-screen passes (first place to look for idle CPU); `Time` float32 loses precision after hours; the GUI goroutine launch will not work on macOS (main-thread requirement).
-   - Animation/panels: per-tick `Rows()` + string-key allocations in `anim.go` and O(rows^2) pruning; muted occupant glow cuts instead of fading; panel fade over-draw slop; settings name row shows a pointer, not a text cursor.
-   - Quality/RTT/health: unsolicited pong can inject a huge sample (clamp to timeout); `Senders` allocates under the mixer lock; quality panel does per-frame work even when closed.
-   - Title bar: hover can stick on a bar button after the mouse leaves the window; brief native-caption flash at startup.
-   - Tests missing: connect-form hits, banner click, rowHL easing, addBarHits clipping, pinger interval seam, jitter-reset/TryLock paths.
-   - Icon: `TestICO` checks only header/width and does not compare committed assets with the generator.
-7. Backlog beyond (the `cross-build` CI job is green since libopus left, confirmed on PR #7): auto-connect-on-launch; GUI polish/identity trust (avatars, key pinning); direct-P2P opt-in; macOS packaging; quickstart paragraph on node-sharing vs tailnet invites; RenderKey extraction to ui/state; hardening list in PLAN.md roadmap item 3 (correlation IDs first).
-8. Audio deferred minors (from the audio plan's reviews, none blocking): mid-call device unplug is silent one-way audio until leave (wants a malgo stop-callback/watchdog); jitter depth can settle at 4-5 frames after a hiccup with no decay back to 3 (slow-decay drop would recover 40ms); `resolveDevices`/notice-to-Status path untested (needs a seam); long device names overflow the settings row (no clip); CJK device names render blank (font lacks glyphs); a TryLock-miss PLC slot burns budget and plays silence (rare, bounded); add a ±25-30ms harsh-jitter test variant; no sequence numbers so a truly lost frame splices undetected (note for loss signalling); startup with a saved device does a synchronous enumeration before the window opens.
+### Add a Server checklist
 
-## Open decisions / gotchas
+1. Create a server from the app (**+**, **Create my own**).
+2. A friend joins over Tailscale using the copied invite address.
+3. Close and reopen the app: the server comes back and the tile reconnects.
+4. Start `hermec-server` on 7697 first, then Create: the port-in-use error
+   shows.
+5. Join a bad address: the tile shows the red x and the retry arrow; click the
+   arrow.
+6. Up and Down in the DISCOVERED list fill the address field.
+7. Stop hosting, then Start hosting (tile right-click menu).
+8. Leave the hosted server and check `hosted.toml` is gone.
 
-- Tailscale for friends: recommend NODE SHARING of the hosting machine (not tailnet invites) — friends see one machine only.
-- Chat history is deliberately not persisted anywhere yet (design round pending; Plan C covers the distributed version).
-- Two clients on ONE machine with the same key silence each other by design (self-echo filter keys on fingerprint) — second client needs `-key <other file>`.
-- No AEC: headphones mandatory in calls.
-- **Measurement runs must use a separate config dir.** The Task 10 agent's runs touched the owner's real `%APPDATA%\hermec` (`servers.toml` last_seen), and its cleanup closed the owner's running instance. Add a `-config-dir`-style flag or an env var before the next automated GUI run (backlog item).
-- **Firewall prompt:** test runs keep WebRTC ICE on loopback (Task 7b, commit ec5a0fb), so `go test` never triggers the Windows Firewall prompt. `go run` still builds a new exe each time, so to run the app itself build to a stable path (`go build -o bin\hermec.exe ./cmd/hermec`) and allow the firewall once.
-- **Release exe is console-subsystem**, so double-clicking shows a terminal window behind the app. Consider `-H windowsgui` plus file logging (backlog item).
+### Title bar and Round A eyeball checklist (Windows)
+
+- Title bar: drag, snap, Win+arrows, edge and corner resize, double-click
+  maximize, minimize/maximize/close buttons, the maximized layout, 150% DPI.
+- Curvature and click accuracy in all four corners; the scan bar visible but
+  subtle; parchment readability; a pointer cursor on every clickable thing; the
+  speaking glow fading in and out; the signal bars reacting under a network
+  throttle or a second laptop on Wi-Fi.
+- The four presets and glow strength.
+
+### Voice, discovery and audio listening gate
+
+- Audio gate (from the audio-quality round, never formally closed): repeat the
+  Mac and desktop call. Speech is clean, no chopping, no rhythmic buzz, and the
+  input and output device rows work. The 2026-10-19 friend call sounded "pretty
+  decent"; Victor should say whether that closes the gate. Headphones are
+  mandatory (no echo cancellation). One-way latency estimate: 110 to 170 ms.
+- Voice: two instances on one machine need `-key <other file>` for the second.
+  Join from both and hear each other, mute shows on both sides, the speaking
+  glow tracks, leave and rejoin work, killing one instance mid-call makes it
+  vanish for the other.
+- Discovery: `-local` discovers itself; a second machine on the LAN sees the
+  server; with Tailscale running, a tailnet server appears within about 2 s;
+  Ctrl+R refreshes; a killed server drops on the next refresh; a click joins in
+  one action; no stutter while probing; `discoverable = false` hides a server.
+
+## Deferred and parked
+
+Lists checked against the code on 2026-10-21; items already fixed were dropped.
+
+**Hardening and server:**
+- Auth bound to server identity (always-on). The auth signature is over the raw
+  nonce only; decide domain separation (`"hermec-auth-v1" || nonce`) before
+  protocol v1 is frozen.
+- Wire correlation IDs for `rtc_*` messages and errors (retires the 300 ms glare
+  heuristic and error misattribution); SFU PeerConnection rebuild past N dead
+  m-lines (long-call SDP growth); client packet-loss concealment on RTP gaps;
+  per-peer `rtc_offer` debounce.
+- Discovery table eviction and hiding the version in replies. Discovery probing
+  cost: probing should run only while the Join list is visible (it also calls
+  `tailscale status --json` once).
+- Per-key rate limits. Full-length fingerprints for allowlists and grants.
+- Server config validation and logging. Mic-silence warning. macOS shortcuts.
+  Auto-rejoin voice after a reconnect (today rejoining is always a click).
+  Homebrew tap.
+- Release workflow extras: draft releases and a protected environment, SHA-pinned
+  actions, Dependabot, govulncheck, build attestations, a concurrency group.
+- A `hosted.toml` written by a pre-fix v0.5 build may contain `max_voice`,
+  `max_clients` or `max_per_ip` keys, which an older app (v0.4) rejects.
+- Linux CI with a longer fuzz budget.
+
+**UI (Add a Server and hosting):**
+- The Create page shows the invite address without a copy action (the tile menu
+  has "Copy invite address").
+- `stopHosted` shuts the server down synchronously on the game goroutine (up to
+  3 s freeze).
+- `g.notice` is drawn only on the connect scene.
+- A stale saved `ws://127.0.0.1:<port>/` entry can map to the hosted session as
+  a second tile. The self-discovery filter misses second NICs and IPv6.
+
+**UI (calls and streams):**
+- The voice panel takes 3 to 4 rows from a channel list that cannot scroll; a
+  short window or a busy server can push rows out of view. The channel list
+  needs scrolling.
+- An open quality panel stays invisible under the video. `previewOn` is one tick
+  late. A single panel label wider than the pane at large font scale clips.
+- After change screen an old-screen frame can take the forced keyframe
+  (harmless, deltas stay valid). Same-aspect even-rounding can leave a 2 px
+  black edge.
+- Task 1 test nit: the `setFullscreen` bool is not asserted in the recorder.
+
+**UI (theme, render, animation):**
+- `theme.Presets()` re-parses the embedded TOML on every call (cache it). `-theme`
+  file edits apply after F2 moved to a preset, and a preset edited while inactive
+  is lost on cycle. A dev-reload error in `st.Status` is not cleared after a
+  later successful reload.
+- The CRT glow is 3 full-screen passes (first place to look for idle CPU).
+  `Time` float32 loses precision after hours.
+- `anim.go`: per-tick `Rows()` and string-key allocations, O(rows^2) pruning;
+  a muted occupant's glow cuts instead of fading; panel fade over-draw slop; the
+  settings name row shows a pointer, not a text cursor.
+- The quality panel does per-frame work even when closed; `Senders` allocates
+  under the mixer lock.
+- An unsolicited pong can inject a huge RTT sample (clamp it, see the friends
+  adjustments).
+- Title bar: hover can stick on a bar button after the mouse leaves the window;
+  a brief native-caption flash at startup.
+- Old UI/UX batch: resizable panels, "user X is typing...".
+- Missing tests: connect-form hits, banner click, rowHL easing, addBarHits
+  clipping, the pinger interval seam, jitter-reset and TryLock paths. `TestICO`
+  checks only the header and width, not that committed assets match the
+  generator.
+- Idle CPU: the lever is redraw-on-demand or an idle frame cap, not faster draw
+  code (see `docs/footprint.md`).
+- RenderKey extraction to `ui/state`.
+
+**Audio:**
+- Mid-call device unplug is silent one-way audio until leave (wants a malgo
+  stop-callback or watchdog).
+- Jitter depth can settle at 4 to 5 frames after a hiccup with no decay back to
+  3.
+- `resolveDevices` and the notice-to-Status path are untested (needs a seam).
+- Long device names overflow the settings row; CJK device names render blank (the
+  font lacks the glyphs).
+- A TryLock-miss PLC slot burns budget and plays silence (rare, bounded).
+- Add a harsh-jitter test variant (plus or minus 25 to 30 ms).
+- No RTP sequence numbers are used for loss, so a truly lost frame splices
+  undetected.
+- Startup with a saved device does a synchronous enumeration before the window
+  opens.
+
+**Screen share:** sharing from macOS and Linux (the button is dim there), window
+capture, shared-screen audio, DXGI capture, simulcast. Capture relies on
+Ebiten's per-monitor DPI awareness (`screencap/gdi_windows.go`).
+
+**Backlog:** auto-connect on launch, GUI polish and identity trust (avatars, key
+pinning), macOS packaging and signing, a quickstart paragraph on node sharing
+versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
+
+## Ideas and roadmap
+
+- **Headscale** as an in-app option (self-hosted coordination instead of
+  Tailscale's), for groups beyond the Tailscale free-plan user limit and
+  friend-to-friend reachability. A tsnet and Headscale spike (2026-10-07) works
+  but adds about 19 MB to both binaries and a large dependency tree, and moves
+  hard infrastructure (public box, domain, TLS, own DERP) onto hosts. Revisit
+  only as an opt-in tsnet listener behind a build tag. Tailscale clients have
+  one active tailnet at a time.
+- **External hosting:** let something else host the server (a paid game server
+  or VPS) for better connections and to invite strangers without compromising
+  security. Needs TLS (`wss://`), invite links or an allowlist, and server key
+  pinning. The headless `hermec-server` already runs on Linux and Windows.
+- **Scale target:** screen share plus webcams plus about 10 people in one call is
+  the "can home infra do this" test, after best-host and config sync. Rough
+  host upload: voice about 4 Mbps, one share watched by 9 about 14 Mbps, 10 small
+  webcams about 27 Mbps, so about 45 Mbps.
+- **Security roadmap ("make it safe"):** a "Tailscale only" listen option for
+  hosted servers; invite links and allowlists in the app; TLS for public hosting;
+  key pinning; kick and ban by fingerprint (server-owned state dir, probably chat
+  commands first; ban-evasion barriers to pick from: invite gating, proof-of-work
+  key minting, invite trees).
+- **Plan A, trust layer:** server identity keypair; founder-signed append-only
+  membership and config chain; unique signed invite links (revocable, invite
+  tree); bans and roles as signed ops. Subsumes the old moderation plan.
+- **Plan B, member hosting:** see always-on above.
+- **Plan C, synced encrypted history:** a gossip append-only log with a group key
+  rotated on ban; end-to-end encryption arrives first at rest. Interest in
+  Discord's published DAVE protocol (MLS-based, MIT `libdave`, whitepaper) as the
+  model. The protocol already reserves `e2ee_key_exchange` and `e2ee_frame`.
+- **Noise suppression and echo cancellation** (removes "headphones mandatory"):
+  RNNoise-class suppression; find a pure-Go or WASM option to keep zero external
+  libs. webrtc-audio-processing (BSD) is the AEC3 Discord uses; echo
+  cancellation needs the playback signal as reference, which the malgo playback
+  path can provide.
+- **Other feature ideas (Discord-inspired, ranked):** push-to-talk with a
+  global hotkey and a voice-activity threshold; typing indicator and member
+  presence (server-wide presence is separate from channel presence); per-channel
+  permission overrides in `core/roles`; a slash-command style bot API; screen
+  share quality presets. Skip Nitro-style extras, social discovery, game
+  detection, overlays. Study Discord's behaviour, write it from scratch; never
+  copy its code, constants or assets (its terms forbid reverse engineering).
+- **Direct P2P opt-in:** per-participant, mixed calls allowed (a relay-choosing
+  participant is relayed on every link). Also a localhost control API on the
+  client for MCP and voice-agent control, and an MCP server as a separate
+  project acting as an ordinary bot identity.
+- **Open report:** "other apps cannot use the mic at the same time". Capture
+  uses miniaudio's default shared mode (no exclusive request), so it is not by
+  design. Needs a repro (which app, what it shows, in a call or not).
+
+## How it works and where to find things
+
+- **Packages:** `core/proto` (wire types and codec), `core/identity`,
+  `core/roles`, `core/names`; `server` (WebSocket server, SFU in `sfu.go` and
+  `voice.go`, limits in `guards.go`, UDP media mux in `mediaport.go`, discovery
+  responder in `discovery.go`); `client` (headless library: connect, voice,
+  share, RTT); `audio` (malgo capture and playback, jitter buffer, gopus);
+  `video` (VP8 via govpx, letterbox); `screencap` (Windows GDI capture, stub
+  elsewhere); `discover` (LAN and Tailscale probing); `update` (GitHub release
+  check); `applog` (session log files); `ui` (Ebiten GUI) with `ui/state`
+  (pure logic and tests), `ui/theme` (presets, bundled fonts), `ui/icon`.
+  Commands: `cmd/hermec`, `cmd/hermec-server`, `cmd/hermec-icon` (regenerate
+  icons: `go run ./cmd/hermec-icon -out assets`).
+- **Files on the user's machine** (`<user config dir>/hermec/`): `identity.key`,
+  `settings.toml`, `servers.toml`, `hosted.toml` (the server hosted from the
+  app), `logs/`. Saved servers keep the last `server_name` the server sent
+  (`Name`) and the user's own nickname (`Nick`).
+- **Sessions:** every server opened this session stays connected; one `session`
+  struct per server (`ui/session.go`). Connection lost: a call on that session
+  drops (rejoining is a click), and the session retries with backoff 1, 2, 4,
+  8, 16 s, then every 30 s (`state.NextBackoff`) until it connects or the user
+  disconnects. An `auth_failed` stops automatic retry; the manual retry arrow
+  still works. Unread is a rail dot plus a bright channel name, never counts.
+- **Hosting from the app:** one hosted server per app, `hosted.toml` in the
+  config dir, started at launch when it exists, stable key `hermec://hosted`
+  mapped to `ws://127.0.0.1:<port>/`; `-local` uses `hermec://local`. The hosted
+  server's media port equals its own port.
+- **Tiles:** a new tile is pending (greyed, pulsing, not saved) until its first
+  successful connect. A failed dial shows a red x (bottom right) and a retry
+  arrow (bottom left); Retry and Leave Server are in the right-click menu.
+- **Title bar (Windows):** the window stays decorated, but its native caption is
+  hidden by replacing the window procedure (`WM_NCCALCSIZE`, `WM_NCHITTEST`), so
+  Windows still does drag, snap and resize. The bar is 32 px, drawn outside the
+  CRT pass; on Linux and macOS the native frame stays (`ui/winbar_windows.go`,
+  `ui/titlebar.go`, `ui/state/titlebar.go`).
+- **Media:** all WebRTC media uses one UDP port, equal to the server port
+  unless `media_port` is set (`udp_port_min/max` is the legacy range). Video is
+  VP8 PT 96, forwarded only to watchers. The server marks source switches with
+  `video_source`. See `docs/protocol.md`.
+- **Releases:** a `v*` tag publishes only if the tagged commit is on `main` and
+  vet and tests pass. Client assets build on native runners (Windows x64 and
+  ARM, Linux x64 and ARM); servers are cross-built with CGO off. The tag is
+  stamped into `version.Version`. macOS: `scripts/build-mac.sh`.
+- **Footprint:** `docs/footprint.md`.
+
+## Gotchas
+
+- Tailscale for friends: recommend node sharing of the hosting machine, not
+  tailnet invites (friends see one machine only).
+- Chat history is not persisted anywhere yet (always-on adds it; Plan C is the
+  encrypted version).
+- Two clients on one machine with the same key silence each other by design
+  (the self-echo filter keys on fingerprint). A second client needs `-key
+  <other file>`.
+- No echo cancellation: headphones are mandatory in calls.
+- **Measurement and GUI runs must use a separate config dir.** An earlier agent's
+  runs touched Victor's real `%APPDATA%\hermec` (`servers.toml` `last_seen`) and
+  its cleanup closed his running instance. There is no `-config-dir` flag yet;
+  add one (or an env var) before the next automated GUI run.
+- **Firewall prompt:** test runs keep WebRTC ICE on loopback, so `go test` never
+  triggers the Windows Firewall prompt. `go run` builds a new exe each time; to
+  run the app itself, build to a stable path (`go build -o bin\hermec.exe
+  ./cmd/hermec`) and allow the firewall once.
+- The release exe is console-subsystem, so double-clicking shows a terminal
+  window behind the app.
+- `scripts/build-mac.sh` leaves the repo on a detached HEAD at the release tag;
+  `git checkout main` goes back.
+- Deployment: primos config is `primos.server.toml` (repo root, untracked).
+  vitoserver has the server installed as a systemd user service, currently
+  disabled and parked (re-enable: `ssh vito "systemctl --user enable --now
+  hermec"`; linger is on). Victor hosts from his desktop meanwhile; the desktop
+  has a "Hermec Server" Windows Firewall allow-rule.
+- The repo is public, so friends' downloads and the update banner work.
