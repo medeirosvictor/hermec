@@ -165,9 +165,9 @@ func (g *game) clickBar(h state.Hit) {
 	switch h.Kind {
 	case state.HitBarMute:
 		g.toggleMute()
-	case state.HitBarLeave:
+	case state.HitBarLeave, state.HitVoiceLeave:
 		g.leaveCall()
-	case state.HitBarShare:
+	case state.HitBarShare, state.HitVoiceShare:
 		if g.share.on {
 			g.stopShare()
 		} else if g.shareSupported() {

@@ -276,7 +276,7 @@ func (g *game) stepTooltip(h state.Hit, ok bool, now time.Time) {
 		id = h.ID
 	case ok && h.Kind == state.HitFingerprint:
 		id = fpTipID
-	case ok && h.Kind == state.HitBarShare && !g.shareSupported():
+	case ok && (h.Kind == state.HitBarShare || h.Kind == state.HitVoiceShare) && !g.shareSupported():
 		id = shareTipID
 	}
 	held := g.hover.Step(id, now)

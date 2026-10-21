@@ -110,17 +110,16 @@ func closeAll(cs ...io.Closer) {
 	}
 }
 
-// clickVoice toggles the call on the viewed session: join ch, or leave if it
-// is the current call.
+// clickVoice joins voice channel ch on the viewed session. Clicking the
+// channel you are already in does nothing (leaving is the bar's and the
+// panel's job), and so does any click while a join or leave is in flight.
 func (g *game) clickVoice(ch string) {
 	if g.cur().c == nil || g.vc.busy {
 		return
 	}
-	if g.cur().st.VoiceClickAction(ch) == "leave" {
-		g.leaveCall()
-		return
+	if g.cur().st.VoiceClickAction(ch) == "join" {
+		g.joinCall(ch)
 	}
-	g.joinCall(ch)
 }
 
 // joinCall leaves the current call (on whichever session holds it), then

@@ -57,7 +57,8 @@ type geometry struct {
 	statusY             float64
 	headY               float64 // header row text top: one line above the channel list and chat text
 	paneY0, paneY1      float64 // first text row (below the header) and chat pane text bottom
-	chanY1              float64 // channel pane text bottom
+	chanY1              float64 // channel pane text bottom (above the voice panel while it is shown)
+	voiceR              rectF   // "voice connected" panel inside chanR (zero when not drawn)
 	inputY              float64 // chat input text top
 	barY                float64 // call bar text top; meaningful only while barVisible
 	membersR, toggleR   rectF   // member list panel (zero when not drawn); "members" button in the header row
@@ -112,6 +113,9 @@ func (g *game) geom() geometry {
 	gm.paneY0 = gm.headY + lh
 	gm.paneY1 = gm.chatR.y1 - pad
 	gm.chanY1 = bottom - pad
+	if gm.voiceR = g.voicePanelRect(gm.chanR, lh); gm.voiceR.y1 > gm.voiceR.y0 {
+		gm.chanY1 = gm.voiceR.y0 - pad/2
+	}
 	gm.rightX = chatX + pad
 	gm.rightW = gm.chatR.x1 - pad - gm.rightX
 	gm.cols = int(gm.rightW / adv)
@@ -153,6 +157,7 @@ func (g *game) addMainHits(gm geometry) {
 	}
 	g.hits.Add(state.Hit{X0: gm.inputR.x0, Y0: gm.inputR.y0, X1: gm.inputR.x1, Y1: gm.inputR.y1, Kind: state.HitText})
 	g.hits.Add(state.Hit{X0: gm.toggleR.x0, Y0: gm.toggleR.y0, X1: gm.toggleR.x1, Y1: gm.toggleR.y1, Kind: state.HitMembersToggle})
+	g.addVoicePanelHits(gm)
 	g.addVideoHit(gm)
 	g.addBarHits(gm)
 	g.addSignalHits(gm) // last: the open panel wins over anything under it
@@ -408,6 +413,7 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	g.drawMembersToggle(screen, gm)
 	g.drawHeader(screen, gm)
 	g.drawChannels(screen, gm)
+	g.drawVoicePanel(screen, gm)
 	g.drawCallBar(screen, gm)
 	if g.videoActive() {
 		title := "watching " + g.watch.name + "  (Esc: chat, double-click: fullscreen)"
