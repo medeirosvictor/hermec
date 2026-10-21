@@ -25,7 +25,7 @@ func main() {
 	printConfig := flag.Bool("print-config", false, "print the effective config (password redacted) and exit")
 	keyPath := flag.String("key", "", "host key file (default hermec-server.key next to -config; generated when missing)")
 	chainPath := flag.String("chain", "", "server chain file (default chain.jsonl next to -config)")
-	applyConfig := flag.Bool("apply-config", false, "append the config file's group fields to the chain, print the count, and exit")
+	applyConfig := flag.Bool("apply-config", false, "append the config file's group fields to the chain, print the count, and exit; stop the server first, the changes apply when it starts")
 	flag.Parse()
 	if *applyConfig && *configPath == "" {
 		log.Fatal("-apply-config requires -config")
@@ -35,6 +35,14 @@ func main() {
 	if *configPath != "" {
 		var err error
 		if cfg, err = server.LoadConfig(*configPath); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	if *applyConfig {
+		// A running server holds the chain in memory; appending to the file
+		// under it would fork the two.
+		if err := checkNotRunning(cfg.Addr); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -130,6 +138,21 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("shutdown: %v", err)
 	}
+}
+
+// checkNotRunning refuses when something already listens on addr, which for
+// -apply-config means a server is running on this chain. A port of 0 or none
+// cannot collide, so the check is skipped.
+func checkNotRunning(addr string) error {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" || port == "0" {
+		return nil
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("-apply-config: %s is in use; stop the running server first (changes apply when it starts): %w", addr, err)
+	}
+	return ln.Close()
 }
 
 // loadOrCreateKey loads the host key at path, generating and saving one when
