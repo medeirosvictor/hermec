@@ -60,7 +60,7 @@ func (s *State) Roles() roles.Config {
 	if s.HasConfig {
 		def = append([]string(nil), s.Config.DefaultRoles...)
 	}
-	return roles.Config{Roles: rs, Grants: grants, DefaultRoles: def}
+	return roles.Config{Roles: rs, Grants: grants, DefaultRoles: def, Founder: s.Founder}
 }
 
 // Can reports whether fp may append an entry with the given op.
@@ -177,6 +177,9 @@ func (s *State) Apply(e Entry) error {
 		var b GrantBody
 		if err := e.DecodeBody(&b); err != nil || b.Fingerprint == "" {
 			return ruleErr("bad grant body")
+		}
+		if b.Fingerprint == s.Founder && author != s.Founder {
+			return ruleErr("only the founder may change the founder's roles")
 		}
 		n.Grants[b.Fingerprint] = append([]string(nil), b.Roles...)
 	case OpRevoke, OpBan, OpUnban, OpHostRemove:

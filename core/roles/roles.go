@@ -12,6 +12,8 @@ type Config struct {
 	Roles        map[string][]Permission
 	Grants       map[string][]string
 	DefaultRoles []string
+	// Founder, when set, holds every permission whatever the grants say.
+	Founder string
 }
 
 // Builtin returns the builtin role definitions.
@@ -36,6 +38,9 @@ func (c Config) RolesFor(fingerprint string) []string {
 // It looks up the roles assigned to the fingerprint, then checks if any of
 // those roles have the permission. Unknown role names are ignored.
 func (c Config) Has(fingerprint string, p Permission) bool {
+	if c.Founder != "" && fingerprint == c.Founder {
+		return true
+	}
 	roleNames := c.RolesFor(fingerprint)
 	for _, roleName := range roleNames {
 		if perms, ok := c.Roles[roleName]; ok {

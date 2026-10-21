@@ -270,13 +270,18 @@ type groupState struct {
 	roles   roles.Config
 	bans    map[string]bool
 	allowed map[string]struct{} // nil: any key may connect
+	exempt  map[string]struct{} // the founder and the hosts: allowed_keys never applies
 }
 
-// keyAllowed reports whether fp passes the allowed_keys gate.
+// keyAllowed reports whether fp passes the allowed_keys gate. The founder and
+// every listed host always pass, so an allowlist cannot lock the group out.
 func (s *Server) keyAllowed(fp string) bool {
 	s.group.mu.RLock()
 	defer s.group.mu.RUnlock()
 	if s.group.allowed == nil {
+		return true
+	}
+	if _, ok := s.group.exempt[fp]; ok {
 		return true
 	}
 	_, ok := s.group.allowed[fp]
@@ -310,6 +315,13 @@ func (s *Server) refreshGroup() {
 		keys = st.Config.AllowedKeys
 	}
 	s.group.allowed = nil
+	s.group.exempt = map[string]struct{}{}
+	if st.Founder != "" {
+		s.group.exempt[st.Founder] = struct{}{}
+	}
+	for _, h := range st.Hosts {
+		s.group.exempt[h.Fingerprint] = struct{}{}
+	}
 	if len(keys) > 0 {
 		s.group.allowed = make(map[string]struct{}, len(keys))
 		for _, fp := range keys {
