@@ -32,6 +32,7 @@ type shareOps struct {
 	supported     func() bool
 	start         func(c *client.Client, src client.FrameSource, w, h, fps, kbps int) error
 	stop          func(c *client.Client) // may block; callers run it off the game goroutine
+	keyframe      func(c *client.Client) // asks the running share for a keyframe
 	watch         func(c *client.Client, fp string)
 	setFullscreen func(on bool)    // sets the window's fullscreen
 	now           func() time.Time // clock of the video view
@@ -83,6 +84,24 @@ func (c *captureSource) Next(dst *video.Frame) error {
 		c.tap(dst)
 	}
 	return nil
+}
+
+// switchTo swaps the captured monitor in the running source: the next Next
+// reads src/mon and the output size (set by the client) is unchanged, with
+// FromBGRA scaling into it. It returns once the old source is closed. On a
+// closed capture the new source is closed instead.
+func (c *captureSource) switchTo(src screencap.Source, mon screencap.Monitor, tap func(*video.Frame)) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		_ = src.Close()
+		return
+	}
+	old := c.src
+	c.src, c.mon, c.tap = src, mon, tap
+	c.buf = screencap.BGRA{}
+	c.mu.Unlock()
+	_ = old.Close()
 }
 
 // failure is the capture error that ended the source, if any.
@@ -224,12 +243,28 @@ func (g *game) pickScreen(m screencap.Monitor) {
 	if g.share.mon == m.Name {
 		return
 	}
-	self := g.watch.self
-	g.stopShare() // ends the preview and drops its frame
-	g.startShare(m)
-	if self && g.share.on {
-		g.watch = watchState{fp: g.fp, self: true}
+	// The share keeps running (viewers stay): only the captured monitor
+	// changes, inside the same source, so the encoder size is unchanged and the
+	// capture is scaled into it. The old screen's in-flight frame is dropped.
+	sh := g.share
+	g.share.mon = m.Name
+	g.tapGen.Add(1)
+	if g.watch.self {
+		g.resetVideo()
 	}
+	tap := g.previewTap(g.fp)
+	ns := g.newCapture()
+	g.logf("sharing %s instead of %s", m.Name, sh.mon)
+	keyframe := g.shareOps.keyframe
+	if keyframe == nil {
+		keyframe = func(c *client.Client) { c.ShareKeyframe() }
+	}
+	g.media.do(func() {
+		sh.src.switchTo(ns, m, tap)
+		if sh.c != nil {
+			keyframe(sh.c) // viewers get a clean picture of the new screen
+		}
+	})
 }
 
 // startShare begins sharing monitor m on the call's client.
@@ -304,6 +339,7 @@ func (g *game) endCallMedia() {
 // stepShare runs every tick: it ends a share whose capture failed, and the
 // watch when the call is gone or the sharer stopped sharing or left.
 func (g *game) stepShare() {
+	defer func() { g.previewOn.Store(g.watch.self && g.videoActive()) }() // the one place previewOn is set
 	g.media.pump()
 	s := g.callSess()
 	if g.share.on {

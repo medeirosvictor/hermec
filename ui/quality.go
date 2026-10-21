@@ -141,9 +141,20 @@ func (g *game) addSignalHits(gm geometry) {
 	if y1 > y0 {
 		g.hits.Add(state.Hit{X0: r.x0 - pad/2, Y0: y0, X1: r.x1 + pad/2, Y1: y1, Kind: state.HitSignal, ID: signalBars})
 	}
-	if q := g.q.rect; q.y1 > q.y0 {
+	// The flat video layer covers the panel: under it the panel takes no clicks,
+	// so the strip and the picture keep theirs.
+	if q := g.q.rect; q.y1 > q.y0 && !g.panelUnderVideo() {
 		g.hits.Add(state.Hit{X0: q.x0, Y0: q.y0, X1: q.x1, Y1: q.y1, Kind: state.HitSignal, ID: signalPanel})
 	}
+}
+
+// panelUnderVideo reports that the open panel is drawn beneath the video pane.
+func (g *game) panelUnderVideo() bool {
+	if !g.videoActive() {
+		return false
+	}
+	p, q := g.videoPane(g.geom()), g.q.rect
+	return q.x0 < p.x1 && q.x1 > p.x0 && q.y0 < p.y1 && q.y1 > p.y0
 }
 
 // toggleQuality is a click on the bars; Esc and a second click close it.

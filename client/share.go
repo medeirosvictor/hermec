@@ -407,6 +407,20 @@ func (cl *call) dropVideo() {
 // VideoEncodeErrors returns how many frames failed to encode so far.
 func (c *Client) VideoEncodeErrors() uint64 { return c.vstats.encodeErrors.Load() }
 
+// ShareKeyframe makes the running share's next frame a keyframe (no-op when
+// not sharing). The UI asks for one after swapping the captured screen.
+func (c *Client) ShareKeyframe() {
+	cl := c.getCall()
+	if cl == nil {
+		return
+	}
+	cl.smu.Lock()
+	defer cl.smu.Unlock()
+	if cl.share != nil {
+		cl.share.requestKey()
+	}
+}
+
 // StopShare stops sharing and tells the server. It is a no-op when not sharing.
 func (c *Client) StopShare() error {
 	cl := c.getCall()

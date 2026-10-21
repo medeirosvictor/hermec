@@ -125,6 +125,8 @@ func (g *game) addVoicePanelHits(gm geometry) {
 		return
 	}
 	l := g.voiceLayout(gm)
+	// The bars, like the call bar's, open the quality panel.
+	g.hits.Add(state.Hit{X0: l.signalX - pad/2, Y0: l.line1Y, X1: l.signalX + signalW(gm.lh) + pad/2, Y1: l.line1Y + gm.lh, Kind: state.HitSignal, ID: signalBars})
 	g.hits.Add(state.Hit{X0: l.leaveX0, Y0: l.leaveY, X1: l.leaveX1, Y1: l.leaveY + l.btnH, Kind: state.HitVoiceLeave})
 	g.hits.Add(state.Hit{X0: l.shareX0, Y0: l.shareY, X1: l.shareX1, Y1: l.shareY + l.btnH, Kind: state.HitVoiceShare})
 }

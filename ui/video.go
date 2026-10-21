@@ -275,10 +275,11 @@ const stripBottom = 0.15
 
 const (
 	stripStopLabel = "close (Esc)"
+	stripStopFull  = "close" // in fullscreen Esc only leaves fullscreen
 	stripSelfStop  = "stop sharing"
 	stripChange    = "change screen"
 	stripFullLabel = "fullscreen"
-	stripExitLabel = "exit fullscreen"
+	stripExitLabel = "exit fullscreen (Esc)"
 )
 
 // trackVideoMouse records the mouse (scene space) over the video view; a move
@@ -313,7 +314,23 @@ func (g *game) stopLabel() string {
 	if g.watch.self {
 		return stripSelfStop
 	}
+	if g.fullscreen {
+		return stripStopFull
+	}
 	return stripStopLabel
+}
+
+// videoHeader is the title line of the video view, with the Esc hint that is
+// true now (in fullscreen Esc only leaves fullscreen).
+func (g *game) videoHeader() string {
+	hint := "(Esc: chat, double-click: fullscreen)"
+	if g.fullscreen {
+		hint = "(Esc: exit fullscreen)"
+	}
+	if g.watch.self {
+		return "your stream (preview)  " + hint
+	}
+	return "watching " + g.watch.name + "  " + hint
 }
 
 func (g *game) fullLabel() string {
@@ -368,16 +385,19 @@ func (g *game) stripButtons(r stripRects) []stripButton {
 	return b
 }
 
-// stripHitAt is the strip button under a scene point, if the strip is up.
-func (g *game) stripHitAt(x, y float64, now time.Time) (state.HitKind, bool) {
+// hotStrip is the strip button the mouse is on, by the hit registry (what a
+// click would reach), if the strip is up.
+func (g *game) hotStrip(now time.Time) (state.HitKind, bool) {
 	if !g.stripVisible(now) {
 		return 0, false
 	}
-	r := g.stripLayout(g.geom())
-	for _, b := range g.stripButtons(r) {
-		if state.InRect(x, y, b.r.x0, b.r.y0, b.r.x1, b.r.y1) {
-			return b.k, true
-		}
+	h, ok := g.hits.At(g.vid.mx, g.vid.my)
+	if !ok {
+		return 0, false
+	}
+	switch h.Kind {
+	case state.HitVideoFull, state.HitVideoStop, state.HitVideoChange:
+		return h.Kind, true
 	}
 	return 0, false
 }
@@ -401,7 +421,8 @@ func (g *game) videoPress(x, y float64, now time.Time) {
 		g.stopWatching() // syncFullscreen leaves fullscreen this tick
 	case state.HitVideoChange:
 		g.vid.lastClk = time.Time{}
-		g.openShareMenu(g.geom())
+		r := g.stripLayout(g.geom())
+		g.openShareMenuAt(r.change.x0, r.change.y0-pad/2)
 	case state.HitVideoFull:
 		g.vid.lastClk = time.Time{}
 		g.toggleFullscreen()
@@ -424,7 +445,6 @@ func (g *game) videoClick(now time.Time) {
 // stepVideo moves the newest decoded frame into the RGBA staging image. Frames
 // of any sharer but the watched one are dropped.
 func (g *game) stepVideo() {
-	g.previewOn.Store(g.watch.self) // the one place previewOn is set
 	fp, f := g.vsink.take()
 	if f == nil || fp != g.watch.fp || g.watch.fp == "" || f.W <= 0 || f.H <= 0 {
 		return
@@ -482,7 +502,7 @@ func (g *game) drawStrip(screen *ebiten.Image, ox, oy float64) {
 		return
 	}
 	r := g.stripLayout(g.geom())
-	hot, _ := g.stripHitAt(g.vid.mx, g.vid.my, now)
+	hot, _ := g.hotStrip(now)
 	for _, b := range g.stripButtons(r) {
 		bg, fg := color.RGBA{0, 0, 0, 190}, g.th.FG
 		if hot == b.k {

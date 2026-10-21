@@ -67,7 +67,7 @@ func TestSelfPreviewFramesComeFromTap(t *testing.T) {
 		t.Fatal("tap fed the sink with no preview open")
 	}
 	g.clickLive(state.Hit{Kind: state.HitLive, Key: "mefp"})
-	g.stepVideo() // the tick turns the tap on
+	g.stepShare() // the tick turns the tap on
 	if err := src.Next(f); err != nil {
 		t.Fatal(err)
 	}
@@ -149,8 +149,8 @@ func TestSelfStripButtons(t *testing.T) {
 	if g.vid.pending {
 		t.Fatal("old screen's frame survived the change")
 	}
-	if rec.stops != 1 || len(rec.started) != 2 {
-		t.Fatalf("stops=%d started=%d", rec.stops, len(rec.started))
+	if rec.stops != 0 || len(rec.started) != 1 || rec.keyframes != 1 {
+		t.Fatalf("stops=%d started=%d keyframes=%d", rec.stops, len(rec.started), rec.keyframes)
 	}
 
 	// stop sharing ends the share and the preview.
@@ -159,7 +159,7 @@ func TestSelfStripButtons(t *testing.T) {
 	r = g.stripLayout(g.geom())
 	press(g, (r.stop.x0+r.stop.x1)/2, (r.stop.y0+r.stop.y1)/2, *now)
 	settle(t, g)
-	if g.share.on || g.videoActive() || rec.stops != 2 {
+	if g.share.on || g.videoActive() || rec.stops != 1 {
 		t.Fatalf("share=%v active=%v stops=%d", g.share.on, g.videoActive(), rec.stops)
 	}
 }
@@ -173,7 +173,7 @@ func TestSelfChangeScreenDropsInFlightFrame(t *testing.T) {
 	oldTap := g.share.src.tap
 	g.pickScreen(twoMonitors().mons[1])
 	settle(t, g)
-	g.stepVideo() // previewOn follows the restored preview
+	g.stepShare() // previewOn follows the restored preview
 	oldTap(video.NewFrame(4, 2))
 	g.stepVideo()
 	if g.vid.pending {

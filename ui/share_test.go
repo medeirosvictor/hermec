@@ -45,6 +45,7 @@ type recorder struct {
 	watches   []string
 	startErr  error
 	fullscrns int
+	keyframes int
 }
 
 type startCall struct {
@@ -66,6 +67,7 @@ func (r *recorder) ops(cp *fakeCap, supported bool) shareOps {
 			return nil
 		},
 		stop:          func(c *client.Client) { r.mu.Lock(); r.stops++; r.mu.Unlock() },
+		keyframe:      func(c *client.Client) { r.mu.Lock(); r.keyframes++; r.mu.Unlock() },
 		watch:         func(c *client.Client, fp string) { r.mu.Lock(); r.watches = append(r.watches, fp); r.mu.Unlock() },
 		setFullscreen: func(bool) { r.mu.Lock(); r.fullscrns++; r.mu.Unlock() },
 	}
