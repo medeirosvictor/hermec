@@ -212,7 +212,7 @@ func (s *Server) voiceJoin(c *conn, ch string) string {
 	if s.channelType(ch) != "voice" {
 		return "bad_request"
 	}
-	if !s.cfg.Roles.Has(c.fingerprint, roles.PermJoinChannel) {
+	if !s.roles().Has(c.fingerprint, roles.PermJoinChannel) {
 		return "forbidden"
 	}
 	s.chMu.Lock()

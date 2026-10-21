@@ -16,6 +16,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pion/ice/v4"
 
+	"github.com/medeirosvictor/hermec/core/chain"
+	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
 )
@@ -84,6 +86,12 @@ type Config struct {
 	MaxPerIP int
 	// Logf receives every server log line; nil means log.Printf.
 	Logf func(format string, args ...any)
+	// HostKey is the host's own key. Nil makes New generate an ephemeral one.
+	HostKey *identity.Identity
+	// Chain is the server chain whose state supplies the group fields (name,
+	// channels, limits, allowed keys, roles). Nil makes New build an in-memory
+	// chain from this Config's own group fields, founded by HostKey.
+	Chain *chain.Chain
 }
 
 // logf writes a server log line through cfg.Logf, or log.Printf.
@@ -104,6 +112,8 @@ const (
 // Server accepts websocket connections and authenticates them.
 type Server struct {
 	cfg      Config
+	chain    *chain.Chain
+	group    groupState
 	allowed  map[string]struct{}
 	upgrader websocket.Upgrader
 
@@ -132,7 +142,24 @@ type Server struct {
 
 // New returns a Server for cfg. Call Start to begin serving.
 func New(cfg Config) *Server {
+	if cfg.Chain == nil {
+		if cfg.HostKey == nil {
+			k, err := identity.Generate()
+			if err != nil {
+				panic(fmt.Sprintf("server: generate host key: %v", err))
+			}
+			cfg.HostKey = k
+		}
+		c, err := newChain(cfg.HostKey, cfg)
+		if err != nil {
+			panic(fmt.Sprintf("server: build default chain: %v", err))
+		}
+		cfg.Chain = c
+	}
+	st := cfg.Chain.State()
+	cfg = chainCfg(cfg, st)
 	s := &Server{
+		chain: cfg.Chain,
 		cfg:   cfg,
 		clock: time.Now,
 		conns: make(map[*conn]struct{}),
@@ -145,6 +172,7 @@ func New(cfg Config) *Server {
 	}
 	s.ipConns = make(map[string]int)
 	s.fails = make(map[string]*authFail)
+	s.refreshGroup()
 	s.initChannels()
 	if len(cfg.AllowedKeys) > 0 {
 		s.allowed = make(map[string]struct{}, len(cfg.AllowedKeys))

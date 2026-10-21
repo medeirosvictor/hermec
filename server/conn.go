@@ -254,7 +254,7 @@ func (c *conn) authenticate() error {
 	}
 	c.sendMsg(proto.TypeAuthOK, proto.AuthOK{
 		Fingerprint: fp,
-		Roles:       c.srv.cfg.Roles.RolesFor(fp),
+		Roles:       c.srv.roles().RolesFor(fp),
 		Channels:    c.srv.channelInfos(),
 		ServerName:  c.srv.cfg.ServerName,
 	})
