@@ -1,0 +1,272 @@
+package chain
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+)
+
+// Chain caps; variables so tests can lower them.
+var (
+	maxEntries = 2048
+	maxBytes   = 512 << 10
+)
+
+// Errors returned by Chain.
+var (
+	// ErrConflict means the entry is not the successor of the current head.
+	ErrConflict = errors.New("chain: entry does not extend the head")
+	// ErrFull means the chain has reached its entry or size cap.
+	ErrFull = errors.New("chain: full")
+	// ErrBadChain means a signature, link or rule check failed.
+	ErrBadChain = errors.New("chain: invalid chain")
+)
+
+// Chain is an append-only, verified sequence of entries, optionally persisted
+// as one JSON line per entry.
+type Chain struct {
+	mu      sync.Mutex
+	entries []Entry
+	size    int // sum of encoded line lengths, newline included
+	state   State
+	path    string
+}
+
+func marshalLine(e Entry) ([]byte, error) {
+	j, err := json.Marshal(e)
+	if err != nil {
+		return nil, err
+	}
+	return append(j, '\n'), nil
+}
+
+func linkOK(prev, e Entry) bool {
+	h := prev.Hash()
+	return e.Seq == prev.Seq+1 && bytes.Equal(e.Prev, h[:])
+}
+
+// New starts a chain from a genesis entry.
+func New(genesis Entry) (*Chain, error) { return FromEntries([]Entry{genesis}) }
+
+// FromEntries fully verifies es (signatures, links, rules, caps) and builds a
+// chain from them.
+func FromEntries(es []Entry) (*Chain, error) {
+	if len(es) == 0 {
+		return nil, fmt.Errorf("%w: empty", ErrBadChain)
+	}
+	c := &Chain{}
+	for i, e := range es {
+		if i == 0 {
+			if e.Op != OpGenesis || e.Seq != 0 || len(e.Prev) != 0 {
+				return nil, fmt.Errorf("%w: entry 0 is not genesis", ErrBadChain)
+			}
+		}
+		if err := c.add(e); err != nil {
+			if errors.Is(err, ErrFull) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("%w: entry %d: %w", ErrBadChain, i, err)
+		}
+	}
+	return c, nil
+}
+
+// add verifies e against the current head and state and adds it in memory.
+// Callers hold the lock (or own c exclusively). It returns the encoded line.
+func (c *Chain) add(e Entry) error {
+	if n := len(c.entries); n > 0 && !linkOK(c.entries[n-1], e) {
+		return ErrConflict
+	}
+	if !e.VerifySig() {
+		return errors.New("bad signature")
+	}
+	line, err := marshalLine(e)
+	if err != nil {
+		return err
+	}
+	if len(c.entries)+1 > maxEntries || c.size+len(line) > maxBytes {
+		return ErrFull
+	}
+	st := c.state.clone()
+	if err := st.Apply(e); err != nil {
+		return err
+	}
+	c.entries = append(c.entries, cloneEntry(e))
+	c.size += len(line)
+	c.state = st
+	return nil
+}
+
+func cloneEntry(e Entry) Entry {
+	e.Prev = append([]byte(nil), e.Prev...)
+	if len(e.Prev) == 0 {
+		e.Prev = nil
+	}
+	e.Author = append([]byte(nil), e.Author...)
+	e.Body = append([]byte(nil), e.Body...)
+	e.Sig = append([]byte(nil), e.Sig...)
+	return e
+}
+
+// Load reads a chain file and fully verifies it.
+func Load(path string) (*Chain, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var es []Entry
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64<<10), maxBytes+4096)
+	for sc.Scan() {
+		if len(bytes.TrimSpace(sc.Bytes())) == 0 {
+			continue
+		}
+		var e Entry
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+			return nil, fmt.Errorf("%w: line %d: %v", ErrBadChain, len(es)+1, err)
+		}
+		es = append(es, e)
+	}
+	if err := sc.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return nil, ErrFull
+		}
+		return nil, err
+	}
+	c, err := FromEntries(es)
+	if err != nil {
+		return nil, err
+	}
+	c.path = path
+	return c, nil
+}
+
+// Append verifies e as the next entry and, when a path is set, persists it as
+// one JSON line before it becomes visible.
+func (c *Chain) Append(e Entry) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Verify on a scratch copy of the bookkeeping so persistence failure
+	// leaves the chain untouched.
+	trial := &Chain{entries: c.entries, size: c.size, state: c.state}
+	if err := trial.add(e); err != nil {
+		return err
+	}
+	if c.path != "" {
+		line, _ := marshalLine(e)
+		f, err := os.OpenFile(c.path, os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		_, err = f.Write(line)
+		if serr := f.Sync(); err == nil {
+			err = serr
+		}
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return err
+		}
+	}
+	c.entries, c.size, c.state = trial.entries, trial.size, trial.state
+	return nil
+}
+
+// SetPath writes the whole chain to path atomically and persists later
+// appends there.
+func (c *Chain) SetPath(path string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".chain-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	w := bufio.NewWriter(tmp)
+	for _, e := range c.entries {
+		var line []byte
+		if line, err = marshalLine(e); err != nil {
+			break
+		}
+		if _, err = w.Write(line); err != nil {
+			break
+		}
+	}
+	if err == nil {
+		err = w.Flush()
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(name, 0o600)
+	}
+	if err == nil {
+		err = os.Rename(name, path)
+	}
+	if err != nil {
+		os.Remove(name)
+		return err
+	}
+	c.path = path
+	return nil
+}
+
+// Head returns the last entry.
+func (c *Chain) Head() Entry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return cloneEntry(c.entries[len(c.entries)-1])
+}
+
+// Entries returns a copy of all entries.
+func (c *Chain) Entries() []Entry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.since(0, true)
+}
+
+// Since returns the entries with Seq greater than seq.
+func (c *Chain) Since(seq uint64) []Entry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.since(seq, false)
+}
+
+func (c *Chain) since(seq uint64, all bool) []Entry {
+	var out []Entry
+	for _, e := range c.entries {
+		if all || e.Seq > seq {
+			out = append(out, cloneEntry(e))
+		}
+	}
+	return out
+}
+
+// State returns a copy of the current state.
+func (c *Chain) State() State {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.state.clone()
+}
+
+// ID returns the server ID.
+func (c *Chain) ID() ID {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.state.ID
+}
