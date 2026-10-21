@@ -182,10 +182,67 @@ func TestLoadCapsReads(t *testing.T) {
 	}
 	b.must(f, OpConfig, ConfigBody{Name: "a"})
 	b.must(f, OpConfig, ConfigBody{Name: "b"})
+	raw, _ := os.ReadFile(path)
+
+	// Entry cap: maxEntries valid lines, then a garbage line. Reading the
+	// extra line must stop with ErrFull, not parse it (ErrBadChain).
+	garbage := filepath.Join(t.TempDir(), "g.jsonl")
+	os.WriteFile(garbage, append(append([]byte(nil), raw...), []byte("{not json\n")...), 0o600)
 	old := maxEntries
-	maxEntries = 2
-	defer func() { maxEntries = old }()
-	if _, err := Load(path); !errors.Is(err, ErrFull) {
-		t.Fatalf("want ErrFull, got %v", err)
+	maxEntries = 3
+	_, err := Load(garbage)
+	maxEntries = old
+	if !errors.Is(err, ErrFull) || errors.Is(err, ErrBadChain) {
+		t.Fatalf("entries: want ErrFull only, got %v", err)
+	}
+
+	// Blank lines are not counted.
+	blank := filepath.Join(t.TempDir(), "b.jsonl")
+	os.WriteFile(blank, append(append([]byte("\n\n\n"), raw...), '\n', '\n'), 0o600)
+	maxEntries = 3
+	_, err = Load(blank)
+	maxEntries = old
+	if err != nil {
+		t.Fatalf("blank lines: %v", err)
+	}
+
+	// Byte cap: each line is valid on its own, the total is over the cap.
+	oldB := maxBytes
+	maxBytes = len(raw) - 10
+	_, err = Load(path)
+	maxBytes = oldB
+	if !errors.Is(err, ErrFull) || errors.Is(err, ErrBadChain) {
+		t.Fatalf("bytes: want ErrFull only, got %v", err)
+	}
+}
+
+func TestRollbackFailureIsSticky(t *testing.T) {
+	f := newID(t)
+	b := newBuilder(t, f)
+	path := filepath.Join(t.TempDir(), "chain.jsonl")
+	if err := b.c.SetPath(path); err != nil {
+		t.Fatal(err)
+	}
+	oldW, oldT := writeFile, truncateFile
+	writeFile = func(fl *os.File, p []byte) (int, error) {
+		n, _ := fl.Write(p[:len(p)/2])
+		return n, errors.New("disk full")
+	}
+	truncateFile = func(string, int64) error { return errors.New("truncate boom") }
+	err := b.add(f, OpConfig, ConfigBody{Name: "x"})
+	writeFile, truncateFile = oldW, oldT
+	if err == nil || !strings.Contains(err.Error(), "disk full") || !strings.Contains(err.Error(), "truncate boom") {
+		t.Fatalf("want both errors, got %v", err)
+	}
+	torn, _ := os.ReadFile(path)
+	if err := b.add(f, OpConfig, ConfigBody{Name: "y"}); err == nil {
+		t.Fatal("append after failed rollback must fail")
+	}
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(torn, after) {
+		t.Fatal("wrote after a torn line")
+	}
+	if b.c.Head().Seq != 0 {
+		t.Fatal("head changed")
 	}
 }

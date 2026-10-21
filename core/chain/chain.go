@@ -35,6 +35,8 @@ type Chain struct {
 	size    int // sum of encoded line lengths, newline included
 	state   State
 	path    string
+
+	persistErr error // sticky: set when a failed append could not be rolled back
 }
 
 func marshalLine(e Entry) ([]byte, error) {
@@ -125,12 +127,12 @@ func Load(path string) (*Chain, error) {
 	sc.Buffer(make([]byte, 64<<10), maxBytes+4096)
 	total := 0
 	for sc.Scan() {
+		if len(bytes.TrimSpace(sc.Bytes())) == 0 {
+			continue
+		}
 		total += len(sc.Bytes()) + 1
 		if total > maxBytes || len(es) >= maxEntries {
 			return nil, ErrFull
-		}
-		if len(bytes.TrimSpace(sc.Bytes())) == 0 {
-			continue
 		}
 		var e Entry
 		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
@@ -157,6 +159,9 @@ func Load(path string) (*Chain, error) {
 func (c *Chain) Append(e Entry) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.persistErr != nil {
+		return fmt.Errorf("chain: file may be corrupt after failed rollback: %w", c.persistErr)
+	}
 	// Verify on a scratch copy of the bookkeeping so persistence failure
 	// leaves the chain untouched.
 	trial := &Chain{entries: c.entries, size: c.size, state: c.state}
@@ -165,7 +170,10 @@ func (c *Chain) Append(e Entry) error {
 	}
 	if c.path != "" {
 		line, _ := marshalLine(e)
-		if err := appendLine(c.path, line); err != nil {
+		if torn, err := appendLine(c.path, line); err != nil {
+			if torn {
+				c.persistErr = err
+			}
 			return err
 		}
 	}
@@ -179,15 +187,18 @@ var writeFile = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
 
 // appendLine appends line in one write and fsyncs. On any failure it
 // truncates the file back to its previous size so no torn line remains.
-func appendLine(path string, line []byte) error {
+//
+// torn is true when the rollback itself failed, so the file may end in a
+// partial line.
+func appendLine(path string, line []byte) (torn bool, err error) {
 	f, err := os.OpenFile(path, os.O_RDWR, 0o600)
 	if err != nil {
-		return err
+		return false, err
 	}
 	st, err := f.Stat()
 	if err != nil {
 		f.Close()
-		return err
+		return false, err
 	}
 	size := st.Size()
 	if _, err = f.Seek(size, 0); err == nil {
@@ -196,18 +207,20 @@ func appendLine(path string, line []byte) error {
 	if err == nil {
 		err = f.Sync()
 	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
 	if err != nil {
-		f.Truncate(size)
-		f.Sync()
-		f.Close()
-		return err
+		if terr := truncateFile(path, size); terr != nil {
+			return true, errors.Join(err, fmt.Errorf("chain: rollback failed: %w", terr))
+		}
+		return false, err
 	}
-	if err = f.Close(); err != nil {
-		os.Truncate(path, size)
-		return err
-	}
-	return nil
+	return false, nil
 }
+
+// truncateFile rolls a failed append back; tests replace it.
+var truncateFile = os.Truncate
 
 // SetPath writes the whole chain to path atomically and persists later
 // appends there.
@@ -253,6 +266,7 @@ func (c *Chain) SetPath(path string) error {
 		return err
 	}
 	c.path = path
+	c.persistErr = nil // the file was just rewritten whole
 	return nil
 }
 
