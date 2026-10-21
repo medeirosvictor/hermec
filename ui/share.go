@@ -49,12 +49,13 @@ type shareState struct {
 // captureSource adapts a screencap.Source to client.FrameSource. Next is called
 // from the client's grab goroutine; Close may come from another, so both hold mu.
 type captureSource struct {
-	mu     sync.Mutex
-	src    screencap.Source
-	mon    screencap.Monitor
-	buf    screencap.BGRA
-	closed bool
-	err    error
+	mu      sync.Mutex
+	src     screencap.Source
+	mon     screencap.Monitor
+	buf     screencap.BGRA
+	scratch *video.Frame // letterbox work frame
+	closed  bool
+	err     error
 
 	// tap, when set, sees each scaled frame after capture (the share preview).
 	// It runs on the client's grab goroutine and must not block.
@@ -79,7 +80,7 @@ func (c *captureSource) Next(dst *video.Frame) error {
 		c.err = err
 		return err
 	}
-	video.FromBGRA(dst, c.buf.Pix, c.buf.W, c.buf.H, c.buf.Stride)
+	c.scratch = video.FromBGRALetterbox(dst, c.buf.Pix, c.buf.W, c.buf.H, c.buf.Stride, c.scratch)
 	if c.tap != nil && !c.muted.Load() {
 		c.tap(dst)
 	}
