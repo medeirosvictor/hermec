@@ -5,6 +5,7 @@ package client
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 )
@@ -23,6 +25,7 @@ const (
 	defaultAuthTimeout = 10 * time.Second
 	writeTimeout       = 10 * time.Second
 	eventBuffer        = 256
+	nonceSize          = 32
 )
 
 // ErrClosed is returned by operations on a closed or dead client.
@@ -67,6 +70,8 @@ type Client struct {
 	roles       []string
 	channels    []proto.ChannelInfo
 	serverName  string // from auth_ok; immutable after Dial
+	serverID    string // chain.ID.String() of the verified chain; immutable after Dial
+	chain       *chain.Chain
 
 	writeMu sync.Mutex // gorilla permits a single concurrent writer
 
@@ -118,9 +123,22 @@ func refusalError(status int) *ServerError {
 	return nil
 }
 
-// Dial connects to url (e.g. "ws://host:port/"), answers the server's
-// challenge as id, and returns once auth_ok has been received.
+// Dial is DialPinned without a pin: the server ID is trusted on first use.
 func Dial(ctx context.Context, url string, id *identity.Identity, name, password string) (*Client, error) {
+	return DialPinned(ctx, url, id, name, password, "")
+}
+
+// DialPinned connects to url (e.g. "ws://host:port/"), makes the host prove it
+// belongs to the server (a verified chain whose genesis hash equals pin, and a
+// host key on the chain's host list), then authenticates as id and returns once
+// auth_ok has been received. pin is a chain.ID.String(); "" trusts the first
+// server ID seen, which the caller can read back with ServerID.
+func DialPinned(ctx context.Context, url string, id *identity.Identity, name, password, pin string) (*Client, error) {
+	if pin != "" {
+		if _, err := chain.ParseID(pin); err != nil {
+			return nil, fmt.Errorf("client: bad pin: %w", err)
+		}
+	}
 	ws, resp, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
 	if err != nil {
 		if errors.Is(err, websocket.ErrBadHandshake) && resp != nil {
@@ -153,7 +171,7 @@ func Dial(ctx context.Context, url string, id *identity.Identity, name, password
 		case <-stop:
 		}
 	}()
-	ok, err := handshake(ws, id, name, password)
+	res, err := handshake(ws, id, name, password, pin)
 	close(stop)
 	<-watched
 	if err == nil && ctx.Err() != nil {
@@ -168,10 +186,12 @@ func Dial(ctx context.Context, url string, id *identity.Identity, name, password
 
 	c := &Client{
 		ws:          ws,
-		fingerprint: ok.Fingerprint,
-		roles:       ok.Roles,
-		channels:    ok.Channels,
-		serverName:  ok.ServerName,
+		fingerprint: res.ok.Fingerprint,
+		roles:       res.ok.Roles,
+		channels:    res.ok.Channels,
+		serverName:  res.ok.ServerName,
+		serverID:    res.ok.ServerID,
+		chain:       res.chain,
 		events:      make(chan Event, eventBuffer),
 		done:        make(chan struct{}),
 		loopDone:    make(chan struct{}),
@@ -190,45 +210,151 @@ func Dial(ctx context.Context, url string, id *identity.Identity, name, password
 	return c, nil
 }
 
-func handshake(ws *websocket.Conn, id *identity.Identity, name, password string) (proto.AuthOK, error) {
-	env, err := readEnv(ws)
+// handshakeResult is what a successful handshake yields.
+type handshakeResult struct {
+	ok    proto.AuthOK
+	chain *chain.Chain
+}
+
+// handshake runs the version 2 mutual handshake: the host proves itself with
+// the signed chain before the password is sent, then the client authenticates
+// with a signature bound to the server ID.
+func handshake(ws *websocket.Conn, id *identity.Identity, name, password, pin string) (handshakeResult, error) {
+	var zero handshakeResult
+	// The challenge is a v1 envelope, so a v1 host looks the same until it
+	// answers host_proof_req.
+	env, err := readHS(ws)
 	if err != nil {
-		return proto.AuthOK{}, fmt.Errorf("client: read challenge: %w", err)
+		return zero, fmt.Errorf("client: read challenge: %w", err)
 	}
 	if env.Type != proto.TypeChallenge {
-		return proto.AuthOK{}, fmt.Errorf("client: expected challenge, got %q", env.Type)
+		return zero, fmt.Errorf("client: expected challenge, got %q", env.Type)
 	}
 	var ch proto.Challenge
-	if err := json.Unmarshal(env.Data, &ch); err != nil {
-		return proto.AuthOK{}, fmt.Errorf("client: bad challenge: %w", err)
+	if err := json.Unmarshal(env.Data, &ch); err != nil || len(ch.Nonce) == 0 {
+		return zero, fmt.Errorf("client: bad challenge")
 	}
-	raw, err := proto.Encode(proto.TypeAuth, proto.Auth{
-		PubKey: id.PublicKey(), Name: name, Sig: id.Sign(ch.Nonce), Password: password,
-	})
+	clientNonce := make([]byte, nonceSize)
+	if _, err := rand.Read(clientNonce); err != nil {
+		return zero, err
+	}
+	raw, err := proto.Encode(proto.TypeHostProofReq, proto.HostProofReq{Nonce: clientNonce})
 	if err != nil {
-		return proto.AuthOK{}, err
+		return zero, err
 	}
 	if err := ws.WriteMessage(websocket.TextMessage, raw); err != nil {
-		return proto.AuthOK{}, fmt.Errorf("client: send auth: %w", err)
+		return zero, fmt.Errorf("client: send host_proof_req: %w", err)
+	}
+
+	var entries []chain.Entry
+	var total int
+	for frames := 0; ; frames++ {
+		env, err = readHS(ws)
+		if err != nil {
+			return zero, fmt.Errorf("client: read chain: %w", err)
+		}
+		if env.V != proto.Version {
+			// A v1 host answers host_proof_req with an error (or nothing it
+			// understands) instead of a chain.
+			return zero, fmt.Errorf("client: %w", errOutdated())
+		}
+		if env.Type == proto.TypeError {
+			return zero, fmt.Errorf("client: %w", handshakeError(env))
+		}
+		if env.Type != proto.TypeChain {
+			return zero, fmt.Errorf("client: %w", badChain("expected chain, got %q", env.Type))
+		}
+		if frames >= maxChainFrames {
+			return zero, fmt.Errorf("client: %w", badChain("too many chain frames"))
+		}
+		var cf proto.ChainFrame
+		if err := json.Unmarshal(env.Data, &cf); err != nil {
+			return zero, fmt.Errorf("client: %w", badChain("malformed chain frame"))
+		}
+		for _, r := range cf.Entries {
+			total += len(r)
+		}
+		if total > maxChainBytes {
+			return zero, fmt.Errorf("client: %w", badChain("chain too large"))
+		}
+		es, err := decodeEntries(cf.Entries)
+		if err != nil {
+			return zero, fmt.Errorf("client: %w", err)
+		}
+		entries = append(entries, es...)
+		if !cf.More {
+			break
+		}
+	}
+
+	env, err = readHS(ws)
+	if err != nil {
+		return zero, fmt.Errorf("client: read host_proof: %w", err)
+	}
+	if env.V != proto.Version {
+		return zero, fmt.Errorf("client: %w", errOutdated())
+	}
+	if env.Type == proto.TypeError {
+		return zero, fmt.Errorf("client: %w", handshakeError(env))
+	}
+	var hp proto.HostProof
+	if env.Type != proto.TypeHostProof || json.Unmarshal(env.Data, &hp) != nil {
+		return zero, fmt.Errorf("client: %w", badChain("expected host_proof, got %q", env.Type))
+	}
+	verified, err := verifyHost(entries, pin, hp, clientNonce, ch.Nonce)
+	if err != nil {
+		return zero, fmt.Errorf("client: %w", err)
+	}
+
+	sid := verified.ID()
+	raw, err = proto.Encode(proto.TypeAuth, proto.Auth{
+		PubKey: id.PublicKey(), Name: name, Password: password,
+		Sig: id.Sign(proto.ClientAuthBytes(ch.Nonce, clientNonce, sid[:])),
+	})
+	if err != nil {
+		return zero, err
+	}
+	if err := ws.WriteMessage(websocket.TextMessage, raw); err != nil {
+		return zero, fmt.Errorf("client: send auth: %w", err)
 	}
 	env, err = readEnv(ws)
 	if err != nil {
-		return proto.AuthOK{}, fmt.Errorf("client: read auth result: %w", err)
+		return zero, fmt.Errorf("client: read auth result: %w", err)
 	}
 	switch env.Type {
 	case proto.TypeAuthOK:
 		var ok proto.AuthOK
 		if err := json.Unmarshal(env.Data, &ok); err != nil {
-			return proto.AuthOK{}, fmt.Errorf("client: bad auth_ok: %w", err)
+			return zero, fmt.Errorf("client: bad auth_ok: %w", err)
 		}
-		return ok, nil
+		if ok.ServerID != sid.String() {
+			return zero, fmt.Errorf("client: %w", &ServerError{Code: proto.CodeServerIDMismatch, Message: "the host reported a different server id"})
+		}
+		return handshakeResult{ok: ok, chain: verified}, nil
 	case proto.TypeError:
-		var em proto.ErrorMsg
-		_ = json.Unmarshal(env.Data, &em)
-		return proto.AuthOK{}, fmt.Errorf("client: auth rejected: %w", &ServerError{Code: em.Code, Message: em.Message})
+		return zero, fmt.Errorf("client: auth rejected: %w", handshakeError(env))
 	default:
-		return proto.AuthOK{}, fmt.Errorf("client: unexpected %q during auth", env.Type)
+		return zero, fmt.Errorf("client: unexpected %q during auth", env.Type)
 	}
+}
+
+func errOutdated() *ServerError {
+	return &ServerError{Code: proto.CodeServerOutdated, Message: "the host runs an older HERMEC"}
+}
+
+func handshakeError(env proto.Envelope) *ServerError {
+	var em proto.ErrorMsg
+	_ = json.Unmarshal(env.Data, &em)
+	return &ServerError{Code: em.Code, Message: em.Message}
+}
+
+// readHS reads one handshake message, accepting both protocol versions.
+func readHS(ws *websocket.Conn) (proto.Envelope, error) {
+	_, raw, err := ws.ReadMessage()
+	if err != nil {
+		return proto.Envelope{}, err
+	}
+	return proto.DecodeHandshake(raw)
 }
 
 func readEnv(ws *websocket.Conn) (proto.Envelope, error) {
@@ -238,6 +364,13 @@ func readEnv(ws *websocket.Conn) (proto.Envelope, error) {
 	}
 	return proto.Decode(raw)
 }
+
+// ServerID returns the server's ID (chain.ID.String()), as proven by the host
+// during the handshake.
+func (c *Client) ServerID() string { return c.serverID }
+
+// Chain returns the client's live copy of the server chain.
+func (c *Client) Chain() *chain.Chain { return c.chain }
 
 // Fingerprint returns the identity fingerprint confirmed by the server.
 func (c *Client) Fingerprint() string { return c.fingerprint }

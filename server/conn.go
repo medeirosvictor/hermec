@@ -180,7 +180,10 @@ func (c *conn) drainInbound() {
 
 const rateLimitDrain = 200 * time.Millisecond
 
-var errAuthFailed = errors.New("auth failed")
+var (
+	errAuthFailed   = errors.New("auth failed")
+	errBadHandshake = errors.New("malformed handshake message")
+)
 
 // authenticate runs the one-shot challenge-response handshake. On failure it
 // queues auth_failed and returns an error; the connection is then closed.
@@ -190,22 +193,32 @@ func (c *conn) authenticate() error {
 	if _, err := rand.Read(nonce); err != nil {
 		return err
 	}
-	if !c.sendMsg(proto.TypeChallenge, proto.Challenge{Nonce: nonce}) {
+	// The challenge stays a v1 envelope so an old client can still read it
+	// and be told to update.
+	chRaw, err := proto.EncodeV(proto.LegacyVersion, proto.TypeChallenge, proto.Challenge{Nonce: nonce})
+	if err != nil || !c.enqueue(chRaw) {
 		return errAuthFailed
 	}
 
 	_ = c.ws.SetReadDeadline(time.Now().Add(authTimeout))
-	_, raw, err := c.ws.ReadMessage()
-	if err != nil {
-		return err
-	}
 
-	// Pre-auth bucket: fixed, small, never disabled. The handshake reads one
-	// message today, so this is a guard that keeps any future multi-step
-	// pre-auth exchange bounded; a flood is otherwise cut by auth_failed.
-	if !pre.allow(c.srv.clock()) {
-		c.sendError("rate_limited", "too many messages; slow down")
-		return errAuthFailed
+	// Pre-auth bucket: fixed, small, never disabled. The handshake reads two
+	// messages (host_proof_req, auth); it bounds the exchange and a flood is
+	// otherwise cut by auth_failed.
+	readPre := func() (proto.Envelope, error) {
+		_, raw, err := c.ws.ReadMessage()
+		if err != nil {
+			return proto.Envelope{}, err
+		}
+		if !pre.allow(c.srv.clock()) {
+			c.sendError("rate_limited", "too many messages; slow down")
+			return proto.Envelope{}, errAuthFailed
+		}
+		env, err := proto.DecodeHandshake(raw)
+		if err != nil {
+			return proto.Envelope{}, errBadHandshake
+		}
+		return env, nil
 	}
 
 	fail := func() error {
@@ -214,8 +227,61 @@ func (c *conn) authenticate() error {
 		return errAuthFailed
 	}
 
-	env, err := proto.Decode(raw)
-	if err != nil || env.Type != proto.TypeAuth {
+	env, err := readPre()
+	if errors.Is(err, errBadHandshake) {
+		return fail()
+	}
+	if err != nil {
+		return err // read error, or rate limited (already answered)
+	}
+	if env.V == proto.LegacyVersion {
+		// A v1 client sends auth straight after the challenge. Tell a
+		// well-formed one to update; anything else is an ordinary failure.
+		var old proto.Auth
+		if env.Type != proto.TypeAuth || json.Unmarshal(env.Data, &old) != nil {
+			return fail()
+		}
+		if raw, err := proto.EncodeV(proto.LegacyVersion, proto.TypeError, proto.ErrorMsg{
+			Code: proto.CodeUpdateRequired, Message: "update HERMEC to connect to this server",
+		}); err == nil {
+			c.enqueue(raw)
+		}
+		return errAuthFailed
+	}
+	if env.Type != proto.TypeHostProofReq {
+		return fail()
+	}
+	var req proto.HostProofReq
+	if err := json.Unmarshal(env.Data, &req); err != nil || len(req.Nonce) != nonceSize {
+		return fail()
+	}
+
+	// Prove this host to the client before it sends anything secret.
+	id := c.srv.chain.ID()
+	frames, err := chainFrames(c.srv.chain.Entries())
+	if err != nil {
+		return err
+	}
+	for _, f := range frames {
+		if !c.enqueue(f) {
+			return errAuthFailed
+		}
+	}
+	if !c.sendMsg(proto.TypeHostProof, proto.HostProof{
+		PubKey: c.srv.cfg.HostKey.PublicKey(),
+		Sig:    c.srv.cfg.HostKey.Sign(proto.HostProofBytes(req.Nonce, nonce, id[:])),
+	}) {
+		return errAuthFailed
+	}
+
+	env, err = readPre()
+	if errors.Is(err, errBadHandshake) {
+		return fail()
+	}
+	if err != nil {
+		return err
+	}
+	if env.V != proto.Version || env.Type != proto.TypeAuth {
 		return fail()
 	}
 	var auth proto.Auth
@@ -226,8 +292,13 @@ func (c *conn) authenticate() error {
 		return fail()
 	}
 	pub := ed25519.PublicKey(auth.PubKey)
-	if !identity.Verify(pub, nonce, auth.Sig) {
+	if !identity.Verify(pub, proto.ClientAuthBytes(nonce, req.Nonce, id[:]), auth.Sig) {
 		return fail()
+	}
+	if c.srv.banned(identity.Fingerprint(pub)) {
+		// The key is proven, so telling it is safe; not an auth failure.
+		c.sendError(proto.CodeBanned, "you are banned from this server")
+		return errAuthFailed
 	}
 	if pw := c.srv.cfg.Password; pw != "" &&
 		subtle.ConstantTimeCompare([]byte(pw), []byte(auth.Password)) != 1 {
@@ -257,6 +328,7 @@ func (c *conn) authenticate() error {
 		Roles:       c.srv.roles().RolesFor(fp),
 		Channels:    c.srv.channelInfos(),
 		ServerName:  c.srv.cfg.ServerName,
+		ServerID:    id.String(),
 	})
 	// Registered after auth_ok is queued so voice_state never precedes it.
 	c.srv.markAuthed(c)

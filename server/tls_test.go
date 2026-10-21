@@ -77,7 +77,7 @@ func TestServerTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env, err := proto.Decode(raw)
+	env, err := proto.DecodeHandshake(raw)
 	if err != nil || env.Type != proto.TypeChallenge {
 		t.Fatalf("first message = %+v, err %v", env, err)
 	}

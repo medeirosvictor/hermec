@@ -54,11 +54,6 @@ type Config struct {
 	// This breaks remote peers, so it is for tests only; not exposed in the
 	// TOML file.
 	AllowLoopbackICE bool
-	// LegacyHost makes the server behave like a pre-v0.5 host: Opus-only media
-	// (no VP8 in its MediaEngine) and share_start, share_stop and watch
-	// answered as unsupported message types. For compatibility tests only; not
-	// exposed in the TOML file.
-	LegacyHost bool
 	// NoVP8 drops only the VP8 codec from the MediaEngine (share messages stay
 	// supported). For tests only; not exposed in the TOML file.
 	NoVP8 bool
@@ -142,14 +137,14 @@ type Server struct {
 
 // New returns a Server for cfg. Call Start to begin serving.
 func New(cfg Config) *Server {
-	if cfg.Chain == nil {
-		if cfg.HostKey == nil {
-			k, err := identity.Generate()
-			if err != nil {
-				panic(fmt.Sprintf("server: generate host key: %v", err))
-			}
-			cfg.HostKey = k
+	if cfg.HostKey == nil {
+		k, err := identity.Generate()
+		if err != nil {
+			panic(fmt.Sprintf("server: generate host key: %v", err))
 		}
+		cfg.HostKey = k
+	}
+	if cfg.Chain == nil {
 		c, err := newChain(cfg.HostKey, cfg)
 		if err != nil {
 			panic(fmt.Sprintf("server: build default chain: %v", err))

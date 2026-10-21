@@ -33,12 +33,10 @@ func (v *voiceClient) hasErr(substr string) bool {
 	return false
 }
 
-// A v0.5 client sharing on a host that cannot carry it (no VP8, or a v0.4 host
-// that does not know share_start) must lose the share, not the call.
+// A v0.5 client sharing on a host that cannot carry it (no VP8) must lose the share, not the call.
 func TestShareOnUnsupportedHostKeepsCallUp(t *testing.T) {
 	cases := map[string]func(*server.Config){
-		"v0.4 host (no VP8, share_start unsupported)": func(c *server.Config) { c.LegacyHost = true },
-		"v0.5 host without VP8":                       func(c *server.Config) { c.NoVP8 = true; c.Logf = t.Logf },
+		"v0.5 host without VP8": func(c *server.Config) { c.NoVP8 = true; c.Logf = t.Logf },
 	}
 	for name, mod := range cases {
 		t.Run(name, func(t *testing.T) {

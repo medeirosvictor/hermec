@@ -23,8 +23,7 @@ import (
 func authNamed(t *testing.T, url string, id *identity.Identity, name string) *websocket.Conn {
 	t.Helper()
 	c := dial(t, url)
-	nonce := readChallenge(t, c)
-	sendEnv(t, c, proto.TypeAuth, proto.Auth{PubKey: id.PublicKey(), Name: name, Sig: id.Sign(nonce)})
+	hello(t, c).sendAuth(t, c, id, name, "")
 	if env := readEnv(t, c); env.Type != proto.TypeAuthOK {
 		t.Fatalf("auth type = %q", env.Type)
 	}

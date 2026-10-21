@@ -73,8 +73,13 @@ func (s *stubServer) serve(ws *websocket.Conn) {
 		defer wmu.Unlock()
 		_ = ws.WriteMessage(websocket.TextMessage, raw)
 	}
-	send(proto.TypeChallenge, proto.Challenge{Nonce: []byte("nonce-nonce-nonce")})
-	var fp string
+	a, sid := stubHandshake(s.t, ws)
+	if a == nil {
+		return
+	}
+	fp := identity.Fingerprint(a.PubKey)
+	send(proto.TypeAuthOK, proto.AuthOK{Fingerprint: fp, Roles: []string{"user"}, ServerID: sid,
+		Channels: []proto.ChannelInfo{{Name: "lobby", Type: "voice"}}})
 	for {
 		_, raw, err := ws.ReadMessage()
 		if err != nil {
@@ -88,12 +93,6 @@ func (s *stubServer) serve(ws *websocket.Conn) {
 		s.seen = append(s.seen, env.Type)
 		s.mu.Unlock()
 		switch env.Type {
-		case proto.TypeAuth:
-			var a proto.Auth
-			_ = json.Unmarshal(env.Data, &a)
-			fp = identity.Fingerprint(a.PubKey)
-			send(proto.TypeAuthOK, proto.AuthOK{Fingerprint: fp, Roles: []string{"user"},
-				Channels: []proto.ChannelInfo{{Name: "lobby", Type: "voice"}}})
 		case proto.TypeVoiceJoin:
 			send(proto.TypeVoiceState, proto.VoiceState{Channel: "lobby",
 				Members: []proto.VoiceMember{{Fingerprint: fp, Name: "alice"}}})

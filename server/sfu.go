@@ -266,7 +266,7 @@ func (s *Server) newVoiceSession(ch string) *voiceSession {
 // servers.
 func (s *Server) newRTCAPI() *webrtc.API {
 	me := &webrtc.MediaEngine{}
-	if !s.cfg.NoVP8 && !s.cfg.LegacyHost {
+	if !s.cfg.NoVP8 {
 		_ = me.RegisterCodec(webrtc.RTPCodecParameters{
 			RTPCodecCapability: webrtc.RTPCodecCapability{
 				MimeType:     webrtc.MimeTypeVP8,
