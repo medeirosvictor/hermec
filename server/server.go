@@ -151,6 +151,8 @@ type Server struct {
 	authed     map[*conn]struct{} // authenticated conns; voice_state goes to all
 	warm       map[*conn]struct{} // warm (paused) sessions: chain frames and hb only; guarded by chMu
 	modeState  serverMode
+	takeover   takeoverState
+	promoted   atomic.Bool // takeover promoted this host; reset when it leaves active mode
 	warmSlots  int                            // warm sessions holding a slot of the warm cap; guarded by mu
 	links      map[*conn]struct{}             // host links being served; guarded by chMu
 	standby    atomic.Pointer[proto.HostInfo] // the host picked as standby, nil for none

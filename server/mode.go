@@ -41,7 +41,12 @@ func (s *Server) Mode() Mode { return Mode(s.modeState.mode.Load()) }
 
 // SetMode switches the host's mode. Promoting warm sessions is the caller's
 // job (promoteWarmLocked).
-func (s *Server) SetMode(m Mode) { s.modeState.mode.Store(int32(m)) }
+func (s *Server) SetMode(m Mode) {
+	s.modeState.mode.Store(int32(m))
+	if m != ModeActive {
+		s.promoted.Store(false)
+	}
+}
 
 // SetHosts sets the host list a refused full auth is answered with.
 func (s *Server) SetHosts(h proto.Hosts) { s.modeState.hosts.Store(&h) }

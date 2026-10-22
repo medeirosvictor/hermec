@@ -429,6 +429,8 @@ func (c *conn) route(env proto.Envelope) {
 		c.handleLinkHello(env)
 	case proto.TypeLinkProbe:
 		c.handleLinkProbe()
+	case proto.TypeTakeover:
+		c.handleTakeover()
 	case proto.TypeReach:
 		c.handleReach(env)
 	default:
