@@ -252,7 +252,8 @@ func TestSplitBrainMerge(t *testing.T) {
 
 	ha.setKnown(hb.url)
 	hb.setKnown(ha.url)
-	waitRole(t, hb, RoleIdle, time.Second)
+	// The loser yields, then may already have relinked as the winner's standby.
+	waitFor(t, "loser not active", func() bool { return hb.Role() != RoleActive })
 	if ha.Role() != RoleActive {
 		t.Fatalf("A is %q, want active", ha.Role())
 	}
