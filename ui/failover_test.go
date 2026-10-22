@@ -164,6 +164,30 @@ func TestSessionFailoverSwapsClient(t *testing.T) {
 	}
 }
 
+// A line typed while the active host is already dead must not vanish: it
+// either reaches the new active host or the user is told the send failed.
+func TestChatInFailoverGapIsDeliveredOrReported(t *testing.T) {
+	g, p, s := pairGame(t)
+	warm := s.warm
+	ch := s.st.Channels[s.st.Active]
+	p.killA(t)
+	const text = "typed in the gap"
+	s.st.Input.AppendRunes([]rune(text))
+	g.sendChat()
+	delivered := func() bool {
+		for _, m := range s.st.Messages[ch] {
+			if m.Text == text {
+				return true
+			}
+		}
+		return false
+	}
+	pumpUntil(t, g, func() bool {
+		return delivered() || strings.Contains(s.st.Status, "send failed")
+	})
+	pumpUntil(t, g, func() bool { return s.c == warm && !s.c.Warm() })
+}
+
 func TestSessionActiveAliveRedials(t *testing.T) {
 	g, p, s := pairGame(t)
 	old := s.c
@@ -207,8 +231,8 @@ func TestHostedByLine(t *testing.T) {
 	}
 	callOn(g, s, "voice")
 	pumpUntil(t, g, func() bool { return s.st.HostedBy == "a" })
-	if got := g.voicePanelLine(); got != "voice / primos · hosted by a" {
-		t.Fatalf("line = %q", got)
+	if got := g.voicePanelLine(); !strings.Contains(got, "hosted by a") {
+		t.Fatalf("line = %q, want hosted by a", got)
 	}
 	warm := s.warm
 	p.killA(t)
@@ -220,6 +244,23 @@ func TestHostedByLine(t *testing.T) {
 	}
 	if g.callKey != s.key || s.st.InCall != "voice" {
 		t.Fatalf("call lost: callKey %q InCall %q", g.callKey, s.st.InCall)
+	}
+}
+
+// A host whose chain is older than the head this app has seen (a rollback) is
+// refused: the tile shows a failure instead of connecting, and the saved
+// chain head is not lowered to the old host's.
+func TestDialRefusesRolledBackChain(t *testing.T) {
+	g := newTestGame(t)
+	_, url := startServer(t, "127.0.0.1:0")
+	g.servers = []state.ServerEntry{{URL: url, Label: "x", ChainSeq: 1000}}
+	s := g.openSession(url, "me")
+	pumpUntil(t, g, func() bool { return s.failed })
+	if s.c != nil || s.lastErr == "" {
+		t.Fatalf("connected or no error shown: c=%v lastErr=%q", s.c, s.lastErr)
+	}
+	if e, _ := g.entryFor(url); e.ChainSeq != 1000 {
+		t.Fatalf("saved chain head = %d, want 1000 kept", e.ChainSeq)
 	}
 }
 

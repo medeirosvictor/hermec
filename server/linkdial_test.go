@@ -5,8 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
@@ -116,9 +122,14 @@ func TestLinkReplicatesBan(t *testing.T) {
 }
 
 func TestLinkPasswordSync(t *testing.T) {
-	_, b, aURL, bURL, _, _, _ := linkPair(t, "pw")
+	_, b, aURL, bURL, _, _, ac := linkPair(t, "pw")
+	var hooked atomic.Pointer[[]byte] // what the app is told to persist
+	b.SetPasswordKeyHook(func(k []byte) { hooked.Store(&k) })
 	dialLink(t, aURL, b)
 	waitFor(t, "key on B", func() bool { return len(b.passwordKey(nil)) > 0 })
+	id := ac.ID()
+	want, _ := proto.PasswordKey("pw", id[:])
+	waitFor(t, "key hook", func() bool { k := hooked.Load(); return k != nil && string(*k) == string(want) })
 	b.SetMode(ModeActive)
 	c, env := authAs(t, bURL, mustID(t), "")
 	requireAuthFailed(t, c, env)
@@ -189,6 +200,55 @@ func TestLinkFirstSyncCarriesPasswordKey(t *testing.T) {
 	}
 	if len(ls.Messages) != 0 {
 		t.Fatalf("first link_sync carries %d messages", len(ls.Messages))
+	}
+}
+
+// Garbage link_role and hosts frames are ignored (and logged): the link stays
+// up and a valid frame after them still takes effect.
+func TestLinkIgnoresMalformedRoleAndHosts(t *testing.T) {
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.Close()
+		for _, f := range []string{
+			`{"v":2,"type":"link_role","data":[1]}`,
+			`{"v":2,"type":"hosts","data":"junk"}`,
+		} {
+			_ = ws.WriteMessage(websocket.TextMessage, []byte(f))
+		}
+		raw, _ := proto.Encode(proto.TypeLinkRole, proto.LinkRole{Standby: true})
+		_ = ws.WriteMessage(websocket.TextMessage, raw)
+		for { // hold the link open until the client goes
+			if _, _, err := ws.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := New(Config{Logf: func(string, ...any) {}})
+	l := &Link{s: b, ws: ws, done: make(chan struct{}), roleCh: make(chan struct{}, 1), handover: make(chan struct{}, 1)}
+	l.lastBeat.Store(time.Now().UnixNano())
+	t.Cleanup(l.Close)
+	go l.Run()
+	select {
+	case <-l.RoleChanged():
+	case <-l.Done():
+		t.Fatalf("link ended on a malformed frame: %v", l.Err())
+	case <-time.After(3 * time.Second):
+		t.Fatal("the valid link_role after the garbage never arrived")
+	}
+	if !l.Standby() {
+		t.Fatal("valid link_role not applied")
+	}
+	if _, ok := l.Hosts(); ok {
+		t.Fatal("a malformed hosts frame was taken")
 	}
 }
 

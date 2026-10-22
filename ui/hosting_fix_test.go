@@ -3,7 +3,9 @@ package ui
 import (
 	"context"
 	"encoding/hex"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,5 +151,37 @@ func TestFriendSetKeyPersists(t *testing.T) {
 	g.friends[id].setKey(key)
 	if hf := readHosting(t, g, id); hf.PasswordKey != hex.EncodeToString(key) {
 		t.Fatalf("password_key = %q", hf.PasswordKey)
+	}
+}
+
+// A damaged hosting file at boot must not start a host (or panic): a file that
+// does not parse is skipped, a bad password_key is reported to the user.
+func TestBootFriendsSurvivesBadHostingFile(t *testing.T) {
+	for _, tc := range []struct {
+		name, content, notice string
+	}{
+		{"corrupt toml", "not [valid", ""},
+		{"key not hex", "enabled = true\nport = 7800\npassword_key = \"zz\"\n", "bad password_key"},
+		{"key wrong length", "enabled = true\nport = 7800\npassword_key = \"abcd\"\n", "bad password_key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := friendGame(t)
+			_, _, id := grantedFriend(t, g, "")
+			g.stopFriends()
+			if err := os.WriteFile(hostingPath(g, id), []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			g2 := friendGame(t)
+			g2.id, g2.fp = g.id, g.fp
+			g2.hostedPath = g.hostedPath
+			g2.bootFriends()
+			g2.pumpSessions()
+			if len(g2.friends) != 0 {
+				t.Fatalf("started a host from a bad hosting file: %v", g2.friends)
+			}
+			if !strings.Contains(g2.notice, tc.notice) || (tc.notice == "" && g2.notice != "") {
+				t.Fatalf("notice = %q, want %q", g2.notice, tc.notice)
+			}
+		})
 	}
 }

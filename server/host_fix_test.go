@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -467,6 +469,63 @@ func TestSendMergeHistoryOversizeLineErrors(t *testing.T) {
 	}()
 	if err == nil {
 		t.Fatal("want an error for a line that cannot fit a frame")
+	}
+}
+
+// A history of several pages reaches the winner whole, in a bounded time: the
+// pacing between pages must not make a merge take minutes.
+func TestSendMergeHistoryMultiPage(t *testing.T) {
+	s, _ := startModeServer(t, Config{Channels: []string{"general"}})
+	const n = 6 * historyPage
+	seedHistory(t, s, n)
+
+	type result struct{ msgs, pages int }
+	got := make(chan result, 1)
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.Close()
+		var res result
+		for {
+			_, raw, err := ws.ReadMessage()
+			if err != nil {
+				return
+			}
+			env, _ := proto.Decode(raw)
+			switch env.Type {
+			case proto.TypeLinkSync:
+				var ls proto.LinkSync
+				_ = json.Unmarshal(env.Data, &ls)
+				res.msgs += len(ls.Messages)
+				res.pages++
+			case proto.TypeLinkProbe: // sent after the last page
+				got <- res
+				reply, _ := proto.Encode(proto.TypeLinkProbeReply, proto.LinkProbeReply{})
+				_ = ws.WriteMessage(websocket.TextMessage, reply)
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	start := time.Now()
+	if err := s.sendMergeHistory(ws); err != nil {
+		t.Fatal(err)
+	}
+	res := <-got
+	if res.msgs != n || res.pages < 2 {
+		t.Fatalf("winner got %d messages in %d pages, want %d in several", res.msgs, res.pages, n)
+	}
+	if limit := time.Duration(res.pages)*(mergePace+50*time.Millisecond) + 2*time.Second; time.Since(start) > limit {
+		t.Fatalf("merging %d pages took %v, want under %v", res.pages, time.Since(start), limit)
 	}
 }
 
