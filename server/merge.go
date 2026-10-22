@@ -36,7 +36,7 @@ func dialMerge(ctx context.Context, url string, s *Server) (*websocket.Conn, []c
 	defer stop()
 	voice, clients := s.load()
 	hello := proto.LinkHello{
-		Addrs:         s.cfg.Advertise,
+		Addrs:         s.advertise(),
 		Name:          s.cfg.HostName,
 		HistoryLastTS: time.Now().AddDate(100, 0, 0), // no history back
 		// The winner checks it still wins against this load.

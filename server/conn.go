@@ -55,8 +55,18 @@ func (s *Server) passwordState(serverID []byte) (key []byte, set bool) {
 // prove (nil: no password), replacing whatever the config says.
 func (s *Server) setPasswordKey(k []byte) {
 	s.pwMu.Lock()
+	old, _ := s.passwordStateLocked()
 	s.pwMirrored, s.pwMirror = true, append([]byte(nil), k...)
 	s.pwMu.Unlock()
+	s.keyChanged(old, k)
+}
+
+// passwordStateLocked is the key now in force, for comparing; pwMu is held.
+func (s *Server) passwordStateLocked() ([]byte, bool) {
+	if s.pwMirrored {
+		return s.pwMirror, len(s.pwMirror) > 0
+	}
+	return s.cfg.PasswordKey, len(s.cfg.PasswordKey) > 0
 }
 
 // checkPassword reports whether auth satisfies the server password. A proof is

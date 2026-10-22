@@ -41,7 +41,7 @@ func (s *Server) selfInfo() proto.HostInfo {
 	return proto.HostInfo{
 		Fingerprint: identity.Fingerprint(pub),
 		Name:        s.cfg.HostName,
-		Addrs:       s.cfg.Advertise,
+		Addrs:       s.advertise(),
 		Priority:    prio,
 	}
 }

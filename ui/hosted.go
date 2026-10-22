@@ -152,6 +152,7 @@ type hostedServer struct {
 
 	mu    sync.Mutex // guards known, which the host's goroutines read and grow
 	known []string   // the other hosts we know, mirrored in hosted.toml
+	logf  func(format string, args ...any)
 }
 
 // knownHosts is HostConfig.Known: the hosts hosted.toml remembers.
@@ -173,7 +174,9 @@ func (h *hostedServer) saveKnown(urls []string) {
 	}
 	cfg := h.cfg
 	cfg.KnownHosts = slices.Clone(h.known)
-	_ = saveHostedLocal(h.path, cfg) // best effort: the hosts are learned again
+	if err := saveHostedLocal(h.path, cfg); err != nil { // best effort: the hosts are learned again
+		h.logf("save known hosts: %v", err)
+	}
 }
 
 // maxKnownHosts bounds the remembered host addresses, like the server's.
@@ -366,9 +369,7 @@ func (g *game) startHosted() error {
 	}
 	cfg.HistoryPath = filepath.Join(dir, h.id+".jsonl")
 	cfg.HostName = g.defaultName()
-	if port := hostedPort(h.cfg); port != 0 { // port 0 has no address to advertise
-		cfg.Advertise = g.advertiseAddrs(port)
-	}
+	h.logf = g.logf
 	h.known = slices.Clone(h.cfg.KnownHosts)
 	srv := server.NewHost(server.HostConfig{
 		Server: cfg, Known: h.knownHosts, SaveKnown: h.saveKnown,
@@ -390,9 +391,8 @@ func (g *game) startHosted() error {
 		h.srv, h.err = nil, err.Error()
 		return err
 	}
-	// A host with no known peers is active at once; give the first dial that.
-	for deadline := time.Now().Add(500 * time.Millisecond); srv.Role() == server.RoleIdle && time.Now().Before(deadline); {
-		time.Sleep(5 * time.Millisecond)
+	if p := hostedPort(h.cfg); p != 0 { // port 0 has no address to advertise
+		go func() { srv.Server().SetAdvertise(g.advertiseAddrs(p)) }() // the lookup can be slow
 	}
 	h.srv, h.err = srv, ""
 	h.url = "ws://" + net.JoinHostPort("127.0.0.1", port) + "/"

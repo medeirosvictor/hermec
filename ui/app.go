@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -73,6 +74,10 @@ type game struct {
 	hostCh   chan hostResult        // warm dials, failovers and moves; made on first use
 	friends  map[string]*friendHost // friend hosts running here, by server ID
 	friendCh chan friendStarted     // finished background friend host starts
+
+	friendStop    map[string]chan struct{} // closed when a stopping friend host has released its port
+	friendWG      sync.WaitGroup           // friend host shutdowns in flight
+	friendBackoff map[string]time.Time     // no start attempt before this, per server ID
 
 	onDialed func(*client.Client) // test seam: sees every client a dial made (loopback ICE); nil = none
 

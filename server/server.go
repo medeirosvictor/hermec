@@ -143,6 +143,11 @@ type Server struct {
 	pwMirrored bool         // the key below came from the active host and overrides cfg
 	pwMirror   []byte
 
+	advMu   sync.RWMutex // guards adv, advSet and keyHook
+	adv     []string
+	advSet  bool
+	keyHook func([]byte)
+
 	mu      sync.Mutex
 	conns   map[*conn]struct{}
 	closing bool

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -52,6 +53,23 @@ type friendHost struct {
 
 	mu   sync.Mutex // guards file, which the host's goroutines grow
 	file hostingFile
+	logf func(format string, args ...any)
+}
+
+// save writes the hosting file; f.mu is held.
+func (f *friendHost) save() {
+	if err := saveHostingFile(f.path, f.file); err != nil {
+		f.logf("friend host %s: hosting file: %v", shortID(f.id), err)
+	}
+}
+
+// setKey is HostConfig.OnPasswordKey: it keeps the key the active host
+// supplied, so a restart starts with it.
+func (f *friendHost) setKey(key []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.file.PasswordKey = hex.EncodeToString(key)
+	f.save()
 }
 
 // knownHosts is HostConfig.Known.
@@ -74,7 +92,7 @@ func (f *friendHost) addKnown(urls []string) {
 		}
 	}
 	if grew {
-		_ = saveHostingFile(f.path, f.file) // best effort: the hosts are learned again
+		f.save() // best effort: the hosts are learned again
 	}
 }
 
@@ -161,6 +179,9 @@ func (g *game) syncFriendHosting(s *session) {
 		f.addKnown(g.sessionHosts(s))
 		return
 	}
+	if time.Now().Before(g.friendBackoff[id]) { // a failed start is not repeated on every chain event
+		return
+	}
 	hf, _ := g.loadHostingFile(id)
 	if !hf.Enabled {
 		return
@@ -207,32 +228,50 @@ func mergeHosts(have, add []string) []string {
 func (g *game) startFriend(id string, c *chain.Chain, hf hostingFile) bool {
 	key, err := hex.DecodeString(hf.PasswordKey)
 	if err != nil || (len(key) != 0 && len(key) != 32) {
-		g.logf("friend host %s: bad password_key in the hosting file", id)
+		g.friendFailed(id, "bad password_key in the hosting file")
 		return false
 	}
+	c, err = reconcileChain(filepath.Join(chainsDir(g.hostedFile()), id+".jsonl"), c)
+	if err != nil {
+		g.friendFailed(id, "not hosting for a friend: %v", err)
+		return false
+	}
+	if !g.amHost(c) { // the chain on disk is newer and no longer lists us
+		return false
+	}
+	prev := g.friendStop[id] // an earlier host of this server may still hold its port
+	pending := false
+	if prev != nil {
+		select {
+		case <-prev:
+		default:
+			pending = true
+		}
+	}
 	port := hf.Port
-	if port == 0 || !portFree(port) {
+	if port == 0 || !(pending || portFree(port)) {
+		old := port
 		if port = freeFriendPort(); port == 0 {
-			g.notice = fmt.Sprintf("no free port in %d-%d to host for a friend", friendPortMin, friendPortMax)
+			g.friendFailed(id, "no free port in %d-%d to host for a friend", friendPortMin, friendPortMax)
 			return false
+		}
+		if old != 0 {
+			g.notice = fmt.Sprintf("port %d is taken; hosting for a friend on port %d instead", old, port)
+			g.logf("%s", g.notice)
 		}
 	}
 	hf.Port = port
 	path := g.hostingPath(id)
 	if err := saveHostingFile(path, hf); err != nil {
-		g.notice = fmt.Sprintf("hosting file: %v", err)
-		return false
-	}
-	if err := c.SetPath(filepath.Join(chainsDir(g.hostedFile()), id+".jsonl")); err != nil {
-		g.notice = fmt.Sprintf("friend chain: %v", err)
+		g.friendFailed(id, "hosting file: %v", err)
 		return false
 	}
 	hdir := historyDir(g.hostedFile())
 	if err := os.MkdirAll(hdir, 0o700); err != nil {
-		g.notice = fmt.Sprintf("friend history: %v", err)
+		g.friendFailed(id, "friend history: %v", err)
 		return false
 	}
-	f := &friendHost{id: id, path: path, port: port, file: hf}
+	f := &friendHost{id: id, path: path, port: port, file: hf, logf: g.logf}
 	if g.friends == nil {
 		g.friends = map[string]*friendHost{}
 	}
@@ -246,14 +285,54 @@ func (g *game) startFriend(id string, c *chain.Chain, hf hostingFile) bool {
 	serverLogf(&cfg)
 	ch := g.friendChan()
 	go func() {
+		if prev != nil {
+			<-prev
+		}
 		cfg.Advertise = g.advertiseAddrs(port)
 		h := server.NewHost(server.HostConfig{
-			Server: cfg, Known: f.knownHosts, SaveKnown: f.addKnown,
+			Server: cfg, Known: f.knownHosts, SaveKnown: f.addKnown, OnPasswordKey: f.setKey,
 			Notify: func(msg string) { g.logf("friend host %s: %s", shortID(id), msg) },
 		})
 		ch <- friendStarted{id: id, f: f, h: h, err: h.Start()}
 	}()
 	return true
+}
+
+// friendBackoffFor is how long a failed friend host start is not retried.
+const friendBackoffFor = time.Minute
+
+// friendFailed reports why a friend host did not start, once: the same server
+// is not tried again before the backoff ends or the toggle is used.
+func (g *game) friendFailed(id, format string, args ...any) {
+	g.notice = fmt.Sprintf(format, args...)
+	g.logf("friend host %s: %s", shortID(id), g.notice)
+	if g.friendBackoff == nil {
+		g.friendBackoff = map[string]time.Time{}
+	}
+	g.friendBackoff[id] = time.Now().Add(friendBackoffFor)
+}
+
+// reconcileChain returns the chain to host from: the persisted one at path and
+// c, whichever is longer when one is a prefix of the other (the file is then
+// written or kept accordingly). A fork is an error and leaves the file alone.
+func reconcileChain(path string, c *chain.Chain) (*chain.Chain, error) {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return c, c.SetPath(path)
+	}
+	local, err := chain.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("saved chain unreadable: %w", err)
+	}
+	le, ce := local.Entries(), c.Entries()
+	for i := 0; i < min(len(le), len(ce)); i++ {
+		if le[i].Seq != ce[i].Seq || !bytes.Equal(le[i].Sig, ce[i].Sig) {
+			return nil, fmt.Errorf("saved chain differs from the server's at entry %d", i)
+		}
+	}
+	if len(le) >= len(ce) {
+		return local, nil
+	}
+	return c, c.SetPath(path)
 }
 
 func portFree(p int) bool {
@@ -272,12 +351,11 @@ func (g *game) applyFriend(r friendStarted) {
 		if g.friends[r.id] == r.f {
 			delete(g.friends, r.id)
 		}
-		g.notice = fmt.Sprintf("can't host for a friend: %v", r.err)
-		g.logf("friend host %s: %v", r.id, r.err)
+		g.friendFailed(r.id, "can't host for a friend: %v", r.err)
 		return
 	}
 	if g.friends[r.id] != r.f {
-		shutdownHost(r.h)
+		g.shutdownAsync(r.id, r.h)
 		return
 	}
 	r.f.h = r.h
@@ -290,7 +368,29 @@ func shutdownHost(h *server.Host) {
 	_ = h.Shutdown(ctx)
 }
 
-// stopFriend stops the friend host of id, keeping its files.
+// shutdownHostFn is a seam for tests.
+var shutdownHostFn = shutdownHost
+
+// shutdownAsync shuts h down in the background; friendStop[id] closes once it
+// has released its port, and a later host of id waits for that.
+func (g *game) shutdownAsync(id string, h *server.Host) {
+	if g.friendStop == nil {
+		g.friendStop = map[string]chan struct{}{}
+	}
+	prev, done := g.friendStop[id], make(chan struct{})
+	g.friendStop[id] = done
+	g.friendWG.Add(1)
+	go func() {
+		defer g.friendWG.Done()
+		defer close(done)
+		if prev != nil {
+			<-prev
+		}
+		shutdownHostFn(h)
+	}()
+}
+
+// stopFriend stops the friend host of id in the background, keeping its files.
 func (g *game) stopFriend(id string) {
 	f := g.friends[id]
 	if f == nil {
@@ -298,14 +398,23 @@ func (g *game) stopFriend(id string) {
 	}
 	delete(g.friends, id)
 	if f.h != nil {
-		shutdownHost(f.h)
+		g.shutdownAsync(id, f.h)
 	}
 }
 
-// stopFriends stops every friend host (app quit).
+// stopFriends stops every friend host (app quit), waiting at most 3 s in all.
 func (g *game) stopFriends() {
 	for id := range g.friends {
 		g.stopFriend(id)
+	}
+	done := make(chan struct{})
+	go func() {
+		g.friendWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
 	}
 }
 
@@ -355,6 +464,7 @@ func (g *game) friendMenuItem(key string) (menuItem, bool) {
 // setFriendHosting turns hosting for s's server on or off and applies it.
 func (g *game) setFriendHosting(s *session, on bool) {
 	id := s.c.ServerID()
+	delete(g.friendBackoff, id) // an explicit switch-on tries again
 	hf, _ := g.loadHostingFile(id)
 	hf.Enabled = on
 	if f := g.friends[id]; f != nil {

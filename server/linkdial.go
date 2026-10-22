@@ -82,7 +82,7 @@ func dialLinkOpts(ctx context.Context, url string, s *Server, full bool) (*Link,
 	l.lastBeat.Store(time.Now().UnixNano())
 	hello := proto.LinkHello{
 		ChainSeq: s.chain.Head().Seq,
-		Addrs:    s.cfg.Advertise,
+		Addrs:    s.advertise(),
 		Name:     s.cfg.HostName,
 	}
 	if s.hist != nil && !full {

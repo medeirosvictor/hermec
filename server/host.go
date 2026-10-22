@@ -56,6 +56,9 @@ type HostConfig struct {
 	// Notify gets short status lines: "hosting: active", "hosting: standby for
 	// <name>", "hosting: idle".
 	Notify func(string)
+	// OnPasswordKey, when set, is called with the password key the active host
+	// supplied over the link whenever it differs from the one held.
+	OnPasswordKey func([]byte)
 }
 
 // Host owns a Server's role: it starts idle, finds the active host or becomes
@@ -88,7 +91,7 @@ type Host struct {
 func NewHost(hc HostConfig) *Host {
 	hc.Server.Mode = ModeIdle
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Host{
+	h := &Host{
 		hc:       hc,
 		srv:      New(hc.Server),
 		ctx:      ctx,
@@ -97,6 +100,10 @@ func NewHost(hc HostConfig) *Host {
 		promoted: make(chan struct{}, 1),
 		role:     RoleIdle,
 	}
+	if hc.OnPasswordKey != nil {
+		h.srv.SetPasswordKeyHook(hc.OnPasswordKey)
+	}
+	return h
 }
 
 // Server returns the host's server.
@@ -201,7 +208,7 @@ func (h *Host) setRole(role, name string) {
 // addresses.
 func (h *Host) targets(extra []string) []string {
 	own := make(map[string]bool)
-	for _, a := range h.srv.cfg.Advertise {
+	for _, a := range h.srv.advertise() {
 		own[a] = true
 	}
 	var known []string
@@ -223,7 +230,7 @@ func (h *Host) targets(extra []string) []string {
 // learn remembers host addresses and passes the set to SaveKnown when it grew.
 func (h *Host) learn(addrs ...string) {
 	own := make(map[string]bool)
-	for _, a := range h.srv.cfg.Advertise {
+	for _, a := range h.srv.advertise() {
 		own[a] = true
 	}
 	for _, a := range h.seen {
