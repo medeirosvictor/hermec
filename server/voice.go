@@ -56,6 +56,14 @@ func (s *Server) channelInfos() []proto.ChannelInfo {
 // auth_ok is already queued, so the snapshot follows it.
 func (s *Server) markAuthed(c *conn) {
 	s.chMu.Lock()
+	dead := s.markAuthedLocked(c)
+	s.chMu.Unlock()
+	dropSlow(dead)
+}
+
+// markAuthedLocked is markAuthed with chMu held by the caller, who closes the
+// returned conns after unlocking.
+func (s *Server) markAuthedLocked(c *conn) []*conn {
 	s.authed[c] = struct{}{}
 	slow := false
 	for _, ch := range s.cfg.VoiceChannels {
@@ -69,9 +77,7 @@ func (s *Server) markAuthed(c *conn) {
 		dead = append(dead, c)
 	}
 	// The roster goes to everyone, c included, after c's voice snapshot.
-	dead = append(dead, s.broadcastAuthedLocked(s.rosterLocked())...)
-	s.chMu.Unlock()
-	dropSlow(dead)
+	return append(dead, s.broadcastAuthedLocked(s.rosterLocked())...)
 }
 
 // voiceStateLocked encodes the current participants of ch. Caller holds chMu.

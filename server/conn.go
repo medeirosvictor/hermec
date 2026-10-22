@@ -76,6 +76,8 @@ type conn struct {
 	// Set once authenticated; only touched by readLoop.
 	fingerprint string
 	name        string
+	pub         []byte // the client's public key
+	warm        bool   // authenticated with Auth.Warm
 
 	voiceCh  string // current voice channel, "" if none; guarded by srv.chMu
 	sharing  bool   // sharing a screen in voiceCh; guarded by srv.chMu
@@ -237,7 +239,13 @@ func (c *conn) joinLive(seq uint64) error {
 	s := c.srv
 	s.chainMu.Lock()
 	defer s.chainMu.Unlock()
-	s.markAuthed(c)
+	if c.warm {
+		s.chMu.Lock()
+		s.warm[c] = struct{}{}
+		s.chMu.Unlock()
+	} else {
+		s.markAuthed(c)
+	}
 	missed := s.chain.Since(seq)
 	if len(missed) == 0 {
 		return nil
@@ -373,7 +381,11 @@ func (c *conn) authenticate() error {
 		c.sendError(proto.CodeBanned, "you are banned from this server")
 		return errAuthFailed
 	}
-	if !c.srv.checkPassword(auth, nonce, req.Nonce, id[:]) {
+	// Hosts reach each other warm and without the password: the chain already
+	// vouches for their keys.
+	st := c.srv.chain.State()
+	hostWarm := auth.Warm && st.IsHost(pub)
+	if !hostWarm && !c.srv.checkPassword(auth, nonce, req.Nonce, id[:]) {
 		return fail()
 	}
 	fp := identity.Fingerprint(pub)
@@ -382,12 +394,22 @@ func (c *conn) authenticate() error {
 	}
 
 	c.srv.noteAuthSuccess(c.ip)
-	if !c.srv.reserveClient() {
-		c.sendError(proto.CodeServerFull, "server is full")
+	if !auth.Warm && c.srv.Mode() != ModeActive {
+		c.sendMsg(proto.TypeHosts, c.srv.hostsInfo())
+		c.sendError(proto.CodeNotActive, "this host is on standby")
 		return errAuthFailed
 	}
-	c.counted = true
+	// Warm sessions hold no client slot; promotion does not take one either.
+	if !auth.Warm {
+		if !c.srv.reserveClient() {
+			c.sendError(proto.CodeServerFull, "server is full")
+			return errAuthFailed
+		}
+		c.counted = true
+	}
 
+	c.warm = auth.Warm
+	c.pub = pub
 	c.fingerprint = fp
 	c.name = names.Clean(auth.Name, discover.MaxNameRunes)
 	if c.name == "" {

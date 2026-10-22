@@ -44,6 +44,7 @@ func (s *Server) initChannels() {
 		s.voice[name] = make(map[*conn]bool)
 	}
 	s.authed = make(map[*conn]struct{})
+	s.warm = make(map[*conn]struct{})
 	s.sessions = make(map[string]*voiceSession)
 }
 
@@ -52,6 +53,7 @@ func (c *conn) member() proto.Member {
 		Fingerprint: c.fingerprint,
 		Name:        c.name,
 		Roles:       c.srv.roles().RolesFor(c.fingerprint),
+		PubKey:      c.pub,
 	}
 }
 
@@ -292,6 +294,7 @@ func (s *Server) leaveAll(c *conn) {
 		delete(set, c)
 		dead = append(dead, s.broadcastLocked(ch, s.presenceLocked(ch))...)
 	}
+	delete(s.warm, c)
 	if _, was := s.authed[c]; was {
 		delete(s.authed, c)
 		dead = append(dead, s.broadcastAuthedLocked(s.rosterLocked())...)
@@ -353,6 +356,10 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 
 // route handles one post-auth message.
 func (c *conn) route(env proto.Envelope) {
+	if !allowedWhenRestricted(env.Type) && c.srv.restricted(c) {
+		c.sendError(proto.CodeNotActive, "this host is not serving clients")
+		return
+	}
 	switch env.Type {
 	case proto.TypeJoin:
 		var m proto.Join

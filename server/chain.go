@@ -404,7 +404,7 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 		s.trimHistory()
 	}
 	s.chMu.Lock()
-	dead := s.broadcastAuthedLocked(frames[0])
+	dead := s.broadcastChainLocked(frames[0])
 	s.chMu.Unlock()
 	dropSlow(dead)
 	if e.Op == chain.OpBan {
@@ -423,6 +423,11 @@ func (s *Server) kick(fp string) {
 	s.chMu.Lock()
 	var hit []*conn
 	for c := range s.authed {
+		if c.fingerprint == fp {
+			hit = append(hit, c)
+		}
+	}
+	for c := range s.warm {
 		if c.fingerprint == fp {
 			hit = append(hit, c)
 		}

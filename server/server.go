@@ -100,6 +100,8 @@ type Config struct {
 	// channels, limits, allowed keys, roles). Nil makes New build an in-memory
 	// chain from this Config's own group fields, founded by HostKey.
 	Chain *chain.Chain
+	// Mode is the host's starting mode. The zero value is ModeActive.
+	Mode Mode
 }
 
 // logf writes a server log line through cfg.Logf, or log.Printf.
@@ -138,6 +140,8 @@ type Server struct {
 	chans      channelSet
 	voice      voiceSet
 	authed     map[*conn]struct{} // authenticated conns; voice_state goes to all
+	warm       map[*conn]struct{} // warm (paused) sessions: chain frames and hb only; guarded by chMu
+	modeState  serverMode
 	// sessions holds the media session of each occupied voice channel; guarded by chMu.
 	sessions map[string]*voiceSession
 
@@ -197,6 +201,7 @@ func New(cfg Config) *Server {
 	if err := CheckHost(cfg.Chain, cfg.HostKey); err != nil {
 		s.logf("server: WARNING: %v; clients will refuse this host", err)
 	}
+	s.modeState.mode.Store(int32(cfg.Mode))
 	s.ipConns = make(map[string]int)
 	s.fails = make(map[string]*authFail)
 	s.refreshGroup()
@@ -277,7 +282,11 @@ func (s *Server) start() error {
 		Handler:           http.HandlerFunc(s.handleWS),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	s.wg.Add(2)
+	s.wg.Add(3)
+	go func() {
+		defer s.wg.Done()
+		s.heartbeatLoop()
+	}()
 	go func() {
 		defer s.wg.Done()
 		_ = s.http.Serve(ln) // always returns on Shutdown
