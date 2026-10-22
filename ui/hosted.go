@@ -7,8 +7,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -140,13 +142,60 @@ var clipboardWrite = clipboard.WriteAll
 // chain, the running server (nil while stopped or failed to start) and the dial
 // URL.
 type hostedServer struct {
-	srv   *server.Server
+	srv   *server.Host
 	cfg   server.Config
 	chain *chain.Chain
 	id    string // chain.ID().String(), the pin the hosted session dials with
 	path  string
 	url   string
 	err   string // why it is not running
+
+	mu    sync.Mutex // guards known, which the host's goroutines read and grow
+	known []string   // the other hosts we know, mirrored in hosted.toml
+}
+
+// knownHosts is HostConfig.Known: the hosts hosted.toml remembers.
+func (h *hostedServer) knownHosts() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.known)
+}
+
+// saveKnown is HostConfig.SaveKnown: it adds urls to the known hosts and
+// rewrites hosted.toml.
+func (h *hostedServer) saveKnown(urls []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, u := range urls {
+		if !slices.Contains(h.known, u) && len(h.known) < maxKnownHosts {
+			h.known = append(h.known, u)
+		}
+	}
+	cfg := h.cfg
+	cfg.KnownHosts = slices.Clone(h.known)
+	_ = saveHostedLocal(h.path, cfg) // best effort: the hosts are learned again
+}
+
+// maxKnownHosts bounds the remembered host addresses, like the server's.
+const maxKnownHosts = 16
+
+// advertiseAddrs are the ws URLs this machine can be reached at on port,
+// Tailscale first.
+func (g *game) advertiseAddrs(port int) []string {
+	self := g.selfAddrs
+	if self == nil {
+		self = discover.SelfAddrs
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ts, lan := self(ctx)
+	var out []string
+	for _, ip := range []string{ts, lan} {
+		if ip != "" {
+			out = append(out, fmt.Sprintf("ws://%s:%d/", ip, port))
+		}
+	}
+	return out
 }
 
 // name is the hosted server's name: the chain's, else the config's.
@@ -316,7 +365,15 @@ func (g *game) startHosted() error {
 		return err
 	}
 	cfg.HistoryPath = filepath.Join(dir, h.id+".jsonl")
-	srv := server.New(cfg)
+	cfg.HostName = g.defaultName()
+	if port := hostedPort(h.cfg); port != 0 { // port 0 has no address to advertise
+		cfg.Advertise = g.advertiseAddrs(port)
+	}
+	h.known = slices.Clone(h.cfg.KnownHosts)
+	srv := server.NewHost(server.HostConfig{
+		Server: cfg, Known: h.knownHosts, SaveKnown: h.saveKnown,
+		Notify: func(msg string) { g.logf("%s", msg) },
+	})
 	if err := srv.Start(); err != nil {
 		h.srv = nil
 		if port := hostedPort(h.cfg); isPortInUse(err) {
@@ -327,11 +384,15 @@ func (g *game) startHosted() error {
 		g.logf("hosted server failed: %v", err)
 		return err
 	}
-	_, port, err := net.SplitHostPort(srv.Addr())
+	_, port, err := net.SplitHostPort(srv.Server().Addr())
 	if err != nil {
 		_ = srv.Shutdown(context.Background())
 		h.srv, h.err = nil, err.Error()
 		return err
+	}
+	// A host with no known peers is active at once; give the first dial that.
+	for deadline := time.Now().Add(500 * time.Millisecond); srv.Role() == server.RoleIdle && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
 	}
 	h.srv, h.err = srv, ""
 	h.url = "ws://" + net.JoinHostPort("127.0.0.1", port) + "/"
@@ -463,7 +524,7 @@ func (g *game) copyInvite() {
 	if self == nil {
 		self = discover.SelfAddrs
 	}
-	_, p, _ := net.SplitHostPort(h.srv.Addr())
+	_, p, _ := net.SplitHostPort(h.srv.Server().Addr())
 	port, _ := strconv.Atoi(p)
 	g.inviteBusy = true
 	ch := g.inviteCh

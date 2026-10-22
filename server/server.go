@@ -108,6 +108,9 @@ type Config struct {
 	// display name and the addresses it can be dialed at.
 	HostName  string
 	Advertise []string
+	// KnownHosts are the other hosts of the server this machine has learned,
+	// kept in the local config file (hosted.toml).
+	KnownHosts []string
 }
 
 // logf writes a server log line through cfg.Logf, or log.Printf.

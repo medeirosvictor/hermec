@@ -186,6 +186,7 @@ func (g *game) noteChainSeq(s *session) bool {
 // host serving s, and follows a change of standby with a new warm session.
 func (g *game) onHosts(s *session, h *proto.Hosts) {
 	s.hint = slices.Clone(h.Active.Addrs)
+	defer g.syncFriendHosting(s)
 	if s.key != hostedKey {
 		urls := append(slices.Clone(h.Active.Addrs), func() []string {
 			if h.Standby != nil {

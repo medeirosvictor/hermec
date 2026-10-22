@@ -70,6 +70,7 @@ type fileConfig struct {
 	HistoryMB     *int                `toml:"history_mb"`
 	ServerName    string              `toml:"server_name,omitempty"`
 	ServerID      string              `toml:"server_id,omitempty"`
+	KnownHosts    []string            `toml:"known_hosts,omitempty"`
 }
 
 // DefaultConfig returns the configuration used when no file is given.
@@ -129,6 +130,7 @@ func LoadConfig(path string) (Config, error) {
 		cfg.PasswordKey = key
 	}
 	cfg.ServerID = fc.ServerID
+	cfg.KnownHosts = fc.KnownHosts
 	cfg.AllowedKeys = fc.AllowedKeys
 	if md.IsDefined("channels") {
 		cfg.Channels = fc.Channels
@@ -302,6 +304,7 @@ func (c Config) MarshalLocalTOML() ([]byte, error) {
 		MsgBurst:     c.MsgBurst,
 		Discoverable: &c.Discoverable,
 		ServerID:     c.ServerID,
+		KnownHosts:   c.KnownHosts,
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(fc); err != nil {

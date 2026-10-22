@@ -259,6 +259,15 @@ func (g *game) view(key string) {
 func (g *game) pumpSessions() {
 	for {
 		select {
+		case r := <-g.friendCh: // nil until a friend host starts
+			g.applyFriend(r)
+			continue
+		default:
+		}
+		break
+	}
+	for {
+		select {
 		case r := <-g.hostCh: // nil until a host operation starts
 			g.applyHost(r)
 			continue
@@ -387,6 +396,7 @@ func (g *game) applyDial(r dialResult) {
 	s.retryAt = time.Time{}
 	g.noteChainSeq(s) // onConnected saves
 	g.onConnected(s)
+	g.syncFriendHosting(s)
 	if carried != "" {
 		s.st.SetInCall(carried) // SetConnected cleared it; the call moves with the dial
 	}
@@ -453,6 +463,7 @@ func (g *game) drainEvents(s *session) {
 				}
 			case ev.Chain != nil:
 				g.bumpChainSeq(s)
+				g.syncFriendHosting(s)
 			}
 		default:
 			return
