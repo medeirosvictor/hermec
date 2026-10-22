@@ -69,9 +69,10 @@ type conn struct {
 	send   chan []byte // closed (under sendMu) when the connection ends
 	closed bool
 
-	ip           string // remote IP
-	leavePreAuth func() // releases the pre-auth slot; idempotent, readLoop only
-	counted      bool   // holds a MaxClients slot; readLoop only
+	ip           string      // remote IP
+	leavePreAuth func()      // releases the pre-auth slot; idempotent, readLoop only
+	counted      atomic.Bool // holds a MaxClients slot; promotion sets it from another goroutine
+	warmHeld     atomic.Bool // holds a slot of the warm cap
 
 	// Set once authenticated; only touched by readLoop.
 	fingerprint string
@@ -136,9 +137,11 @@ func (c *conn) sendErrorGen(code, message string, gen uint32) {
 // queued (e.g. a final error), then closes the socket.
 func (c *conn) finish() {
 	c.srv.unregister(c)
-	if c.counted {
-		c.counted = false
+	if c.counted.Swap(false) {
 		c.srv.releaseClient()
+	}
+	if c.warmHeld.Swap(false) {
+		c.srv.releaseWarmSlot()
 	}
 	c.srv.leaveAll(c)
 	c.closeSend()
@@ -399,13 +402,20 @@ func (c *conn) authenticate() error {
 		c.sendError(proto.CodeNotActive, "this host is on standby")
 		return errAuthFailed
 	}
-	// Warm sessions hold no client slot; promotion does not take one either.
-	if !auth.Warm {
+	// Warm sessions are capped by their own counter at the same max_clients;
+	// promotion takes a real slot.
+	if auth.Warm {
+		if !c.srv.reserveWarmSlot() {
+			c.sendError(proto.CodeServerFull, "server is full")
+			return errAuthFailed
+		}
+		c.warmHeld.Store(true)
+	} else {
 		if !c.srv.reserveClient() {
 			c.sendError(proto.CodeServerFull, "server is full")
 			return errAuthFailed
 		}
-		c.counted = true
+		c.counted.Store(true)
 	}
 
 	c.warm = auth.Warm

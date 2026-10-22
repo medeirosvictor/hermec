@@ -61,9 +61,49 @@ func (s *Server) promoteWarmLocked() []*conn {
 	var dead []*conn
 	for c := range s.warm {
 		delete(s.warm, c)
+		if c.warmHeld.Swap(false) {
+			s.releaseWarmSlot()
+		}
+		if !s.reserveClient() {
+			c.sendError(proto.CodeServerFull, "server is full")
+			c.closeSend()
+			continue
+		}
+		c.counted.Store(true)
+		c.warm = false
 		dead = append(dead, s.markAuthedLocked(c)...)
 	}
 	return dead
+}
+
+// reserveWarmSlot takes one slot of the warm cap (max_clients, counted apart
+// from live sessions); false when it is full.
+func (s *Server) reserveWarmSlot() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.warmSlots >= s.maxClients() {
+		return false
+	}
+	s.warmSlots++
+	return true
+}
+
+func (s *Server) releaseWarmSlot() {
+	s.mu.Lock()
+	s.warmSlots--
+	s.mu.Unlock()
+}
+
+// PromoteWarm moves every warm session into the live set. It takes chainMu
+// first, like joinLive, so a conn between auth_ok and joinLive is either
+// promoted or joins live under the new mode, never left warm.
+func (s *Server) PromoteWarm() {
+	s.chainMu.Lock()
+	s.chMu.Lock()
+	dead := s.promoteWarmLocked()
+	s.chMu.Unlock()
+	s.chainMu.Unlock()
+	dropSlow(dead)
 }
 
 // broadcastChainLocked sends a chain frame to every authenticated and warm
