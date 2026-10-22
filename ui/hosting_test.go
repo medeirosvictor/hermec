@@ -297,9 +297,7 @@ func TestHostedUsesOrchestrator(t *testing.T) {
 	if err := g.createHosted("Den", "", 0); err != nil {
 		t.Fatal(err)
 	}
-	if got := g.hosted.srv.Role(); got != server.RoleActive {
-		t.Fatalf("role = %q, want active", got)
-	}
+	pumpUntil(t, g, func() bool { return g.hosted.srv.Role() == server.RoleActive }) // the host loop settles on its own goroutine
 }
 
 func TestHostedKnownHostsPersist(t *testing.T) {

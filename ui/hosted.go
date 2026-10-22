@@ -167,20 +167,13 @@ func (h *hostedServer) knownHosts() []string {
 func (h *hostedServer) saveKnown(urls []string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for _, u := range urls {
-		if !slices.Contains(h.known, u) && len(h.known) < maxKnownHosts {
-			h.known = append(h.known, u)
-		}
-	}
+	h.known = state.MergeAddrs(h.known, urls, state.MaxHosts)
 	cfg := h.cfg
 	cfg.KnownHosts = slices.Clone(h.known)
 	if err := saveHostedLocal(h.path, cfg); err != nil { // best effort: the hosts are learned again
 		h.logf("save known hosts: %v", err)
 	}
 }
-
-// maxKnownHosts bounds the remembered host addresses, like the server's.
-const maxKnownHosts = 16
 
 // advertiseAddrs are the ws URLs this machine can be reached at on port,
 // Tailscale first.

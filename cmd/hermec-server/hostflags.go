@@ -43,15 +43,15 @@ func parseFlags(args []string) (flags, error) {
 	if err := fs.Parse(args); err != nil {
 		return flags{}, err
 	}
-	f.advertise = cleanURLs(splitList(advertise), "-advertise")
-	f.hosts = cleanURLs(splitList(hosts), "-hosts")
+	f.advertise = cleanURLs(splitTrim(advertise, ","), "-advertise")
+	f.hosts = cleanURLs(splitTrim(hosts, ","), "-hosts")
 	return f, nil
 }
 
-// splitList splits a comma list, trimming blanks and dropping empty items.
-func splitList(s string) []string {
+// splitTrim splits s at sep, trimming blanks and dropping empty items.
+func splitTrim(s, sep string) []string {
 	var out []string
-	for _, p := range strings.Split(s, ",") {
+	for _, p := range strings.Split(s, sep) {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}
@@ -157,17 +157,7 @@ func (k *knownHosts) fileURLs() []string {
 	if err != nil {
 		return nil
 	}
-	return cleanURLs(splitLines(string(b)), knownHostsFile)
-}
-
-func splitLines(s string) []string {
-	var out []string
-	for _, l := range strings.Split(s, "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			out = append(out, l)
-		}
-	}
-	return out
+	return cleanURLs(splitTrim(string(b), "\n"), knownHostsFile)
 }
 
 // list is the merged set, flags first.

@@ -18,6 +18,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/ui/state"
 )
 
 // A friend the founder granted hosting can let this PC host the server: a
@@ -29,6 +30,9 @@ const (
 	friendPortMin = 7697
 	friendPortMax = 7707
 )
+
+// friendStopWait is how long shutting down waits for the friend hosts to stop.
+const friendStopWait = 3 * time.Second
 
 // friendReachNotice is shown once, when this PC first starts hosting for a friend.
 const friendReachNotice = "friends must be able to reach this PC (share it on Tailscale)"
@@ -84,14 +88,9 @@ func (f *friendHost) knownHosts() []string {
 func (f *friendHost) addKnown(urls []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	grew := false
-	for _, u := range urls {
-		if u != "" && !slices.Contains(f.file.KnownHosts, u) && len(f.file.KnownHosts) < maxKnownHosts {
-			f.file.KnownHosts = append(f.file.KnownHosts, u)
-			grew = true
-		}
-	}
-	if grew {
+	merged := state.MergeAddrs(f.file.KnownHosts, urls, state.MaxHosts)
+	if len(merged) > len(f.file.KnownHosts) {
+		f.file.KnownHosts = merged
 		f.save() // best effort: the hosts are learned again
 	}
 }
@@ -192,7 +191,7 @@ func (g *game) syncFriendHosting(s *session) {
 		return
 	}
 	hf.PasswordKey = hex.EncodeToString(s.c.PasswordKey())
-	hf.KnownHosts = mergeHosts(hf.KnownHosts, g.sessionHosts(s))
+	hf.KnownHosts = state.MergeAddrs(hf.KnownHosts, g.sessionHosts(s), state.MaxHosts)
 	if !g.startFriend(id, c, hf) {
 		return
 	}
@@ -208,16 +207,6 @@ func (g *game) sessionHosts(s *session) []string {
 	out = append(out, s.url)
 	if e, ok := g.entryFor(s.key); ok {
 		out = append(out, e.Hosts...)
-	}
-	return out
-}
-
-func mergeHosts(have, add []string) []string {
-	out := slices.Clone(have)
-	for _, u := range add {
-		if u != "" && !slices.Contains(out, u) && len(out) < maxKnownHosts {
-			out = append(out, u)
-		}
 	}
 	return out
 }
@@ -414,7 +403,7 @@ func (g *game) stopFriends() {
 	}()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(friendStopWait):
 	}
 }
 

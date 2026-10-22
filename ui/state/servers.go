@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -242,18 +243,23 @@ func SetPasswordKey(entries []ServerEntry, url, key string) []ServerEntry {
 // MaxHosts caps ServerEntry.Hosts.
 const MaxHosts = 16
 
+// MergeAddrs returns a copy of have with the entries of add appended that are
+// non-empty and not already there, up to max entries in all.
+func MergeAddrs(have, add []string, max int) []string {
+	out := slices.Clone(have)
+	for _, u := range add {
+		if u != "" && !slices.Contains(out, u) && len(out) < max {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
 // SetHosts returns a copy of entries with the known hosts of url set to hosts,
 // without empty entries or duplicates, capped at MaxHosts.
 func SetHosts(entries []ServerEntry, url string, hosts []string) []ServerEntry {
 	out := append([]ServerEntry(nil), entries...)
-	var clean []string
-	seen := map[string]bool{}
-	for _, h := range hosts {
-		if h != "" && !seen[h] && len(clean) < MaxHosts {
-			seen[h] = true
-			clean = append(clean, h)
-		}
-	}
+	clean := MergeAddrs(nil, hosts, MaxHosts)
 	for i := range out {
 		if out[i].URL == url {
 			out[i].Hosts = clean

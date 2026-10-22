@@ -468,7 +468,9 @@ func (g *game) drainEvents(s *session) {
 					return
 				}
 			case ev.Chain != nil:
-				g.bumpChainSeq(s)
+				if g.noteChainSeq(s) {
+					g.persist()
+				}
 				g.syncFriendHosting(s)
 			}
 		default:

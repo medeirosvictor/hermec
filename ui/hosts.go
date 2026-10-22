@@ -34,6 +34,13 @@ const (
 // tests can shorten it.
 var takeoverRetryFor = 3 * time.Second
 
+const (
+	dialAnyTimeout     = 20 * time.Second // all the dials of one dialAny
+	dialOneTimeout     = 8 * time.Second  // one dial of dialAny
+	takeoverTimeout    = 8 * time.Second  // a Takeover with its retries
+	takeoverRetryEvery = 200 * time.Millisecond
+)
+
 // hostResult is the outcome of a background host operation. s identifies the
 // session instance it was started for, old the client it replaces.
 type hostResult struct {
@@ -106,7 +113,7 @@ func (g *game) dialTargets(s *session) []string {
 // only if nothing better), else the last network error. Safe off the game
 // goroutine.
 func (g *game) dialAny(urls []string, name, pass string, o client.DialOpts) (*client.Client, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), dialAnyTimeout)
 	defer cancel()
 	queue := slices.Clone(urls)
 	tried := map[string]bool{}
@@ -118,7 +125,7 @@ func (g *game) dialAny(urls []string, name, pass string, o client.DialOpts) (*cl
 			continue
 		}
 		tried[u] = true
-		dctx, dcancel := context.WithTimeout(ctx, 8*time.Second)
+		dctx, dcancel := context.WithTimeout(ctx, dialOneTimeout)
 		c, err := client.DialWith(dctx, u, g.id, name, pass, o)
 		dcancel()
 		if err == nil {
@@ -156,16 +163,9 @@ func (g *game) persist() {
 	}
 }
 
-// bumpChainSeq records the chain head s's client has seen, so a later dial
-// refuses a host with an older chain.
-func (g *game) bumpChainSeq(s *session) {
-	if g.noteChainSeq(s) {
-		g.persist()
-	}
-}
-
-// noteChainSeq is bumpChainSeq without the write; it reports whether the
-// saved seq rose. For callers that save right after.
+// noteChainSeq records the chain head s's client has seen, so a later dial
+// refuses a host with an older chain. It reports whether the saved seq rose;
+// the caller saves.
 func (g *game) noteChainSeq(s *session) bool {
 	if s.c == nil || s.key == hostedKey {
 		return false
@@ -406,7 +406,7 @@ func (g *game) failover(s *session) {
 	old, w, hc := s.c, s.warm, g.hostChan()
 	retryFor := takeoverRetryFor // read once, here
 	go func(s *session, key string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), takeoverTimeout)
 		defer cancel()
 		deadline := time.Now().Add(retryFor)
 		told := false
@@ -422,7 +422,7 @@ func (g *game) failover(s *session) {
 				hc <- hostResult{kind: hostAlive, key: key, s: s, old: old}
 			}
 			select {
-			case <-time.After(200 * time.Millisecond):
+			case <-time.After(takeoverRetryEvery):
 			case <-ctx.Done():
 			}
 		}
