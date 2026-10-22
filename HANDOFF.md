@@ -10,17 +10,18 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and
    the memory note `hermec-project`.
-2. Repo state: `main` == `origin/main`, released through **v0.5.1**. The
-   worktree `.claude/worktrees/hermec-portable` is on branch `chat-history`.
+2. Repo state: `main` == `origin/main`, released through **v0.5.1**; chat
+   history (PR #9) is merged but not released. PR 3 is built in the worktree
+   `.claude/worktrees/hermec-failover` (branch `worktree-hermec-failover`).
    Untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.
 3. **Current round: always-on.** Spec (approved design):
    `docs/superpowers/specs/2026-10-21-hermec-always-on-design.md`. Three PRs:
    identity and chain, chat history, host link with warm standby and failover.
-   **PR 1 (identity and chain) and PR 2 (chat history) are done** (protocol v2;
-   history on branch `chat-history`); next is PR 3, the host link with warm
-   standby and failover. After always-on and webcam, Victor moves to stress
+   **PR 1 (identity and chain) and PR 2 (chat history, PR #9) are merged.**
+   PR 3 (host link, warm standby, failover; one PR by Victor's choice) is in
+   progress: plan `docs/superpowers/plans/2026-10-22-hermec-host-failover.md`. After always-on and webcam, Victor moves to stress
    testing and use-case scenarios.
 4. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload:
    `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In Victor's real settings,
@@ -54,14 +55,17 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 1. **Always-on (now).** See the spec. Later idea riding the same synced
    store: file sharing (a capped shared folder). vitoserver stays parked
    (Victor: do not bring it back for now).
-   - **For PR 3 (from the PR 1 final review):** persist the last seen chain
-     head per pin (rollback protection: a host could serve an older valid
-     prefix); rate-limit pre-auth chain sends (an unauthenticated peer can
-     re-fetch up to 512 KiB repeatedly); move error-to-request matching off
-     FIFO (errors carry no correlation id); a live grant/revoke does not
-     re-broadcast the roster, so role badges lag until the next join.
-   - README 'How safe is this?': once standby ships, say the active host and
-     its standby can read and keep chat.
+   - The PR 1 review items (rollback pin, pre-auth chain budget, error refs,
+     roster on grant) and the README standby line are tasks in the PR 3 plan.
+   - **PR 3 decisions (Victor, 2026-10-22):** the password never travels
+     (scrypt key + HMAC login; plain passwords accepted from v0.6 clients for
+     one release); friend hosts node-share their PC on Tailscale, and the
+     standby must be reachable by at least half the clients.
+   - **PR 2 leftovers (low, from the fix re-reviews):** lines evicted during a
+     rewrite are written back to the file and trimmed at the next start; the
+     `gen` check in a rewrite is dead code; the rewrite swap fsyncs under the
+     store lock (milliseconds of chat stall); untested: eviction or Close
+     during a rewrite, Compact skipping while a rewrite runs.
    - **No UI yet** for ban, grant or host changes; the protocol and server
      enforce them (`chain_append`). PR 3 adds Allow hosting / Stop hosting /
      Move up; ban/grant UI is still to be placed.
@@ -75,9 +79,21 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
      as torn; missing tests for 0600 mode, mutation isolation, the sync/close
      rollback branches, a replayed host proof, and an `auth_ok.server_id`
      mismatch.
-2. **Webcam.** Same pipeline as screen share (govpx VP8), camera source,
-   call-bar toggle. Camera capture per OS is new work.
-3. **Friends adjustments** (designed in chat 2026-10-19, not yet specced):
+2. **Webcam + call view.** Same pipeline as screen share (govpx VP8), camera
+   source, call-bar toggle. Camera capture per OS is new work. Victor
+   (2026-10-22): clicking the voice channel you are in opens a Discord-style
+   call view with participant tiles (speaking glow, mute, webcam or avatar,
+   LIVE streams); today that click does nothing.
+3. **Signed membership + connection modes** (Victor, 2026-10-22; brainstorm
+   first). Invite tree on the chain: the inviter signs, the invitee co-signs,
+   so there is an audit trail of who brought whom; ban or review a whole
+   branch; invite as a role; k-of-n admin signatures for host and role
+   changes. Connection modes: group policy in the chain (`tailnet`, `public`,
+   `lan`), per-host reachability; tailnet mode embeds Tailscale via tsnet
+   (pure Go) on a group tailnet (Tailscale account or Headscale) so Victor's
+   private tailnet stays separate; public mode (port forward or VPS) requires
+   `wss://` and invites. Author-signed chat (Plan C) comes after.
+4. **Friends adjustments** (designed in chat 2026-10-19, not yet specced):
    - Volume: per-person volume (right-click a person, 0 to 200%, saved per
      fingerprint), a mic gain settings row (0 to 200%), and a soft limiter.
      Friends were too quiet in both directions. Volume for a shared stream
@@ -97,7 +113,7 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
      (`pongTimeout` in `client/rtt.go`, recorded by `check`). Victor saw 1400 ms
      spikes with fine voice. Check Tailscale DERP versus direct
      (`tailscale ping`, `tailscale status`, `tailscale netcheck`).
-4. **B.3: icon editor.** In-app pixel-art editor for a server icon.
+5. **B.3: icon editor.** In-app pixel-art editor for a server icon.
 
 ## Open checklists
 
