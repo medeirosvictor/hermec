@@ -52,6 +52,9 @@ type Opts struct {
 	// Warm asks for a warm (paused) session, as a standby's pre-connection or
 	// a host link.
 	Warm bool
+	// MinChainSeq is the lowest chain head Seq the host may present; a lower
+	// head is a rollback and fails with bad_chain. 0 accepts any chain.
+	MinChainSeq uint64
 }
 
 // Result is what a successful handshake yields.
@@ -110,7 +113,7 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 	// answers host_proof_req.
 	env, err := readHS(ws)
 	if err != nil {
-		return nil, fmt.Errorf("client: read challenge: %w", err)
+		return nil, fmt.Errorf("client: read challenge: %w", closedEarly(err))
 	}
 	if env.Type != proto.TypeChallenge {
 		return nil, fmt.Errorf("client: expected challenge, got %q", env.Type)
@@ -136,6 +139,9 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 	for frames := 0; ; frames++ {
 		env, err = readHS(ws)
 		if err != nil {
+			if frames == 0 {
+				err = closedEarly(err)
+			}
 			return nil, fmt.Errorf("client: read chain: %w", err)
 		}
 		if env.V != proto.Version {
@@ -186,7 +192,7 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 	if env.Type != proto.TypeHostProof || json.Unmarshal(env.Data, &hp) != nil {
 		return nil, fmt.Errorf("client: %w", badChain("expected host_proof, got %q", env.Type))
 	}
-	verified, err := verifyHost(entries, o.Pin, hp, clientNonce, ch.Nonce)
+	verified, err := verifyHost(entries, o, hp, clientNonce, ch.Nonce)
 	if err != nil {
 		return nil, fmt.Errorf("client: %w", err)
 	}
@@ -231,6 +237,17 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 	default:
 		return nil, fmt.Errorf("client: unexpected %q during auth", env.Type)
 	}
+}
+
+// closedEarly maps a connection the host closed before sending any chain frame
+// to server_busy: that is how the pre-auth chain budget refuses. It is
+// retryable, so callers do not mistake the host for dead. Other errors pass.
+func closedEarly(err error) error {
+	var ce *websocket.CloseError
+	if errors.As(err, &ce) {
+		return &ServerError{Code: "server_busy", Message: "server busy"}
+	}
+	return err
 }
 
 func errOutdated() *ServerError {
@@ -281,16 +298,16 @@ func DecodeEntries(raws []json.RawMessage) ([]chain.Entry, error) {
 }
 
 // verifyHost checks everything the host presented before the client sends
-// its password: the chain verifies and matches pin (if any), the proving key
+// its password: the chain verifies and matches o.Pin (if any), is not older than o.MinChainSeq, the proving key
 // is on the chain's host list, and the proof signature is valid for these
 // nonces. It returns the verified chain.
-func verifyHost(entries []chain.Entry, pin string, hp proto.HostProof, clientNonce, serverNonce []byte) (*chain.Chain, error) {
+func verifyHost(entries []chain.Entry, o Opts, hp proto.HostProof, clientNonce, serverNonce []byte) (*chain.Chain, error) {
 	if len(entries) == 0 {
 		return nil, badChain("the host sent an empty chain")
 	}
 	// The genesis hash is the server ID: compare it to the pin first, so a
 	// different server is reported as such rather than as a broken chain.
-	if pin != "" && chain.IDOf(entries[0]).String() != pin {
+	if o.Pin != "" && chain.IDOf(entries[0]).String() != o.Pin {
 		return nil, &ServerError{Code: proto.CodeServerIDMismatch, Message: "this is not the server you saved"}
 	}
 	ch, err := chain.FromEntries(entries)
@@ -299,6 +316,9 @@ func verifyHost(entries []chain.Entry, pin string, hp proto.HostProof, clientNon
 			return nil, badChain("%v", err)
 		}
 		return nil, badChain("chain rejected")
+	}
+	if ch.Head().Seq < o.MinChainSeq {
+		return nil, badChain("host served an older chain")
 	}
 	id := ch.ID()
 	if len(hp.PubKey) != ed25519.PublicKeySize {

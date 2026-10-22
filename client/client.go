@@ -39,7 +39,12 @@ type Event struct {
 	Roster   *proto.Roster  // full member list, re-sent on every connect/disconnect
 	Chain    *chain.Entry   // a new entry, already applied to Client.Chain()
 	History  *proto.History // a page of stored chat history
-	Err      error
+	Hosts    *proto.Hosts   // the active host and the standby
+	Move     *proto.Move    // the host asks us to reconnect elsewhere
+	// ActiveLost is true once, when heartbeats stopped (or the connection
+	// dropped after they began). It is the cue to ask the standby to take over.
+	ActiveLost bool
+	Err        error
 }
 
 // ServerError is an error message sent by the server.
@@ -80,6 +85,11 @@ type Client struct {
 	waiters []*joinWaiter
 	closed  bool
 	call    *call // active voice call, if any
+
+	warm      atomic.Bool   // paused session until a takeover promotes it
+	lastHB    atomic.Int64  // clock time of the newest hb in unix nanoseconds; 0 before the first
+	lostFired atomic.Bool   // ActiveLost was emitted
+	grace     time.Duration // heartbeatGrace at Dial time
 
 	loopbackICE atomic.Bool
 	audioOnly   atomic.Bool
@@ -193,6 +203,8 @@ func DialWith(ctx context.Context, url string, id *identity.Identity, name, pass
 		rtt:         newRTTTracker(),
 		started:     time.Now(),
 	}
+	c.warm.Store(o.Warm)
+	c.grace = heartbeatGrace
 	// Only the pong handler is set: the default ping handler keeps answering
 	// the server's keepalive pings.
 	ws.SetPongHandler(func(p string) error {
@@ -200,6 +212,7 @@ func DialWith(ctx context.Context, url string, id *identity.Identity, name, pass
 		return nil
 	})
 	go c.readLoop()
+	go c.watchdog(time.Now)
 	c.startPinger(pingInterval, pongTimeout, time.Now)
 	return c, nil
 }
@@ -384,6 +397,7 @@ func (c *Client) readLoop() {
 			case <-c.done: // deliberate Close: no error event
 			default:
 				exitErr = fmt.Errorf("client: connection lost: %w", err)
+				c.connLost()
 				c.emit(Event{Err: exitErr})
 			}
 			return
@@ -430,7 +444,14 @@ func (c *Client) readLoop() {
 				c.emit(Event{Err: fmt.Errorf("client: bad roster: %w", err)})
 				continue
 			}
+			c.promoted()
 			c.emit(Event{Roster: &r})
+		case proto.TypeHosts:
+			c.onHosts(env)
+		case proto.TypeMove:
+			c.onMove(env)
+		case proto.TypeHeartbeat:
+			c.lastHB.Store(time.Now().UnixNano())
 		case proto.TypeChain:
 			if !c.onChain(env) {
 				return
