@@ -28,6 +28,11 @@ type Link struct {
 	lastBeat atomic.Int64 // unix nanoseconds of the newest frame from the active host
 	standby  atomic.Bool
 
+	evMu     sync.Mutex
+	hosts    *proto.Hosts  // the newest hosts frame from the active host
+	roleCh   chan struct{} // signaled (cap 1) when link_role arrives
+	handover chan struct{} // signaled (cap 1) when the active host hands over
+
 	done chan struct{}
 	once sync.Once
 	mu   sync.Mutex
@@ -62,18 +67,25 @@ func dialHost(ctx context.Context, url string, s *Server) (*websocket.Conn, erro
 // active host sends. A host that is not active refuses with not_active, which
 // surfaces from Run as an error.
 func DialLink(ctx context.Context, url string, s *Server) (*Link, error) {
+	return dialLinkOpts(ctx, url, s, false)
+}
+
+// dialLinkOpts is DialLink; with full set it asks for the active host's whole
+// history, not just the lines after our newest (a merged host holds lines the
+// active host older than that lacks to us).
+func dialLinkOpts(ctx context.Context, url string, s *Server, full bool) (*Link, error) {
 	ws, err := dialHost(ctx, url, s)
 	if err != nil {
 		return nil, err
 	}
-	l := &Link{s: s, ws: ws, done: make(chan struct{})}
+	l := &Link{s: s, ws: ws, done: make(chan struct{}), roleCh: make(chan struct{}, 1), handover: make(chan struct{}, 1)}
 	l.lastBeat.Store(time.Now().UnixNano())
 	hello := proto.LinkHello{
 		ChainSeq: s.chain.Head().Seq,
 		Addrs:    s.cfg.Advertise,
 		Name:     s.cfg.HostName,
 	}
-	if s.hist != nil {
+	if s.hist != nil && !full {
 		hello.HistoryLastTS, hello.HistoryLastID = s.hist.Last()
 	}
 	if err := l.write(proto.TypeLinkHello, hello); err != nil {
@@ -195,7 +207,12 @@ func (l *Link) ActiveAlive(now time.Time) bool {
 // ends, and heartbeats toward it. A local chain append that fails as a
 // conflict or a bad chain ends the link with that error.
 func (l *Link) Run() {
-	go l.beat()
+	beatDone := make(chan struct{})
+	go func() {
+		defer close(beatDone)
+		l.beat()
+	}()
+	defer func() { <-beatDone }() // finish closes done, which ends beat
 	gotKey := false
 	for {
 		_, raw, err := l.ws.ReadMessage()
@@ -245,12 +262,48 @@ func (l *Link) Run() {
 			var r proto.LinkRole
 			if json.Unmarshal(env.Data, &r) == nil {
 				l.standby.Store(r.Standby)
+				signal(l.roleCh)
 			}
+		case proto.TypeHosts:
+			var h proto.Hosts
+			if json.Unmarshal(env.Data, &h) == nil {
+				l.evMu.Lock()
+				l.hosts = &h
+				l.evMu.Unlock()
+				l.s.SetHosts(h)
+			}
+		case proto.TypeHandover:
+			signal(l.handover)
 		case proto.TypeError:
 			l.finish(remoteError(env))
 			return
 		}
 	}
+}
+
+// signal wakes a waiter on ch without blocking; a signal already pending is
+// enough.
+func signal(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+// RoleChanged receives a value whenever the active host sent a link_role.
+func (l *Link) RoleChanged() <-chan struct{} { return l.roleCh }
+
+// Handover receives a value when the active host hands its role to this host.
+func (l *Link) Handover() <-chan struct{} { return l.handover }
+
+// Hosts is the newest host list the active host sent, if any.
+func (l *Link) Hosts() (proto.Hosts, bool) {
+	l.evMu.Lock()
+	defer l.evMu.Unlock()
+	if l.hosts == nil {
+		return proto.Hosts{}, false
+	}
+	return *l.hosts, true
 }
 
 // beat sends hb to the active host every heartbeatInterval until the link ends.

@@ -148,6 +148,11 @@ func (s *Server) updateStandbyLocked() []*conn {
 	s.standby.Store(next)
 	if raw, err := proto.Encode(proto.TypeHosts, proto.Hosts{Active: s.selfInfo(), Standby: next}); err == nil {
 		dead = append(dead, s.broadcastAuthedLocked(raw)...)
+		for c := range s.links {
+			if !c.enqueue(raw) {
+				dead = append(dead, c)
+			}
+		}
 	}
 	return dead
 }
@@ -223,6 +228,9 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 	var dead []*conn
 	if ok {
 		dead = s.updateStandbyLocked()
+		if !c.sendMsg(proto.TypeHosts, proto.Hosts{Active: s.selfInfo(), Standby: s.standby.Load()}) {
+			dead = append(dead, c)
+		}
 	} else {
 		dead = append(dead, c)
 	}
@@ -344,6 +352,8 @@ func (c *conn) routeLink(env proto.Envelope) {
 		c.srv.chMu.Lock()
 		c.link.lastBeat = c.srv.clock()
 		c.srv.chMu.Unlock()
+	case proto.TypeLinkSync:
+		c.handleLinkSyncIn(env)
 	case proto.TypeLinkProbe:
 		c.handleLinkProbe()
 	default:
@@ -360,21 +370,15 @@ func (c *conn) handleLinkProbe() {
 		return
 	}
 	self := s.selfInfo()
-	s.chMu.Lock()
-	voice := 0
-	for _, set := range s.voice {
-		voice += len(set)
-	}
-	reply := proto.LinkProbeReply{
+	voice, clients := s.load()
+	c.sendMsg(proto.TypeLinkProbeReply, proto.LinkProbeReply{
 		Active:       s.Mode() == ModeActive,
 		ServerID:     s.chain.ID().String(),
 		VoiceMembers: voice,
-		Clients:      len(s.authed),
+		Clients:      clients,
 		Priority:     self.Priority,
 		Self:         self,
-	}
-	s.chMu.Unlock()
-	c.sendMsg(proto.TypeLinkProbeReply, reply)
+	})
 }
 
 // handleReach records a client's report on whether it can reach a host and

@@ -258,6 +258,11 @@ var truncateFile = os.Truncate
 func (c *Chain) SetPath(path string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.setPathLocked(path)
+}
+
+// setPathLocked is SetPath with c.mu held.
+func (c *Chain) setPathLocked(path string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
