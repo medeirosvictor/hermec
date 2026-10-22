@@ -375,6 +375,7 @@ func (g *game) stopHosted() {
 		return
 	}
 	g.endVoiceFor(hostedKey)
+	g.dropWarm(s)
 	if s.c != nil {
 		_ = s.c.Close()
 		s.c = nil

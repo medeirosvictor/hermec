@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -243,5 +244,92 @@ func TestDialTriesKnownHosts(t *testing.T) {
 	pumpUntil(t, g, connected(s))
 	if s.failed {
 		t.Fatal("failed despite a live known host")
+	}
+}
+
+// warmOn dials a warm client to url and parks it on s as its warm session.
+func warmOn(t *testing.T, g *game, s *session, url string) *client.Client {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	w, err := client.DialWith(ctx, url, g.id, "me", "", client.DialOpts{Warm: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Close() })
+	s.warm = w
+	return w
+}
+
+func warmClosed(w *client.Client) bool {
+	return errors.Is(w.ReportReach("x", true), client.ErrClosed)
+}
+
+func TestWarmClosedOnDisconnectQuitAndStop(t *testing.T) {
+	t.Run("disconnect", func(t *testing.T) {
+		g := newTestGame(t)
+		_, url := startServer(t, "127.0.0.1:0")
+		s := g.openSession(url, "me")
+		pumpUntil(t, g, connected(s))
+		w := warmOn(t, g, s, url)
+		g.disconnect(s.key)
+		if !warmClosed(w) {
+			t.Fatal("warm client left open by disconnect")
+		}
+	})
+	t.Run("quit", func(t *testing.T) {
+		g := newTestGame(t)
+		_, url := startServer(t, "127.0.0.1:0")
+		s := g.openSession(url, "me")
+		pumpUntil(t, g, connected(s))
+		w := warmOn(t, g, s, url)
+		g.closeSessions()
+		if !warmClosed(w) || s.warm != nil {
+			t.Fatal("warm client left open by quit")
+		}
+	})
+	t.Run("hosted stop", func(t *testing.T) {
+		g, path := hostedTestGame(t, "127.0.0.1:0", true)
+		g.bootHosted(path)
+		s := g.sess[hostedKey]
+		pumpUntil(t, g, connected(s))
+		w := warmOn(t, g, s, g.hosted.url)
+		g.stopHosted()
+		if s.warm != nil || !warmClosed(w) {
+			t.Fatal("warm client left open by stopHosted")
+		}
+	})
+}
+
+// duplexNop is fake call devices that really carry (silent) opus.
+type duplexNop struct {
+	nopSource
+	nopSink
+	fakeCloser
+}
+
+// The active host only dropped us and answers the redial while a takeover is
+// pending: the call rejoins there with the same mute state, not ended.
+func TestRedialWinKeepsCall(t *testing.T) {
+	g, _, s := pairGame(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := s.c.JoinVoice(ctx, "voice", nopSource{}, nopSink{}); err != nil {
+		t.Fatalf("JoinVoice: %v", err)
+	}
+	d := &duplexNop{}
+	g.vc = voiceCall{start: time.Now(), src: d, sink: d, muted: true}
+	g.callKey = s.key
+	s.st.SetInCall("voice")
+	old := s.c
+	_ = old.Close() // only our connection drops
+	pumpVoiceUntil(t, g, func() bool {
+		return s.c != nil && s.c != old && !g.vc.busy && s.c.VoiceChannel() == "voice"
+	})
+	if g.callKey != s.key || s.st.InCall != "voice" || !g.vc.muted {
+		t.Fatalf("call lost: callKey %q InCall %q muted %v", g.callKey, s.st.InCall, g.vc.muted)
+	}
+	if s.st.HostedBy != "a" {
+		t.Fatalf("hosted by %q, want a", s.st.HostedBy)
 	}
 }

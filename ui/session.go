@@ -26,6 +26,7 @@ type session struct {
 	failed         bool      // the last dial failed; cleared by a retry or a success
 	dialGen        int       // generation of the latest dial; older results are stale
 	lastErr        string    // that dial's error, for the tooltip and the failed pane
+	activeOnly     bool      // the next dial tries only the active host (after active_alive)
 
 	// Host failover (hosts.go). The host serving the session is st.HostedBy.
 	warm        *client.Client // warm session to the standby; nil = none
@@ -360,12 +361,20 @@ func (g *game) applyDial(r dialResult) {
 		return
 	}
 	g.logf("connected to %s, channels %v", s.url, r.c.Channels())
+	carried := ""
 	if s.switching { // the active host answered before the standby could take over
 		s.switching = false
 		g.dropWarm(s)
-		g.endVoiceFor(s.key) // its call died with the connection
-		if s.c != nil {
-			_ = s.c.Close()
+		if old := s.c; old != nil {
+			// Keep the call: it rejoins on the host that answered, same mute.
+			g.endOldMedia(s, old)
+			s.c = r.c
+			ch := s.st.InCall
+			if g.carryCall(s, r.c, old) {
+				carried = ch
+			} else {
+				_ = old.Close()
+			}
 		}
 	}
 	s.c = r.c
@@ -376,8 +385,11 @@ func (g *game) applyDial(r dialResult) {
 	s.failed, s.lastErr = false, ""
 	s.attempt = 0
 	s.retryAt = time.Time{}
-	g.bumpChainSeq(s)
+	g.noteChainSeq(s) // onConnected saves
 	g.onConnected(s)
+	if carried != "" {
+		s.st.SetInCall(carried) // SetConnected cleared it; the call moves with the dial
+	}
 }
 
 func (g *game) applyJoin(r joinResult) {

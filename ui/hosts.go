@@ -76,6 +76,8 @@ func (g *game) dialCreds(s *session) (pass string, o client.DialOpts) {
 // dialTargets are the URLs to try for s, in order: the active host as last
 // told, the saved URL, then the known hosts.
 func (g *game) dialTargets(s *session) []string {
+	activeOnly := s.activeOnly
+	s.activeOnly = false
 	if s.key == hostedKey {
 		return []string{s.url}
 	}
@@ -89,6 +91,9 @@ func (g *game) dialTargets(s *session) []string {
 	}
 	add(s.hint...)
 	add(s.url)
+	if activeOnly { // the redial after active_alive must not reach the standby
+		return out
+	}
 	if e, ok := g.entryFor(s.key); ok {
 		add(e.Hosts...)
 	}
@@ -154,17 +159,27 @@ func (g *game) persist() {
 // bumpChainSeq records the chain head s's client has seen, so a later dial
 // refuses a host with an older chain.
 func (g *game) bumpChainSeq(s *session) {
+	if g.noteChainSeq(s) {
+		g.persist()
+	}
+}
+
+// noteChainSeq is bumpChainSeq without the write; it reports whether the
+// saved seq rose. For callers that save right after.
+func (g *game) noteChainSeq(s *session) bool {
 	if s.c == nil || s.key == hostedKey {
-		return
+		return false
 	}
 	e, ok := g.entryFor(s.key)
 	if !ok {
-		return
+		return false
 	}
-	if seq := s.c.ChainSeq(); seq > e.ChainSeq {
-		g.servers = state.BumpChainSeq(g.servers, s.key, seq)
-		g.persist()
+	seq := s.c.ChainSeq()
+	if seq <= e.ChainSeq {
+		return false
 	}
+	g.servers = state.BumpChainSeq(g.servers, s.key, seq)
+	return true
 }
 
 // onHosts handles a hosts frame: it remembers the host addresses, names the
@@ -234,8 +249,10 @@ func (g *game) drainWarm(s *session) {
 				s.warmRetryAt = time.Now().Add(state.JitteredBackoff(s.warmFails, nil))
 				return
 			}
-			if !s.warm.Warm() {
+			if !s.warm.Warm() { // promoted by someone else; back off like a loss
 				g.dropWarm(s)
+				s.warmFails++
+				s.warmRetryAt = time.Now().Add(state.JitteredBackoff(s.warmFails, nil))
 				return
 			}
 		default:
@@ -317,6 +334,7 @@ func (g *game) applyHost(r hostResult) {
 		if live && s.switching && s.c == r.old && !s.dialing {
 			g.logf("active host of %s may be alive; redialing", s.url)
 			s.attempt = 0
+			s.activeOnly = true
 			g.dial(s) // applyDial ends the takeover if this wins
 		}
 	case hostMove:
@@ -385,10 +403,11 @@ func (g *game) failover(s *session) {
 	g.logf("host of %s lost; taking over on the standby", s.url)
 	s.switching = true
 	old, w, hc := s.c, s.warm, g.hostChan()
+	retryFor := takeoverRetryFor // read once, here
 	go func(s *session, key string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
-		deadline := time.Now().Add(takeoverRetryFor)
+		deadline := time.Now().Add(retryFor)
 		told := false
 		for {
 			err := w.Takeover(ctx)
@@ -449,15 +468,8 @@ func (g *game) install(s *session, nu, old *client.Client) {
 	s.failed, s.lastErr = false, ""
 	s.attempt = 0
 	s.retryAt = time.Time{}
-	if g.share.on && g.share.c == old {
-		// The share does not carry over: end it cleanly, the user starts it again.
-		g.stopShare()
-		s.st.Status = "screen share ended: the host changed"
-	}
-	if g.watch.fp != "" && !g.watch.self && g.callKey == s.key {
-		g.watch = watchState{}
-		g.resetVideo()
-	}
+	s.st.HostedBy = "" // the new host's hosts frame names it
+	g.endOldMedia(s, old)
 	if !g.carryCall(s, nu, old) {
 		_ = old.Close()
 	}
@@ -469,8 +481,22 @@ func (g *game) install(s *session, nu, old *client.Client) {
 			g.joinChannel(s, c)
 		}
 	}
-	g.bumpChainSeq(s)
-	g.saveServer(s, ch)
+	g.noteChainSeq(s)
+	g.saveServer(s, ch) // one write for the seq and the touch
+}
+
+// endOldMedia ends what does not carry over to a new client: our screen share
+// and a stream we watch.
+func (g *game) endOldMedia(s *session, old *client.Client) {
+	if g.share.on && g.share.c == old {
+		// The share does not carry over: end it cleanly, the user starts it again.
+		g.stopShare()
+		s.st.Status = "screen share ended: the host changed"
+	}
+	if g.watch.fp != "" && !g.watch.self && g.callKey == s.key {
+		g.watch = watchState{}
+		g.resetVideo()
+	}
 }
 
 // carryCall moves the call of s from old to nu in the background and closes

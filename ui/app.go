@@ -345,12 +345,19 @@ func Run(opts Options) error {
 		}
 		closeAll(g.vc.src, g.vc.sink)
 	}
+	g.closeSessions()
+	return err
+}
+
+// closeSessions closes every session's client and warm session.
+func (g *game) closeSessions() {
 	for _, k := range g.sessionKeys() {
-		if c := g.sess[k].c; c != nil {
-			_ = c.Close()
+		s := g.sess[k]
+		g.dropWarm(s)
+		if s.c != nil {
+			_ = s.c.Close()
 		}
 	}
-	return err
 }
 
 func (g *game) Update() error {
