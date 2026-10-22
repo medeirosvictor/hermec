@@ -77,7 +77,9 @@ func (s *Server) markAuthedLocked(c *conn) []*conn {
 		dead = append(dead, c)
 	}
 	// The roster goes to everyone, c included, after c's voice snapshot.
-	return append(dead, s.broadcastAuthedLocked(s.rosterLocked())...)
+	dead = append(dead, s.broadcastAuthedLocked(s.rosterLocked())...)
+	// The share of clients that must reach a host just changed.
+	return append(dead, s.updateStandbyLocked()...)
 }
 
 // voiceStateLocked encodes the current participants of ch. Caller holds chMu.

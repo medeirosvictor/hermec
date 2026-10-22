@@ -114,7 +114,19 @@ func authAs(t *testing.T, url string, id *identity.Identity, password string) (*
 	c := dial(t, url)
 	h := hello(t, c)
 	h.sendAuth(t, c, id, "tester", password)
-	return c, readEnv(t, c)
+	env := readEnv(t, c)
+	if env.Type == proto.TypeAuthOK {
+		expectHosts(t, c)
+	}
+	return c, env
+}
+
+// expectHosts reads the hosts frame a full session gets right after auth_ok.
+func expectHosts(t *testing.T, c *websocket.Conn) {
+	t.Helper()
+	if env := readEnv(t, c); env.Type != proto.TypeHosts {
+		t.Fatalf("after auth_ok: %q, want hosts", env.Type)
+	}
 }
 
 // hs is the state of a version 2 handshake after the host has proven itself.

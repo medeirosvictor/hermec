@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"reflect"
 	"sort"
 	"time"
 
@@ -137,13 +138,12 @@ func (s *Server) updateStandbyLocked() []*conn {
 			dead = append(dead, c)
 		}
 	}
-	cur := s.standby.Load()
-	if (pick == nil && cur == nil) || (pick != nil && cur != nil && pick.Fingerprint == cur.Fingerprint) {
-		return dead
-	}
 	var next *proto.HostInfo
 	if pick != nil {
 		next = &proto.HostInfo{Fingerprint: pick.Fingerprint, Name: pick.Name, Addrs: pick.Addrs, Priority: pick.Priority}
+	}
+	if cur := s.standby.Load(); reflect.DeepEqual(cur, next) {
+		return dead
 	}
 	s.standby.Store(next)
 	if raw, err := proto.Encode(proto.TypeHosts, proto.Hosts{Active: s.selfInfo(), Standby: next}); err == nil {
@@ -162,40 +162,51 @@ func (c *conn) handleLinkHello(env proto.Envelope) {
 		c.sendError(proto.CodeBadRequest, "malformed link_hello")
 		return
 	}
-	st := s.chain.State()
-	if !c.warm || !st.IsHost(c.pub) {
+	if !c.warm {
 		c.sendError(proto.CodeForbidden, "only hosts on the chain may link")
 		return
 	}
-	if s.Mode() != ModeActive {
-		c.sendError(proto.CodeNotActive, "this host is not serving clients")
+	if code, msg := s.registerLink(c, h); code != "" {
+		c.sendError(code, msg)
 		return
 	}
+	s.streamHistory(c, h.HistoryLastTS, h.HistoryLastID)
+}
 
+// registerLink checks that c may link and, if so, makes it a link and queues
+// the chain after h.ChainSeq and the password key. It returns an error code and
+// message on refusal. The checks and the registration share one chainMu hold,
+// so a host_remove cannot slip between them; chainMu is not held while the
+// history is paged.
+func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 	// chainMu first, like joinLive: no entry is appended between the frames
 	// below and the first broadcast this link receives.
 	s.chainMu.Lock()
 	defer s.chainMu.Unlock()
+	st := s.chain.State()
+	if !st.IsHost(c.pub) || st.Banned(c.fingerprint) {
+		return proto.CodeForbidden, "only hosts on the chain may link"
+	}
+	if s.Mode() != ModeActive {
+		return proto.CodeNotActive, "this host is not serving clients"
+	}
 	if h.ChainSeq > s.chain.Head().Seq {
-		c.sendError(proto.CodeBadChain, "your chain is ahead of this host's")
-		return
+		return proto.CodeBadChain, "your chain is ahead of this host's"
 	}
 	frames, err := chainFrames(s.chain.Since(h.ChainSeq))
 	if err != nil {
-		c.sendError(proto.CodeBadRequest, "cannot encode chain")
-		return
+		return proto.CodeBadRequest, "cannot encode chain"
 	}
 	id := s.chain.ID()
 	keyFrame, err := proto.Encode(proto.TypeLinkSync, proto.LinkSync{PasswordKey: s.passwordKey(id[:]), More: true})
 	if err != nil {
-		return
+		return proto.CodeBadRequest, "cannot encode key"
 	}
 
 	s.chMu.Lock()
 	if _, ok := s.warm[c]; !ok {
 		s.chMu.Unlock()
-		c.sendError(proto.CodeNotActive, "this host is not serving clients")
-		return
+		return proto.CodeNotActive, "this host is not serving clients"
 	}
 	// A link counts against neither cap.
 	delete(s.warm, c)
@@ -217,9 +228,7 @@ func (c *conn) handleLinkHello(env proto.Envelope) {
 	}
 	s.chMu.Unlock()
 	dropSlow(dead)
-	if ok {
-		s.streamHistory(c, h.HistoryLastTS, h.HistoryLastID)
-	}
+	return "", ""
 }
 
 // streamHistory sends c the chat lines after (ts, id), paged to fit a frame;
@@ -265,18 +274,27 @@ func encodeLinkSync(msgs []proto.ChatMessage, more bool) ([]byte, int) {
 	return raw, n
 }
 
-// enqueueWait is enqueue that waits (up to writeTimeout) for room in a full
-// buffer, for the bulk history; it reports false if c is closed or stays full.
+// syncHeadroom is how many send slots bulk history leaves free for live
+// frames (hb, chain, chat), which are enqueued without waiting.
+const syncHeadroom = 16
+
+// enqueueWait is enqueue for bulk history: it waits (up to writeTimeout) until
+// the buffer has syncHeadroom slots free, so live frames are not refused; it
+// reports false if c is closed or stays full.
 func (c *conn) enqueueWait(raw []byte) bool {
 	deadline := time.Now().Add(writeTimeout)
 	for {
-		if c.enqueue(raw) {
-			return true
-		}
 		c.sendMu.Lock()
 		closed := c.closed
+		room := len(c.send) <= cap(c.send)-syncHeadroom
 		c.sendMu.Unlock()
-		if closed || time.Now().After(deadline) {
+		if closed {
+			return false
+		}
+		if room && c.enqueue(raw) {
+			return true
+		}
+		if time.Now().After(deadline) {
 			return false
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -302,13 +320,14 @@ func (s *Server) forwardChatLocked(msg proto.ChatMessage) []*conn {
 	return dead
 }
 
-// dropRemovedLinks closes the links of hosts that are no longer on the chain.
+// dropRemovedLinks closes the links of hosts that are no longer on the chain
+// or are banned.
 func (s *Server) dropRemovedLinks() {
 	st := s.chain.State()
 	s.chMu.Lock()
 	var hit []*conn
 	for c := range s.links {
-		if !st.IsHost(c.pub) {
+		if !st.IsHost(c.pub) || st.Banned(c.fingerprint) {
 			hit = append(hit, c)
 		}
 	}

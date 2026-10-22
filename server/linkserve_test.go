@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -333,4 +335,90 @@ func TestHostRemoveDropsLink(t *testing.T) {
 		}
 	}
 	waitFor(t, "link gone", func() bool { return len(s.Links()) == 0 })
+}
+
+// A long history takes several frames; live chats and heartbeats flowing
+// meanwhile must not get the link dropped as slow, and every line arrives.
+func TestLinkSyncMultiPageWithLiveTraffic(t *testing.T) {
+	old := heartbeatInterval
+	heartbeatInterval = 10 * time.Millisecond
+	defer func() { heartbeatInterval = old }()
+	c, a, b := twoHostChain(t)
+	s, url := startLinkServer(t, c, a, "pw")
+	cl := fullClient(t, url)
+	text := strings.Repeat("x", 4000)
+	want := map[string]bool{}
+	base := time.Now().Add(-time.Hour)
+	for i := 0; i < 120; i++ {
+		m := proto.ChatMessage{ID: fmt.Sprintf("%032d", i), Channel: "general", Text: text, TS: base.Add(time.Duration(i) * time.Second)}
+		if err := s.hist.Add(m); err != nil {
+			t.Fatal(err)
+		}
+		want[m.ID] = true
+	}
+	lk := linkUp(t, url, b, proto.LinkHello{Name: "b"})
+	for i := 0; i < 5; i++ {
+		sendEnv(t, cl, proto.TypeChatSend, proto.ChatSend{Channel: "general", Text: "live"})
+	}
+	got := map[string]bool{}
+	live := 0
+	for len(got) < len(want) || live < 5 {
+		env := readType(t, lk, proto.TypeLinkSync)
+		var m proto.LinkSync
+		_ = json.Unmarshal(env.Data, &m)
+		for _, msg := range m.Messages {
+			got[msg.ID] = true
+			if msg.Text == "live" {
+				live++
+			}
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	for id := range want {
+		if !got[id] {
+			t.Fatalf("history line %s never arrived", id)
+		}
+	}
+	if len(s.Links()) != 1 {
+		t.Fatal("link was dropped")
+	}
+}
+
+func TestBanClosesLink(t *testing.T) {
+	c, a, b := twoHostChain(t)
+	s, url := startLinkServer(t, c, a, "pw")
+	lk := linkUp(t, url, b, proto.LinkHello{Name: "b"})
+	waitFor(t, "link", func() bool { return len(s.Links()) == 1 })
+	f, _ := authAs(t, url, a, "pw")
+	head := c.Head()
+	e, err := chain.NewEntry(a, &head, chain.OpBan, chain.FPBody{Fingerprint: identity.Fingerprint(b.PublicKey())}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendAppend(t, f, e)
+	_ = lk.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		if _, _, err := lk.ReadMessage(); err != nil {
+			break
+		}
+	}
+	waitFor(t, "link gone", func() bool { return len(s.Links()) == 0 })
+}
+
+// The share of clients that must reach a host changes as clients come and go.
+func TestStandbyRecomputedWhenClientsJoin(t *testing.T) {
+	b, cc := mustID(t), mustID(t)
+	c, a := hostChain(t, b, cc)
+	s, url := startLinkServer(t, c, a, "pw")
+	fpB, fpC := identity.Fingerprint(b.PublicKey()), identity.Fingerprint(cc.PublicKey())
+	first := fullClient(t, url)
+	linkUp(t, url, b, proto.LinkHello{Name: "b"})
+	linkUp(t, url, cc, proto.LinkHello{Name: "c"})
+	waitFor(t, "links", func() bool { return len(s.Links()) == 2 })
+	sendEnv(t, first, proto.TypeReach, proto.Reach{Fingerprint: fpB, OK: false})
+	waitFor(t, "standby C", func() bool { p := s.PickStandby(); return p != nil && p.Fingerprint == fpC })
+	hostsUntil(t, first, func(h proto.Hosts) bool { return h.Standby != nil && h.Standby.Fingerprint == fpC })
+	fullClient(t, url)
+	fullClient(t, url)
+	hostsUntil(t, first, func(h proto.Hosts) bool { return h.Standby != nil && h.Standby.Fingerprint == fpB })
 }

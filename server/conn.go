@@ -434,6 +434,9 @@ func (c *conn) authenticate() error {
 		ServerName:  c.srv.cfg.ServerName,
 		ServerID:    id.String(),
 	})
+	if !auth.Warm {
+		c.sendMsg(proto.TypeHosts, c.srv.hostsInfo())
+	}
 	// Registered after auth_ok is queued so voice_state never precedes it.
 	// Under chainMu, so no append can broadcast in between: entries added
 	// since the handshake sent the chain are caught up here, and every later
@@ -447,10 +450,6 @@ func (c *conn) authenticate() error {
 		c.sendError(proto.CodeBanned, "you are banned from this server")
 		return errAuthFailed
 	}
-	// A client learns the standby at once; with none picked there is nothing
-	// to tell, and one is sent when it appears.
-	if h := c.srv.hostsInfo(); !c.warm && h.Standby != nil {
-		c.sendMsg(proto.TypeHosts, h)
-	}
+
 	return nil
 }

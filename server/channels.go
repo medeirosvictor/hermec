@@ -303,6 +303,7 @@ func (s *Server) leaveAll(c *conn) {
 	if _, was := s.authed[c]; was {
 		delete(s.authed, c)
 		dead = append(dead, s.broadcastAuthedLocked(s.rosterLocked())...)
+		dead = append(dead, s.updateStandbyLocked()...)
 	}
 	if vch := s.removeVoiceLocked(c); vch != "" {
 		dead = append(dead, s.broadcastVoiceLocked(vch)...)
