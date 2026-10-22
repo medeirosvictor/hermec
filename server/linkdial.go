@@ -126,31 +126,16 @@ func ProbeHost(ctx context.Context, url string, s *Server) (proto.LinkProbeReply
 	if err := ws.WriteMessage(websocket.TextMessage, raw); err != nil {
 		return reply, fmt.Errorf("server: probe: %w", err)
 	}
-	for {
-		_, raw, err := ws.ReadMessage()
-		if err != nil {
-			return reply, fmt.Errorf("server: probe: %w", err)
+	err = readFrames(ws, "probe", func(env proto.Envelope) (bool, error) {
+		if env.Type != proto.TypeLinkProbeReply {
+			return false, nil
 		}
-		env, err := proto.Decode(raw)
-		if err != nil {
-			continue
+		if err := json.Unmarshal(env.Data, &reply); err != nil {
+			return true, fmt.Errorf("server: probe: bad reply: %w", err)
 		}
-		switch env.Type {
-		case proto.TypeLinkProbeReply:
-			if err := json.Unmarshal(env.Data, &reply); err != nil {
-				return reply, fmt.Errorf("server: probe: bad reply: %w", err)
-			}
-			return reply, nil
-		case proto.TypeError:
-			return reply, remoteError(env)
-		}
-	}
-}
-
-func remoteError(env proto.Envelope) error {
-	var em proto.ErrorMsg
-	_ = json.Unmarshal(env.Data, &em)
-	return &hshake.ServerError{Code: em.Code, Message: em.Message}
+		return true, nil
+	})
+	return reply, err
 }
 
 func (l *Link) write(typ string, payload any) error {
@@ -214,42 +199,23 @@ func (l *Link) Run() {
 	}()
 	defer func() { <-beatDone }() // finish closes done, which ends beat
 	gotKey := false
-	for {
-		_, raw, err := l.ws.ReadMessage()
-		if err != nil {
-			l.finish(fmt.Errorf("server: link: %w", err))
-			return
-		}
-		env, err := proto.Decode(raw)
-		if err != nil {
-			continue
-		}
+	l.finish(readFrames(l.ws, "link", func(env proto.Envelope) (bool, error) {
 		switch env.Type {
 		case proto.TypeHeartbeat:
 			l.lastBeat.Store(time.Now().UnixNano())
 		case proto.TypeChain:
-			var cf proto.ChainFrame
-			if json.Unmarshal(env.Data, &cf) != nil {
-				l.finish(errors.New("server: link: malformed chain frame"))
-				return
-			}
-			es, err := hshake.DecodeEntries(cf.Entries)
-			if err == nil {
-				for _, e := range es {
-					if err = l.s.applyLinkEntry(e); err != nil {
-						break
-					}
+			es, err := decodeChainFrame(env)
+			for _, e := range es {
+				if err != nil {
+					break
 				}
+				err = l.s.applyLinkEntry(e)
 			}
-			if err != nil {
-				l.finish(err)
-				return
-			}
+			return false, err
 		case proto.TypeLinkSync:
 			var ls proto.LinkSync
 			if json.Unmarshal(env.Data, &ls) != nil {
-				l.finish(errors.New("server: link: malformed link_sync"))
-				return
+				return false, errors.New("server: link: malformed link_sync")
 			}
 			// The first link_sync carries the password key, empty when the
 			// active host has none.
@@ -260,25 +226,27 @@ func (l *Link) Run() {
 			l.s.mergeLinkMessages(ls.Messages)
 		case proto.TypeLinkRole:
 			var r proto.LinkRole
-			if json.Unmarshal(env.Data, &r) == nil {
-				l.standby.Store(r.Standby)
-				signal(l.roleCh)
+			if json.Unmarshal(env.Data, &r) != nil {
+				l.s.logf("server: link: malformed link_role ignored")
+				break
 			}
+			l.standby.Store(r.Standby)
+			signal(l.roleCh)
 		case proto.TypeHosts:
 			var h proto.Hosts
-			if json.Unmarshal(env.Data, &h) == nil {
-				l.evMu.Lock()
-				l.hosts = &h
-				l.evMu.Unlock()
-				l.s.SetHosts(h)
+			if json.Unmarshal(env.Data, &h) != nil {
+				l.s.logf("server: link: malformed hosts ignored")
+				break
 			}
+			l.evMu.Lock()
+			l.hosts = &h
+			l.evMu.Unlock()
+			l.s.SetHosts(h)
 		case proto.TypeHandover:
 			signal(l.handover)
-		case proto.TypeError:
-			l.finish(remoteError(env))
-			return
 		}
-	}
+		return false, nil
+	}))
 }
 
 // signal wakes a waiter on ch without blocking; a signal already pending is
@@ -346,10 +314,7 @@ func (s *Server) applyLinkEntry(e chain.Entry) error {
 	if err := s.chain.Append(e); err != nil {
 		return fmt.Errorf("server: link: entry %d: %w", e.Seq, err)
 	}
-	s.refreshGroup()
-	if s.applyHistoryLimits() {
-		s.trimHistory()
-	}
+	s.afterChainChange()
 	s.chMu.Lock()
 	dead := s.broadcastChainLocked(frames[0])
 	s.chMu.Unlock()

@@ -397,12 +397,7 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 		c.sendErrorRef(proto.CodeBadRequest, "entry rejected", m.Ref)
 		return
 	}
-	s.refreshGroup()
-	if s.applyHistoryLimits() {
-		// New caps take effect at once, not at the next hourly trim. Done
-		// before the broadcast, outside chMu (History is a leaf lock).
-		s.trimHistory()
-	}
+	s.afterChainChange()
 	s.chMu.Lock()
 	dead := s.broadcastChainLocked(frames[0])
 	s.chMu.Unlock()
@@ -424,6 +419,16 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 		}
 	}
 	s.chainMu.Unlock()
+}
+
+// afterChainChange applies a chain change to the group state and history
+// limits. New caps take effect at once, not at the next hourly trim; call it
+// before broadcasting, outside chMu (History is a leaf lock).
+func (s *Server) afterChainChange() {
+	s.refreshGroup()
+	if s.applyHistoryLimits() {
+		s.trimHistory()
+	}
 }
 
 // kick tells every connection of fp that it is banned and ends it. The voice

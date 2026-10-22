@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -16,6 +15,12 @@ import (
 // mergePace spaces the history pages sent to the winner of a split brain, so
 // a long history stays under its per-connection message limit.
 const mergePace = 40 * time.Millisecond
+
+// mergeAckTimeout is how long the winner has to confirm it merged our history.
+const mergeAckTimeout = 30 * time.Second
+
+// noHistory is a HistoryLastTS far enough ahead that the peer sends none.
+func noHistory() time.Time { return time.Now().AddDate(100, 0, 0) }
 
 // dialMerge opens a host link to the winner of a split brain at url, asking for
 // its whole chain (our own may be ahead of or diverge from it) and none of its
@@ -38,7 +43,7 @@ func dialMerge(ctx context.Context, url string, s *Server) (*websocket.Conn, []c
 	hello := proto.LinkHello{
 		Addrs:         s.advertise(),
 		Name:          s.cfg.HostName,
-		HistoryLastTS: time.Now().AddDate(100, 0, 0), // no history back
+		HistoryLastTS: noHistory(),
 		// The winner checks it still wins against this load.
 		Yield: &proto.YieldLoad{VoiceMembers: voice, Clients: clients, Priority: s.selfInfo().Priority},
 	}
@@ -52,38 +57,24 @@ func dialMerge(ctx context.Context, url string, s *Server) (*websocket.Conn, []c
 	}
 	// The chain frames come first, then the first link_sync (the password key).
 	var entries []chain.Entry
-	for {
-		_, raw, err := ws.ReadMessage()
-		if err != nil {
-			ws.Close()
-			return nil, nil, fmt.Errorf("server: merge: %w", err)
-		}
-		env, err := proto.Decode(raw)
-		if err != nil {
-			continue
-		}
+	err = readFrames(ws, "merge", func(env proto.Envelope) (bool, error) {
 		switch env.Type {
 		case proto.TypeChain:
-			var cf proto.ChainFrame
-			if err := json.Unmarshal(env.Data, &cf); err != nil {
-				ws.Close()
-				return nil, nil, fmt.Errorf("server: merge: malformed chain frame")
-			}
-			es, err := hshake.DecodeEntries(cf.Entries)
-			if err != nil {
-				ws.Close()
-				return nil, nil, err
-			}
+			es, err := decodeChainFrame(env)
 			entries = append(entries, es...)
+			return false, err
 		case proto.TypeLinkSync:
-			_ = ws.SetReadDeadline(time.Time{})
-			_ = ws.SetWriteDeadline(time.Time{})
-			return ws, entries, nil
-		case proto.TypeError:
-			ws.Close()
-			return nil, nil, remoteError(env)
+			return true, nil
 		}
+		return false, nil
+	})
+	if err != nil {
+		ws.Close()
+		return nil, nil, err
 	}
+	_ = ws.SetReadDeadline(time.Time{})
+	_ = ws.SetWriteDeadline(time.Time{})
+	return ws, entries, nil
 }
 
 // sendMergeHistory sends every chat line we hold to the winner as link_sync
@@ -120,23 +111,10 @@ func (s *Server) sendMergeHistory(ws *websocket.Conn) error {
 	if err != nil {
 		return fmt.Errorf("server: merge history: %w", err)
 	}
-	_ = ws.SetReadDeadline(time.Now().Add(30 * time.Second))
-	for {
-		_, raw, err := ws.ReadMessage()
-		if err != nil {
-			return fmt.Errorf("server: merge history: %w", err)
-		}
-		env, err := proto.Decode(raw)
-		if err != nil {
-			continue
-		}
-		switch env.Type {
-		case proto.TypeLinkProbeReply:
-			return nil
-		case proto.TypeError:
-			return remoteError(env)
-		}
-	}
+	_ = ws.SetReadDeadline(time.Now().Add(mergeAckTimeout))
+	return readFrames(ws, "merge history", func(env proto.Envelope) (bool, error) {
+		return env.Type == proto.TypeLinkProbeReply, nil
+	})
 }
 
 // watchClose closes ws when ctx ends, so a read or write blocked on it fails;
@@ -162,10 +140,7 @@ func (s *Server) replaceChain(es []chain.Entry) error {
 	if err := s.chain.Replace(es); err != nil {
 		return err
 	}
-	s.refreshGroup()
-	if s.applyHistoryLimits() {
-		s.trimHistory()
-	}
+	s.afterChainChange()
 	s.dropRemovedLinks()
 	st := s.chain.State()
 	for fp := range st.Bans {
