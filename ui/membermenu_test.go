@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,6 +132,32 @@ func TestMemberMenuMoveUp(t *testing.T) {
 	}
 }
 
+// With a gap in the priorities the host above C is the founder: no Move up.
+func TestMemberMenuNoMoveUpUnderFounder(t *testing.T) {
+	f := startFounder(t, "")
+	c := mustIdentity(t)
+	appendHost(t, f, c, 3)
+	g := memberMenuGame(t, f, c)
+	if !rightClickMember(g, identity.Fingerprint(c.PublicKey())) {
+		t.Fatal("no hit on the member row")
+	}
+	if want := []string{"Stop hosting"}; !reflect.DeepEqual(menuLabels(g), want) {
+		t.Errorf("items = %v, want %v", menuLabels(g), want)
+	}
+}
+
+func TestMemberMenuFailureNotice(t *testing.T) {
+	f := startFounder(t, "")
+	m := mustIdentity(t)
+	g := memberMenuGame(t, f, m)
+	if !rightClickMember(g, identity.Fingerprint(m.PublicKey())) {
+		t.Fatal("no hit on the member row")
+	}
+	_ = f.c.Close() // the append now fails
+	menuAct(g, "Allow hosting")
+	pumpUntil(t, g, func() bool { return strings.HasPrefix(g.cur().st.Status, "host change failed: ") })
+}
+
 func TestMemberMenuNonFounderNone(t *testing.T) {
 	f := startFounder(t, "")
 	m := mustIdentity(t)
@@ -147,6 +174,13 @@ func TestMemberMenuNonFounderNone(t *testing.T) {
 		}
 	}()
 	g.cur().c = other
+	deadline := time.Now().Add(5 * time.Second)
+	for other.Chain().State().Founder == "" { // the chain must be synced, or the test proves nothing
+		if time.Now().After(deadline) {
+			t.Fatal("other client never learned the founder")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if !rightClickMember(g, identity.Fingerprint(m.PublicKey())) {
 		t.Fatal("no hit on the member row")
 	}

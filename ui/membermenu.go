@@ -71,7 +71,8 @@ func (g *game) openMemberMenu(fp string, ax, ay float64) {
 		items = append(items, menuItem{label: "Stop hosting", act: func() {
 			g.chainOp(s.key, chainStep{chain.OpHostRemove, chain.FPBody{Fingerprint: fp}})
 		}})
-		if h := cs.Hosts[idx]; h.Priority > 2 && idx > 0 {
+		// Never swap with the founder: priority 1 stays theirs, gaps or not.
+		if h := cs.Hosts[idx]; idx > 0 && cs.Hosts[idx-1].Fingerprint != cs.Founder {
 			above := cs.Hosts[idx-1]
 			items = append(items, menuItem{label: "Move up", act: func() {
 				// Swap with the host above, the lower one first.
