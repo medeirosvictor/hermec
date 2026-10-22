@@ -78,6 +78,7 @@ type Client struct {
 	channels    []proto.ChannelInfo
 	serverName  string // from auth_ok; immutable after Dial
 	serverID    string // chain.ID.String() of the verified chain; immutable after Dial
+	pwKey       []byte // the password key this login used; nil without a password
 	chain       *chain.Chain
 
 	writeMu sync.Mutex // gorilla permits a single concurrent writer
@@ -141,6 +142,23 @@ func Dial(ctx context.Context, url string, id *identity.Identity, name, password
 // auth_ok has been received. pin is a chain.ID.String(); "" trusts the first
 // server ID seen, which the caller can read back with ServerID.
 func DialPinned(ctx context.Context, url string, id *identity.Identity, name, password, pin string) (*Client, error) {
+	return DialWith(ctx, url, id, name, password, DialOpts{Pin: pin})
+}
+
+// DialOpts are the optional parts of DialWith.
+type DialOpts struct {
+	// Pin is a chain.ID.String() the server must match; "" trusts the first ID.
+	Pin string
+	// PasswordKey, when set, is the key derived from the password for this
+	// server (Client.PasswordKey from an earlier login); it skips the scrypt
+	// derivation and the password argument.
+	PasswordKey []byte
+}
+
+// DialWith is DialPinned with options. The password never goes over the wire:
+// the client proves it knows it with an HMAC under the derived key.
+func DialWith(ctx context.Context, url string, id *identity.Identity, name, password string, o DialOpts) (*Client, error) {
+	pin := o.Pin
 	if pin != "" {
 		if _, err := chain.ParseID(pin); err != nil {
 			return nil, fmt.Errorf("client: bad pin: %w", err)
@@ -178,7 +196,7 @@ func DialPinned(ctx context.Context, url string, id *identity.Identity, name, pa
 		case <-stop:
 		}
 	}()
-	res, err := handshake(ws, id, name, password, pin)
+	res, err := handshake(ws, id, name, password, o)
 	close(stop)
 	<-watched
 	if err == nil && ctx.Err() != nil {
@@ -199,6 +217,7 @@ func DialPinned(ctx context.Context, url string, id *identity.Identity, name, pa
 		channels:    res.ok.Channels,
 		serverName:  res.ok.ServerName,
 		serverID:    res.ok.ServerID,
+		pwKey:       res.key,
 		chain:       res.chain,
 		events:      make(chan Event, eventBuffer),
 		done:        make(chan struct{}),
@@ -222,12 +241,13 @@ func DialPinned(ctx context.Context, url string, id *identity.Identity, name, pa
 type handshakeResult struct {
 	ok    proto.AuthOK
 	chain *chain.Chain
+	key   []byte // the password key used, nil when none
 }
 
 // handshake runs the version 2 mutual handshake: the host proves itself with
 // the signed chain before the password is sent, then the client authenticates
 // with a signature bound to the server ID.
-func handshake(ws *websocket.Conn, id *identity.Identity, name, password, pin string) (handshakeResult, error) {
+func handshake(ws *websocket.Conn, id *identity.Identity, name, password string, o DialOpts) (handshakeResult, error) {
 	var zero handshakeResult
 	// The challenge is a v1 envelope, so a v1 host looks the same until it
 	// answers host_proof_req.
@@ -309,16 +329,26 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password, pin st
 	if env.Type != proto.TypeHostProof || json.Unmarshal(env.Data, &hp) != nil {
 		return zero, fmt.Errorf("client: %w", badChain("expected host_proof, got %q", env.Type))
 	}
-	verified, err := verifyHost(entries, pin, hp, clientNonce, ch.Nonce)
+	verified, err := verifyHost(entries, o.Pin, hp, clientNonce, ch.Nonce)
 	if err != nil {
 		return zero, fmt.Errorf("client: %w", err)
 	}
 
 	sid := verified.ID()
-	raw, err = proto.Encode(proto.TypeAuth, proto.Auth{
-		PubKey: id.PublicKey(), Name: name, Password: password,
+	pwKey := o.PasswordKey
+	if len(pwKey) == 0 && password != "" {
+		if pwKey, err = proto.PasswordKey(password, sid[:]); err != nil {
+			return zero, fmt.Errorf("client: derive password key: %w", err)
+		}
+	}
+	a := proto.Auth{
+		PubKey: id.PublicKey(), Name: name,
 		Sig: id.Sign(proto.ClientAuthBytes(ch.Nonce, clientNonce, sid[:])),
-	})
+	}
+	if len(pwKey) > 0 {
+		a.Proof = proto.PasswordProof(pwKey, ch.Nonce, clientNonce, sid[:])
+	}
+	raw, err = proto.Encode(proto.TypeAuth, a)
 	if err != nil {
 		return zero, err
 	}
@@ -338,7 +368,7 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password, pin st
 		if ok.ServerID != sid.String() {
 			return zero, fmt.Errorf("client: %w", &ServerError{Code: proto.CodeServerIDMismatch, Message: "the host reported a different server id"})
 		}
-		return handshakeResult{ok: ok, chain: verified}, nil
+		return handshakeResult{ok: ok, chain: verified, key: pwKey}, nil
 	case proto.TypeError:
 		return zero, fmt.Errorf("client: auth rejected: %w", handshakeError(env))
 	default:
@@ -376,6 +406,11 @@ func readEnv(ws *websocket.Conn) (proto.Envelope, error) {
 // ServerID returns the server's ID (chain.ID.String()), as proven by the host
 // during the handshake.
 func (c *Client) ServerID() string { return c.serverID }
+
+// PasswordKey returns the key derived from the password for this server, which
+// a caller can cache and pass back in DialOpts.PasswordKey so the next login
+// skips the derivation. nil when the login used no password.
+func (c *Client) PasswordKey() []byte { return c.pwKey }
 
 // Chain returns the client's live copy of the server chain.
 func (c *Client) Chain() *chain.Chain { return c.chain }

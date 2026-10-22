@@ -162,7 +162,9 @@ type Auth struct {
 	PubKey   []byte `json:"pubkey"`
 	Name     string `json:"name"`
 	Sig      []byte `json:"sig"`
-	Password string `json:"password,omitempty"`
+	Password string `json:"password,omitempty"` // v0.6 clients only
+	// Proof replaces Password: PasswordProof over the nonces and server ID.
+	Proof []byte `json:"proof,omitempty"`
 	// Warm marks a standby's pre-connection, which the host may hold open
 	// before the client is promoted to a live session.
 	Warm bool `json:"warm,omitempty"`

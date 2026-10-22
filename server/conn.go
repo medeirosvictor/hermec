@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
@@ -19,6 +20,44 @@ import (
 )
 
 const nonceSize = 32
+
+// passwordKey is the key clients must prove they know: the configured
+// PasswordKey, else one derived from Password for this server ID. nil means no
+// password is set.
+func (s *Server) passwordKey(serverID []byte) []byte {
+	if len(s.cfg.PasswordKey) > 0 {
+		return s.cfg.PasswordKey
+	}
+	if s.cfg.Password == "" {
+		return nil
+	}
+	s.pwOnce.Do(func() {
+		s.pwKey, _ = proto.PasswordKey(s.cfg.Password, serverID)
+	})
+	return s.pwKey
+}
+
+// checkPassword reports whether auth satisfies the server password. A proof is
+// compared against the HMAC under the key; a plain Password (v0.6 clients) is
+// run through the same derivation and compared in constant time. With no
+// password configured everything passes.
+func (s *Server) checkPassword(auth proto.Auth, serverNonce, clientNonce, serverID []byte) bool {
+	if len(s.cfg.PasswordKey) == 0 && s.cfg.Password == "" {
+		return true
+	}
+	key := s.passwordKey(serverID)
+	if len(key) == 0 {
+		return false
+	}
+	if len(auth.Proof) > 0 {
+		return hmac.Equal(auth.Proof, proto.PasswordProof(key, serverNonce, clientNonce, serverID))
+	}
+	if auth.Password == "" {
+		return false
+	}
+	got, err := proto.PasswordKey(auth.Password, serverID)
+	return err == nil && subtle.ConstantTimeCompare(got, key) == 1
+}
 
 // conn is one client connection. One goroutine (readLoop) reads and owns the
 // auth state; one goroutine (writeLoop) writes everything queued on send.
@@ -334,8 +373,7 @@ func (c *conn) authenticate() error {
 		c.sendError(proto.CodeBanned, "you are banned from this server")
 		return errAuthFailed
 	}
-	if pw := c.srv.cfg.Password; pw != "" &&
-		subtle.ConstantTimeCompare([]byte(pw), []byte(auth.Password)) != 1 {
+	if !c.srv.checkPassword(auth, nonce, req.Nonce, id[:]) {
 		return fail()
 	}
 	fp := identity.Fingerprint(pub)

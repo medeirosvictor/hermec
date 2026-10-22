@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/hex"
 	"fmt"
 	"image/color"
 	"math"
@@ -117,6 +118,9 @@ func (g *game) saveServer(s *session, channel string) {
 	live := func(u string) bool { _, ok := g.sess[u]; return ok }
 	g.servers = state.Touch(g.servers, s.key, label, serverNameOf(s.c), channel, live)
 	g.servers = state.PinID(g.servers, s.key, s.c.ServerID())
+	if s.key != hostedKey { // the hosted key lives in hosted.toml
+		g.servers = state.SetPasswordKey(g.servers, s.key, hex.EncodeToString(s.c.PasswordKey()))
+	}
 	if err := state.SaveServers(g.serversPath, g.servers); err != nil {
 		g.notice = fmt.Sprintf("save servers: %v", err)
 		s.st.Status = g.notice

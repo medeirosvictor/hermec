@@ -44,6 +44,7 @@ func main() {
 
 	if *printConfig {
 		shown := cfg
+		shown.PasswordKey = nil
 		if shown.Password != "" {
 			shown.Password = "<redacted>"
 		}
@@ -93,6 +94,10 @@ func main() {
 			log.Printf("WARNING: chain exists; ignoring group keys in %s: %s (use -apply-config to append them)",
 				*configPath, strings.Join(set, ", "))
 		}
+	}
+
+	if cfg.Password != "" && len(cfg.PasswordKey) == 0 {
+		log.Print("NOTICE: server.toml stores the plain password; set password_key instead (the server derives it on every start)")
 	}
 
 	srv := server.New(cfg)

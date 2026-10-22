@@ -34,6 +34,10 @@ type ServerEntry struct {
 	// ServerID pins the server's identity (chain.ID.String()) once first seen.
 	ServerID string `toml:"server_id,omitempty"`
 
+	// PasswordKey caches proto.PasswordKey(password, server ID) as hex after a
+	// successful login, so scrypt runs once and the password is not kept.
+	PasswordKey string `toml:"password_key,omitempty"`
+
 	// Pending marks an entry not yet connected; it is never saved.
 	Pending bool `toml:"-"`
 }
@@ -210,6 +214,21 @@ func RailHit(x, y, railW, top, tileH float64, count int, h float64) int {
 		return RailNone
 	}
 	return i
+}
+
+// SetPasswordKey returns a copy of entries with the cached password key of url
+// set to key (hex); an empty key leaves the entries as they are.
+func SetPasswordKey(entries []ServerEntry, url, key string) []ServerEntry {
+	out := append([]ServerEntry(nil), entries...)
+	if key == "" {
+		return out
+	}
+	for i := range out {
+		if out[i].URL == url {
+			out[i].PasswordKey = key
+		}
+	}
+	return out
 }
 
 // PinID returns a copy of entries with the server ID of url set to id, only

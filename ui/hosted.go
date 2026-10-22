@@ -17,6 +17,7 @@ import (
 	"github.com/medeirosvictor/hermec/client"
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/discover"
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/ui/state"
 )
@@ -171,7 +172,20 @@ func chainsDir(hostedPath string) string {
 func (g *game) openHostedChain(path string, cfg *server.Config) (c *chain.Chain, err error) {
 	dir := chainsDir(path)
 	if cfg.ServerID != "" {
-		return chain.Load(filepath.Join(dir, cfg.ServerID+".jsonl"))
+		c, err = chain.Load(filepath.Join(dir, cfg.ServerID+".jsonl"))
+		if err != nil {
+			return nil, err
+		}
+		if cfg.Password != "" { // an older hosted.toml: swap the password for its key
+			id := c.ID()
+			if err := migratePassword(cfg, id[:]); err != nil {
+				return nil, err
+			}
+			if err := saveHostedLocal(path, *cfg); err != nil {
+				return nil, err
+			}
+		}
+		return c, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -191,10 +205,28 @@ func (g *game) openHostedChain(path string, cfg *server.Config) (c *chain.Chain,
 		return nil, err
 	}
 	cfg.ServerID = id
+	cid := c.ID()
+	if err := migratePassword(cfg, cid[:]); err != nil {
+		return nil, err
+	}
 	if err := saveHostedLocal(path, *cfg); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// migratePassword replaces cfg.Password with its key for serverID, so
+// hosted.toml holds password_key and the password is never kept or sent.
+func migratePassword(cfg *server.Config, serverID []byte) error {
+	if cfg.Password == "" {
+		return nil
+	}
+	key, err := proto.PasswordKey(cfg.Password, serverID)
+	if err != nil {
+		return err
+	}
+	cfg.PasswordKey, cfg.Password = key, ""
+	return nil
 }
 
 // hostedFile is where the hosted config lives for this run.

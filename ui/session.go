@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -136,20 +137,23 @@ func (g *game) dial(s *session) {
 	s.dialGen++
 	s.st.ConnectErr = ""
 	g.logf("dialing %s as %q", s.url, s.name)
-	pass, pin := "", ""
+	pass := ""
+	var o client.DialOpts
 	if e, ok := g.entryFor(s.key); ok {
-		pin = e.ServerID
+		o.Pin = e.ServerID
+		o.PasswordKey, _ = hex.DecodeString(e.PasswordKey)
 	}
 	if s.key == hostedKey && g.hosted != nil {
 		pass = g.hosted.cfg.Password
-		pin = g.hosted.id
+		o.PasswordKey = g.hosted.cfg.PasswordKey
+		o.Pin = g.hosted.id
 	}
-	go func(s *session, key, url, name, pass, pin string, gen int) { // reads no session field
+	go func(s *session, key, url, name, pass string, o client.DialOpts, gen int) { // reads no session field
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		c, err := client.DialPinned(ctx, url, g.id, name, pass, pin)
+		c, err := client.DialWith(ctx, url, g.id, name, pass, o)
 		g.dialCh <- dialResult{key: key, s: s, gen: gen, c: c, err: err}
-	}(s, s.key, s.url, s.name, pass, pin, s.dialGen)
+	}(s, s.key, s.url, s.name, pass, o, s.dialGen)
 }
 
 // closeClient closes a client no session owns (a stale dial result).

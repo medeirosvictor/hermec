@@ -29,8 +29,13 @@ type Config struct {
 	// ServerID is the machine-local ID of the chain this config belongs to (as
 	// chain.ID.String()); the app stores it in hosted.toml. Unused by Server.
 	ServerID string
-	// Password, when non-empty, must be presented by every client.
+	// Password, when non-empty, is what every client must know. The server
+	// derives its key from it with the chain ID, so it is never compared on
+	// the wire; prefer PasswordKey.
 	Password string
+	// PasswordKey, when set, is proto.PasswordKey(password, server ID); clients
+	// then prove they know the password without sending it.
+	PasswordKey []byte
 	// AllowedKeys are permitted fingerprints. Empty means an open server.
 	AllowedKeys []string
 	// Roles maps fingerprints to roles and roles to permissions.
@@ -119,6 +124,9 @@ type Server struct {
 	group    groupState
 	chainMu  sync.Mutex // serializes chain_append: append, refresh, broadcast, kick
 	upgrader websocket.Upgrader
+
+	pwOnce sync.Once // derives pwKey from cfg.Password on first use
+	pwKey  []byte
 
 	mu      sync.Mutex
 	conns   map[*conn]struct{}
