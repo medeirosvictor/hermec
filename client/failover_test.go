@@ -57,8 +57,9 @@ func newPair(t *testing.T) *pair {
 	t.Helper()
 	ak, bk := mustIdent(t), mustIdent(t)
 	cfg := server.Config{
-		Roles:    roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
-		Channels: []string{"general"},
+		Roles:         roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
+		Channels:      []string{"general"},
+		VoiceChannels: []string{"lobby"}, AllowLoopbackICE: true,
 	}
 	g, err := chain.NewEntry(ak, nil, chain.OpGenesis, chain.GenesisBody{
 		Founder: []byte(ak.PublicKey()), Salt: []byte("0123456789abcdef"),

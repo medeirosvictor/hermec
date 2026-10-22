@@ -95,6 +95,9 @@ type Client struct {
 	loopbackICE atomic.Bool
 	audioOnly   atomic.Bool
 
+	wpMu sync.Mutex // guards wp
+	wp   *warmPeer  // data-channel PeerConnection to the standby, if opened
+
 	started     time.Time // Dial time; baseline of the first VideoStats window
 	vstats      videoStats
 	vsinkMu     sync.RWMutex
@@ -306,6 +309,7 @@ func (c *Client) Close() error {
 		c.mu.Unlock()
 		close(c.done)
 		err = c.ws.Close()
+		c.closeWarmPeer()
 	})
 	<-c.loopDone
 	<-c.pingDone
@@ -459,6 +463,8 @@ func (c *Client) readLoop() {
 			}
 		case proto.TypeRTCOffer, proto.TypeRTCAnswer, proto.TypeRTCCandidate:
 			c.onRTC(env)
+		case proto.TypeWarmAnswer:
+			c.onWarmAnswer(env)
 		case proto.TypeVideoSource:
 			var vsrc proto.VideoSource
 			if json.Unmarshal(env.Data, &vsrc) == nil {
