@@ -246,6 +246,11 @@ func (g *game) defaultName() string {
 	return g.opts.Name
 }
 
+// historyDir is where hosted servers keep their chat history, beside hosted.toml.
+func historyDir(hostedPath string) string {
+	return filepath.Join(filepath.Dir(hostedPath), "history")
+}
+
 // startHosted starts the server from g.hosted.cfg. The dial URL uses the port
 // the server really got, which differs from cfg only for port 0.
 func (g *game) startHosted() error {
@@ -258,6 +263,13 @@ func (g *game) startHosted() error {
 	serverLogf(&h.cfg)
 	cfg := h.cfg
 	cfg.HostKey, cfg.Chain = g.id, h.chain
+	dir := historyDir(h.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		h.srv, h.err = nil, err.Error()
+		g.logf("hosted server not started: history dir: %v", err)
+		return err
+	}
+	cfg.HistoryPath = filepath.Join(dir, h.id+".jsonl")
 	srv := server.New(cfg)
 	if err := srv.Start(); err != nil {
 		h.srv = nil

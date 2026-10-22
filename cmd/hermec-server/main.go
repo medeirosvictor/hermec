@@ -26,6 +26,7 @@ func main() {
 	printConfig := flag.Bool("print-config", false, "print the effective config (password redacted) and exit")
 	keyPath := flag.String("key", "", "host key file (default hermec-server.key next to -config; generated when missing)")
 	chainPath := flag.String("chain", "", "server chain file (default chain.jsonl next to -config)")
+	historyPath := flag.String("history", "", "chat history file (default history.jsonl next to -config)")
 	applyConfig := flag.Bool("apply-config", false, "append the config file's group fields to the chain, print the count, and exit; stop the server first, the changes apply when it starts")
 	flag.Parse()
 	if *applyConfig && *configPath == "" {
@@ -71,6 +72,9 @@ func main() {
 	if *chainPath == "" {
 		*chainPath = filepath.Join(dir, "chain.jsonl")
 	}
+	if *historyPath == "" {
+		*historyPath = filepath.Join(dir, "history.jsonl")
+	}
 	key, err := loadOrCreateKey(*keyPath)
 	if err != nil {
 		log.Fatal(err)
@@ -107,7 +111,7 @@ func main() {
 	if err := checkHostKey(*keyPath, c, key); err != nil {
 		log.Fatal(err)
 	}
-	cfg.HostKey, cfg.Chain = key, c
+	cfg.HostKey, cfg.Chain, cfg.HistoryPath = key, c, *historyPath
 	if !created && *configPath != "" {
 		if set, err := server.GroupFieldsSet(*configPath); err != nil {
 			log.Print(err)

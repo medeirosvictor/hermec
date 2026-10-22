@@ -353,7 +353,8 @@ func (s *Server) refreshGroup() {
 // handleChainAppend processes a chain_append from c: the entry must be c's own
 // and extend the head under the chain's rules. On success every authenticated
 // connection receives it and its effects (roles, bans, allowed_keys) apply at
-// once; name, channels and limits of a config entry apply at the next start.
+// once, as do the history limits; name, channels and the other limits of a
+// config entry apply at the next start.
 func (c *conn) handleChainAppend(env proto.Envelope) {
 	s := c.srv
 	var m proto.ChainAppend
@@ -397,6 +398,11 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 		return
 	}
 	s.refreshGroup()
+	if s.applyHistoryLimits() {
+		// New caps take effect at once, not at the next hourly trim. Done
+		// before the broadcast, outside chMu (History is a leaf lock).
+		s.trimHistory()
+	}
 	s.chMu.Lock()
 	dead := s.broadcastAuthedLocked(frames[0])
 	s.chMu.Unlock()

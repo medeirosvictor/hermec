@@ -510,3 +510,20 @@ func TestLostTextStopped(t *testing.T) {
 		t.Fatalf("lostText = %q", got)
 	}
 }
+
+func TestHistoryDir(t *testing.T) {
+	got := historyDir(filepath.Join("a", "hermec", "hosted.toml"))
+	if want := filepath.Join("a", "hermec", "history"); got != want {
+		t.Fatalf("historyDir = %q, want %q", got, want)
+	}
+}
+
+func TestStartHostedCreatesHistoryDir(t *testing.T) {
+	g, path := hostedTestGame(t, "127.0.0.1:0", true)
+	g.bootHosted(path)
+	pumpUntil(t, g, connected(g.sess[hostedKey]))
+	fi, err := os.Stat(historyDir(path))
+	if err != nil || !fi.IsDir() {
+		t.Fatalf("history dir missing: %v", err)
+	}
+}
