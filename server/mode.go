@@ -48,6 +48,9 @@ func (s *Server) SetHosts(h proto.Hosts) { s.modeState.hosts.Store(&h) }
 
 // hostsInfo is the host list for a hosts frame; with none set, this host alone.
 func (s *Server) hostsInfo() proto.Hosts {
+	if s.Mode() == ModeActive {
+		return proto.Hosts{Active: s.selfInfo(), Standby: s.standby.Load()}
+	}
 	if h := s.modeState.hosts.Load(); h != nil {
 		return *h
 	}
@@ -115,6 +118,11 @@ func (s *Server) broadcastChainLocked(raw []byte) []*conn {
 			dead = append(dead, m)
 		}
 	}
+	for m := range s.links {
+		if !m.enqueue(raw) {
+			dead = append(dead, m)
+		}
+	}
 	return dead
 }
 
@@ -148,6 +156,11 @@ func (s *Server) sendHeartbeat() {
 			dead = append(dead, m)
 		}
 	}
+	for m := range s.links {
+		if !m.enqueue(raw) {
+			dead = append(dead, m)
+		}
+	}
 	s.chMu.Unlock()
 	dropSlow(dead)
 }
@@ -163,5 +176,5 @@ func (s *Server) restricted(c *conn) bool {
 
 // allowedWhenRestricted reports whether a restricted conn may send typ.
 func allowedWhenRestricted(typ string) bool {
-	return typ == proto.TypeTakeover || typ == proto.TypeLinkProbe || strings.HasPrefix(typ, "warm_")
+	return typ == proto.TypeTakeover || typ == proto.TypeLinkProbe || typ == proto.TypeLinkHello || strings.HasPrefix(typ, "warm_")
 }

@@ -407,6 +407,9 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 	dead := s.broadcastChainLocked(frames[0])
 	s.chMu.Unlock()
 	dropSlow(dead)
+	if e.Op == chain.OpHostRemove {
+		s.dropRemovedLinks()
+	}
 	if e.Op == chain.OpBan {
 		var b chain.FPBody
 		if e.DecodeBody(&b) == nil {

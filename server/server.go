@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -102,6 +103,10 @@ type Config struct {
 	Chain *chain.Chain
 	// Mode is the host's starting mode. The zero value is ModeActive.
 	Mode Mode
+	// HostName and Advertise describe this host to its peers and clients: a
+	// display name and the addresses it can be dialed at.
+	HostName  string
+	Advertise []string
 }
 
 // logf writes a server log line through cfg.Logf, or log.Printf.
@@ -142,7 +147,9 @@ type Server struct {
 	authed     map[*conn]struct{} // authenticated conns; voice_state goes to all
 	warm       map[*conn]struct{} // warm (paused) sessions: chain frames and hb only; guarded by chMu
 	modeState  serverMode
-	warmSlots  int // warm sessions holding a slot of the warm cap; guarded by mu
+	warmSlots  int                            // warm sessions holding a slot of the warm cap; guarded by mu
+	links      map[*conn]struct{}             // host links being served; guarded by chMu
+	standby    atomic.Pointer[proto.HostInfo] // the host picked as standby, nil for none
 	// sessions holds the media session of each occupied voice channel; guarded by chMu.
 	sessions map[string]*voiceSession
 

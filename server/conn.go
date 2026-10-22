@@ -77,8 +77,10 @@ type conn struct {
 	// Set once authenticated; only touched by readLoop.
 	fingerprint string
 	name        string
-	pub         []byte // the client's public key
-	warm        bool   // authenticated with Auth.Warm
+	pub         []byte          // the client's public key
+	warm        bool            // authenticated with Auth.Warm
+	link        *linkState      // non-nil once a host link_hello was accepted; set by readLoop
+	reach       map[string]bool // host fingerprint -> client reported it reachable; guarded by srv.chMu
 
 	voiceCh  string // current voice channel, "" if none; guarded by srv.chMu
 	sharing  bool   // sharing a screen in voiceCh; guarded by srv.chMu
@@ -444,6 +446,11 @@ func (c *conn) authenticate() error {
 	if c.srv.banned(fp) {
 		c.sendError(proto.CodeBanned, "you are banned from this server")
 		return errAuthFailed
+	}
+	// A client learns the standby at once; with none picked there is nothing
+	// to tell, and one is sent when it appears.
+	if h := c.srv.hostsInfo(); !c.warm && h.Standby != nil {
+		c.sendMsg(proto.TypeHosts, h)
 	}
 	return nil
 }

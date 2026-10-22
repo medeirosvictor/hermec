@@ -45,6 +45,7 @@ func (s *Server) initChannels() {
 	}
 	s.authed = make(map[*conn]struct{})
 	s.warm = make(map[*conn]struct{})
+	s.links = make(map[*conn]struct{})
 	s.sessions = make(map[string]*voiceSession)
 }
 
@@ -295,6 +296,10 @@ func (s *Server) leaveAll(c *conn) {
 		dead = append(dead, s.broadcastLocked(ch, s.presenceLocked(ch))...)
 	}
 	delete(s.warm, c)
+	if _, was := s.links[c]; was {
+		delete(s.links, c)
+		dead = append(dead, s.updateStandbyLocked()...)
+	}
 	if _, was := s.authed[c]; was {
 		delete(s.authed, c)
 		dead = append(dead, s.broadcastAuthedLocked(s.rosterLocked())...)
@@ -343,6 +348,7 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 	if err == nil {
 		dead = s.broadcastLocked(ch, raw)
 	}
+	dead = append(dead, s.forwardChatLocked(msg)...)
 	s.chMu.Unlock()
 	dropSlow(dead)
 	if s.hist != nil {
@@ -356,6 +362,10 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 
 // route handles one post-auth message.
 func (c *conn) route(env proto.Envelope) {
+	if c.link != nil {
+		c.routeLink(env)
+		return
+	}
 	if !allowedWhenRestricted(env.Type) && c.srv.restricted(c) {
 		c.sendError(proto.CodeNotActive, "this host is not serving clients")
 		return
@@ -414,6 +424,12 @@ func (c *conn) route(env proto.Envelope) {
 		}
 	case proto.TypeChainAppend:
 		c.handleChainAppend(env)
+	case proto.TypeLinkHello:
+		c.handleLinkHello(env)
+	case proto.TypeLinkProbe:
+		c.handleLinkProbe()
+	case proto.TypeReach:
+		c.handleReach(env)
 	default:
 		if c.routeVoice(env) {
 			return
