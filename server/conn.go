@@ -25,32 +25,30 @@ const nonceSize = 32
 // PasswordKey, else one derived from Password for this server ID. nil means no
 // password is set.
 func (s *Server) passwordKey(serverID []byte) []byte {
+	key, _ := s.passwordState(serverID)
+	return key
+}
+
+// passwordState returns the password key and whether a password is required,
+// from one snapshot of the mirrored key. A required password whose key cannot
+// be derived yields (nil, true).
+func (s *Server) passwordState(serverID []byte) (key []byte, set bool) {
 	s.pwMu.RLock()
-	mirrored, key := s.pwMirrored, s.pwMirror
+	mirrored, mkey := s.pwMirrored, s.pwMirror
 	s.pwMu.RUnlock()
 	if mirrored {
-		return key
+		return mkey, len(mkey) > 0
 	}
 	if len(s.cfg.PasswordKey) > 0 {
-		return s.cfg.PasswordKey
+		return s.cfg.PasswordKey, true
 	}
 	if s.cfg.Password == "" {
-		return nil
+		return nil, false
 	}
 	s.pwOnce.Do(func() {
 		s.pwKey, _ = proto.PasswordKey(s.cfg.Password, serverID)
 	})
-	return s.pwKey
-}
-
-// passwordSet reports whether clients must prove a password.
-func (s *Server) passwordSet() bool {
-	s.pwMu.RLock()
-	defer s.pwMu.RUnlock()
-	if s.pwMirrored {
-		return len(s.pwMirror) > 0
-	}
-	return len(s.cfg.PasswordKey) > 0 || s.cfg.Password != ""
+	return s.pwKey, true
 }
 
 // setPasswordKey makes k, the active host's password key, the one clients must
@@ -66,10 +64,10 @@ func (s *Server) setPasswordKey(k []byte) {
 // run through the same derivation and compared in constant time. With no
 // password configured everything passes.
 func (s *Server) checkPassword(auth proto.Auth, serverNonce, clientNonce, serverID []byte) bool {
-	if !s.passwordSet() {
+	key, set := s.passwordState(serverID)
+	if !set {
 		return true
 	}
-	key := s.passwordKey(serverID)
 	if len(key) == 0 {
 		return false
 	}

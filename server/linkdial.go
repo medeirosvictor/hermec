@@ -182,7 +182,7 @@ func (l *Link) Err() error {
 // Standby reports whether the active host has named this host its standby.
 func (l *Link) Standby() bool { return l.standby.Load() }
 
-// LastBeat is when the newest heartbeat (or link frame) arrived.
+// LastBeat is when the newest heartbeat arrived (the link's start until then).
 func (l *Link) LastBeat() time.Time { return time.Unix(0, l.lastBeat.Load()) }
 
 // ActiveAlive reports whether the active host has been heard from within
@@ -283,9 +283,10 @@ func (s *Server) applyLinkEntry(e chain.Entry) error {
 	s.chainMu.Lock()
 	defer s.chainMu.Unlock()
 	if head := s.chain.Head(); e.Seq <= head.Seq {
-		mine := s.chain.Since(e.Seq - 1)
-		if len(mine) > 0 && string(mine[0].Sig) == string(e.Sig) {
-			return nil
+		if e.Seq > 0 { // genesis is never resent; Seq 0 is a fork
+			if mine := s.chain.Since(e.Seq - 1); len(mine) > 0 && string(mine[0].Sig) == string(e.Sig) {
+				return nil
+			}
 		}
 		return fmt.Errorf("server: link: entry %d: %w", e.Seq, chain.ErrConflict)
 	}
@@ -320,6 +321,7 @@ func (s *Server) mergeLinkMessages(msgs []proto.ChatMessage) {
 	}
 	if _, err := s.hist.Merge(msgs); err != nil {
 		s.logf("server: link history: %v", err)
+		return
 	}
 	limit := s.clock().Add(maxStoredSkew)
 	var newest time.Time

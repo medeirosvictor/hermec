@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net"
 	"testing"
 	"time"
 
@@ -97,9 +100,15 @@ func TestLinkReplicatesBan(t *testing.T) {
 	waitFor(t, "ban on B", func() bool { st := b.chain.State(); return st.Banned(fp) })
 	_ = mc.SetReadDeadline(time.Now().Add(3 * time.Second))
 	for {
-		if _, _, err := mc.ReadMessage(); err != nil {
-			break
+		_, _, err := mc.ReadMessage()
+		if err == nil {
+			continue
 		}
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			t.Fatal("M's connection on B was not closed after the ban")
+		}
+		break
 	}
 	if !b.banned(fp) {
 		t.Fatal("B's group state does not show the ban")
@@ -160,6 +169,26 @@ func TestLinkConflictClosesLink(t *testing.T) {
 	}
 	if l.Err() == nil {
 		t.Fatal("Err is nil after a conflict")
+	}
+}
+
+// The standby takes the password key from the first link_sync, so the active
+// host must put it there (before any history page).
+func TestLinkFirstSyncCarriesPasswordKey(t *testing.T) {
+	_, _, aURL, _, _, bk, ac := linkPair(t, "pw")
+	lk := linkUp(t, aURL, bk, proto.LinkHello{Name: "beta"})
+	env := readType(t, lk, proto.TypeLinkSync)
+	var ls proto.LinkSync
+	if err := json.Unmarshal(env.Data, &ls); err != nil {
+		t.Fatal(err)
+	}
+	id := ac.ID()
+	want, _ := proto.PasswordKey("pw", id[:])
+	if len(ls.PasswordKey) == 0 || string(ls.PasswordKey) != string(want) {
+		t.Fatalf("first link_sync key = %x, want %x", ls.PasswordKey, want)
+	}
+	if len(ls.Messages) != 0 {
+		t.Fatalf("first link_sync carries %d messages", len(ls.Messages))
 	}
 }
 
