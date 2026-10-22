@@ -343,7 +343,7 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 	s.chMu.Unlock()
 	dropSlow(dead)
 	if s.hist != nil {
-		// Outside chMu: the rewrite is slow and must not stall every channel.
+		// Outside chMu; a rewrite holds the store lock only for its final swap.
 		if err := s.hist.Compact(s.clock()); err != nil {
 			s.logf("server: history compact: %v", err)
 		}

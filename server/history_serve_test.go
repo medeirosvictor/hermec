@@ -328,3 +328,27 @@ func TestConfigAppendAppliesHistoryLimits(t *testing.T) {
 		t.Fatalf("history file still exists (err=%v)", err)
 	}
 }
+
+// Only the bogus line is ignored; a valid stored line a little ahead of the
+// clock still seeds it.
+func TestChatTSKeepsValidStoredBesideBogus(t *testing.T) {
+	cfg := chatCfg()
+	cfg.HistoryPath = filepath.Join(t.TempDir(), "h.jsonl")
+	near := time.Now().UTC().Add(20 * time.Second)
+	var data []byte
+	for i, ts := range []time.Time{near, time.Now().UTC().Add(24 * time.Hour)} {
+		b, _ := json.Marshal(proto.ChatMessage{ID: fmt.Sprintf("%032x", i+1), Channel: "general", Text: "old", TS: ts})
+		data = append(data, append(b, '\n')...)
+	}
+	if err := os.WriteFile(cfg.HistoryPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	url := startServer(t, cfg)
+	a, _ := authed(t, url)
+	joinGeneral(t, a)
+	readHistory(t, a)
+	sendEnv(t, a, proto.TypeChatSend, proto.ChatSend{Channel: "general", Text: "new"})
+	if m := readChat(t, a); !m.TS.After(near) {
+		t.Fatalf("new ts %v not after the valid stored line %v", m.TS, near)
+	}
+}

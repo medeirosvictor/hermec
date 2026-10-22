@@ -208,12 +208,12 @@ func (s *Server) Start() error {
 		// a restart within one clock tick or after the clock was set back.
 		s.chMu.Lock()
 		// A stored time far ahead of the clock is bogus and would pin it.
-		if n := h.Newest(); n.After(s.lastChatTS) {
-			if n.After(s.clock().Add(maxStoredSkew)) {
-				s.logf("server: history: newest stored line is dated %s, over %s ahead of now; ignoring it for new timestamps", n.Format(time.RFC3339), maxStoredSkew)
-			} else {
-				s.lastChatTS = n
-			}
+		limit := s.clock().Add(maxStoredSkew)
+		if n := h.NewestBefore(limit); n.After(s.lastChatTS) {
+			s.lastChatTS = n
+		}
+		if n := h.Newest(); n.After(limit) {
+			s.logf("server: history: newest stored line is dated %s, over %s ahead of now; ignoring it for new timestamps", n.Format(time.RFC3339), maxStoredSkew)
 		}
 		s.chMu.Unlock()
 		s.applyHistoryLimits()
