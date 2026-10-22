@@ -655,6 +655,20 @@ func TestHistoryMergeDedup(t *testing.T) {
 	}
 }
 
+func TestHistoryMergeSkipsEmptyChannel(t *testing.T) {
+	h := openH(t, filepath.Join(t.TempDir(), "h.jsonl"))
+	bad := hmsg("a", 1, histBase)
+	bad.Channel = ""
+	ok := hmsg("a", 2, histBase.Add(time.Second))
+	added, err := h.Merge([]proto.ChatMessage{bad, ok})
+	if err != nil || added != 1 {
+		t.Fatalf("added %d err %v", added, err)
+	}
+	if _, id := h.Last(); id != ok.ID {
+		t.Fatalf("last = %s, want %s", id, ok.ID)
+	}
+}
+
 func TestHistoryMergeRespectsCaps(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "h.jsonl")
 	h := openH(t, p)

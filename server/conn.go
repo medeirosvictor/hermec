@@ -25,6 +25,12 @@ const nonceSize = 32
 // PasswordKey, else one derived from Password for this server ID. nil means no
 // password is set.
 func (s *Server) passwordKey(serverID []byte) []byte {
+	s.pwMu.RLock()
+	mirrored, key := s.pwMirrored, s.pwMirror
+	s.pwMu.RUnlock()
+	if mirrored {
+		return key
+	}
 	if len(s.cfg.PasswordKey) > 0 {
 		return s.cfg.PasswordKey
 	}
@@ -37,12 +43,30 @@ func (s *Server) passwordKey(serverID []byte) []byte {
 	return s.pwKey
 }
 
+// passwordSet reports whether clients must prove a password.
+func (s *Server) passwordSet() bool {
+	s.pwMu.RLock()
+	defer s.pwMu.RUnlock()
+	if s.pwMirrored {
+		return len(s.pwMirror) > 0
+	}
+	return len(s.cfg.PasswordKey) > 0 || s.cfg.Password != ""
+}
+
+// setPasswordKey makes k, the active host's password key, the one clients must
+// prove (nil: no password), replacing whatever the config says.
+func (s *Server) setPasswordKey(k []byte) {
+	s.pwMu.Lock()
+	s.pwMirrored, s.pwMirror = true, append([]byte(nil), k...)
+	s.pwMu.Unlock()
+}
+
 // checkPassword reports whether auth satisfies the server password. A proof is
 // compared against the HMAC under the key; a plain Password (v0.6 clients) is
 // run through the same derivation and compared in constant time. With no
 // password configured everything passes.
 func (s *Server) checkPassword(auth proto.Auth, serverNonce, clientNonce, serverID []byte) bool {
-	if len(s.cfg.PasswordKey) == 0 && s.cfg.Password == "" {
+	if !s.passwordSet() {
 		return true
 	}
 	key := s.passwordKey(serverID)
@@ -450,6 +474,5 @@ func (c *conn) authenticate() error {
 		c.sendError(proto.CodeBanned, "you are banned from this server")
 		return errAuthFailed
 	}
-
 	return nil
 }

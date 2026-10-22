@@ -618,7 +618,7 @@ func (h *History) Last() (ts time.Time, id string) {
 
 // Merge stores the messages whose ids are unknown, keeping (TS, ID) order, as
 // one append to the file, then enforces the megabyte cap as Add does. Messages
-// with an empty id are skipped. It returns how many were new, before the cap
+// with an empty id or channel (peer data) are skipped. It returns how many were new, before the cap
 // evicts anything. Like Add it is a no-op while the day cap is 0.
 func (h *History) Merge(msgs []proto.ChatMessage) (added int, err error) {
 	h.mu.Lock()
@@ -634,7 +634,7 @@ func (h *History) Merge(msgs []proto.ChatMessage) (added int, err error) {
 	var buf []byte
 	seen := make(map[string]struct{}, len(msgs))
 	for _, m := range msgs {
-		if m.ID == "" {
+		if m.ID == "" || m.Channel == "" {
 			continue
 		}
 		if _, dup := h.ids[m.ID]; dup {

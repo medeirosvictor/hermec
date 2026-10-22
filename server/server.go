@@ -135,6 +135,10 @@ type Server struct {
 	pwOnce sync.Once // derives pwKey from cfg.Password on first use
 	pwKey  []byte
 
+	pwMu       sync.RWMutex // guards pwMirrored and pwMirror
+	pwMirrored bool         // the key below came from the active host and overrides cfg
+	pwMirror   []byte
+
 	mu      sync.Mutex
 	conns   map[*conn]struct{}
 	closing bool
