@@ -16,8 +16,8 @@ import (
 
 	"github.com/medeirosvictor/hermec/client"
 	"github.com/medeirosvictor/hermec/core/chain"
-	"github.com/medeirosvictor/hermec/discover"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/discover"
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/ui/state"
 )

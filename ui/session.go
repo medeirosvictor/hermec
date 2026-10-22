@@ -141,7 +141,9 @@ func (g *game) dial(s *session) {
 	var o client.DialOpts
 	if e, ok := g.entryFor(s.key); ok {
 		o.Pin = e.ServerID
-		o.PasswordKey, _ = hex.DecodeString(e.PasswordKey)
+		if k, err := hex.DecodeString(e.PasswordKey); err == nil && len(k) == 32 {
+			o.PasswordKey = k // a corrupt cache is ignored; the password is used
+		}
 	}
 	if s.key == hostedKey && g.hosted != nil {
 		pass = g.hosted.cfg.Password
@@ -305,6 +307,23 @@ func noRetryCode(code string) bool {
 	return false
 }
 
+// dropCachedKey forgets the cached password key of s after the server refused
+// it, so a changed server password can be used on the next dial.
+func (g *game) dropCachedKey(s *session, err error) {
+	var se *client.ServerError
+	if s.key == hostedKey || !errors.As(err, &se) || se.Code != proto.CodeAuthFailed {
+		return
+	}
+	for i := range g.servers {
+		if g.servers[i].URL == s.key && g.servers[i].PasswordKey != "" {
+			g.servers[i].PasswordKey = ""
+			if err := state.SaveServers(g.serversPath, g.servers); err != nil {
+				g.notice = fmt.Sprintf("save servers: %v", err)
+			}
+		}
+	}
+}
+
 func (g *game) applyDial(r dialResult) {
 	s := g.sess[r.key]
 	if s == nil || s != r.s || r.gen != s.dialGen || !s.dialing || s.c != nil { // stale: the session is gone, replaced, redialed or moved on
@@ -316,6 +335,7 @@ func (g *game) applyDial(r dialResult) {
 	s.dialing = false
 	if r.err != nil {
 		g.logf("dial %s failed: %v", s.url, r.err)
+		g.dropCachedKey(s, r.err)
 		s.failed, s.lastErr = true, state.DialErrorText(r.err)
 		if !s.everUp {
 			return // keeps its tile and session; the user retries with the badge

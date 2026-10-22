@@ -1,6 +1,7 @@
 package server
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/gorilla/websocket"
@@ -46,6 +47,39 @@ func TestAuthNeitherProofNorPassword(t *testing.T) {
 	c := dial(t, url)
 	h := hello(t, c)
 	h.sendAuth(t, c, mustID(t), "tester", "")
+	requireAuthFailed(t, c, readEnv(t, c))
+}
+
+func TestAuthKeyOnlyHost(t *testing.T) {
+	hostKey := mustID(t)
+	cfg := Config{HostKey: hostKey}
+	ch, _, err := OpenChain(filepath.Join(t.TempDir(), "chain.jsonl"), hostKey, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := ch.ID()
+	pk, err := proto.PasswordKey("s3cret", id[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Chain, cfg.PasswordKey = ch, pk // no Password: the host holds only the key
+	url := startServer(t, cfg)
+
+	c := dial(t, url)
+	h := hello(t, c)
+	h.sendProofAuth(t, c, mustID(t), pk)
+	if env := readEnv(t, c); env.Type != proto.TypeAuthOK {
+		t.Fatalf("proof login: type = %q, want auth_ok", env.Type)
+	}
+	if _, env := authAs(t, url, mustID(t), "s3cret"); env.Type != proto.TypeAuthOK {
+		t.Fatalf("legacy login: type = %q, want auth_ok", env.Type)
+	}
+	c, env := authAs(t, url, mustID(t), "nope")
+	requireAuthFailed(t, c, env)
+	c = dial(t, url)
+	h = hello(t, c)
+	bad, _ := proto.PasswordKey("nope", id[:])
+	h.sendProofAuth(t, c, mustID(t), bad)
 	requireAuthFailed(t, c, readEnv(t, c))
 }
 
