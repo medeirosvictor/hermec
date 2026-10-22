@@ -173,6 +173,7 @@ func (c *conn) finish() {
 	if c.warmHeld.Swap(false) {
 		c.srv.releaseWarmSlot()
 	}
+	c.srv.closeWarmPeer(c)
 	c.srv.leaveAll(c)
 	c.closeSend()
 }

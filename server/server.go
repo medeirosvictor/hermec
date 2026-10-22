@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/pion/ice/v4"
+	"github.com/pion/webrtc/v4"
 
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
@@ -152,11 +153,13 @@ type Server struct {
 	warm       map[*conn]struct{} // warm (paused) sessions: chain frames and hb only; guarded by chMu
 	modeState  serverMode
 	takeover   takeoverState
-	loadHook   func() (voice, clients int)    // tests: replaces the measured load
-	promoted   atomic.Bool                    // takeover promoted this host; reset when it leaves active mode
-	warmSlots  int                            // warm sessions holding a slot of the warm cap; guarded by mu
-	links      map[*conn]struct{}             // host links being served; guarded by chMu
-	standby    atomic.Pointer[proto.HostInfo] // the host picked as standby, nil for none
+	loadHook   func() (voice, clients int)      // tests: replaces the measured load
+	promoted   atomic.Bool                      // takeover promoted this host; reset when it leaves active mode
+	warmSlots  int                              // warm sessions holding a slot of the warm cap; guarded by mu
+	warmMu     sync.Mutex                       // guards warmPeers
+	warmPeers  map[*conn]*webrtc.PeerConnection // data-channel-only PCs of warm clients; survive promotion until voice_join adopts them
+	links      map[*conn]struct{}               // host links being served; guarded by chMu
+	standby    atomic.Pointer[proto.HostInfo]   // the host picked as standby, nil for none
 	// sessions holds the media session of each occupied voice channel; guarded by chMu.
 	sessions map[string]*voiceSession
 

@@ -42,9 +42,14 @@ func (s *Server) Mode() Mode { return Mode(s.modeState.mode.Load()) }
 // SetMode switches the host's mode. Promoting warm sessions is the caller's
 // job (promoteWarmLocked).
 func (s *Server) SetMode(m Mode) {
-	s.modeState.mode.Store(int32(m))
+	prev := Mode(s.modeState.mode.Swap(int32(m)))
 	if m != ModeActive {
 		s.promoted.Store(false)
+		if prev == ModeActive {
+			// Peers kept past promotion for voice_join to adopt; a demoted
+			// host's clients are going elsewhere.
+			s.closeWarmPeers()
+		}
 	}
 }
 

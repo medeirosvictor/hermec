@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
+	"github.com/pion/webrtc/v4"
 
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
@@ -45,6 +46,7 @@ func (s *Server) initChannels() {
 	}
 	s.authed = make(map[*conn]struct{})
 	s.warm = make(map[*conn]struct{})
+	s.warmPeers = make(map[*conn]*webrtc.PeerConnection)
 	s.links = make(map[*conn]struct{})
 	s.sessions = make(map[string]*voiceSession)
 }
@@ -425,6 +427,8 @@ func (c *conn) route(env proto.Envelope) {
 		}
 	case proto.TypeChainAppend:
 		c.handleChainAppend(env)
+	case proto.TypeWarmOffer, proto.TypeWarmAnswer, proto.TypeWarmCandidate:
+		c.handleWarmSignal(env)
 	case proto.TypeLinkHello:
 		c.handleLinkHello(env)
 	case proto.TypeLinkProbe:

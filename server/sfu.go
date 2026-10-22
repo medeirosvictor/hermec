@@ -586,9 +586,21 @@ func (vs *voiceSession) reply(p *peer, msgType string, payload any) {
 }
 
 func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
-	pc, err := vs.api.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		return nil, err
+	// A promoted warm client brings the PeerConnection it already connected
+	// (ICE and DTLS done); its next rtc_offer renegotiates it. Ownership moves
+	// here. One mid-negotiation or dead is not worth reusing.
+	pc := vs.srv.takeWarmPeer(p.c)
+	if pc != nil && (pc.SignalingState() != webrtc.SignalingStateStable ||
+		pc.ConnectionState() == webrtc.PeerConnectionStateFailed || pc.ConnectionState() == webrtc.PeerConnectionStateClosed) {
+		_ = pc.Close()
+		pc = nil
+	}
+	if pc == nil {
+		var err error
+		pc, err = vs.api.NewPeerConnection(webrtc.Configuration{})
+		if err != nil {
+			return nil, err
+		}
 	}
 	// pion goroutines: only post, never touch session state directly.
 	pc.OnICECandidate(func(ci *webrtc.ICECandidate) {
