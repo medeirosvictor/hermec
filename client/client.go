@@ -57,6 +57,7 @@ const (
 type joinWaiter struct {
 	channel string
 	sig     []byte
+	ref     string     // chain_append request ref; errors for it echo this
 	res     chan error // buffered(1)
 }
 
@@ -445,7 +446,7 @@ func (c *Client) readLoop() {
 			var em proto.ErrorMsg
 			_ = json.Unmarshal(env.Data, &em)
 			se := &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen}
-			if c.failOldestJoin(se) {
+			if c.failWaiter(em.Ref, se) {
 				continue
 			}
 			if !c.onError(em) {
@@ -475,15 +476,18 @@ func (c *Client) resolveJoins(channel string) {
 	}
 }
 
-func (c *Client) failOldestJoin(err error) bool {
+// failWaiter fails the chain_append waiter ref names, or, for an error with
+// no ref, the oldest pending Join.
+func (c *Client) failWaiter(ref string, err error) bool {
 	c.mu.Lock()
-	if len(c.waiters) == 0 {
-		c.mu.Unlock()
-		return false
+	for i, w := range c.waiters {
+		if w.ref == ref {
+			c.waiters = append(c.waiters[:i], c.waiters[i+1:]...)
+			c.mu.Unlock()
+			w.res <- err
+			return true
+		}
 	}
-	w := c.waiters[0]
-	c.waiters = c.waiters[1:]
 	c.mu.Unlock()
-	w.res <- err
-	return true
+	return false
 }

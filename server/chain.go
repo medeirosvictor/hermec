@@ -360,16 +360,16 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 	var m proto.ChainAppend
 	var e chain.Entry
 	if json.Unmarshal(env.Data, &m) != nil || json.Unmarshal(m.Entry, &e) != nil {
-		c.sendError(proto.CodeBadRequest, "malformed chain_append")
+		c.sendErrorRef(proto.CodeBadRequest, "malformed chain_append", m.Ref)
 		return
 	}
 	if len(e.Author) != ed25519.PublicKeySize || identity.Fingerprint(ed25519.PublicKey(e.Author)) != c.fingerprint {
-		c.sendError(proto.CodeForbidden, "entries may only be appended by their author")
+		c.sendErrorRef(proto.CodeForbidden, "entries may only be appended by their author", m.Ref)
 		return
 	}
 	frames, err := chainFrames([]chain.Entry{e})
 	if err != nil || len(frames) != 1 {
-		c.sendError(proto.CodeBadRequest, "malformed chain entry")
+		c.sendErrorRef(proto.CodeBadRequest, "malformed chain entry", m.Ref)
 		return
 	}
 
@@ -381,20 +381,20 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 	case err == nil:
 	case errors.Is(err, chain.ErrConflict):
 		s.chainMu.Unlock()
-		c.sendError(proto.CodeChainConflict, "the chain moved on; retry")
+		c.sendErrorRef(proto.CodeChainConflict, "the chain moved on; retry", m.Ref)
 		return
 	case errors.Is(err, chain.ErrFull):
 		s.chainMu.Unlock()
-		c.sendError(proto.CodeChainFull, "the chain is full")
+		c.sendErrorRef(proto.CodeChainFull, "the chain is full", m.Ref)
 		return
 	case errors.As(err, &ruleErr):
 		s.chainMu.Unlock()
-		c.sendError(proto.CodeForbidden, ruleErr.Reason)
+		c.sendErrorRef(proto.CodeForbidden, ruleErr.Reason, m.Ref)
 		return
 	default:
 		s.chainMu.Unlock()
 		s.logf("server: chain_append from %s: %v", c.fingerprint, err)
-		c.sendError(proto.CodeBadRequest, "entry rejected")
+		c.sendErrorRef(proto.CodeBadRequest, "entry rejected", m.Ref)
 		return
 	}
 	s.refreshGroup()
@@ -407,6 +407,13 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 	dead := s.broadcastChainLocked(frames[0])
 	s.chMu.Unlock()
 	dropSlow(dead)
+	if e.Op == chain.OpGrant || e.Op == chain.OpRevoke {
+		// Role changes show in the roster's per-member roles.
+		s.chMu.Lock()
+		dead = s.broadcastAuthedLocked(s.rosterLocked())
+		s.chMu.Unlock()
+		dropSlow(dead)
+	}
 	if e.Op == chain.OpHostRemove || e.Op == chain.OpBan {
 		s.dropRemovedLinks()
 	}

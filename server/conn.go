@@ -152,6 +152,12 @@ func (c *conn) sendError(code, message string) {
 	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message})
 }
 
+// sendErrorRef is sendError for a failed chain_append: it echoes the
+// request's ref.
+func (c *conn) sendErrorRef(code, message, ref string) {
+	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message, Ref: ref})
+}
+
 // sendErrorGen is sendError for a refused watch: it echoes the request's gen.
 func (c *conn) sendErrorGen(code, message string, gen uint32) {
 	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message, Gen: gen})
@@ -369,6 +375,13 @@ func (c *conn) authenticate() error {
 	frames, err := chainFrames(sent)
 	if err != nil {
 		return err
+	}
+	size := 0
+	for _, f := range frames {
+		size += len(f)
+	}
+	if !c.srv.chargeChain(c.ip, size) {
+		return errAuthFailed // over the per-IP budget: close without sending
 	}
 	for _, f := range frames {
 		if !c.enqueue(f) {

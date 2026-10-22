@@ -216,6 +216,7 @@ func New(cfg Config) *Server {
 	s.modeState.mode.Store(int32(cfg.Mode))
 	s.ipConns = make(map[string]int)
 	s.fails = make(map[string]*authFail)
+	s.sent = make(map[string]*chainSend)
 	s.refreshGroup()
 	s.initChannels()
 	return s

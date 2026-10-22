@@ -3,6 +3,8 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"time"
@@ -111,7 +113,12 @@ func (c *Client) chainAppendOnce(ctx context.Context, op chain.Op, body any) err
 	if err != nil {
 		return err
 	}
-	w := &joinWaiter{sig: e.Sig, res: make(chan error, 1)}
+	var rb [8]byte
+	if _, err := rand.Read(rb[:]); err != nil {
+		return err
+	}
+	ref := hex.EncodeToString(rb[:])
+	w := &joinWaiter{sig: e.Sig, ref: ref, res: make(chan error, 1)}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -119,7 +126,7 @@ func (c *Client) chainAppendOnce(ctx context.Context, op chain.Op, body any) err
 	}
 	c.waiters = append(c.waiters, w)
 	c.mu.Unlock()
-	if err := c.send(proto.TypeChainAppend, proto.ChainAppend{Entry: raw}); err != nil {
+	if err := c.send(proto.TypeChainAppend, proto.ChainAppend{Entry: raw, Ref: ref}); err != nil {
 		c.removeWaiter(w)
 		return err
 	}
