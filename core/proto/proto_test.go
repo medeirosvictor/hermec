@@ -1,6 +1,7 @@
 package proto
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -276,5 +277,38 @@ func TestHistoryRoundTrip(t *testing.T) {
 	hb, err = json.Marshal(HistoryBefore{Channel: "general", BeforeID: "ab", BeforeTS: ts})
 	if err != nil || string(hb) != `{"channel":"general","before_id":"ab","before_ts":"2026-10-01T12:00:00.000000005Z"}` {
 		t.Errorf("HistoryBefore with ts = %s, %v", hb, err)
+	}
+}
+
+func TestPR3RoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		typ string
+		v   any
+	}{
+		{TypeHosts, Hosts{Active: HostInfo{Fingerprint: "ab", Name: "vic", Addrs: []string{"ws://1.2.3.4:7697/"}, Priority: 1}}},
+		{TypeHeartbeat, Heartbeat{Seq: 9}},
+		{TypeLinkHello, LinkHello{ChainSeq: 7, HistoryLastID: "x", Addrs: []string{"ws://a/"}}},
+		{TypeLinkSync, LinkSync{PasswordKey: []byte{1, 2}, Messages: []ChatMessage{{ID: "m", System: true}}, More: true}},
+		{TypeLinkRole, LinkRole{Standby: true}},
+		{TypeLinkProbeReply, LinkProbeReply{Active: true, VoiceMembers: 3, Clients: 5, Priority: 2}},
+		{TypeMove, Move{To: HostInfo{Fingerprint: "cd"}, Reason: "handback"}},
+		{TypeReach, Reach{Fingerprint: "ef", OK: true}},
+		{TypeHandover, Handover{}},
+	} {
+		raw, err := Encode(tc.typ, tc.v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env, err := Decode(raw)
+		if err != nil || env.Type != tc.typ || env.V != Version {
+			t.Fatalf("%s: %v %+v", tc.typ, err, env)
+		}
+	}
+}
+
+func TestAuthWarmOmittedWhenFalse(t *testing.T) {
+	raw, _ := json.Marshal(Auth{Name: "a"})
+	if bytes.Contains(raw, []byte("warm")) {
+		t.Fatal("warm leaked")
 	}
 }

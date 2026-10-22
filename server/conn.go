@@ -164,7 +164,7 @@ func (c *conn) readLoop() {
 		}
 		env, err := proto.Decode(raw)
 		if err != nil {
-			c.sendError("bad_request", "malformed message")
+			c.sendError(proto.CodeBadRequest, "malformed message")
 			continue
 		}
 		c.route(env)

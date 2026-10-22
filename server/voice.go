@@ -210,10 +210,10 @@ func (s *Server) watch(c *conn, fp string, gen uint32) string {
 // Returns "" on success or an error code.
 func (s *Server) voiceJoin(c *conn, ch string) string {
 	if s.channelType(ch) != "voice" {
-		return "bad_request"
+		return proto.CodeBadRequest
 	}
 	if !s.roles().Has(c.fingerprint, roles.PermJoinChannel) {
-		return "forbidden"
+		return proto.CodeForbidden
 	}
 	s.chMu.Lock()
 	var dead []*conn
@@ -275,14 +275,14 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 	case proto.TypeVoiceJoin:
 		var m proto.VoiceJoin
 		if json.Unmarshal(env.Data, &m) != nil {
-			c.sendError("bad_request", "malformed voice_join")
+			c.sendError(proto.CodeBadRequest, "malformed voice_join")
 			return true
 		}
 		switch c.srv.voiceJoin(c, m.Channel) {
-		case "bad_request":
-			c.sendError("bad_request", "not a voice channel: "+m.Channel)
-		case "forbidden":
-			c.sendError("forbidden", "not permitted to join channels")
+		case proto.CodeBadRequest:
+			c.sendError(proto.CodeBadRequest, "not a voice channel: "+m.Channel)
+		case proto.CodeForbidden:
+			c.sendError(proto.CodeForbidden, "not permitted to join channels")
 		case proto.CodeVoiceFull:
 			c.sendError(proto.CodeVoiceFull, "voice channel is full")
 		}
@@ -291,7 +291,7 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 	case proto.TypeVoiceMute:
 		var m proto.VoiceMute
 		if json.Unmarshal(env.Data, &m) != nil {
-			c.sendError("bad_request", "malformed voice_mute")
+			c.sendError(proto.CodeBadRequest, "malformed voice_mute")
 			return true
 		}
 		if c.srv.voiceMute(c, m.Muted) == "not_joined" {
@@ -304,7 +304,7 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 	case proto.TypeWatch:
 		var m proto.Watch
 		if json.Unmarshal(env.Data, &m) != nil {
-			c.sendError("bad_request", "malformed watch")
+			c.sendError(proto.CodeBadRequest, "malformed watch")
 			return true
 		}
 		switch c.srv.watch(c, m.Fingerprint, m.Gen) {

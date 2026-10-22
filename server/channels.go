@@ -311,7 +311,7 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 	}
 	if !s.roles().Has(c.fingerprint, roles.PermSendChat) {
 		s.chMu.Unlock()
-		return "forbidden"
+		return proto.CodeForbidden
 	}
 	id, err := newMessageID()
 	if err != nil {
@@ -357,20 +357,20 @@ func (c *conn) route(env proto.Envelope) {
 	case proto.TypeJoin:
 		var m proto.Join
 		if json.Unmarshal(env.Data, &m) != nil {
-			c.sendError("bad_request", "malformed join")
+			c.sendError(proto.CodeBadRequest, "malformed join")
 			return
 		}
 		if !c.srv.roles().Has(c.fingerprint, roles.PermJoinChannel) {
-			c.sendError("forbidden", "not permitted to join channels")
+			c.sendError(proto.CodeForbidden, "not permitted to join channels")
 			return
 		}
 		if !c.srv.join(c, m.Channel) {
-			c.sendError("bad_request", "unknown channel "+m.Channel)
+			c.sendError(proto.CodeBadRequest, "unknown channel "+m.Channel)
 		}
 	case proto.TypeLeave:
 		var m proto.Leave
 		if json.Unmarshal(env.Data, &m) != nil {
-			c.sendError("bad_request", "malformed leave")
+			c.sendError(proto.CodeBadRequest, "malformed leave")
 			return
 		}
 		if !c.srv.leave(c, m.Channel) {
@@ -379,27 +379,27 @@ func (c *conn) route(env proto.Envelope) {
 	case proto.TypeChatSend:
 		var m proto.ChatSend
 		if json.Unmarshal(env.Data, &m) != nil {
-			c.sendError("bad_request", "malformed chat_send")
+			c.sendError(proto.CodeBadRequest, "malformed chat_send")
 			return
 		}
 		if len(m.Text) > maxChatBytes {
-			c.sendError("bad_request", "message too long")
+			c.sendError(proto.CodeBadRequest, "message too long")
 			return
 		}
 		switch c.srv.chat(c, m.Channel, m.Text) {
 		case "not_joined":
 			c.sendError("not_joined", "not in channel "+m.Channel)
-		case "forbidden":
-			c.sendError("forbidden", "not permitted to send chat")
+		case proto.CodeForbidden:
+			c.sendError(proto.CodeForbidden, "not permitted to send chat")
 		}
 	case proto.TypeHistoryBefore:
 		var m proto.HistoryBefore
 		if json.Unmarshal(env.Data, &m) != nil || m.Channel == "" || m.BeforeID == "" {
-			c.sendError("bad_request", "malformed history_before")
+			c.sendError(proto.CodeBadRequest, "malformed history_before")
 			return
 		}
 		if !c.srv.roles().Has(c.fingerprint, roles.PermJoinChannel) {
-			c.sendError("forbidden", "not permitted to join channels")
+			c.sendError(proto.CodeForbidden, "not permitted to join channels")
 			return
 		}
 		if !c.srv.historyBefore(c, m.Channel, m.BeforeID, m.BeforeTS) {
@@ -411,7 +411,7 @@ func (c *conn) route(env proto.Envelope) {
 		if c.routeVoice(env) {
 			return
 		}
-		c.sendError("bad_request", "unsupported message type "+env.Type)
+		c.sendError(proto.CodeBadRequest, "unsupported message type "+env.Type)
 	}
 }
 

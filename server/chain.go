@@ -360,16 +360,16 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 	var m proto.ChainAppend
 	var e chain.Entry
 	if json.Unmarshal(env.Data, &m) != nil || json.Unmarshal(m.Entry, &e) != nil {
-		c.sendError("bad_request", "malformed chain_append")
+		c.sendError(proto.CodeBadRequest, "malformed chain_append")
 		return
 	}
 	if len(e.Author) != ed25519.PublicKeySize || identity.Fingerprint(ed25519.PublicKey(e.Author)) != c.fingerprint {
-		c.sendError("forbidden", "entries may only be appended by their author")
+		c.sendError(proto.CodeForbidden, "entries may only be appended by their author")
 		return
 	}
 	frames, err := chainFrames([]chain.Entry{e})
 	if err != nil || len(frames) != 1 {
-		c.sendError("bad_request", "malformed chain entry")
+		c.sendError(proto.CodeBadRequest, "malformed chain entry")
 		return
 	}
 
@@ -389,12 +389,12 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 		return
 	case errors.As(err, &ruleErr):
 		s.chainMu.Unlock()
-		c.sendError("forbidden", ruleErr.Reason)
+		c.sendError(proto.CodeForbidden, ruleErr.Reason)
 		return
 	default:
 		s.chainMu.Unlock()
 		s.logf("server: chain_append from %s: %v", c.fingerprint, err)
-		c.sendError("bad_request", "entry rejected")
+		c.sendError(proto.CodeBadRequest, "entry rejected")
 		return
 	}
 	s.refreshGroup()
