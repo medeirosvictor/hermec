@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/webrtc/v4"
+
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 )
@@ -29,16 +31,27 @@ func (m *markerSource) ReadOpusFrame() ([]byte, error) {
 type recSink struct {
 	mu      sync.Mutex
 	markers map[byte]int
+	arrived map[byte][]time.Time
 }
 
-func newRecSink() *recSink { return &recSink{markers: map[byte]int{}} }
+func newRecSink() *recSink {
+	return &recSink{markers: map[byte]int{}, arrived: map[byte][]time.Time{}}
+}
 
 func (r *recSink) WriteOpusFrame(_ string, frame []byte) {
 	r.mu.Lock()
 	if len(frame) > 0 {
 		r.markers[frame[0]]++
+		r.arrived[frame[0]] = append(r.arrived[frame[0]], time.Now())
 	}
 	r.mu.Unlock()
+}
+
+// arrival is when the n-th (0-based) frame with marker m arrived.
+func (r *recSink) arrival(m byte, n int) time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.arrived[m][n]
 }
 
 func (r *recSink) marker(m byte) int {
@@ -109,9 +122,7 @@ func TestAdoptCallResumesAudio(t *testing.T) {
 	waitUntil(t, "warm peers ready", func() bool { return x.warm.WarmPeerReady() && y.warm.WarmPeerReady() })
 	killHost(t, p.a)
 
-	// Measured from the takeover, not from the shutdown.
-	t0 := time.Now()
-	before := y.sink.marker('X')
+	before := y.sink.marker('X') // A is dead: nothing arrives until B carries X again
 	for _, co := range []*callee{x, y} {
 		if err := co.warm.Takeover(testCtx(t)); err != nil {
 			t.Fatalf("Takeover: %v", err)
@@ -129,8 +140,9 @@ func TestAdoptCallResumesAudio(t *testing.T) {
 	}
 	wg.Wait()
 	waitUntil(t, "Y hears X again", func() bool { return y.sink.marker('X') > before })
-	if gap := time.Since(t0); gap >= 1500*time.Millisecond {
-		t.Fatalf("audio resumed %v after Takeover, want < 1500ms", gap)
+	// The gap between X's last frame from A and its first from B.
+	if gap := y.sink.arrival('X', before).Sub(y.sink.arrival('X', before-1)); gap >= 1500*time.Millisecond {
+		t.Fatalf("audio gap across failover = %v, want < 1500ms", gap)
 	}
 	if x.warm.VoiceChannel() != warmVoiceCh || x.active.VoiceChannel() != "" {
 		t.Fatalf("call not moved: new=%q old=%q", x.warm.VoiceChannel(), x.active.VoiceChannel())
@@ -173,6 +185,56 @@ func mutedIn(st *proto.VoiceState, fp string) bool {
 		}
 	}
 	return false
+}
+
+// A refused adoption leaves from's call alone.
+func TestAdoptCallInVoiceKeepsFrom(t *testing.T) {
+	p := newPair(t)
+	x := newCallee(t, p, 'X')
+	c, err := Dial(testCtx(t), p.aURL, mustIdent(t), "c", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetLoopbackICE(true)
+	go drain(c)
+	if err := c.JoinVoice(testCtx(t), warmVoiceCh, &markerSource{marker: 'C'}, newRecSink()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AdoptCall(testCtx(t), x.active); err != ErrInVoice {
+		t.Fatalf("err = %v, want ErrInVoice", err)
+	}
+	if x.active.VoiceChannel() != warmVoiceCh {
+		t.Fatal("from lost its call")
+	}
+}
+
+// A media reset after adoption builds a fresh PeerConnection, not the
+// consumed warm one.
+func TestAdoptCallResetBuildsFreshPC(t *testing.T) {
+	p := newPair(t)
+	x := newCallee(t, p, 'X')
+	waitUntil(t, "warm peer ready", x.warm.WarmPeerReady)
+	killHost(t, p.a)
+	if err := x.warm.Takeover(testCtx(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.warm.AdoptCall(testCtx(t), x.active); err != nil {
+		t.Fatal(err)
+	}
+	cl := x.warm.getCall()
+	var before, after *webrtc.PeerConnection
+	done := make(chan struct{})
+	cl.post(func() {
+		before = cl.pc
+		cl.reset()
+		after = cl.pc
+		close(done)
+	})
+	<-done
+	if before == nil || after == nil || before == after {
+		t.Fatalf("reset kept the PC: before=%p after=%p", before, after)
+	}
 }
 
 // Without a warm peer AdoptCall falls back to a plain join with the same

@@ -126,6 +126,7 @@ func (c *Client) OpenWarmPeer(ctx context.Context) error {
 		c.dropWarmPeer(w)
 		return ctx.Err()
 	case <-c.done:
+		c.dropWarmPeer(w)
 		return ErrClosed
 	}
 }
@@ -206,27 +207,34 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 	if c.Warm() {
 		return ErrStillWarm
 	}
-	from.mu.Lock()
-	old := from.call
-	from.call = nil
-	from.mu.Unlock()
-	if old == nil {
+	// Every check that can fail comes before from's call is touched.
+	if c.getCall() != nil {
+		return ErrInVoice
+	}
+	if from.getCall() == nil {
 		return ErrNotInVoice
 	}
-	_ = from.send(proto.TypeVoiceLeave, proto.VoiceLeave{}) // fails on the dead connection
-	old.teardownCtx(ctx)
-	select {
-	case <-old.tdDone:
-	default:
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return errors.New("client: previous call did not stop")
-	}
-	// The actor has exited, so its state is ours to read.
 	var pc *webrtc.PeerConnection
 	if w := c.takeReadyWarmPeer(); w != nil {
 		pc = w.pc
 	}
-	return c.joinCall(ctx, old.channel, old.src, old.sink, old.muted.Load(), old.vidWanted, pc)
+	from.mu.Lock()
+	old := from.call
+	from.call = nil
+	from.mu.Unlock()
+	if old == nil { // raced with a leave
+		if pc != nil {
+			_ = pc.Close()
+		}
+		return ErrNotInVoice
+	}
+	_ = from.send(proto.TypeVoiceLeave, proto.VoiceLeave{}) // fails on the dead connection
+	old.teardownCtx(ctx)
+	vid := false
+	select {
+	case <-old.tdDone:
+		vid = old.vidWanted // the actor has exited, so its state is ours to read
+	default: // a stuck teardown must not cost the user the call: join anyway
+	}
+	return c.joinCall(ctx, old.channel, old.src, old.sink, old.muted.Load(), vid, pc)
 }
