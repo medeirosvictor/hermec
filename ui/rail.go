@@ -200,9 +200,6 @@ func (g *game) addServer() {
 }
 
 func (g *game) updateRail() {
-	if g.railW() == 0 {
-		return
-	}
 	right := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight)
 	if !right && !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		return
@@ -219,6 +216,9 @@ func (g *game) updateRail() {
 // (x, y). A right press opens the tile menu; a left press acts on the target.
 func (g *game) clickRail(h state.Hit, ok, right bool, x, y float64) {
 	if right {
+		if ok && h.Kind == state.HitMember {
+			g.openMemberMenu(h.Key, x, y)
+		}
 		if ok && (h.Kind == state.HitRailTile || h.Kind == state.HitRailRetry) && h.ID >= 0 && h.ID < len(g.servers) {
 			g.openTileMenu(g.servers[h.ID].URL, x, y)
 		}

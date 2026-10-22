@@ -69,6 +69,8 @@ type sendResult struct {
 	// older is set for a history_before request: the channel whose Loading
 	// mark an error must clear.
 	older string
+	// what names the failed action in the notice; empty is "send".
+	what string
 }
 
 // cur returns the viewed session, or g.none (a PhaseConnect placeholder that
@@ -301,7 +303,11 @@ func (g *game) pumpSessions() {
 					delete(s.st.Loading, r.older)
 					continue
 				}
-				s.st.Status = fmt.Sprintf("send failed: %v", r.err)
+				what := r.what
+				if what == "" {
+					what = "send"
+				}
+				s.st.Status = fmt.Sprintf("%s failed: %v", what, r.err)
 			}
 			continue
 		default:

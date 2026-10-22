@@ -161,6 +161,7 @@ func (g *game) addMainHits(gm geometry) {
 	}
 	g.hits.Add(state.Hit{X0: gm.inputR.x0, Y0: gm.inputR.y0, X1: gm.inputR.x1, Y1: gm.inputR.y1, Kind: state.HitText})
 	g.hits.Add(state.Hit{X0: gm.toggleR.x0, Y0: gm.toggleR.y0, X1: gm.toggleR.x1, Y1: gm.toggleR.y1, Kind: state.HitMembersToggle})
+	g.addMemberHits(gm)
 	g.addVoicePanelHits(gm)
 	g.addVideoHit(gm)
 	g.addBarHits(gm)

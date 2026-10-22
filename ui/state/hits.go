@@ -33,6 +33,7 @@ const (
 	HitVideoChange                  // on-video strip, self preview: change screen
 	HitVoiceLeave                   // voice panel: disconnect
 	HitVoiceShare                   // voice panel: share / stop share
+	HitMember                       // roster member row; Key is their fingerprint
 )
 
 // Hit is one click target: the half-open rect [X0,X1) x [Y0,Y1).
