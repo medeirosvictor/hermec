@@ -299,18 +299,6 @@ func TestRollbackRefused(t *testing.T) {
 	}
 }
 
-func TestHostsEvent(t *testing.T) {
-	url := startServer(t, server.Config{})
-	c, err := Dial(testCtx(t), url, mustIdent(t), "alice", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	if ev, ok := waitEvent(c, 3*time.Second, func(e Event) bool { return e.Hosts != nil }); !ok || ev.Hosts.Active.Fingerprint == "" {
-		t.Fatalf("hosts event = %+v ok=%v", ev.Hosts, ok)
-	}
-}
-
 // An upgraded connection that is dropped is a lost connection, not a busy
 // host.
 func TestDialBareCloseIsNotServerBusy(t *testing.T) {

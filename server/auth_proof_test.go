@@ -19,7 +19,7 @@ func (h *hs) sendProofAuth(t *testing.T, c *websocket.Conn, id *identity.Identit
 	})
 }
 
-func TestAuthWithProof(t *testing.T) {
+func TestAuthProofRightAndWrongPassword(t *testing.T) {
 	url := startServer(t, Config{Password: "s3cret"})
 	for _, tc := range []struct {
 		pw string

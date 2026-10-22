@@ -10,19 +10,52 @@ import (
 	"time"
 )
 
-func TestLoadServersMissing(t *testing.T) {
-	got, err := LoadServers(filepath.Join(t.TempDir(), "nope", "servers.toml"))
-	if err != nil || len(got) != 0 {
-		t.Fatalf("got %v, %v", got, err)
+func TestLoadServers(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content *string // nil: no file
+		wantErr bool
+		wantN   int
+	}{
+		{"missing file", nil, false, 0},
+		{"corrupt", ptr("not [valid"), true, 0},
+		{"old format without name or nick", ptr("[[server]]\nurl = \"ws://a/\"\nlabel = \"a\"\nlast_channel = \"c\"\nlast_seen = 2023-11-14T22:13:20Z\n"), false, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "sub", "servers.toml")
+			if tc.content != nil {
+				if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte(*tc.content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := LoadServers(p)
+			if (err != nil) != tc.wantErr || len(got) != tc.wantN {
+				t.Fatalf("got %v, %v; want err=%v n=%d", got, err, tc.wantErr, tc.wantN)
+			}
+			if tc.wantN == 1 && (got[0].URL != "ws://a/" || got[0].Name != "" || got[0].Nick != "") {
+				t.Fatalf("old format: %+v", got[0])
+			}
+		})
 	}
 }
 
+func ptr(s string) *string { return &s }
+
+// Everything persistable survives a save and load, pending entries are not
+// saved, empty name and nick are not written, and no temp file is left.
 func TestServersRoundTrip(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "sub", "servers.toml")
 	in := []ServerEntry{
 		{URL: "ws://a:1/", Label: "a:1", LastChannel: "general", LastSeen: time.Unix(1700000000, 0).UTC()},
-		{URL: "ws://b:2/", Label: "local", LastSeen: time.Unix(1600000000, 0).UTC()},
+		{URL: "ws://b:2/", Label: "local", Name: "Primos", Nick: "Lab", LastSeen: time.Unix(1600000000, 0).UTC()},
+		{URL: "ws://pending/", Pending: true},
 	}
+	in = SetHosts(in, "ws://a:1/", []string{"ws://a:1/", "ws://b:2/"})
+	in = BumpChainSeq(in, "ws://a:1/", 7)
+	in = BumpChainSeq(in, "ws://a:1/", 3) // never lowers
 	if err := SaveServers(p, in); err != nil {
 		t.Fatal(err)
 	}
@@ -30,124 +63,114 @@ func TestServersRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 2 || out[0].URL != in[0].URL || out[0].LastChannel != "general" || !out[0].LastSeen.Equal(in[0].LastSeen) || out[1].Label != "local" {
-		t.Fatalf("round trip: %+v", out)
+	if len(out) != 2 {
+		t.Fatalf("loaded %+v, want the two non-pending entries", out)
+	}
+	if a := out[0]; a.URL != "ws://a:1/" || a.LastChannel != "general" || !a.LastSeen.Equal(in[0].LastSeen) ||
+		len(a.Hosts) != 2 || a.Hosts[1] != "ws://b:2/" || a.ChainSeq != 7 {
+		t.Fatalf("first entry: %+v", a)
+	}
+	if b := out[1]; b.Label != "local" || b.Name != "Primos" || b.Nick != "Lab" {
+		t.Fatalf("second entry: %+v", b)
 	}
 	if ents, _ := os.ReadDir(filepath.Dir(p)); len(ents) != 1 {
 		t.Fatalf("temp file left behind: %v", ents)
 	}
-}
-
-func TestLoadServersCorrupt(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "s.toml")
-	if err := os.WriteFile(p, []byte("not [valid"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadServers(p); err == nil {
-		t.Fatal("want error")
+	raw, _ := os.ReadFile(p)
+	if strings.Count(string(raw), "nick") != 1 || strings.Count(string(raw), "name") != 1 {
+		t.Fatalf("empty name or nick written:\n%s", raw)
 	}
 }
 
-func TestTouchUpsertOrder(t *testing.T) {
-	var e []ServerEntry
-	e = Touch(e, "ws://a/", "a", "", "x", nil)
-	e = Touch(e, "ws://b/", "b", "", "y", nil)
-	if e[0].URL != "ws://b/" || e[1].URL != "ws://a/" {
-		t.Fatalf("order %+v", e)
-	}
-	e = Touch(e, "ws://a/", "a2", "", "z", nil)
-	if len(e) != 2 || e[0].URL != "ws://b/" || e[1].URL != "ws://a/" {
-		t.Fatalf("order must stay stable %+v", e)
-	}
-	if e[1].LastChannel != "z" || e[1].Label != "a2" {
-		t.Fatalf("upsert %+v", e)
-	}
-	if e[1].LastSeen.IsZero() {
-		t.Fatal("LastSeen unset")
-	}
-}
-
-func TestTouchNewGoesFirst(t *testing.T) {
-	e := Touch(nil, "ws://a/", "", "", "", nil)
-	e = Touch(e, "ws://b/", "", "", "", nil)
-	if e[0].URL != "ws://b/" {
-		t.Fatalf("%+v", e)
-	}
-}
-
-func TestTouchCapKeepsLive(t *testing.T) {
-	var e []ServerEntry
-	for i := 0; i < MaxServers-1; i++ {
-		e = append(e, ServerEntry{URL: "ws://h" + string(rune('a'+i)) + "/"})
-	}
-	e = append(e, ServerEntry{URL: "ws://live/"})
-	live := func(u string) bool { return u == "ws://live/" }
-	e = Touch(e, "ws://new/", "", "", "", live)
-	if len(e) != MaxServers || e[0].URL != "ws://new/" {
-		t.Fatalf("len %d first %s", len(e), e[0].URL)
-	}
-	hasLive, hasLastDropped := false, true
-	for _, x := range e {
-		if x.URL == "ws://live/" {
-			hasLive = true
+func TestTouch(t *testing.T) {
+	t.Run("upsert keeps order, new goes first", func(t *testing.T) {
+		var e []ServerEntry
+		e = Touch(e, "ws://a/", "a", "", "x", nil)
+		e = Touch(e, "ws://b/", "b", "", "y", nil)
+		if e[0].URL != "ws://b/" || e[1].URL != "ws://a/" {
+			t.Fatalf("order %+v", e)
 		}
-		if x.URL == "ws://h"+string(rune('a'+MaxServers-2))+"/" {
-			hasLastDropped = false
+		e = Touch(e, "ws://a/", "a2", "", "z", nil)
+		if len(e) != 2 || e[0].URL != "ws://b/" || e[1].URL != "ws://a/" {
+			t.Fatalf("order must stay stable %+v", e)
 		}
-	}
-	if !hasLive || !hasLastDropped {
-		t.Fatalf("live kept=%v last non-live dropped=%v", hasLive, hasLastDropped)
-	}
+		if e[1].LastChannel != "z" || e[1].Label != "a2" || e[1].LastSeen.IsZero() {
+			t.Fatalf("upsert %+v", e)
+		}
+	})
+	t.Run("empty arguments keep fields, a new name replaces, nick untouched, pending cleared", func(t *testing.T) {
+		e := Touch(nil, "ws://a/", "a", "Primos", "chan", nil)
+		e[0].Nick, e[0].Pending = "mine", true
+		e = Touch(e, "ws://a/", "", "", "", nil)
+		if e[0].Label != "a" || e[0].LastChannel != "chan" || e[0].Name != "Primos" || e[0].Nick != "mine" || e[0].Pending {
+			t.Fatalf("%+v", e)
+		}
+		if e = Touch(e, "ws://a/", "", "Other", "", nil); e[0].Name != "Other" {
+			t.Fatalf("name not replaced: %+v", e)
+		}
+	})
+	t.Run("cap drops the oldest, never a live one", func(t *testing.T) {
+		var e []ServerEntry
+		for i := 0; i < MaxServers-1; i++ {
+			e = append(e, ServerEntry{URL: fmt.Sprintf("ws://h%d/", i)})
+		}
+		e = append(e, ServerEntry{URL: "ws://live/"}) // the oldest
+		e = Touch(e, "ws://new/", "", "", "", func(u string) bool { return u == "ws://live/" })
+		if len(e) != MaxServers || e[0].URL != "ws://new/" {
+			t.Fatalf("len %d first %s", len(e), e[0].URL)
+		}
+		urls := map[string]bool{}
+		for _, x := range e {
+			urls[x.URL] = true
+		}
+		if !urls["ws://live/"] || urls[fmt.Sprintf("ws://h%d/", MaxServers-2)] {
+			t.Fatalf("live kept=%v; the oldest non-live should be gone", urls["ws://live/"])
+		}
+	})
+	t.Run("cap without live", func(t *testing.T) {
+		var e []ServerEntry
+		for i := 0; i < MaxServers+9; i++ {
+			e = Touch(e, fmt.Sprintf("ws://h%d/", i), "", "", "", nil)
+		}
+		if len(e) != MaxServers || e[0].URL != fmt.Sprintf("ws://h%d/", MaxServers+8) {
+			t.Fatalf("len %d first %s", len(e), e[0].URL)
+		}
+	})
+	t.Run("input not aliased", func(t *testing.T) {
+		a := []ServerEntry{{URL: "ws://a/", LastChannel: "1"}}
+		_ = Touch(a, "ws://a/", "", "", "2", nil)
+		if a[0].LastChannel != "1" {
+			t.Fatal("input mutated")
+		}
+	})
 }
 
-func TestTouchEmptyKeepsFields(t *testing.T) {
-	e := Touch(nil, "ws://a/", "a", "", "chan", nil)
-	e = Touch(e, "ws://a/", "", "", "", nil)
-	if e[0].Label != "a" || e[0].LastChannel != "chan" {
-		t.Fatalf("%+v", e)
-	}
-}
-
-func TestTouchCap(t *testing.T) {
-	var e []ServerEntry
-	for i := 0; i < 25; i++ {
-		e = Touch(e, "ws://h"+string(rune('a'+i))+"/", "", "", "", nil)
-	}
-	if len(e) != MaxServers || e[0].URL != "ws://hy/" {
-		t.Fatalf("len %d first %s", len(e), e[0].URL)
-	}
-}
-
-func TestTouchDoesNotAliasInput(t *testing.T) {
-	a := []ServerEntry{{URL: "ws://a/", LastChannel: "1"}}
-	_ = Touch(a, "ws://a/", "", "", "2", nil)
-	if a[0].LastChannel != "1" {
-		t.Fatal("input mutated")
-	}
-}
-
-func TestInitials(t *testing.T) {
-	cases := []struct {
-		e    ServerEntry
-		want string
+func TestNames(t *testing.T) {
+	for _, tc := range []struct {
+		e        ServerEntry
+		display  string
+		initials string
 	}{
-		{ServerEntry{Label: "local", URL: "ws://127.0.0.1:1/"}, "lo"},
-		{ServerEntry{Label: "é", URL: "ws://x/"}, "é"},
-		{ServerEntry{URL: "ws://chat.example.com:9/"}, "ch"},
-	}
-	for _, c := range cases {
-		if got := Initials(c.e); got != c.want {
-			t.Errorf("%+v: got %q want %q", c.e, got, c.want)
+		{ServerEntry{Nick: "N", Name: "S", Label: "L"}, "N", "N"},
+		{ServerEntry{Name: "Primos", Label: "lo"}, "Primos", "Pr"},
+		{ServerEntry{Nick: "Lab", Name: "Primos"}, "Lab", "La"},
+		{ServerEntry{Label: "local", URL: "ws://127.0.0.1:1/"}, "local", "lo"},
+		{ServerEntry{Label: "é", URL: "ws://x/"}, "é", "é"},
+		{ServerEntry{URL: "ws://chat.example.com:9/"}, "chat.example.com:9", "ch"},
+		{ServerEntry{URL: "ws://h:9/"}, "h:9", "h:"},
+	} {
+		if got := DisplayName(tc.e); got != tc.display {
+			t.Errorf("DisplayName(%+v) = %q, want %q", tc.e, got, tc.display)
+		}
+		if got := Initials(tc.e); got != tc.initials {
+			t.Errorf("Initials(%+v) = %q, want %q", tc.e, got, tc.initials)
 		}
 	}
-}
-
-func TestHostPort(t *testing.T) {
 	if got := HostPort("ws://127.0.0.1:5555/"); got != "127.0.0.1:5555" {
-		t.Fatal(got)
+		t.Error(got)
 	}
 	if got := HostPort("junk"); got != "junk" {
-		t.Fatal(got)
+		t.Error(got)
 	}
 }
 
@@ -173,41 +196,6 @@ func TestRailHit(t *testing.T) {
 	}
 }
 
-func TestDisplayNamePrecedence(t *testing.T) {
-	cases := []struct {
-		e    ServerEntry
-		want string
-	}{
-		{ServerEntry{Nick: "N", Name: "S", Label: "L"}, "N"},
-		{ServerEntry{Name: "S", Label: "L"}, "S"},
-		{ServerEntry{Label: "L"}, "L"},
-		{ServerEntry{URL: "ws://h:9/"}, "h:9"},
-	}
-	for _, c := range cases {
-		if got := DisplayName(c.e); got != c.want {
-			t.Errorf("%+v: got %q want %q", c.e, got, c.want)
-		}
-	}
-}
-
-func TestInitialsUsesDisplayName(t *testing.T) {
-	cases := []struct {
-		e    ServerEntry
-		want string
-	}{
-		{ServerEntry{Name: "Primos", Label: "lo"}, "Pr"},
-		{ServerEntry{Nick: "Lab", Name: "Primos"}, "La"},
-		{ServerEntry{Label: "local", URL: "ws://127.0.0.1:1/"}, "lo"},
-		{ServerEntry{Label: "é", URL: "ws://x/"}, "é"},
-		{ServerEntry{URL: "ws://chat.example.com:9/"}, "ch"},
-	}
-	for _, c := range cases {
-		if got := Initials(c.e); got != c.want {
-			t.Errorf("%+v: got %q want %q", c.e, got, c.want)
-		}
-	}
-}
-
 func TestCleanName(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -219,9 +207,9 @@ func TestCleanName(t *testing.T) {
 		{strings.Repeat("é", 70), 64, strings.Repeat("é", 64)},
 		{"\x01\t \n", 64, ""},
 		{strings.Repeat("a", 40), 32, strings.Repeat("a", 32)},
-		{"a\u202eb", 64, "ab"},
-		{"a\u2066b\u2069c", 64, "abc"},
-		{"a\u2028b\u2029c", 64, "abc"},
+		{"a‮b", 64, "ab"},
+		{"a⁦b⁩c", 64, "abc"},
+		{"a b c", 64, "abc"},
 	}
 	for _, c := range cases {
 		if got := CleanName(c.in, c.max); got != c.want {
@@ -266,81 +254,6 @@ func TestRemove(t *testing.T) {
 	}
 }
 
-func TestTouchKeepsName(t *testing.T) {
-	e := Touch(nil, "ws://a/", "a", "Primos", "c", nil)
-	e[0].Nick = "mine"
-	e = Touch(e, "ws://a/", "", "", "", nil)
-	if e[0].Name != "Primos" {
-		t.Fatalf("name lost: %+v", e)
-	}
-	e = Touch(e, "ws://a/", "", "Other", "", nil)
-	if e[0].Name != "Other" {
-		t.Fatalf("name not replaced: %+v", e)
-	}
-	if e[0].Nick != "mine" {
-		t.Fatalf("Touch changed nick: %+v", e)
-	}
-}
-
-func TestServersFileOldFormatLoads(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "servers.toml")
-	old := "[[server]]\nurl = \"ws://a/\"\nlabel = \"a\"\nlast_channel = \"c\"\nlast_seen = 2023-11-14T22:13:20Z\n"
-	if err := os.WriteFile(p, []byte(old), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := LoadServers(p)
-	if err != nil || len(got) != 1 || got[0].Name != "" || got[0].Nick != "" || got[0].URL != "ws://a/" {
-		t.Fatalf("got %+v, %v", got, err)
-	}
-	if err := SaveServers(p, got); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := os.ReadFile(p)
-	if strings.Contains(string(b), "name") || strings.Contains(string(b), "nick") {
-		t.Fatalf("empty name/nick written:\n%s", b)
-	}
-	in := []ServerEntry{{URL: "ws://b/", Name: "Primos", Nick: "Lab"}}
-	if err := SaveServers(p, in); err != nil {
-		t.Fatal(err)
-	}
-	out, err := LoadServers(p)
-	if err != nil || len(out) != 1 || out[0].Name != "Primos" || out[0].Nick != "Lab" {
-		t.Fatalf("round trip: %+v, %v", out, err)
-	}
-}
-
-func TestSaveServersSkipsPending(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "servers.toml")
-	if err := SaveServers(p, []ServerEntry{{URL: "a"}, {URL: "b", Pending: true}}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := LoadServers(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0].URL != "a" {
-		t.Errorf("got %+v, want only a", got)
-	}
-}
-
-func TestServersHostsAndChainSeqPersist(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "servers.toml")
-	in := []ServerEntry{{URL: "ws://a:1/", Label: "a"}}
-	in = SetHosts(in, "ws://a:1/", []string{"ws://a:1/", "ws://b:2/"})
-	in = BumpChainSeq(in, "ws://a:1/", 7)
-	in = BumpChainSeq(in, "ws://a:1/", 3) // never lowers
-	if err := SaveServers(p, in); err != nil {
-		t.Fatal(err)
-	}
-	got, err := LoadServers(p)
-	if err != nil || len(got) != 1 {
-		t.Fatalf("load: %v %v", got, err)
-	}
-	if len(got[0].Hosts) != 2 || got[0].Hosts[1] != "ws://b:2/" || got[0].ChainSeq != 7 {
-		t.Fatalf("round trip lost hosts or seq: %+v", got[0])
-	}
-}
-
 func TestSetHostsDedupesAndCaps(t *testing.T) {
 	var hs []string
 	for i := 0; i < 40; i++ {
@@ -356,12 +269,5 @@ func TestSetHostsDedupesAndCaps(t *testing.T) {
 			t.Fatalf("empty or duplicate host %q in %v", h, out[0].Hosts)
 		}
 		seen[h] = true
-	}
-}
-
-func TestTouchClearsPending(t *testing.T) {
-	got := Touch([]ServerEntry{{URL: "b", Pending: true}}, "b", "", "", "", nil)
-	if len(got) != 1 || got[0].Pending {
-		t.Errorf("got %+v, want Pending false", got)
 	}
 }
