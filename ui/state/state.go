@@ -14,6 +14,9 @@ import (
 // MaxMessages is the per-channel scrollback cap.
 const MaxMessages = 2000
 
+// HistoryPage is the most messages a host sends in one history page.
+const HistoryPage = 100
+
 type Phase int
 
 const (
@@ -177,9 +180,10 @@ func (s *State) PrevChannel() {
 	}
 }
 
-// CanLoadOlder reports whether an older page can be requested for ch.
+// CanLoadOlder reports whether an older page can be requested for ch: one is
+// due, none is in flight, and a whole page fits under MaxMessages.
 func (s *State) CanLoadOlder(ch string) bool {
-	return s.Older[ch] && !s.Loading[ch] && len(s.Messages[ch]) < MaxMessages
+	return s.Older[ch] && !s.Loading[ch] && len(s.Messages[ch])+HistoryPage <= MaxMessages
 }
 
 // OldestID is the id of the oldest message shown in ch ("" if none).

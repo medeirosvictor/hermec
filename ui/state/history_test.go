@@ -119,6 +119,20 @@ func TestHistoryCap(t *testing.T) {
 	}
 }
 
+// An older page merged into a nearly full channel would be cut right back off
+// the old end, so loading needs room for a whole page.
+func TestCanLoadOlderNeedsRoomForPage(t *testing.T) {
+	s := newHS()
+	s.Older["general"] = true
+	for _, n := range []int{MaxMessages - HistoryPage, MaxMessages - HistoryPage + 1} {
+		s.Messages["general"] = make([]Message, n)
+		want := n <= MaxMessages-HistoryPage
+		if got := s.CanLoadOlder("general"); got != want {
+			t.Errorf("%d messages: CanLoadOlder = %v, want %v", n, got, want)
+		}
+	}
+}
+
 // An older page with nothing new must not re-arm Older, or the view at the
 // top would ask for the same page forever.
 func TestHistoryOlderPageNothingNewStopsOlder(t *testing.T) {
