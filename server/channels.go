@@ -391,6 +391,10 @@ func (c *conn) route(env proto.Envelope) {
 			c.sendError("bad_request", "malformed history_before")
 			return
 		}
+		if !c.srv.roles().Has(c.fingerprint, roles.PermJoinChannel) {
+			c.sendError("forbidden", "not permitted to join channels")
+			return
+		}
 		if !c.srv.historyBefore(c, m.Channel, m.BeforeID) {
 			c.sendError("not_joined", "not in channel "+m.Channel)
 		}
