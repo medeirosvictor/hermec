@@ -60,6 +60,8 @@ type ConfigBody struct {
 	AllowedKeys   []string            `json:"allowed_keys"`
 	Roles         map[string][]string `json:"roles"`
 	DefaultRoles  []string            `json:"default_roles"`
+	HistoryDays   *int                `json:"history_days,omitempty"`
+	HistoryMB     *int                `json:"history_mb,omitempty"`
 }
 
 // GrantBody grants roles to a fingerprint.

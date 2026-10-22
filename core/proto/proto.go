@@ -34,6 +34,8 @@ const (
 	TypeChatSend    = "chat_send"
 	TypeChatMessage = "chat_message"
 	TypeChannelList = "channel_list"
+	TypeHistory       = "history"
+	TypeHistoryBefore = "history_before"
 	TypeRoster      = "roster"
 
 	TypeVoiceJoin    = "voice_join"
@@ -278,10 +280,27 @@ type ChatSend struct {
 
 // ChatMessage is a chat message broadcast by the server.
 type ChatMessage struct {
+	ID      string    `json:"id,omitempty"`
 	Channel string    `json:"channel"`
 	From    Member    `json:"from"`
 	Text    string    `json:"text"`
 	TS      time.Time `json:"ts"`
+}
+
+// History is a page of stored chat lines for a text channel, oldest first.
+// Before echoes the before_id it answers (empty for the join page); More says
+// older lines remain.
+type History struct {
+	Channel  string        `json:"channel"`
+	Before   string        `json:"before,omitempty"`
+	Messages []ChatMessage `json:"messages"`
+	More     bool          `json:"more,omitempty"`
+}
+
+// HistoryBefore asks for the page of lines older than BeforeID.
+type HistoryBefore struct {
+	Channel  string `json:"channel"`
+	BeforeID string `json:"before_id"`
 }
 
 // Encode wraps payload in a versioned envelope and marshals it.

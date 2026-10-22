@@ -82,6 +82,11 @@ type Config struct {
 	// MaxPerIP caps concurrent connections per remote IP; 0 means
 	// DefaultMaxPerIP. TOML: max_per_ip.
 	MaxPerIP int
+	// HistoryDays and HistoryMB cap the stored chat history (nil = default;
+	// see HistoryLimits). Group fields: the chain config carries them.
+	HistoryDays, HistoryMB *int
+	// HistoryPath is the chat history file; empty keeps history in memory only.
+	HistoryPath string
 	// Logf receives every server log line; nil means log.Printf.
 	Logf func(format string, args ...any)
 	// HostKey is the host's own key. Nil makes New generate an ephemeral one.

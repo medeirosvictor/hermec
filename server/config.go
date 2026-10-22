@@ -19,6 +19,27 @@ const DefaultAddr = ":7697"
 // MaxVoiceLimit is the largest accepted max_voice (see LoadConfig).
 const MaxVoiceLimit = 50
 
+// Chat history defaults and ceilings (see Config.HistoryLimits).
+const (
+	DefaultHistoryDays = 30
+	DefaultHistoryMB   = 8
+	MaxHistoryDays     = 3650
+	MaxHistoryMB       = 1024
+)
+
+// HistoryLimits returns the effective retention: days (0 keeps nothing) and
+// megabytes, defaulted when unset and clamped to their ceilings.
+func (c Config) HistoryLimits() (days, mb int) {
+	days, mb = DefaultHistoryDays, DefaultHistoryMB
+	if c.HistoryDays != nil {
+		days = *c.HistoryDays
+	}
+	if c.HistoryMB != nil {
+		mb = *c.HistoryMB
+	}
+	return min(max(days, 0), MaxHistoryDays), min(max(mb, 1), MaxHistoryMB)
+}
+
 // fileConfig is the on-disk TOML shape of Config.
 type fileConfig struct {
 	Addr          string              `toml:"addr"`
@@ -41,6 +62,8 @@ type fileConfig struct {
 	MaxClients    *int                `toml:"max_clients"`
 	MaxPerIP      *int                `toml:"max_per_ip"`
 	Discoverable  *bool               `toml:"discoverable"`
+	HistoryDays   *int                `toml:"history_days"`
+	HistoryMB     *int                `toml:"history_mb"`
 	ServerName    string              `toml:"server_name,omitempty"`
 	ServerID      string              `toml:"server_id,omitempty"`
 }
@@ -164,6 +187,18 @@ func LoadConfig(path string) (Config, error) {
 	if md.IsDefined("max_voice") {
 		cfg.MaxVoice = maxVoice
 	}
+	if fc.HistoryDays != nil {
+		if *fc.HistoryDays < 0 || *fc.HistoryDays > MaxHistoryDays {
+			return Config{}, fmt.Errorf("server: load config: history_days must be between 0 and %d", MaxHistoryDays)
+		}
+		cfg.HistoryDays = fc.HistoryDays
+	}
+	if fc.HistoryMB != nil {
+		if *fc.HistoryMB < 1 || *fc.HistoryMB > MaxHistoryMB {
+			return Config{}, fmt.Errorf("server: load config: history_mb must be between 1 and %d", MaxHistoryMB)
+		}
+		cfg.HistoryMB = fc.HistoryMB
+	}
 	if utf8.RuneCountInString(fc.ServerName) > discover.MaxNameRunes {
 		return Config{}, fmt.Errorf("server: load config: server_name must be at most %d characters", discover.MaxNameRunes)
 	}
@@ -210,6 +245,8 @@ func (c Config) MarshalTOML() ([]byte, error) {
 		MaxClients:    omitLimit(c.MaxClients, DefaultMaxClients),
 		MaxPerIP:      omitLimit(c.MaxPerIP, DefaultMaxPerIP),
 		Discoverable:  &c.Discoverable,
+		HistoryDays:   c.HistoryDays,
+		HistoryMB:     c.HistoryMB,
 		ServerName:    c.ServerName,
 		ServerID:      c.ServerID,
 	}

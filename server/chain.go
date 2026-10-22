@@ -25,6 +25,7 @@ import (
 var groupKeys = []string{
 	"server_name", "channels", "voice_channels", "max_voice", "max_clients",
 	"max_per_ip", "allowed_keys", "roles", "default_roles", "grants",
+	"history_days", "history_mb",
 }
 
 // GroupFieldsSet returns the group keys that the TOML file at path sets, in a
@@ -56,6 +57,8 @@ func configBody(cfg Config) chain.ConfigBody {
 		MaxPerIP:      cfg.MaxPerIP,
 		AllowedKeys:   cfg.AllowedKeys,
 		DefaultRoles:  cfg.Roles.DefaultRoles,
+		HistoryDays:   cfg.HistoryDays,
+		HistoryMB:     cfg.HistoryMB,
 	}
 	builtin := roles.Builtin()
 	for name, perms := range cfg.Roles.Roles {
@@ -234,6 +237,12 @@ func ApplyTOML(c *chain.Chain, key *identity.Identity, cfg Config, set []string)
 		}
 		if isSet["default_roles"] {
 			want.DefaultRoles = cfgBody.DefaultRoles
+		}
+		if isSet["history_days"] {
+			want.HistoryDays = cfgBody.HistoryDays
+		}
+		if isSet["history_mb"] {
+			want.HistoryMB = cfgBody.HistoryMB
 		}
 		want = normConfig(want)
 	}
@@ -432,6 +441,7 @@ func chainCfg(cfg Config, st chain.State) Config {
 	cfg.Channels, cfg.VoiceChannels = b.Channels, b.VoiceChannels
 	cfg.MaxVoice, cfg.MaxClients, cfg.MaxPerIP = b.MaxVoice, b.MaxClients, b.MaxPerIP
 	cfg.AllowedKeys = b.AllowedKeys
+	cfg.HistoryDays, cfg.HistoryMB = b.HistoryDays, b.HistoryMB
 	cfg.Roles = st.Roles()
 	return cfg
 }
