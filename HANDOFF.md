@@ -11,15 +11,16 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and
    the memory note `hermec-project`.
 2. Repo state: `main` == `origin/main`, released through **v0.5.1**. The
-   worktree `.claude/worktrees/hermec-portable` is on branch `always-on`.
+   worktree `.claude/worktrees/hermec-portable` is on branch `chat-history`.
    Untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.
 3. **Current round: always-on.** Spec (approved design):
    `docs/superpowers/specs/2026-10-21-hermec-always-on-design.md`. Three PRs:
    identity and chain, chat history, host link with warm standby and failover.
-   **PR 1 (identity and chain) is done** (branch `always-on`, protocol v2); next
-   is PR 2, chat history. After always-on and webcam, Victor moves to stress
+   **PR 1 (identity and chain) and PR 2 (chat history) are done** (protocol v2;
+   history on branch `chat-history`); next is PR 3, the host link with warm
+   standby and failover. After always-on and webcam, Victor moves to stress
    testing and use-case scenarios.
 4. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload:
    `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In Victor's real settings,
@@ -59,6 +60,8 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
      re-fetch up to 512 KiB repeatedly); move error-to-request matching off
      FIFO (errors carry no correlation id); a live grant/revoke does not
      re-broadcast the roster, so role badges lag until the next join.
+   - README 'How safe is this?': once standby ships, say the active host and
+     its standby can read and keep chat.
    - **No UI yet** for ban, grant or host changes; the protocol and server
      enforce them (`chain_append`). PR 3 adds Allow hosting / Stop hosting /
      Move up; ban/grant UI is still to be placed.
@@ -348,7 +351,8 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
   icons: `go run ./cmd/hermec-icon -out assets`).
 - **Files on the user's machine** (`<user config dir>/hermec/`): `identity.key`,
   `settings.toml`, `servers.toml`, `hosted.toml` (the server hosted from the
-  app), `logs/`. Saved servers keep the last `server_name` the server sent
+  app), `chains/` and `history/` (chain and chat history of the hosted
+  server), `logs/`. Saved servers keep the last `server_name` the server sent
   (`Name`) and the user's own nickname (`Nick`).
 - **Sessions:** every server opened this session stays connected; one `session`
   struct per server (`ui/session.go`). Connection lost: a call on that session
@@ -382,8 +386,30 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
 
 - Tailscale for friends: recommend node sharing of the hosting machine, not
   tailnet invites (friends see one machine only).
-- Chat history is not persisted anywhere yet (always-on adds it; Plan C is the
-  encrypted version).
+- Chat history is plain JSON lines on the host, unencrypted and unsigned (Plan C
+  is the encrypted version). It lives in `<config>/hermec/history/<server-id>.jsonl`
+  for a server hosted from the app, and at `-history` (default `history.jsonl`
+  next to `-config`) for `hermec-server`. Caps `history_days` (30; at most
+  3650) and `history_mb` (8; at most 64, since the store is held in memory and
+  rewritten under its lock) come from the chain config entry and apply at once
+  on a config append; code in `server/history.go` and `ui/state`. PR 3 must
+  carry history to the standby.
+- **Changing history caps of an app-hosted server:** the app has no group
+  settings UI and ignores group keys in `hosted.toml` (it logs a warning and
+  shows a notice). The way is `hermec-server -config <file>.toml -apply-config
+  -key <config>/hermec/identity.key -chain
+  <config>/hermec/chains/<server-id>.jsonl` with the app closed; the TOML holds
+  `history_days`/`history_mb` and `addr` set to the hosted port so the
+  running-server check works. Tested in
+  `cmd/hermec-server/apply_test.go`. A wrong `-key` path makes a new key there
+  and the append is then refused (not the founder). A wrong `-chain` path is
+  worse: it founds a new chain there, prints "appended N entries" and leaves
+  the real chain untouched (open: make this recipe refuse to create a chain).
+- **Old config writers reset history caps.** A `config` entry is the full group
+  config, and one written by a build from before chat history (its
+  `hermec-server -apply-config`, or an admin's app sending `chain_append`)
+  lacks `history_days`/`history_mb`, so it resets both to the defaults.
+  Everyone who runs `-apply-config` on a group must be on v0.6+.
 - Two clients on one machine with the same key silence each other by design
   (the self-echo filter keys on fingerprint). A second client needs `-key
   <other file>`.

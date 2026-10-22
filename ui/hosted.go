@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -224,12 +225,25 @@ func (g *game) bootHosted(path string) {
 	if !ok {
 		return
 	}
+	var inert string
+	if cfg.ServerID != "" { // without one, the group keys found the chain (migration)
+		if set, err := server.GroupFieldsSet(path); err != nil {
+			g.logf("hosted.toml: %v", err)
+		} else if len(set) > 0 {
+			inert = fmt.Sprintf("hosted.toml: ignoring group keys %s; the chain holds them (close the app and use hermec-server -apply-config)",
+				strings.Join(set, ", "))
+			g.logf("WARNING: %s", inert)
+		}
+	}
 	c, err := g.openHostedChain(path, &cfg)
 	if err != nil {
 		g.notice = fmt.Sprintf("hosted chain unreadable: %v", err)
 		return
 	}
-	if n := c.TornTail(); n > 0 {
+	if inert != "" {
+		g.notice = inert
+	}
+	if n := c.TornTail(); n > 0 { // the more urgent notice wins
 		g.logf("hosted chain ended in a torn entry; dropped %d bytes", n)
 		g.notice = "hosted chain: a half-written last entry was dropped (the app closed mid-write)"
 	}
@@ -246,6 +260,11 @@ func (g *game) defaultName() string {
 	return g.opts.Name
 }
 
+// historyDir is where hosted servers keep their chat history, beside hosted.toml.
+func historyDir(hostedPath string) string {
+	return filepath.Join(filepath.Dir(hostedPath), "history")
+}
+
 // startHosted starts the server from g.hosted.cfg. The dial URL uses the port
 // the server really got, which differs from cfg only for port 0.
 func (g *game) startHosted() error {
@@ -258,6 +277,13 @@ func (g *game) startHosted() error {
 	serverLogf(&h.cfg)
 	cfg := h.cfg
 	cfg.HostKey, cfg.Chain = g.id, h.chain
+	dir := historyDir(h.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		h.srv, h.err = nil, err.Error()
+		g.logf("hosted server not started: history dir: %v", err)
+		return err
+	}
+	cfg.HistoryPath = filepath.Join(dir, h.id+".jsonl")
 	srv := server.New(cfg)
 	if err := srv.Start(); err != nil {
 		h.srv = nil

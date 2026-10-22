@@ -141,11 +141,12 @@ exits.
 
 ### 4.2 Serving it
 
-- After auth the host sends each text channel's latest messages as
-  `history {channel, messages[], more}`, one frame of at most 64 KiB per
-  channel.
+- When a member joins a text channel, the host sends its latest messages as
+  `history {channel, messages[], more}`, one frame of at most 64 KiB. Join is
+  the existing read gate, and sending under the join keeps the frame ahead of
+  live messages.
 - Scrolling to the top of a channel sends `history_before {channel, before_id}`;
-  the host answers with the next older page.
+  the host answers with the next older page, echoing `before`.
 - The client deduplicates by `id` and orders by `(ts, id)`, so reconnects,
   failovers and split-brain merges never show a line twice.
 

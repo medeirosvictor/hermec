@@ -25,6 +25,7 @@ import (
 var groupKeys = []string{
 	"server_name", "channels", "voice_channels", "max_voice", "max_clients",
 	"max_per_ip", "allowed_keys", "roles", "default_roles", "grants",
+	"history_days", "history_mb",
 }
 
 // GroupFieldsSet returns the group keys that the TOML file at path sets, in a
@@ -56,6 +57,8 @@ func configBody(cfg Config) chain.ConfigBody {
 		MaxPerIP:      cfg.MaxPerIP,
 		AllowedKeys:   cfg.AllowedKeys,
 		DefaultRoles:  cfg.Roles.DefaultRoles,
+		HistoryDays:   cfg.HistoryDays,
+		HistoryMB:     cfg.HistoryMB,
 	}
 	builtin := roles.Builtin()
 	for name, perms := range cfg.Roles.Roles {
@@ -235,6 +238,12 @@ func ApplyTOML(c *chain.Chain, key *identity.Identity, cfg Config, set []string)
 		if isSet["default_roles"] {
 			want.DefaultRoles = cfgBody.DefaultRoles
 		}
+		if isSet["history_days"] {
+			want.HistoryDays = cfgBody.HistoryDays
+		}
+		if isSet["history_mb"] {
+			want.HistoryMB = cfgBody.HistoryMB
+		}
 		want = normConfig(want)
 	}
 	if !st.HasConfig || !reflect.DeepEqual(want, normConfig(st.Config)) {
@@ -344,7 +353,8 @@ func (s *Server) refreshGroup() {
 // handleChainAppend processes a chain_append from c: the entry must be c's own
 // and extend the head under the chain's rules. On success every authenticated
 // connection receives it and its effects (roles, bans, allowed_keys) apply at
-// once; name, channels and limits of a config entry apply at the next start.
+// once, as do the history limits; name, channels and the other limits of a
+// config entry apply at the next start.
 func (c *conn) handleChainAppend(env proto.Envelope) {
 	s := c.srv
 	var m proto.ChainAppend
@@ -388,6 +398,11 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 		return
 	}
 	s.refreshGroup()
+	if s.applyHistoryLimits() {
+		// New caps take effect at once, not at the next hourly trim. Done
+		// before the broadcast, outside chMu (History is a leaf lock).
+		s.trimHistory()
+	}
 	s.chMu.Lock()
 	dead := s.broadcastAuthedLocked(frames[0])
 	s.chMu.Unlock()
@@ -432,6 +447,7 @@ func chainCfg(cfg Config, st chain.State) Config {
 	cfg.Channels, cfg.VoiceChannels = b.Channels, b.VoiceChannels
 	cfg.MaxVoice, cfg.MaxClients, cfg.MaxPerIP = b.MaxVoice, b.MaxClients, b.MaxPerIP
 	cfg.AllowedKeys = b.AllowedKeys
+	cfg.HistoryDays, cfg.HistoryMB = b.HistoryDays, b.HistoryMB
 	cfg.Roles = st.Roles()
 	return cfg
 }

@@ -47,6 +47,7 @@ type dialResult struct {
 // joinResult is the outcome of a background Join.
 type joinResult struct {
 	key, channel string
+	c            *client.Client // the client that joined; nil skips the staleness check
 	err          error
 }
 
@@ -54,6 +55,9 @@ type joinResult struct {
 type sendResult struct {
 	key string
 	err error
+	// older is set for a history_before request: the channel whose Loading
+	// mark an error must clear.
+	older string
 }
 
 // cur returns the viewed session, or g.none (a PhaseConnect placeholder that
@@ -271,6 +275,10 @@ func (g *game) pumpSessions() {
 		select {
 		case r := <-g.sendCh:
 			if s := g.sess[r.key]; s != nil && r.err != nil {
+				if r.older != "" {
+					delete(s.st.Loading, r.older)
+					continue
+				}
 				s.st.Status = fmt.Sprintf("send failed: %v", r.err)
 			}
 			continue
@@ -331,14 +339,16 @@ func (g *game) applyDial(r dialResult) {
 
 func (g *game) applyJoin(r joinResult) {
 	s := g.sess[r.key]
-	if s == nil {
-		return
+	if s == nil || (r.c != nil && r.c != s.c) {
+		return // gone, or answered for a connection since replaced
 	}
 	if r.err != nil {
 		delete(s.ms.joined, r.channel) // allow retry on next switch
+		delete(s.ms.confirmed, r.channel)
 		s.st.Status = fmt.Sprintf("join %s failed: %v", r.channel, r.err)
 		return
 	}
+	s.ms.confirmed[r.channel] = true
 	g.logf("joined %s on %s", r.channel, s.url)
 }
 

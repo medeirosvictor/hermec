@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -26,6 +27,7 @@ func main() {
 	printConfig := flag.Bool("print-config", false, "print the effective config (password redacted) and exit")
 	keyPath := flag.String("key", "", "host key file (default hermec-server.key next to -config; generated when missing)")
 	chainPath := flag.String("chain", "", "server chain file (default chain.jsonl next to -config)")
+	historyPath := flag.String("history", "", "chat history file (default history.jsonl next to -config)")
 	applyConfig := flag.Bool("apply-config", false, "append the config file's group fields to the chain, print the count, and exit; stop the server first, the changes apply when it starts")
 	flag.Parse()
 	if *applyConfig && *configPath == "" {
@@ -36,14 +38,6 @@ func main() {
 	if *configPath != "" {
 		var err error
 		if cfg, err = server.LoadConfig(*configPath); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	if *applyConfig {
-		// A running server holds the chain in memory; appending to the file
-		// under it would fork the two.
-		if err := checkNotRunning(cfg.Addr); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -71,43 +65,27 @@ func main() {
 	if *chainPath == "" {
 		*chainPath = filepath.Join(dir, "chain.jsonl")
 	}
+	if *historyPath == "" {
+		*historyPath = filepath.Join(dir, "history.jsonl")
+	}
+	if *applyConfig {
+		if err := applyConfigFile(*configPath, *keyPath, *chainPath, cfg, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	key, err := loadOrCreateKey(*keyPath)
 	if err != nil {
 		log.Fatal(err)
 	}
-	c, created, err := server.OpenChain(*chainPath, key, cfg)
+	c, created, err := openChain(*chainPath, key, cfg)
 	if err != nil {
 		log.Fatal(err)
-	}
-	if n := c.TornTail(); n > 0 {
-		log.Printf("WARNING: %s ended in a torn entry (a crash during a write); dropped %d bytes and kept the %d entries before it",
-			*chainPath, n, len(c.Entries()))
-	}
-	if *applyConfig {
-		var applied []string
-		if created { // a fresh chain was just built from the config
-			for _, e := range c.Entries() {
-				applied = append(applied, string(e.Op))
-			}
-		} else {
-			set, err := server.GroupFieldsSet(*configPath)
-			if err != nil {
-				log.Fatal(err)
-			}
-			if applied, err = server.ApplyTOML(c, key, cfg, set); err != nil {
-				log.Fatal(err)
-			}
-		}
-		for _, a := range applied {
-			fmt.Println(a)
-		}
-		fmt.Printf("appended %d entries to %s\n", len(applied), *chainPath)
-		return
 	}
 	if err := checkHostKey(*keyPath, c, key); err != nil {
 		log.Fatal(err)
 	}
-	cfg.HostKey, cfg.Chain = key, c
+	cfg.HostKey, cfg.Chain, cfg.HistoryPath = key, c, *historyPath
 	if !created && *configPath != "" {
 		if set, err := server.GroupFieldsSet(*configPath); err != nil {
 			log.Print(err)
@@ -142,6 +120,58 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("shutdown: %v", err)
 	}
+}
+
+// openChain opens or creates the chain at path and warns about a torn tail.
+func openChain(path string, key *identity.Identity, cfg server.Config) (*chain.Chain, bool, error) {
+	c, created, err := server.OpenChain(path, key, cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	if n := c.TornTail(); n > 0 {
+		log.Printf("WARNING: %s ended in a torn entry (a crash during a write); dropped %d bytes and kept the %d entries before it",
+			path, n, len(c.Entries()))
+	}
+	return c, created, nil
+}
+
+// applyConfigFile is -apply-config: it appends the group fields that the TOML
+// at configPath sets (cfg is that file, loaded) to the chain at chainPath,
+// signed with the key at keyPath, and prints one line per entry to out. It also
+// serves an app host: pass the app's identity.key and chains/<id>.jsonl.
+func applyConfigFile(configPath, keyPath, chainPath string, cfg server.Config, out io.Writer) error {
+	// A running server holds the chain in memory; appending to the file
+	// under it would fork the two.
+	if err := checkNotRunning(cfg.Addr); err != nil {
+		return err
+	}
+	key, err := loadOrCreateKey(keyPath)
+	if err != nil {
+		return err
+	}
+	c, created, err := openChain(chainPath, key, cfg)
+	if err != nil {
+		return err
+	}
+	var applied []string
+	if created { // a fresh chain was just built from the config
+		for _, e := range c.Entries() {
+			applied = append(applied, string(e.Op))
+		}
+	} else {
+		set, err := server.GroupFieldsSet(configPath)
+		if err != nil {
+			return err
+		}
+		if applied, err = server.ApplyTOML(c, key, cfg, set); err != nil {
+			return err
+		}
+	}
+	for _, a := range applied {
+		fmt.Fprintln(out, a)
+	}
+	fmt.Fprintf(out, "appended %d entries to %s\n", len(applied), chainPath)
+	return nil
 }
 
 // checkHostKey refuses to serve a chain with a key it does not list as a host:

@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"sort"
 	"sync/atomic"
@@ -20,6 +22,10 @@ const (
 	maxMissed    = 2 // unanswered pings before a connection is dropped
 
 	maxChatBytes = 4096 // longest accepted chat text, in bytes
+
+	historyPage   = 100         // most messages read for one history frame
+	trimInterval  = time.Hour   // how often the host trims the history store
+	maxStoredSkew = time.Minute // stored timestamps further ahead of now are ignored when seeding chat time
 )
 
 // channelSet is the channel registry. All access is guarded by Server.chMu.
@@ -183,9 +189,80 @@ func (s *Server) join(c *conn, ch string) bool {
 	}
 	set[c] = struct{}{}
 	dead := s.broadcastLocked(ch, s.presenceLocked(ch))
+	if s.hist != nil {
+		// Under the same hold as the join, so no chat line falls between the
+		// page and the live stream.
+		if msgs, more := s.hist.Page(ch, "", time.Time{}, historyPage); len(msgs) > 0 {
+			if !c.enqueue(encodeHistory(proto.History{Channel: ch, Messages: msgs, More: more})) {
+				dead = append(dead, c)
+			}
+		}
+	}
 	s.chMu.Unlock()
 	dropSlow(dead)
 	return true
+}
+
+// historyBefore answers c's history_before: one page of lines older than
+// beforeID (placed by beforeTS if the store no longer holds it). It reports
+// false when c is not in ch.
+func (s *Server) historyBefore(c *conn, ch, beforeID string, beforeTS time.Time) bool {
+	s.chMu.Lock()
+	if _, ok := s.chans[ch][c]; !ok {
+		s.chMu.Unlock()
+		return false
+	}
+	var msgs []proto.ChatMessage
+	var more bool
+	if s.hist != nil {
+		msgs, more = s.hist.Page(ch, beforeID, beforeTS, historyPage)
+	}
+	var dead []*conn
+	if !c.enqueue(encodeHistory(proto.History{Channel: ch, Before: beforeID, Messages: msgs, More: more})) {
+		dead = append(dead, c)
+	}
+	s.chMu.Unlock()
+	dropSlow(dead)
+	return true
+}
+
+// encodeHistory encodes h as a history frame that fits MaxMessageSize,
+// dropping messages from the oldest end (and setting More) until it does. A nil
+// Messages is sent as an empty list.
+func encodeHistory(h proto.History) []byte {
+	msgs, more := h.Messages, h.More
+	h.Messages, h.More = []proto.ChatMessage{}, true // worst-case base
+	base, err := proto.Encode(proto.TypeHistory, h)
+	if err != nil {
+		return nil
+	}
+	size, start := len(base), len(msgs)
+	for start > 0 {
+		n, err := encodedLen(msgs[start-1])
+		if err != nil {
+			break
+		}
+		if start < len(msgs) {
+			n++ // comma
+		}
+		if size+n > proto.MaxMessageSize {
+			break
+		}
+		size += n
+		start--
+	}
+	h.Messages, h.More = append([]proto.ChatMessage{}, msgs[start:]...), more || start > 0
+	raw, _ := proto.Encode(proto.TypeHistory, h)
+	return raw
+}
+
+// newMessageID returns 16 random bytes as 32 lowercase hex characters.
+func newMessageID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // leave removes c from ch and broadcasts presence to the rest. It reports
@@ -236,15 +313,41 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 		s.chMu.Unlock()
 		return "forbidden"
 	}
-	raw, err := proto.Encode(proto.TypeChatMessage, proto.ChatMessage{
-		Channel: ch, From: c.member(), Text: text, TS: time.Now().UTC(),
-	})
+	id, err := newMessageID()
+	if err != nil {
+		s.chMu.Unlock()
+		s.logf("server: chat id: %v", err)
+		return ""
+	}
+	// Clients order by (ts, id) and ids are random, so timestamps must be
+	// strictly increasing or two lines in one clock tick could swap.
+	ts := time.Now().UTC()
+	if !ts.After(s.lastChatTS) {
+		ts = s.lastChatTS.Add(time.Nanosecond)
+	}
+	s.lastChatTS = ts
+	msg := proto.ChatMessage{
+		ID: id, Channel: ch, From: c.member(), Text: text, TS: ts,
+	}
+	raw, err := proto.Encode(proto.TypeChatMessage, msg)
+	if s.hist != nil {
+		// A store failure must not lose the live message.
+		if herr := s.hist.Add(msg); herr != nil {
+			s.logf("server: history: %v", herr)
+		}
+	}
 	var dead []*conn
 	if err == nil {
 		dead = s.broadcastLocked(ch, raw)
 	}
 	s.chMu.Unlock()
 	dropSlow(dead)
+	if s.hist != nil {
+		// Outside chMu; a rewrite holds the store lock only for its final swap.
+		if err := s.hist.Compact(s.clock()); err != nil {
+			s.logf("server: history compact: %v", err)
+		}
+	}
 	return ""
 }
 
@@ -288,6 +391,19 @@ func (c *conn) route(env proto.Envelope) {
 			c.sendError("not_joined", "not in channel "+m.Channel)
 		case "forbidden":
 			c.sendError("forbidden", "not permitted to send chat")
+		}
+	case proto.TypeHistoryBefore:
+		var m proto.HistoryBefore
+		if json.Unmarshal(env.Data, &m) != nil || m.Channel == "" || m.BeforeID == "" {
+			c.sendError("bad_request", "malformed history_before")
+			return
+		}
+		if !c.srv.roles().Has(c.fingerprint, roles.PermJoinChannel) {
+			c.sendError("forbidden", "not permitted to join channels")
+			return
+		}
+		if !c.srv.historyBefore(c, m.Channel, m.BeforeID, m.BeforeTS) {
+			c.sendError("not_joined", "not in channel "+m.Channel)
 		}
 	case proto.TypeChainAppend:
 		c.handleChainAppend(env)

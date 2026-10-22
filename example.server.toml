@@ -5,7 +5,8 @@
 # Inspect the effective config with:  hermec-server -config ... -print-config
 #
 # Group settings (server_name, channels, voice_channels, max_voice, max_clients,
-# max_per_ip, allowed_keys, roles, default_roles, [grants]) seed the server's
+# max_per_ip, allowed_keys, roles, default_roles, history_days, history_mb,
+# [grants]) seed the server's
 # chain on first start. Once the chain exists they are ignored with a warning;
 # to change them, edit them here and run:
 #   hermec-server -config example.server.toml -apply-config
@@ -68,6 +69,16 @@ voice_channels = ["voice"]
 
 # Name shown in discovery replies, at most 64 characters (default: the listen host:port).
 # server_name = "My Hermec Server"
+
+# Chat history for text channels. Messages older than history_days are dropped
+# (default 30; 0 keeps nothing and deletes the file; at most 3650). The oldest
+# messages are dropped as soon as the stored chat passes history_mb megabytes
+# (default 8; 1 to 64); the file itself is rewritten once it reaches twice
+# that. The host also trims at start, every hour, and when these change.
+# The file is chosen with the -history flag (default history.jsonl next to
+# the -config file), as -key and -chain choose the key and chain files.
+# history_days = 30
+# history_mb = 8
 
 # Roles given to fingerprints that have no entry in [grants].
 default_roles = ["user"]

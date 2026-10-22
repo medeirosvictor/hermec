@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEncodeDecodeRoundTrip(t *testing.T) {
@@ -243,5 +244,37 @@ func TestAuthOKServerName(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "server_name") {
 		t.Errorf("empty ServerName not omitted: %s", raw)
+	}
+}
+
+func TestHistoryRoundTrip(t *testing.T) {
+	in := History{Channel: "general", Before: "ab", Messages: []ChatMessage{{ID: "0f", Channel: "general", Text: "hi"}}, More: true}
+	raw, err := Encode(TypeHistory, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Type != TypeHistory || TypeHistory != "history" || TypeHistoryBefore != "history_before" {
+		t.Errorf("Type = %q", env.Type)
+	}
+	var out History
+	if err := json.Unmarshal(env.Data, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Channel != "general" || out.Before != "ab" || !out.More || len(out.Messages) != 1 ||
+		out.Messages[0].ID != "0f" || out.Messages[0].Channel != "general" || out.Messages[0].Text != "hi" {
+		t.Errorf("got %+v, want %+v", out, in)
+	}
+	hb, err := json.Marshal(HistoryBefore{Channel: "general", BeforeID: "ab"})
+	if err != nil || string(hb) != `{"channel":"general","before_id":"ab"}` {
+		t.Errorf("HistoryBefore = %s, %v", hb, err)
+	}
+	ts := time.Date(2026, 10, 1, 12, 0, 0, 5, time.UTC)
+	hb, err = json.Marshal(HistoryBefore{Channel: "general", BeforeID: "ab", BeforeTS: ts})
+	if err != nil || string(hb) != `{"channel":"general","before_id":"ab","before_ts":"2026-10-01T12:00:00.000000005Z"}` {
+		t.Errorf("HistoryBefore with ts = %s, %v", hb, err)
 	}
 }

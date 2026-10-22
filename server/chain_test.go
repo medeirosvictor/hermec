@@ -276,3 +276,48 @@ func TestReopenWithDifferentTOMLLeavesChain(t *testing.T) {
 		t.Errorf("served %q %v", ok.ServerName, ok.Channels)
 	}
 }
+
+func TestApplyTOMLHistoryKeys(t *testing.T) {
+	key := mustID(t)
+	c, _, err := OpenChain(filepath.Join(t.TempDir(), "chain.jsonl"), key, chainTestCfg(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := c.State().Config; h.HistoryDays != nil || h.HistoryMB != nil {
+		t.Fatalf("fresh chain has history fields: %+v", h)
+	}
+	cfg := chainTestCfg(nil)
+	seven := 7
+	cfg.HistoryDays = &seven
+	got, err := ApplyTOML(c, key, cfg, []string{"history_days"})
+	if err != nil || len(got) != 1 {
+		t.Fatalf("ApplyTOML = %v, %v", got, err)
+	}
+	b := c.State().Config
+	if b.HistoryDays == nil || *b.HistoryDays != 7 || b.HistoryMB != nil {
+		t.Errorf("config = %+v", b)
+	}
+	got, err = ApplyTOML(c, key, cfg, []string{"history_days"})
+	if err != nil || len(got) != 0 {
+		t.Errorf("second ApplyTOML = %v, %v", got, err)
+	}
+}
+
+func TestChainCfgHistory(t *testing.T) {
+	d, mb := 7, 16
+	st := chain.State{HasConfig: true, Config: chain.ConfigBody{HistoryDays: &d, HistoryMB: &mb}}
+	cfg := chainCfg(DefaultConfig(), st)
+	if cfg.HistoryDays == nil || *cfg.HistoryDays != 7 || cfg.HistoryMB == nil || *cfg.HistoryMB != 16 {
+		t.Errorf("cfg = %v %v", cfg.HistoryDays, cfg.HistoryMB)
+	}
+}
+
+func TestOldConfigBodyDecodes(t *testing.T) {
+	var b chain.ConfigBody
+	if err := json.Unmarshal([]byte(`{"name":"x","channels":["a"],"max_voice":8}`), &b); err != nil {
+		t.Fatal(err)
+	}
+	if b.HistoryDays != nil || b.HistoryMB != nil {
+		t.Errorf("body = %+v", b)
+	}
+}

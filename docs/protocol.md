@@ -2,8 +2,9 @@
 
 This document specifies the Hermec signaling/chat protocol, version 2. It
 covers the mutual handshake, the server chain (section 9), channels, presence,
-text chat, the server roster, voice signaling (section 4.12) and screen share
-signaling (section 4.15). Webcam is not specified yet.
+text chat and its history (sections 4.9 and 4.9a), the server roster, voice
+signaling (section 4.12) and screen share signaling (section 4.15). Webcam is
+not specified yet.
 
 The reference implementation is `core/proto` (types and codec) and `server`
 (behavior). Where this document and the code disagree, that is a bug in one of
@@ -64,6 +65,7 @@ Client                                   Server
   |                                      |
   | ---------------- join -------------> |
   | <------------- presence ------------ |   broadcast to all channel members
+  | <-------------- history ------------ |   to the joiner, if the channel has stored messages
   | ------------- chat_send -----------> |
   | <----------- chat_message ---------- |   broadcast to all channel members
 ```
@@ -138,8 +140,9 @@ split into hyphen-separated groups of four characters, for example
 
 ### 3.2 After authentication
 
-The client may send `join`, `leave` and `chat_send`. The server sends
-`presence` and `chat_message` for channels the client has joined. A
+The client may send `join`, `leave`, `chat_send` and `history_before`. The
+server sends `presence`, `chat_message` and `history` for channels the client
+has joined. A
 connection that sends anything else receives `error` (`bad_request`).
 Disconnecting leaves all channels; remaining members receive a new `presence`.
 
@@ -228,9 +231,10 @@ signature over the host-proof string of section 3.1.
 | `channel` | string | Channel to join.    |
 
 Requires the `join_channel` permission. On success the server broadcasts
-`presence` for the channel, including to the joiner. Joining a channel the
-client is already in is not an error; it produces another `presence`.
-Unknown channels yield `error` `bad_request`.
+`presence` for the channel, including to the joiner, and then, for a text
+channel with stored messages, sends the joiner a `history` frame (section 4.9a).
+Joining a channel the client is already in is not an error; it produces another
+`presence` and `history`. Unknown channels yield `error` `bad_request`.
 
 ### 4.6 `leave` (C)
 
@@ -276,14 +280,73 @@ message `message too long`.
 
 | Field     | Type   | Description                                   |
 |-----------|--------|-----------------------------------------------|
+| `id`      | string | Message id: 32 lowercase hex characters (16 random bytes), set by the host. |
 | `channel` | string | Channel name.                                 |
 | `from`    | Member | Sender (see 4.7).                             |
 | `text`    | string | Message body.                                 |
-| `ts`      | string | Server receive time, RFC 3339 UTC.            |
+| `ts`      | string | Host receive time, RFC 3339 UTC. Strictly increasing per server: a message never has the same or an earlier `ts` than the one before it. |
 
 Broadcast to every member of the channel, including the sender. Messages are
-delivered in a single consistent order to all members. The server keeps no
-history; members who join later do not receive earlier messages.
+delivered in a single consistent order to all members. The host stores text
+channel messages for later `history` (section 4.9a). Messages are not signed
+by their authors; there are no edits or deletes. A client orders messages by
+`(ts, id)` and drops a message whose `id` it already has.
+
+### 4.9a `history` (S) and `history_before` (C)
+
+The host keeps text-channel chat in a file, capped by the chain `config` entry's
+`history_days` and `history_mb` (section 9.3). Voice channels have no history.
+
+`history` (S):
+
+| Field      | Type          | Description                                          |
+|------------|---------------|------------------------------------------------------|
+| `channel`  | string        | Channel name.                                        |
+| `messages` | ChatMessage[] | `chat_message` payloads (4.9), oldest first.         |
+| `before`   | string        | Optional. The `before_id` of the request this answers; omitted for the page sent on join. |
+| `more`     | bool          | True when older messages than the first one exist.   |
+
+`history_before` (C):
+
+| Field       | Type   | Description                                           |
+|-------------|--------|-------------------------------------------------------|
+| `channel`   | string | A text channel the sender has joined.                 |
+| `before_id` | string | Id of a message; the host returns the messages just older than it. |
+| `before_ts` | string | Optional. The `ts` of that message (RFC 3339), used when the host no longer holds `before_id`. |
+
+Semantics:
+
+- **On join.** Right after the `presence` of a join (section 4.5), the host
+  sends `history` with the newest messages of the channel, at most 100, oldest
+  first. Nothing is sent when the channel has no stored messages.
+- **Frame size.** A `history` frame never exceeds 64 KiB encoded: when 100
+  messages would not fit, the page is cut to the newest messages that do, and
+  `more` is true.
+- **Older pages.** `history_before` is answered with a `history` whose
+  `before` echoes `before_id` and whose `messages` are the up to 100 messages
+  just older than that one (same size rule), oldest first. "Older" is by
+  `(ts, id)`. A `before_id` the host holds is placed by its own `ts`. One it
+  no longer holds (for instance a message trimmed since) is placed by
+  `before_ts` together with `before_id`; without `before_ts` the answer has
+  empty `messages` and `more` false. A client sends the `ts` of the message it
+  names.
+- **Errors.** A `history_before` for a channel the sender has not joined gets
+  `error` `not_joined`; one from a sender who no longer holds the permission
+  to join channels gets `error` `forbidden`; a malformed one (not a JSON object, or an empty
+  `channel` or `before_id`) gets `bad_request`. It counts against the normal
+  message rate limit.
+- **Client behavior.** A client merges messages by `id` and may receive the same
+  message from `history` and as a live `chat_message`. If the join page after a
+  reconnect shares no message with what the client already holds, the client
+  replaces its list for that channel and loads older pages again on demand. A
+  client sends `history_before` only after its `join` of that channel has
+  succeeded, and stops asking when an older page adds no new message.
+- **Retention.** The host drops lines older than `history_days` at start,
+  every hour, and at once when a `config` entry changes the limits.
+  `history_mb` is enforced on every stored message: when the stored lines
+  would pass it, the oldest leave the host's memory (and so every page) at
+  once, and the file is rewritten whenever it has grown past twice
+  `history_mb`. `history_days` 0 keeps nothing.
 
 ### 4.10 `channel_list`
 
@@ -428,9 +491,9 @@ closes it, and later authentications are refused with `banned`. A connection
 that logs in while an entry is being appended still receives it: the server
 registers the connection for live frames and sends it every entry after the
 head it sent in the handshake, in one step that no append can interleave with.
-The server name,
-channels and limits of a `config` entry are read at start-up and apply from the
-next start.
+The server name, channels and limits of a `config` entry are read at start-up
+and apply from the next start; the exception is `history_days` and
+`history_mb`, which apply at once (section 4.9a).
 
 ### 4.15 Screen share messages
 
@@ -531,7 +594,7 @@ Media:
 | `bad_chain` | Raised by a client when the chain it received does not verify (handshake or a live frame). Never sent on the wire. |
 | `forbidden`   | The role lacks the required permission (`join_channel`, `send_chat`). |
 | `bad_request` | Malformed message, unknown channel, unsupported message type, or chat text over 4096 bytes (`message too long`). |
-| `not_joined`  | The operation needs channel membership the client does not have.     |
+| `not_joined`  | The operation needs channel membership the client does not have (`leave`, `chat_send`, `history_before`, voice messages). |
 | `not_sharing` | `watch` named a member who is not sharing in the sender's voice channel. |
 | `voice_full`  | `voice_join` named a channel already at its participant cap (`max_voice`, default 25). |
 | `server_full` | Authentication was refused because the server is at its `max_clients` cap (default 256); the connection is closed after this message. |
@@ -681,7 +744,7 @@ nothing.
 | Op            | Body                                                         | Who may sign |
 |---------------|--------------------------------------------------------------|--------------|
 | `genesis`     | `name`, `founder` (the author's key), `salt` (random bytes)  | the founder; entry 0 only |
-| `config`      | the full group config: `name`, `channels`, `voice_channels`, `max_voice`, `max_clients`, `max_per_ip`, `allowed_keys`, `roles`, `default_roles` | founder, or a key with `manage` |
+| `config`      | the full group config: `name`, `channels`, `voice_channels`, `max_voice`, `max_clients`, `max_per_ip`, `allowed_keys`, `roles`, `default_roles`, `history_days` (default 30; 0 keeps no history; at most 3650), `history_mb` (default 8; 1 to 64) | founder, or a key with `manage` |
 | `grant`       | `fingerprint`, `roles`; replaces that key's roles. A grant naming the founder is refused unless the founder signs it | founder, or `manage` |
 | `revoke`      | `fingerprint`; removes that key's grant. The founder cannot be revoked | founder, or `manage` |
 | `ban`         | `fingerprint`. The founder cannot be banned                  | founder, or `manage` |

@@ -82,6 +82,11 @@ type Config struct {
 	// MaxPerIP caps concurrent connections per remote IP; 0 means
 	// DefaultMaxPerIP. TOML: max_per_ip.
 	MaxPerIP int
+	// HistoryDays and HistoryMB cap the stored chat history (nil = default;
+	// see HistoryLimits). Group fields: the chain config carries them.
+	HistoryDays, HistoryMB *int
+	// HistoryPath is the chat history file; empty keeps history in memory only.
+	HistoryPath string
 	// Logf receives every server log line; nil means log.Printf.
 	Logf func(format string, args ...any)
 	// HostKey is the host's own key. Nil makes New generate an ephemeral one.
@@ -120,15 +125,26 @@ type Server struct {
 	closing bool
 	wg      sync.WaitGroup // per-connection goroutines and the accept loop
 
-	chMu   sync.Mutex // guards chans, voice, authed, conn.voiceCh; see channels.go, voice.go
-	chans  channelSet
-	voice  voiceSet
-	authed map[*conn]struct{} // authenticated conns; voice_state goes to all
+	lastChatTS time.Time  // newest chat timestamp issued; guarded by chMu
+	chMu       sync.Mutex // guards chans, voice, authed, conn.voiceCh, lastChatTS; see channels.go, voice.go
+	chans      channelSet
+	voice      voiceSet
+	authed     map[*conn]struct{} // authenticated conns; voice_state goes to all
 	// sessions holds the media session of each occupied voice channel; guarded by chMu.
 	sessions map[string]*voiceSession
 
-	// clock is the time source for rate limiting; tests replace it.
+	// clock is the time source for rate limiting and history trims; tests replace it.
 	clock func() time.Time
+
+	// hist is the chat history store; nil until Start opens it (New runs
+	// refreshGroup first), so every user must tolerate nil.
+	hist     *History
+	stopHist chan struct{} // closed by Shutdown to stop the trimmer
+	stopOnce sync.Once
+
+	limitMu            sync.Mutex // guards the last applied history limits
+	limitSet           bool
+	limitDays, limitMB int
 
 	guards
 
@@ -161,6 +177,8 @@ func New(cfg Config) *Server {
 		cfg:   cfg,
 		clock: time.Now,
 		conns: make(map[*conn]struct{}),
+
+		stopHist: make(chan struct{}),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -180,6 +198,30 @@ func New(cfg Config) *Server {
 
 // Start listens on cfg.Addr and serves in the background.
 func (s *Server) Start() error {
+	if s.hist == nil {
+		h, err := OpenHistory(s.cfg.HistoryPath)
+		if err != nil {
+			return fmt.Errorf("server: open history: %w", err)
+		}
+		s.hist = h
+		// New chat timestamps must sort after every stored line, even across
+		// a restart within one clock tick or after the clock was set back.
+		s.chMu.Lock()
+		// A stored time far ahead of the clock is bogus and would pin it.
+		limit := s.clock().Add(maxStoredSkew)
+		if n := h.NewestBefore(limit); n.After(s.lastChatTS) {
+			s.lastChatTS = n
+		}
+		if n := h.Newest(); n.After(limit) {
+			s.logf("server: history: newest stored line is dated %s, over %s ahead of now; ignoring it for new timestamps", n.Format(time.RFC3339), maxStoredSkew)
+		}
+		s.chMu.Unlock()
+		s.applyHistoryLimits()
+		if n := h.Skipped(); n > 0 {
+			s.logf("server: history: skipped %d malformed lines in %s", n, s.cfg.HistoryPath)
+		}
+		s.trimHistory()
+	}
 	// With an ephemeral port (":0") the matching UDP port may already be
 	// taken; try a fresh TCP port a few times before giving up.
 	_, port, _ := net.SplitHostPort(s.cfg.Addr)
@@ -227,12 +269,55 @@ func (s *Server) start() error {
 		Handler:           http.HandlerFunc(s.handleWS),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	s.wg.Add(1)
+	s.wg.Add(2)
 	go func() {
 		defer s.wg.Done()
 		_ = s.http.Serve(ln) // always returns on Shutdown
 	}()
+	go func() {
+		defer s.wg.Done()
+		s.trimLoop()
+	}()
 	return nil
+}
+
+// applyHistoryLimits sets the store's caps from the live chain config and
+// reports whether they differ from the ones in force before.
+func (s *Server) applyHistoryLimits() (changed bool) {
+	if s.hist == nil {
+		return false
+	}
+	// One hold over read, compare and set: otherwise a trim that read the
+	// state before a config append could write the old limits back after it.
+	s.limitMu.Lock()
+	defer s.limitMu.Unlock()
+	days, mb := chainCfg(s.cfg, s.chain.State()).HistoryLimits()
+	changed = !s.limitSet || days != s.limitDays || mb != s.limitMB
+	s.limitSet, s.limitDays, s.limitMB = true, days, mb
+	s.hist.SetLimits(days, mb)
+	return changed
+}
+
+// trimHistory trims the store with the current limits; errors are only logged.
+func (s *Server) trimHistory() {
+	s.applyHistoryLimits()
+	if err := s.hist.Trim(s.clock()); err != nil {
+		s.logf("server: history trim: %v", err)
+	}
+}
+
+// trimLoop trims the history every trimInterval until Shutdown.
+func (s *Server) trimLoop() {
+	t := time.NewTicker(trimInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.stopHist:
+			return
+		case <-t.C:
+			s.trimHistory()
+		}
+	}
 }
 
 // Addr returns the actual listen address (host:port) after Start.
@@ -253,6 +338,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		open = append(open, c)
 	}
 	s.mu.Unlock()
+	s.stopOnce.Do(func() { close(s.stopHist) })
+	if s.hist != nil {
+		defer s.hist.Close() // after the goroutines below have stopped
+	}
 
 	var err error
 	if s.http != nil {

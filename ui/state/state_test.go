@@ -31,11 +31,11 @@ func TestApplyChatAppendsToItsChannel(t *testing.T) {
 func TestApplyCapsAt500(t *testing.T) {
 	s := New()
 	s.SetConnected(chans("general"), "me")
-	for i := 0; i < 501; i++ {
+	for i := 0; i < MaxMessages+1; i++ {
 		s.Apply(chat("general", fmt.Sprint(i)), true)
 	}
 	ms := s.Messages["general"]
-	if len(ms) != MaxMessages || ms[0].Text != "1" || ms[len(ms)-1].Text != "500" {
+	if len(ms) != MaxMessages || ms[0].Text != "1" || ms[len(ms)-1].Text != fmt.Sprint(MaxMessages) {
 		t.Fatalf("len=%d first=%s last=%s", len(ms), ms[0].Text, ms[len(ms)-1].Text)
 	}
 }

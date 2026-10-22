@@ -135,6 +135,23 @@ func TestChainAppendAppliesRolesImmediately(t *testing.T) {
 	}
 }
 
+func TestHistoryBeforeAfterJoinRevoked(t *testing.T) {
+	f := newAppendFixture(t)
+	user := mustID(t)
+	a := f.connect(t, f.founder)
+	u := f.connect(t, user)
+	fp := identity.Fingerprint(user.PublicKey())
+	sendEnv(t, u, proto.TypeJoin, proto.Join{Channel: "general"})
+	readPresence(t, u)
+	sendAppend(t, a, f.entry(t, f.founder, chain.OpGrant, chain.GrantBody{Fingerprint: fp, Roles: nil}))
+	readChainEntry(t, u)
+	// Still in the channel, but no longer allowed to read its history.
+	sendEnv(t, u, proto.TypeHistoryBefore, proto.HistoryBefore{Channel: "general", BeforeID: "x"})
+	if em := readErrCode(t, u); em.Code != "forbidden" {
+		t.Fatalf("code = %q, want forbidden", em.Code)
+	}
+}
+
 func TestChainAppendForbiddenForUser(t *testing.T) {
 	f := newAppendFixture(t)
 	user := mustID(t)

@@ -30,9 +30,11 @@ const (
 
 // mainScene is the per-connection view state of the chat scene.
 type mainScene struct {
-	joined     map[string]bool
-	scroll     int // lines scrolled up from the bottom; 0 = pinned
+	joined     map[string]bool // join sent (or done); cleared on failure
+	confirmed  map[string]bool // join answered ok; history_before may go out
+	scroll     int             // lines scrolled up from the bottom; 0 = pinned
 	prevTotal  int
+	prevNewest string       // newestKey of the last tick; a prepend leaves it unchanged
 	wheelCarry float64      // fractional wheel lines carried between frames
 	lines      []state.Line // laid out in updateMain, drawn in drawMain
 	layout     state.LayoutCache
@@ -44,7 +46,9 @@ type mainScene struct {
 	rosterScroll int // member list rows scrolled down from the top
 }
 
-func newMainScene() mainScene { return mainScene{joined: map[string]bool{}} }
+func newMainScene() mainScene {
+	return mainScene{joined: map[string]bool{}, confirmed: map[string]bool{}}
+}
 
 // geometry is the pixel layout of the main scene for the current window.
 // The *R fields are panel surfaces; the other fields are text-area
@@ -174,7 +178,7 @@ func (g *game) joinChannel(s *session, ch string) {
 	go func(key string, c *client.Client) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		g.joinCh <- joinResult{key, ch, c.Join(ctx, ch)}
+		g.joinCh <- joinResult{key: key, channel: ch, c: c, err: c.Join(ctx, ch)}
 	}(s.key, s.c)
 }
 
@@ -204,7 +208,7 @@ func (g *game) selectChannel(i int) {
 
 func (g *game) afterChannelChange() {
 	s := g.cur()
-	s.ms.scroll, s.ms.prevTotal, s.ms.wheelCarry = 0, 0, 0
+	s.ms.scroll, s.ms.prevTotal, s.ms.prevNewest, s.ms.wheelCarry = 0, 0, "", 0
 	ch := s.st.Channels[s.st.Active]
 	s.st.MarkRead(ch)
 	g.joinChannel(s, ch)
@@ -222,8 +226,60 @@ func (g *game) sendChat() {
 	go func(key string, c *client.Client) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		g.sendCh <- sendResult{key, c.SendChat(ctx, ch, txt)}
+		g.sendCh <- sendResult{key: key, err: c.SendChat(ctx, ch, txt)}
 	}(s.key, s.c)
+}
+
+// newestKey identifies the newest message: its id, or its timestamp for a
+// message without one. Empty for no messages.
+func newestKey(msgs []state.Message) string {
+	if len(msgs) == 0 {
+		return ""
+	}
+	m := msgs[len(msgs)-1]
+	if m.ID != "" {
+		return m.ID
+	}
+	return "ts:" + m.TS.UTC().Format(time.RFC3339Nano)
+}
+
+// adjustScroll keeps the view stable while scrolled up (scroll counts lines
+// from the bottom): new live lines shift it by their count, but only when the
+// newest message changed. Older lines prepended at the top leave the offset
+// from the bottom as it was.
+func adjustScroll(scroll, total, prevTotal int, newestChanged bool) int {
+	if scroll > 0 && newestChanged && total > prevTotal {
+		scroll += total - prevTotal
+	}
+	return scroll
+}
+
+// maybeLoadOlder requests the next older page of the active channel when the
+// view is at its top (which includes a channel that fits on screen). The send
+// runs in a goroutine; an error comes back on sendCh and clears Loading.
+func (g *game) maybeLoadOlder(s *session, total, visible int) {
+	if len(s.st.Channels) == 0 || s.ms.scroll != state.ClampScroll(total, visible, math.MaxInt) {
+		return
+	}
+	ch := s.st.Channels[s.st.Active]
+	id, ts := s.st.Oldest(ch)
+	// Before the join is answered the host would refuse with not_joined, and
+	// the client would charge that to the pending join.
+	if id == "" || !s.ms.confirmed[ch] || !s.st.CanLoadOlder(ch) {
+		return
+	}
+	send := g.reqOlder
+	if send == nil {
+		if s.c == nil {
+			return
+		}
+		c := s.c
+		send = func(_ *session, ch, id string, ts time.Time) error { return c.HistoryBefore(ch, id, ts) }
+	}
+	s.st.MarkLoading(ch)
+	go func(key string) {
+		g.sendCh <- sendResult{key: key, err: send(s, ch, id, ts), older: ch}
+	}(s.key)
 }
 
 func enterPressed() bool {
@@ -298,10 +354,9 @@ func (g *game) updateMain() {
 		s.ms.layoutGen++
 	}
 	total := len(s.ms.lines)
-	if s.ms.scroll > 0 && total > s.ms.prevTotal {
-		s.ms.scroll += total - s.ms.prevTotal // keep the view stable while scrolled up
-	}
-	s.ms.prevTotal = total
+	newest := newestKey(msgs)
+	s.ms.scroll = adjustScroll(s.ms.scroll, total, s.ms.prevTotal, newest != s.ms.prevNewest)
+	s.ms.prevTotal, s.ms.prevNewest = total, newest
 	if in && inpututil.IsKeyJustPressed(ebiten.KeyPageUp) {
 		s.ms.scroll += gm.visible - 1
 	}
@@ -316,6 +371,7 @@ func (g *game) updateMain() {
 		s.ms.scroll += n
 	}
 	s.ms.scroll = state.ClampScroll(total, gm.visible, s.ms.scroll)
+	g.maybeLoadOlder(s, total, gm.visible)
 	if gm.showMembers { // a hidden list keeps its scroll for when it returns
 		rows, _ := g.memberRows()
 		s.ms.rosterScroll = state.ClampScroll(len(rows), g.rosterVisible(gm), s.ms.rosterScroll)

@@ -22,8 +22,10 @@ random number and the app signs it with your personal key file (like an SSH
 key). That proves "this is really the same person as last time" without any
 account or password. After that, the same connection carries everything that
 isn't sound: chat messages, who is in which channel, who is muted, and so on.
-The server simply passes each chat message on to everyone in that channel. It
-does not save chat history, so if you were not there, you missed it.
+The server passes each chat message on to everyone in that channel and keeps
+the text channels' messages for a while (30 days and 8 MB per server by
+default), so when you join a channel you see what you missed. Scroll to the top
+of the chat to load older messages.
 
 Voice works a little differently. When you click a voice channel, the app and
 the server use that same WebSocket to agree on how to send audio (this
@@ -153,7 +155,7 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Enter**: Connect to server or send message
 - **Ctrl+V** (Cmd+V on macOS): Paste into any text field. **Left**, **Right**, **Home**, **End** and **Delete** move and edit at the caret. On Linux, copy and paste need `xclip`, `xsel` or `wl-clipboard`.
 - **Tab** or **Ctrl+Up/Down**: Switch channel
-- **PgUp/PgDn** or **mouse wheel**: Scroll chat
+- **PgUp/PgDn** or **mouse wheel**: Scroll chat. At the top, the next older page of history loads (the app keeps up to 2000 messages per channel)
 - **F1**: Toggle CRT effect
 - **F3**: Toggle CRT screen curvature (persisted; the rest of the CRT effect stays on)
 - **F2**: Cycle color palettes (amber, green, blue, parchment light theme, slate modern dark)
@@ -314,7 +316,11 @@ Any OS, once HERMEC is running:
 
    Drop `,LocalSubnet` to allow Tailscale only.
 4. **The host can read everything.** Chat and voice pass through the host's
-   server. Only join servers run by people you trust.
+   server. Only join servers run by people you trust. Chat is kept: the host
+   can read and keep chat for up to `history_days`; set it to 0 to keep
+   nothing. Messages are not signed by their authors, so a host can forge or
+   drop lines. There are no edits or deletes, and a ban keeps the banned
+   member's past messages.
 5. **Names are not verified.** Anyone can pick any name. The fingerprint (hover
    a server or person) is the real identity.
 6. **The handshake does not bind the connection.** On plain `ws://`, someone
@@ -349,21 +355,38 @@ when its key is not an approved host of the chain it loads. If a crash left a
 half-written last entry in the chain file, the server drops it, logs a
 warning and keeps the entries before it.
 
+Chat in text channels is kept in a JSON-lines file, `-history` (default
+`history.jsonl` next to the config file, or in the current directory without
+`-config`). The group keys `history_days` (default 30; 0 keeps nothing; at most
+3650) and `history_mb` (default 8; 1 to 64) cap it. Lines older than
+`history_days` are dropped at start, every hour, and at once when a config
+entry changes the limits (`history_days = 0` deletes the file). The size cap
+holds all the time: once the stored chat passes `history_mb`, each new message
+pushes out the oldest, and the file is rewritten whenever it has grown past
+twice `history_mb`. A member who joins a text channel
+receives the newest 100 messages, and the app asks for older pages as you
+scroll up. Lines in the file that cannot be read are skipped and dropped at the
+next trim.
+
 Once a chain exists, the group settings in the TOML (`server_name`, `channels`,
 `voice_channels`, `max_voice`, `max_clients`, `max_per_ip`, `allowed_keys`,
-`roles`, `default_roles` and `[grants]`) are ignored, and the server logs a
-warning when it sees them. To change them from the file, edit the TOML and run
-`hermec-server -config server.toml -apply-config`. Stop the server first: the
-command refuses to run while something listens on the config's port, and the
-changes apply when the server starts. It needs `-config`, appends only the
-group keys the TOML actually sets (grants are compared only when `[grants]` is
-set), signed by the server's key, then prints what it appended and exits.
+`roles`, `default_roles`, `history_days`, `history_mb` and `[grants]`) are
+ignored, and the server logs a warning when it sees them. To change them from
+the file, edit the TOML and run `hermec-server -config server.toml
+-apply-config`. Stop the server first: the command refuses to run while
+something listens on the config's port, and the changes apply when the server
+starts. It needs `-config`, appends only the group keys the TOML actually sets
+(grants are compared only when `[grants]` is set), signed by the server's key,
+then prints what it appended and exits. Everyone who runs `-apply-config` on a
+group must have HERMEC v0.6 or newer: an older one writes a config without the
+history keys, which resets `history_days` and `history_mb` to their defaults.
 Entries that an admin's app sends to a running server with `chain_append`
-(grants, bans, a new config) are different: `allowed_keys`, roles and bans
-apply at once, and the name, channels and limits from a later config apply at
-the next start. The founder always keeps every permission and always passes
-`allowed_keys`, as does every approved host. The password, port, TLS and the
-other machine settings stay in the TOML and never go into the chain.
+(grants, bans, a new config) are different: `allowed_keys`, roles, bans,
+`history_days` and `history_mb` apply at once, and the name, channels and the
+other limits from a later config apply at the next start. The founder always
+keeps every permission and always passes `allowed_keys`, as does every approved
+host. The password, port, TLS and the other machine settings stay in the TOML
+and never go into the chain.
 
 Everyone in a group needs HERMEC v0.6 or newer: an older app is told to update
 HERMEC, and a v0.6 app that meets an older server reports that the host runs an
@@ -495,7 +518,28 @@ asks once to allow HERMEC on your network; choose Allow so friends can connect.
 The server runs while the app is open. Its signed chain (the server's identity
 and group settings, with you as founder) is kept in a `chains` folder next to
 `hosted.toml`; a server created before v0.6 gets its chain the first time v0.6
-starts it.
+starts it. Its chat history is kept in a `history` folder there too, one
+`<server-id>.jsonl` file per server.
+
+The app has no settings page for the group yet, and keys you add to
+`hosted.toml` are ignored (the app says so when it starts). To change
+`history_days` or `history_mb` of a server you host from the app, close the app,
+write a small TOML with the keys to change and `addr` set to the server's port,
+and run `hermec-server` with your app key and the server's chain file. With
+`<config>` your user config folder (`%APPDATA%` on Windows) and `<server-id>`
+the full ID (right-click the tile, **id srv-...** copies it):
+
+```sh
+# history.toml:
+#   addr = ":7697"
+#   history_days = 0
+hermec-server -config history.toml -apply-config \
+  -key <config>/hermec/identity.key \
+  -chain <config>/hermec/chains/<server-id>.jsonl
+```
+
+The command refuses while the app still listens on that port, and the change
+applies the next time the app starts the server.
 
 ## Use as a library
 
