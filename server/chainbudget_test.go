@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -61,14 +62,26 @@ func TestPreAuthChainBudget(t *testing.T) {
 	readChallenge(t, c)
 	sendEnv(t, c, proto.TypeHostProofReq, proto.HostProofReq{Nonce: make([]byte, 32)})
 	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	busy := false
 	for {
 		_, raw, err := c.ReadMessage()
 		if err != nil {
 			break
 		}
-		if env, derr := proto.Decode(raw); derr == nil && env.Type == proto.TypeChain {
+		env, derr := proto.DecodeHandshake(raw)
+		if derr != nil {
+			continue
+		}
+		if env.Type == proto.TypeChain {
 			t.Fatal("chain frame sent over budget")
 		}
+		var em proto.ErrorMsg
+		if env.Type == proto.TypeError && json.Unmarshal(env.Data, &em) == nil && em.Code == proto.CodeServerBusy {
+			busy = true
+		}
+	}
+	if !busy {
+		t.Error("no server_busy error before the close")
 	}
 	_ = c.Close()
 

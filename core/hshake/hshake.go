@@ -113,7 +113,7 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 	// answers host_proof_req.
 	env, err := readHS(ws)
 	if err != nil {
-		return nil, fmt.Errorf("client: read challenge: %w", closedEarly(err))
+		return nil, fmt.Errorf("client: read challenge: %w", err)
 	}
 	if env.Type != proto.TypeChallenge {
 		return nil, fmt.Errorf("client: expected challenge, got %q", env.Type)
@@ -139,10 +139,10 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 	for frames := 0; ; frames++ {
 		env, err = readHS(ws)
 		if err != nil {
-			if frames == 0 {
-				err = closedEarly(err)
-			}
 			return nil, fmt.Errorf("client: read chain: %w", err)
+		}
+		if busy := busyError(env); busy != nil {
+			return nil, fmt.Errorf("client: %w", busy)
 		}
 		if env.V != proto.Version {
 			// A v1 host answers host_proof_req with an error (or nothing it
@@ -239,15 +239,18 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 	}
 }
 
-// closedEarly maps a connection the host closed before sending any chain frame
-// to server_busy: that is how the pre-auth chain budget refuses. It is
-// retryable, so callers do not mistake the host for dead. Other errors pass.
-func closedEarly(err error) error {
-	var ce *websocket.CloseError
-	if errors.As(err, &ce) {
-		return &ServerError{Code: "server_busy", Message: "server busy"}
+// busyError is the host's explicit server_busy refusal (the pre-auth chain
+// budget), sent as a v1-compatible error frame so any client can read it. It
+// is retryable. Nothing else maps to it: a bare close is just a lost
+// connection.
+func busyError(env proto.Envelope) *ServerError {
+	if env.Type != proto.TypeError {
+		return nil
 	}
-	return err
+	if se := handshakeError(env); se.Code == proto.CodeServerBusy {
+		return se
+	}
+	return nil
 }
 
 func errOutdated() *ServerError {

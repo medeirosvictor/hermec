@@ -161,6 +161,17 @@ func TestActiveLostAfterSilence(t *testing.T) {
 
 // dropHB proxies url, forwarding every frame except hb: a host before v0.7.
 func dropHB(t *testing.T, url string) string {
+	return proxy(t, url, func(raw []byte, env proto.Envelope) [][]byte {
+		if env.Type == proto.TypeHeartbeat {
+			return nil
+		}
+		return [][]byte{raw}
+	})
+}
+
+// proxy relays url, passing each frame the host sends through f, which
+// returns the frames to forward in its place.
+func proxy(t *testing.T, url string, f func(raw []byte, env proto.Envelope) [][]byte) string {
 	t.Helper()
 	up := websocket.Upgrader{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,11 +199,11 @@ func dropHB(t *testing.T, url string) string {
 			if err != nil {
 				return
 			}
-			if env, err := proto.Decode(raw); err == nil && env.Type == proto.TypeHeartbeat {
-				continue
-			}
-			if front.WriteMessage(mt, raw) != nil {
-				return
+			env, _ := proto.DecodeHandshake(raw)
+			for _, out := range f(raw, env) {
+				if front.WriteMessage(mt, out) != nil {
+					return
+				}
 			}
 		}
 	}))
@@ -299,7 +310,9 @@ func TestHostsEvent(t *testing.T) {
 	}
 }
 
-func TestDialBareCloseIsServerBusy(t *testing.T) {
+// An upgraded connection that is dropped is a lost connection, not a busy
+// host.
+func TestDialBareCloseIsNotServerBusy(t *testing.T) {
 	up := websocket.Upgrader{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if ws, err := up.Upgrade(w, r, nil); err == nil {
@@ -310,7 +323,59 @@ func TestDialBareCloseIsServerBusy(t *testing.T) {
 	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/"
 	_, err := Dial(testCtx(t), url, mustIdent(t), "alice", "")
 	var se *ServerError
+	if err == nil || errors.As(err, &se) {
+		t.Fatalf("err = %v, want a plain connection error", err)
+	}
+}
+
+// The host's pre-auth chain budget refusal is an explicit server_busy frame.
+func TestDialServerBusyFrame(t *testing.T) {
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.Close()
+		ch, _ := proto.EncodeV(proto.LegacyVersion, proto.TypeChallenge, proto.Challenge{Nonce: make([]byte, 32)})
+		_ = ws.WriteMessage(websocket.TextMessage, ch)
+		_, _, _ = ws.ReadMessage() // host_proof_req
+		busy, _ := proto.EncodeV(proto.LegacyVersion, proto.TypeError, proto.ErrorMsg{Code: proto.CodeServerBusy, Message: "server busy"})
+		_ = ws.WriteMessage(websocket.TextMessage, busy)
+	}))
+	t.Cleanup(srv.Close)
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/"
+	_, err := Dial(testCtx(t), url, mustIdent(t), "alice", "")
+	var se *ServerError
 	if !errors.As(err, &se) || se.Code != CodeServerBusy {
 		t.Fatalf("err = %v, want server_busy", err)
+	}
+}
+
+// A ref-less error meant for something else must not answer a Takeover.
+func TestTakeoverIgnoresStrayError(t *testing.T) {
+	p := newPair(t)
+	stray, _ := proto.Encode(proto.TypeError, proto.ErrorMsg{Code: "rate_limited", Message: "slow down"})
+	url := proxy(t, p.bURL, func(raw []byte, env proto.Envelope) [][]byte {
+		if env.Type == proto.TypeError {
+			return [][]byte{stray, raw}
+		}
+		return [][]byte{raw}
+	})
+	c, err := DialWith(testCtx(t), url, mustIdent(t), "alice", "", DialOpts{Warm: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	err = c.Takeover(testCtx(t))
+	var se *ServerError
+	if !errors.As(err, &se) || se.Code != proto.CodeActiveAlive {
+		t.Fatalf("err = %v, want active_alive, not the stray error", err)
+	}
+	if _, ok := waitEvent(c, time.Second, func(e Event) bool {
+		var s *ServerError
+		return errors.As(e.Err, &s) && s.Code == "rate_limited"
+	}); !ok {
+		t.Fatal("the stray error did not reach the event stream")
 	}
 }

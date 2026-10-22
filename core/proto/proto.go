@@ -96,6 +96,7 @@ const CodeAuthFailed = "auth_failed"
 // Error codes added with protocol version 2.
 const (
 	CodeUpdateRequired    = "update_required"
+	CodeServerBusy        = "server_busy" // also the HTTP 503 refusal, which the client synthesizes
 	CodeServerOutdated    = "server_outdated"
 	CodeServerIDMismatch  = "server_id_mismatch"
 	CodeHostNotAuthorized = "host_not_authorized"

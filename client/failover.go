@@ -54,6 +54,27 @@ func (c *Client) Takeover(ctx context.Context) error {
 	}
 }
 
+// failTakeover fails a pending Takeover with se when se is a code Takeover can
+// be answered with; any other error is not its answer.
+func (c *Client) failTakeover(se *ServerError) bool {
+	switch se.Code {
+	case proto.CodeActiveAlive, proto.CodeNotStandby, proto.CodeHostNotAuthorized, proto.CodeBanned:
+	default:
+		return false
+	}
+	c.mu.Lock()
+	for i, w := range c.waiters {
+		if w.channel == takeoverKey {
+			c.waiters = append(c.waiters[:i], c.waiters[i+1:]...)
+			c.mu.Unlock()
+			w.res <- se
+			return true
+		}
+	}
+	c.mu.Unlock()
+	return false
+}
+
 // promoted marks the session full: a warm session receives roster and hosts
 // frames only when the host has promoted it. It resolves a pending Takeover.
 func (c *Client) promoted() {

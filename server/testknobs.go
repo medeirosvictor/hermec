@@ -2,7 +2,7 @@ package server
 
 import "time"
 
-// SetHeartbeatForTest shortens (or lengthens) the heartbeat interval and grace
+// SetHeartbeatForTest is for tests only. It shortens (or lengthens) the heartbeat interval and grace
 // for tests in other packages and returns a function that restores them. Call
 // it before starting servers: the timing is read without synchronization.
 func SetHeartbeatForTest(interval, grace time.Duration) (restore func()) {

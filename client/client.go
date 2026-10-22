@@ -41,8 +41,9 @@ type Event struct {
 	History  *proto.History // a page of stored chat history
 	Hosts    *proto.Hosts   // the active host and the standby
 	Move     *proto.Move    // the host asks us to reconnect elsewhere
-	// ActiveLost is true once, when heartbeats stopped (or the connection
-	// dropped after they began). It is the cue to ask the standby to take over.
+	// ActiveLost is true once, when the session's host goes silent or drops
+	// after its heartbeats began (on a warm session that host is the standby).
+	// It is the cue to ask the standby to take over.
 	ActiveLost bool
 	Err        error
 }
@@ -53,8 +54,8 @@ type ServerError = hshake.ServerError
 // Codes for refusals the server makes before the WebSocket upgrade. They come
 // as an HTTP status, not a protocol error message, so Dial synthesizes them.
 const (
-	CodeServerBusy = "server_busy" // 503: pre-auth or per-IP cap, or a blocked IP
-	CodeForbidden  = "forbidden"   // 403: the request carried an Origin header
+	CodeServerBusy = proto.CodeServerBusy // 503: pre-auth or per-IP cap, or a blocked IP
+	CodeForbidden  = "forbidden"          // 403: the request carried an Origin header
 )
 
 // joinWaiter is a pending request answered in FIFO order: a Join (channel set)
@@ -467,7 +468,7 @@ func (c *Client) readLoop() {
 			var em proto.ErrorMsg
 			_ = json.Unmarshal(env.Data, &em)
 			se := &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen}
-			if c.failWaiter(em.Ref, se) {
+			if c.failTakeover(se) || c.failWaiter(em.Ref, se) {
 				continue
 			}
 			if !c.onError(em) {
@@ -498,11 +499,12 @@ func (c *Client) resolveJoins(channel string) {
 }
 
 // failWaiter fails the chain_append waiter ref names, or, for an error with
-// no ref, the oldest pending Join.
+// no ref, the oldest pending Join. A pending Takeover is answered only by
+// failTakeover.
 func (c *Client) failWaiter(ref string, err error) bool {
 	c.mu.Lock()
 	for i, w := range c.waiters {
-		if w.ref == ref {
+		if w.ref == ref && w.channel != takeoverKey {
 			c.waiters = append(c.waiters[:i], c.waiters[i+1:]...)
 			c.mu.Unlock()
 			w.res <- err

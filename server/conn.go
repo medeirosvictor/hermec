@@ -382,7 +382,15 @@ func (c *conn) authenticate() error {
 		size += len(f)
 	}
 	if !c.srv.chargeChain(c.ip, size) {
-		return errAuthFailed // over the per-IP budget: close without sending
+		// Over the per-IP budget: say so (v1 envelope, readable by any
+		// client) and close, so the client retries later instead of
+		// treating this host as dead.
+		if raw, err := proto.EncodeV(proto.LegacyVersion, proto.TypeError, proto.ErrorMsg{
+			Code: proto.CodeServerBusy, Message: "server busy",
+		}); err == nil {
+			c.enqueue(raw)
+		}
+		return errAuthFailed
 	}
 	for _, f := range frames {
 		if !c.enqueue(f) {
