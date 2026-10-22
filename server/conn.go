@@ -100,6 +100,7 @@ type conn struct {
 	sendMu sync.Mutex
 	send   chan []byte // closed (under sendMu) when the connection ends
 	closed bool
+	drained chan struct{} // signaled (cap 1) when the writer took a message or send closed; wakes enqueueWait
 
 	ip           string      // remote IP
 	leavePreAuth func()      // releases the pre-auth slot; idempotent, readLoop only
@@ -121,7 +122,7 @@ type conn struct {
 }
 
 func newConn(s *Server, ws *websocket.Conn) *conn {
-	return &conn{srv: s, ws: ws, send: make(chan []byte, sendBuffer)}
+	return &conn{srv: s, ws: ws, send: make(chan []byte, sendBuffer), drained: make(chan struct{}, 1)}
 }
 
 // enqueue queues an encoded message for the writer. It reports false if the
@@ -198,12 +199,14 @@ func (c *conn) closeSend() {
 		close(c.send)
 	}
 	c.sendMu.Unlock()
+	signal(c.drained)
 }
 
 func (c *conn) writeLoop() {
 	defer c.srv.wg.Done()
 	defer c.ws.Close()
 	for raw := range c.send {
+		signal(c.drained)
 		_ = c.ws.SetWriteDeadline(time.Now().Add(writeTimeout))
 		if err := c.ws.WriteMessage(websocket.TextMessage, raw); err != nil {
 			return

@@ -53,11 +53,7 @@ func (h *Host) probeAndYield() (l *Link, demoted bool) {
 	if len(urls) == 0 {
 		return nil, false
 	}
-	timeout := probeEvery
-	if timeout > 5*time.Second {
-		timeout = 5 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(h.ctx, timeout)
+	ctx, cancel := context.WithTimeout(h.ctx, min(probeEvery, probeMaxTimeout))
 	defer cancel()
 	var winURL string
 	var win proto.LinkProbeReply
@@ -173,7 +169,7 @@ func sendChainEntries(ws *websocket.Conn, entries []chain.Entry) error {
 // cold-starts (which makes this host active when nobody answers).
 func (h *Host) relink(to proto.HostInfo, urls []string, full bool) *Link {
 	urls = append(append([]string(nil), urls...), to.Addrs...)
-	for attempt := 0; attempt < 10 && !h.stopped(); attempt++ {
+	for attempt := 0; attempt < relinkTries && !h.stopped(); attempt++ {
 		for _, u := range urls {
 			dctx, cancel := context.WithTimeout(h.ctx, dialTimeout)
 			l, err := dialLinkOpts(dctx, u, h.srv, full)
@@ -186,10 +182,7 @@ func (h *Host) relink(to proto.HostInfo, urls []string, full bool) *Link {
 				return l
 			}
 		}
-		select {
-		case <-h.ctx.Done():
-		case <-time.After(100 * time.Millisecond):
-		}
+		h.pause(relinkEvery)
 	}
 	return h.rejoin(urls, coldStartWindow)
 }

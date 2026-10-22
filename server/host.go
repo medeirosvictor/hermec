@@ -22,6 +22,18 @@ var (
 const (
 	dialTimeout   = 5 * time.Second
 	maxKnownHosts = 16
+
+	// maxHandbackCheck caps how often an active host looks for a handback.
+	maxHandbackCheck = 5 * time.Second
+	// handoverProbeTimeout and handoverPollEvery pace waitActive's probes of
+	// the host a role was handed to.
+	handoverProbeTimeout = time.Second
+	handoverPollEvery    = 50 * time.Millisecond
+	// relinkTries and relinkEvery bound relink's retries of the new active host.
+	relinkTries = 10
+	relinkEvery = 100 * time.Millisecond
+	// probeMaxTimeout caps the time an active host spends probing for a rival.
+	probeMaxTimeout = 5 * time.Second
 )
 
 var (
@@ -337,11 +349,21 @@ func (h *Host) coldStart(extra []string, window time.Duration) *Link {
 		if now := time.Now(); !now.Before(end) && !(better && now.Before(hardEnd)) {
 			return nil
 		}
-		select {
-		case <-h.ctx.Done():
+		if !h.pause(coldProbeEvery) {
 			return nil
-		case <-time.After(coldProbeEvery):
 		}
+	}
+}
+
+// pause sleeps for d and reports false if the host is stopping.
+func (h *Host) pause(d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-h.ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 
@@ -508,7 +530,8 @@ func (h *Host) runActive() *Link {
 	}
 	probe := time.NewTicker(probeEvery)
 	defer probe.Stop()
-	check := time.NewTicker(handbackCheck())
+	// Look often relative to handbackIdle so the idle time is honored closely.
+	check := time.NewTicker(min(handbackIdle/4, maxHandbackCheck))
 	defer check.Stop()
 	var emptySince time.Time
 	for {
@@ -546,36 +569,20 @@ func (h *Host) runActive() *Link {
 	}
 }
 
-// handbackCheck is how often an active host looks for a handback; short
-// relative to handbackIdle so the idle time is honored closely.
-func handbackCheck() time.Duration {
-	d := handbackIdle / 4
-	if d < 20*time.Millisecond {
-		d = 20 * time.Millisecond
-	}
-	if d > 5*time.Second {
-		d = 5 * time.Second
-	}
-	return d
-}
-
 // waitActive polls the host at addrs until it reports active, up to
 // handoverWait.
 func (h *Host) waitActive(addrs []string) bool {
 	deadline := time.Now().Add(handoverWait)
 	for time.Now().Before(deadline) && !h.stopped() {
 		for _, u := range addrs {
-			ctx, cancel := context.WithTimeout(h.ctx, time.Second)
+			ctx, cancel := context.WithTimeout(h.ctx, handoverProbeTimeout)
 			r, err := ProbeHost(ctx, u, h.srv)
 			cancel()
 			if err == nil && h.sameServer(r) {
 				return true
 			}
 		}
-		select {
-		case <-h.ctx.Done():
-		case <-time.After(50 * time.Millisecond):
-		}
+		h.pause(handoverPollEvery)
 	}
 	return false
 }

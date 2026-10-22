@@ -297,11 +297,16 @@ func encodeLinkSync(msgs []proto.ChatMessage, more bool) ([]byte, int) {
 // frames (hb, chain, chat), which are enqueued without waiting.
 const syncHeadroom = 16
 
-// enqueueWait is enqueue for bulk history: it waits (up to writeTimeout) until
+// enqueueWaitTimeout is how long enqueueWait waits for room. A variable so
+// tests can shorten it.
+var enqueueWaitTimeout = writeTimeout
+
+// enqueueWait is enqueue for bulk history: it waits (up to enqueueWaitTimeout) until
 // the buffer has syncHeadroom slots free, so live frames are not refused; it
 // reports false if c is closed or stays full.
 func (c *conn) enqueueWait(raw []byte) bool {
-	deadline := time.Now().Add(writeTimeout)
+	timeout := time.NewTimer(enqueueWaitTimeout)
+	defer timeout.Stop()
 	for {
 		c.sendMu.Lock()
 		closed := c.closed
@@ -313,10 +318,11 @@ func (c *conn) enqueueWait(raw []byte) bool {
 		if room && c.enqueue(raw) {
 			return true
 		}
-		if time.Now().After(deadline) {
+		select {
+		case <-c.drained:
+		case <-timeout.C:
 			return false
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
 }
 
