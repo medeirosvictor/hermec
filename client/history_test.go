@@ -47,10 +47,18 @@ func TestClientHistoryEvent(t *testing.T) {
 		}
 	}
 	// Wait until both are echoed so they are stored before b joins.
+	timeout := time.After(5 * time.Second)
 	for seen := 0; seen < 2; {
-		ev := <-a.Events()
-		if ev.Chat != nil {
-			seen++
+		select {
+		case ev, ok := <-a.Events():
+			if !ok {
+				t.Fatalf("events closed after %d of 2 echoes", seen)
+			}
+			if ev.Chat != nil {
+				seen++
+			}
+		case <-timeout:
+			t.Fatalf("saw %d of 2 echoes", seen)
 		}
 	}
 

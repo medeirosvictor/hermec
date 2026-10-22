@@ -73,7 +73,7 @@ voice_channels = ["voice"]
 # Chat history for text channels. Messages older than history_days are dropped
 # (default 30; 0 keeps nothing and deletes the file; at most 3650). The oldest
 # messages are dropped when the file passes history_mb megabytes (default 8;
-# 1 to 1024). The host trims at start, every hour, and when these change.
+# 1 to 64). The host trims at start, every hour, and when these change.
 # The file is chosen with the -history flag (default history.jsonl next to
 # the -config file), as -key and -chain choose the key and chain files.
 # history_days = 30

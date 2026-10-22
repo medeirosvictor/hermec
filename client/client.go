@@ -38,10 +38,10 @@ type Event struct {
 	Chat     *proto.ChatMessage
 	Presence *proto.Presence
 	Voice    *proto.VoiceState
-	Roster   *proto.Roster // full member list, re-sent on every connect/disconnect
-	Chain    *chain.Entry  // a new entry, already applied to Client.Chain()
+	Roster   *proto.Roster  // full member list, re-sent on every connect/disconnect
+	Chain    *chain.Entry   // a new entry, already applied to Client.Chain()
 	History  *proto.History // a page of stored chat history
-	Err     error
+	Err      error
 }
 
 // ServerError is an error message sent by the server.

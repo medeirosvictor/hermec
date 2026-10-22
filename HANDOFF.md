@@ -389,9 +389,25 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
 - Chat history is plain JSON lines on the host, unencrypted and unsigned (Plan C
   is the encrypted version). It lives in `<config>/hermec/history/<server-id>.jsonl`
   for a server hosted from the app, and at `-history` (default `history.jsonl`
-  next to `-config`) for `hermec-server`. Caps `history_days` (30) and
-  `history_mb` (8) come from the chain config entry; code in `server/history.go`
-  and `ui/state`. PR 3 must carry history to the standby.
+  next to `-config`) for `hermec-server`. Caps `history_days` (30; at most
+  3650) and `history_mb` (8; at most 64, since the store is held in memory and
+  rewritten under its lock) come from the chain config entry and apply at once
+  on a config append; code in `server/history.go` and `ui/state`. PR 3 must
+  carry history to the standby.
+- **Changing history caps of an app-hosted server:** the app has no group
+  settings UI and ignores group keys in `hosted.toml` (it logs a warning and
+  shows a notice). The way is `hermec-server -config <file>.toml -apply-config
+  -key <config>/hermec/identity.key -chain
+  <config>/hermec/chains/<server-id>.jsonl` with the app closed; the TOML holds
+  `history_days`/`history_mb` and `addr` set to the hosted port so the
+  running-server check works. Tested in
+  `cmd/hermec-server/apply_test.go`. A wrong `-key` path makes a new key there
+  and the append is then refused (not the founder).
+- **Old config writers reset history caps.** A `config` entry is the full group
+  config, and one written by a build from before chat history (its
+  `hermec-server -apply-config`, or an admin's app sending `chain_append`)
+  lacks `history_days`/`history_mb`, so it resets both to the defaults.
+  Everyone who runs `-apply-config` on a group must be on v0.6+.
 - Two clients on one machine with the same key silence each other by design
   (the self-echo filter keys on fingerprint). A second client needs `-key
   <other file>`.

@@ -3,7 +3,8 @@
 This document specifies the Hermec signaling/chat protocol, version 2. It
 covers the mutual handshake, the server chain (section 9), channels, presence,
 text chat and its history (sections 4.9 and 4.9a), the server roster, voice
-signaling (section 4.12) and screen share signaling (section 4.15). Webcam is not specified yet.
+signaling (section 4.12) and screen share signaling (section 4.15). Webcam is
+not specified yet.
 
 The reference implementation is `core/proto` (types and codec) and `server`
 (behavior). Where this document and the code disagree, that is a bug in one of
@@ -327,12 +328,14 @@ Semantics:
   and `more` false.
 - **Errors.** A `history_before` for a channel the sender has not joined gets
   `error` `not_joined`; a malformed one (not a JSON object, or an empty
-  `channel` or `before_id`) gets `bad_request`. It counts against the normal message rate
-  limit.
+  `channel` or `before_id`) gets `bad_request`. It counts against the normal
+  message rate limit.
 - **Client behavior.** A client merges messages by `id` and may receive the same
   message from `history` and as a live `chat_message`. If the join page after a
   reconnect shares no message with what the client already holds, the client
-  replaces its list for that channel and loads older pages again on demand.
+  replaces its list for that channel and loads older pages again on demand. A
+  client sends `history_before` only after its `join` of that channel has
+  succeeded, and stops asking when an older page adds no new message.
 - **Retention.** The host trims the oldest lines when the file passes
   `history_days` or `history_mb`, at start, every hour, and at once when a
   `config` entry changes the limits. `history_days` 0 keeps nothing.
@@ -733,7 +736,7 @@ nothing.
 | Op            | Body                                                         | Who may sign |
 |---------------|--------------------------------------------------------------|--------------|
 | `genesis`     | `name`, `founder` (the author's key), `salt` (random bytes)  | the founder; entry 0 only |
-| `config`      | the full group config: `name`, `channels`, `voice_channels`, `max_voice`, `max_clients`, `max_per_ip`, `allowed_keys`, `roles`, `default_roles`, `history_days` (default 30; 0 keeps no history; at most 3650), `history_mb` (default 8; 1 to 1024) | founder, or a key with `manage` |
+| `config`      | the full group config: `name`, `channels`, `voice_channels`, `max_voice`, `max_clients`, `max_per_ip`, `allowed_keys`, `roles`, `default_roles`, `history_days` (default 30; 0 keeps no history; at most 3650), `history_mb` (default 8; 1 to 64) | founder, or a key with `manage` |
 | `grant`       | `fingerprint`, `roles`; replaces that key's roles. A grant naming the founder is refused unless the founder signs it | founder, or `manage` |
 | `revoke`      | `fingerprint`; removes that key's grant. The founder cannot be revoked | founder, or `manage` |
 | `ban`         | `fingerprint`. The founder cannot be banned                  | founder, or `manage` |
