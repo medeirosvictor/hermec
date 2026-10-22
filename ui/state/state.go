@@ -197,10 +197,15 @@ func (s *State) applyHistory(h *proto.History) {
 	ch := h.Channel
 	if h.Before != "" {
 		s.Older[ch] = h.More // set first: the cap may raise it
-		s.mergeMessages(ch, h.Messages)
+		if s.mergeMessages(ch, h.Messages) == 0 {
+			// Nothing new: asking again would fetch the same page forever.
+			s.Older[ch] = false
+		}
 		delete(s.Loading, ch)
 		return
 	}
+	// A join page (after a rejoin) supersedes any older-page request in flight.
+	delete(s.Loading, ch)
 	if len(h.Messages) == 0 {
 		return
 	}
@@ -238,8 +243,9 @@ func msgBefore(a, b Message) bool { // a sorts strictly before b
 }
 
 // mergeMessages inserts in into ch in (TS, ID) order, skipping non-empty ids
-// already present, and enforces MaxMessages (keeping the newest).
-func (s *State) mergeMessages(ch string, in []proto.ChatMessage) {
+// already present, and enforces MaxMessages (keeping the newest). It returns
+// how many messages it inserted, before the cap.
+func (s *State) mergeMessages(ch string, in []proto.ChatMessage) (added int) {
 	ms := s.Messages[ch]
 	have := make(map[string]bool, len(ms))
 	for _, m := range ms {
@@ -265,10 +271,12 @@ func (s *State) mergeMessages(ch string, in []proto.ChatMessage) {
 		ms = append(ms, Message{})
 		copy(ms[i+1:], ms[i:])
 		ms[i] = nm
+		added++
 	}
 	if len(ms) > MaxMessages {
 		ms = append([]Message(nil), ms[len(ms)-MaxMessages:]...)
 		s.Older[ch] = true
 	}
 	s.Messages[ch] = ms
+	return added
 }

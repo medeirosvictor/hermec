@@ -47,6 +47,7 @@ type dialResult struct {
 // joinResult is the outcome of a background Join.
 type joinResult struct {
 	key, channel string
+	c            *client.Client // the client that joined; nil skips the staleness check
 	err          error
 }
 
@@ -338,14 +339,16 @@ func (g *game) applyDial(r dialResult) {
 
 func (g *game) applyJoin(r joinResult) {
 	s := g.sess[r.key]
-	if s == nil {
-		return
+	if s == nil || (r.c != nil && r.c != s.c) {
+		return // gone, or answered for a connection since replaced
 	}
 	if r.err != nil {
 		delete(s.ms.joined, r.channel) // allow retry on next switch
+		delete(s.ms.confirmed, r.channel)
 		s.st.Status = fmt.Sprintf("join %s failed: %v", r.channel, r.err)
 		return
 	}
+	s.ms.confirmed[r.channel] = true
 	g.logf("joined %s on %s", r.channel, s.url)
 }
 

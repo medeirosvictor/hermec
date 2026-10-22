@@ -19,6 +19,7 @@ func olderTestGame(t *testing.T, msgs []state.Message) (*game, *session, *int32)
 	s.st.Channels = []string{"general"}
 	s.st.Messages["general"] = msgs
 	s.st.Older["general"] = true
+	s.ms.confirmed["general"] = true
 	g.sess["k"], g.curKey = s, "k"
 	var n int32
 	g.reqOlder = func(_ *session, ch, id string) error {
@@ -68,6 +69,32 @@ func TestScrollTopRequestsOlder(t *testing.T) {
 func TestShortChannelKeepsFilling(t *testing.T) {
 	g, s, n := olderTestGame(t, []state.Message{{ID: "b", TS: time.Unix(2, 0)}})
 	g.maybeLoadOlder(s, 3, 10) // everything fits: scroll 0 is the top
+	waitCount(t, n, 1)
+}
+
+// A history_before that beats the join to the host is refused as not_joined,
+// which the client blames on the pending join; so none goes out before then.
+func TestNoOlderRequestBeforeJoinConfirmed(t *testing.T) {
+	g, s, n := olderTestGame(t, []state.Message{{ID: "b", TS: time.Unix(2, 0)}})
+	delete(s.ms.confirmed, "general")
+	s.ms.joined["general"] = true // join sent, not answered
+	g.maybeLoadOlder(s, 3, 10)
+	if s.st.Loading["general"] {
+		t.Fatal("requested before the join was confirmed")
+	}
+	g.applyJoin(joinResult{key: "k", channel: "general", err: errors.New("timeout")})
+	if s.ms.confirmed["general"] || s.ms.joined["general"] {
+		t.Fatalf("failed join: confirmed=%v joined=%v", s.ms.confirmed, s.ms.joined)
+	}
+	g.maybeLoadOlder(s, 3, 10)
+	if s.st.Loading["general"] {
+		t.Fatal("requested after a failed join")
+	}
+	g.applyJoin(joinResult{key: "k", channel: "general"})
+	if !s.ms.confirmed["general"] {
+		t.Fatal("join success not recorded")
+	}
+	g.maybeLoadOlder(s, 3, 10)
 	waitCount(t, n, 1)
 }
 

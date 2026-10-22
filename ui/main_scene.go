@@ -30,8 +30,9 @@ const (
 
 // mainScene is the per-connection view state of the chat scene.
 type mainScene struct {
-	joined     map[string]bool
-	scroll     int // lines scrolled up from the bottom; 0 = pinned
+	joined     map[string]bool // join sent (or done); cleared on failure
+	confirmed  map[string]bool // join answered ok; history_before may go out
+	scroll     int             // lines scrolled up from the bottom; 0 = pinned
 	prevTotal  int
 	prevNewest string       // newestKey of the last tick; a prepend leaves it unchanged
 	wheelCarry float64      // fractional wheel lines carried between frames
@@ -45,7 +46,9 @@ type mainScene struct {
 	rosterScroll int // member list rows scrolled down from the top
 }
 
-func newMainScene() mainScene { return mainScene{joined: map[string]bool{}} }
+func newMainScene() mainScene {
+	return mainScene{joined: map[string]bool{}, confirmed: map[string]bool{}}
+}
 
 // geometry is the pixel layout of the main scene for the current window.
 // The *R fields are panel surfaces; the other fields are text-area
@@ -175,7 +178,7 @@ func (g *game) joinChannel(s *session, ch string) {
 	go func(key string, c *client.Client) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		g.joinCh <- joinResult{key, ch, c.Join(ctx, ch)}
+		g.joinCh <- joinResult{key: key, channel: ch, c: c, err: c.Join(ctx, ch)}
 	}(s.key, s.c)
 }
 
@@ -260,7 +263,9 @@ func (g *game) maybeLoadOlder(s *session, total, visible int) {
 	}
 	ch := s.st.Channels[s.st.Active]
 	id := s.st.OldestID(ch)
-	if id == "" || !s.st.CanLoadOlder(ch) {
+	// Before the join is answered the host would refuse with not_joined, and
+	// the client would charge that to the pending join.
+	if id == "" || !s.ms.confirmed[ch] || !s.st.CanLoadOlder(ch) {
 		return
 	}
 	send := g.reqOlder

@@ -119,6 +119,44 @@ func TestHistoryCap(t *testing.T) {
 	}
 }
 
+// An older page with nothing new must not re-arm Older, or the view at the
+// top would ask for the same page forever.
+func TestHistoryOlderPageNothingNewStopsOlder(t *testing.T) {
+	for name, page := range map[string][]proto.ChatMessage{
+		"empty":     nil,
+		"dups only": {hmsg("c", 3)},
+	} {
+		s := newHS()
+		s.Apply(hist("", true, hmsg("c", 3), hmsg("d", 4)), true)
+		s.MarkLoading("general")
+		s.Apply(hist("c", true, page...), true)
+		if s.Older["general"] || s.CanLoadOlder("general") || s.Loading["general"] {
+			t.Errorf("%s: older=%v loading=%v", name, s.Older["general"], s.Loading["general"])
+		}
+	}
+	s := newHS()
+	s.Apply(hist("", true, hmsg("c", 3)), true)
+	s.Apply(hist("c", true, hmsg("b", 2)), true)
+	if !s.Older["general"] {
+		t.Error("a page that adds a message keeps More")
+	}
+}
+
+// A join page answers any request in flight (it arrives after a rejoin).
+func TestHistoryJoinPageClearsLoading(t *testing.T) {
+	for name, page := range map[string][]proto.ChatMessage{
+		"empty": nil,
+		"lines": {hmsg("a", 1)},
+	} {
+		s := newHS()
+		s.MarkLoading("general")
+		s.Apply(hist("", false, page...), true)
+		if s.Loading["general"] {
+			t.Errorf("%s: Loading survived the join page", name)
+		}
+	}
+}
+
 func TestHistorySetConnectedClearsLoading(t *testing.T) {
 	s := newHS()
 	s.MarkLoading("general")
