@@ -156,7 +156,7 @@ func TestChatTSAfterStoredNewest(t *testing.T) {
 	cfg.HistoryPath = filepath.Join(t.TempDir(), "h.jsonl")
 	// A stored line ahead of the clock (it was set back, or a restart came
 	// within the same tick) must still sort before any new line.
-	future := time.Now().UTC().Add(time.Hour)
+	future := time.Now().UTC().Add(30 * time.Second)
 	old := proto.ChatMessage{ID: fmt.Sprintf("%032x", 1), Channel: "general", Text: "old", TS: future}
 	b, _ := json.Marshal(old)
 	if err := os.WriteFile(cfg.HistoryPath, append(b, '\n'), 0o600); err != nil {
@@ -169,6 +169,31 @@ func TestChatTSAfterStoredNewest(t *testing.T) {
 	sendEnv(t, a, proto.TypeChatSend, proto.ChatSend{Channel: "general", Text: "new"})
 	if m := readChat(t, a); !m.TS.After(future) {
 		t.Fatalf("new ts %v not after stored %v", m.TS, future)
+	}
+}
+
+func TestChatTSIgnoresFarFutureStored(t *testing.T) {
+	cfg := chatCfg()
+	cfg.HistoryPath = filepath.Join(t.TempDir(), "h.jsonl")
+	var logs []string
+	cfg.Logf = func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
+	// A bogus stored timestamp must not pin the clock of new lines to it.
+	future := time.Now().UTC().Add(24 * time.Hour)
+	old := proto.ChatMessage{ID: fmt.Sprintf("%032x", 1), Channel: "general", Text: "old", TS: future}
+	b, _ := json.Marshal(old)
+	if err := os.WriteFile(cfg.HistoryPath, append(b, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	url := startServer(t, cfg)
+	a, _ := authed(t, url)
+	joinGeneral(t, a)
+	readHistory(t, a)
+	sendEnv(t, a, proto.TypeChatSend, proto.ChatSend{Channel: "general", Text: "new"})
+	if m := readChat(t, a); m.TS.After(time.Now().UTC().Add(time.Minute)) {
+		t.Fatalf("new ts %v follows the stored future line", m.TS)
+	}
+	if !strings.Contains(strings.Join(logs, " "), "ahead") {
+		t.Fatalf("no warning logged: %q", logs)
 	}
 }
 

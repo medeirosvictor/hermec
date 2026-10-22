@@ -23,8 +23,9 @@ const (
 
 	maxChatBytes = 4096 // longest accepted chat text, in bytes
 
-	historyPage  = 100       // most messages read for one history frame
-	trimInterval = time.Hour // how often the host trims the history store
+	historyPage   = 100         // most messages read for one history frame
+	trimInterval  = time.Hour   // how often the host trims the history store
+	maxStoredSkew = time.Minute // stored timestamps further ahead of now are ignored when seeding chat time
 )
 
 // channelSet is the channel registry. All access is guarded by Server.chMu.
