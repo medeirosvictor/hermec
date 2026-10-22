@@ -118,6 +118,39 @@ func TestHostedRestartKeepsServerID(t *testing.T) {
 	}
 }
 
+// Group keys in hosted.toml are inert once the chain exists; boot says so.
+func TestBootHostedWarnsOnGroupKeys(t *testing.T) {
+	g, path := hostedTestGame(t, "127.0.0.1:0", true)
+	g.bootHosted(path) // migrates: hosted.toml now holds local keys only
+	if g.notice != "" {
+		t.Fatalf("first boot notice = %q", g.notice)
+	}
+	g.stopHosted()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("\nhistory_days = 0\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	g2 := newTestGame(t)
+	g2.id, g2.fp = g.id, g.fp
+	withLayout(t, g2)
+	t.Cleanup(g2.stopHosted)
+	g2.bootHosted(path)
+	if g2.hosted == nil || g2.hosted.srv == nil {
+		t.Fatalf("second boot hosted = %+v", g2.hosted)
+	}
+	if !strings.Contains(g2.notice, "history_days") || !strings.Contains(g2.notice, "-apply-config") {
+		t.Errorf("notice = %q", g2.notice)
+	}
+	if d := g2.hosted.chain.State().Config.HistoryDays; d != nil {
+		t.Errorf("chain HistoryDays = %v, want unset", *d)
+	}
+}
+
 func TestCreateHostedWritesChainAndLocalConfig(t *testing.T) {
 	g, path := hostedTestGame(t, "", false)
 	g.hostedTweak = func(c *server.Config) { c.Addr, c.Discoverable = "127.0.0.1:0", false }
