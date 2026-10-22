@@ -402,7 +402,9 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
   `history_days`/`history_mb` and `addr` set to the hosted port so the
   running-server check works. Tested in
   `cmd/hermec-server/apply_test.go`. A wrong `-key` path makes a new key there
-  and the append is then refused (not the founder).
+  and the append is then refused (not the founder). A wrong `-chain` path is
+  worse: it founds a new chain there, prints "appended N entries" and leaves
+  the real chain untouched (open: make this recipe refuse to create a chain).
 - **Old config writers reset history caps.** A `config` entry is the full group
   config, and one written by a build from before chat history (its
   `hermec-server -apply-config`, or an admin's app sending `chain_append`)
