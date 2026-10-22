@@ -190,11 +190,10 @@ func TestVoiceNotSentBeforeAuth(t *testing.T) {
 	url := startServer(t, voiceCfg())
 	a, _ := authed(t, url)
 	pre := dial(t, url)
-	nonce := readChallenge(t, pre)
+	h := hello(t, pre)
 	sendEnv(t, a, proto.TypeVoiceJoin, proto.VoiceJoin{Channel: "lounge"})
 	readVoiceState(t, a) // the broadcast has happened; pre was not a target
-	id := mustID(t)
-	sendEnv(t, pre, proto.TypeAuth, proto.Auth{PubKey: id.PublicKey(), Name: "late", Sig: id.Sign(nonce)})
+	h.sendAuth(t, pre, mustID(t), "late", "")
 	if env := readEnv(t, pre); env.Type != proto.TypeAuthOK {
 		t.Fatalf("first message = %q, want auth_ok", env.Type)
 	}

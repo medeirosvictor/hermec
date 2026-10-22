@@ -6,11 +6,11 @@ served by lightweight servers that anyone can host. The project owns no
 infrastructure; resilience comes from many small, independently hosted servers
 rather than one central service that can be blocked.
 
-The design is relay-by-default, so participants' IPs stay hidden from each
-other, with direct peer-to-peer media as a per-participant opt-in. Hermec is
-also meant to be a reusable base for communications apps, with a role-gated Go
-core and a versioned, documented wire protocol. See
-[the design spec](docs/specs/2026-10-06-hermec-design.md) and [PLAN.md](PLAN.md).
+Media is relayed by the server, so participants' IPs stay hidden from each
+other. Hermec is also meant to be a reusable base for communications apps, with
+a role-gated Go core and a versioned, documented wire protocol. See
+[PLAN.md](PLAN.md) for the roadmap and [docs/protocol.md](docs/protocol.md) for
+the protocol.
 
 ## How people actually reach each other (plain-language version)
 
@@ -43,20 +43,20 @@ servers automatically by shouting a small "anyone there?" message on the
 network. Across the internet, the easiest option is **Tailscale**: the host
 shares their machine with friends, everyone gets a private address that
 already reaches the host, and the app finds tailnet servers automatically too.
-The last option is the **classic way**: the host opens port 7697 (TCP) and the
-voice UDP ports on their router and sets `public_ip` in the server config. In
+The last option is the **classic way**: the host forwards port 7697 (TCP and
+UDP) on their router and sets `public_ip` in the server config. In
 every case the app only needs to be able to reach the host; the host does the
 rest.
 
 ## Status
 
-This repository currently ships a Go server with Ed25519 key-based
-authentication, roles, channels, presence and text chat, plus a headless client
-library, a desktop GUI client, and integration tests. Voice chat now works in
-the GUI, with audio relayed through the self-hosted server. Screen share works
-too (sharing from Windows, watching on Windows, macOS or Linux). Camera video and the
-direct peer-to-peer opt-in remain unimplemented. The
-wire protocol for what exists is specified in [docs/protocol.md](docs/protocol.md).
+Current release: v0.5.1. This repository ships a Go server with Ed25519
+key-based authentication, roles, channels, presence and text chat, a headless
+client library, a desktop GUI client, and integration tests. Voice works, with
+audio relayed through the self-hosted server. Screen share works too (sharing
+from Windows, watching on Windows, macOS or Linux). Camera video and direct
+peer-to-peer media are not built yet. The wire protocol is specified in
+[docs/protocol.md](docs/protocol.md).
 
 ## Install
 
@@ -164,8 +164,8 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Members button** (top right of the chat): Show or hide the member list of everyone on the server. The list hides itself in narrow windows; your choice is saved in `settings.toml`
 - **Click "+" tile**: Add a server
 - **Click the signal bars** (status line, or the call bar in a call): Show connection quality (ping, jitter, per-participant concealment); Esc or a second click closes it
-- **Click voice channel in the pane**: Join or leave voice call
-- **Click share** (call bar): Share a screen, see [Screen share](#screen-share). **Click LIVE** next to a person in the voice list to watch them. **Esc** goes back to chat; **double-click** the video for fullscreen.
+- **Click a voice channel in the pane**: Join it (moves your call if you are in another one). Clicking the channel you are already in does nothing; leave with the call bar or the "voice connected" panel.
+- **Click share** (call bar or "voice connected" panel): Share a screen, see [Screen share](#screen-share). **Click LIVE** next to a person in the voice list to watch them. **Esc** goes back to chat (out of fullscreen first); **F11** or **double-click** the video toggles fullscreen.
 - **Title bar** (Windows): a Discord-style app bar replaces the default frame. Drag it to move the window (double-click to maximize or restore), use the buttons on the right to minimize, maximize and close, and drag the window edges and corners to resize.
 - **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, text size as a percentage, share quality (720p or 1080p), logs (open folder), update status, a help section; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono, and existing settings files keep VT323.
 
@@ -180,7 +180,8 @@ need no audio libraries and no pkg-config. The GUI client (`cmd/hermec`) still
 needs a C compiler for the audio backend (miniaudio):
 
 - **Windows:** MSYS2 with the UCRT64 gcc only.
-- **Linux:** `gcc`.
+- **Linux:** `gcc`, plus the development headers for the window and sound
+  libraries (on Debian or Ubuntu: `sudo apt install gcc libgl1-mesa-dev xorg-dev libasound2-dev`).
 - **macOS:** Xcode command line tools (`xcode-select --install`).
 
 **Windows (MSYS2):**
@@ -258,6 +259,20 @@ Any OS, once HERMEC is running:
   Revoke invite.
 - **Keys, not passwords.** Every person has a key file. The server checks a
   signature from that key when they connect.
+- **The host proves itself first.** Before your app sends anything secret
+  (including the server password), the host sends the server's signed chain and
+  proves it holds a key that the chain approves as a host. A machine that
+  merely copied the address cannot pass.
+- **Your app remembers the server.** Each server has an ID (the hash of the
+  first entry of its chain). The app pins it the first time you connect and, if
+  the ID ever changes, refuses to connect, tells you so and does not retry. Your
+  login signature also covers the server ID, so once the real server's ID is
+  pinned, one host cannot replay your login to log in as you on another server.
+  On first use of a server you add, a malicious server could still relay another
+  server's handshake (see known gap 6).
+- **Bans are enforced by the server.** The server and protocol support banning
+  a key: a banned key is disconnected at once and refused when it comes back.
+  There is no app or command-line control for bans yet.
 
 **Known gaps (we are working on these):**
 
@@ -299,17 +314,21 @@ Any OS, once HERMEC is running:
 
    Drop `,LocalSubnet` to allow Tailscale only.
 4. **The host can read everything.** Chat and voice pass through the host's
-   server. Only join servers run by people you trust. A host could also pretend
-   to be you on other servers you use, until server identity keys land
-   (planned).
+   server. Only join servers run by people you trust.
 5. **Names are not verified.** Anyone can pick any name. The fingerprint (hover
    a server or person) is the real identity.
-6. **Not ready for the open internet.** HERMEC uses plain `ws://` unless you
-   set `tls_cert` and `tls_key` in the server config (both are in
-   [example.server.toml](example.server.toml); the server then serves `wss://`).
-   Only reach servers through Tailscale or your LAN. Hosting on a rented server
-   for strangers needs invite links and server identity keys first (on the
-   roadmap).
+6. **The handshake does not bind the connection.** On plain `ws://`, someone
+   on the network path between you and the host could relay a real host's
+   proof and so read the password you send. Use TLS (set `tls_cert` and
+   `tls_key` in the server config; both are in
+   [example.server.toml](example.server.toml); the server then serves `wss://`)
+   or a network that is already encrypted. Tailscale is, and it is what this
+   friend group uses. Without one of them, treat the password as visible to
+   anyone on the path.
+7. **Not ready for strangers on the open internet.** There are no invite links
+   yet, so a public server cannot tell welcome visitors from unwelcome ones
+   (`allowed_keys` helps, and bans work after the fact, though the app has no ban control yet). Reach servers
+   through Tailscale or your LAN.
 
 ## Run
 
@@ -317,7 +336,38 @@ Any OS, once HERMEC is running:
 ./hermec-server                                # defaults: ws on :7697, channel "general"
 ./hermec-server -config example.server.toml    # with a config file
 ./hermec-server -config server.toml -print-config   # show effective config and exit
+./hermec-server -config server.toml -apply-config   # append the TOML's group settings to the chain and exit (server stopped)
 ```
+
+The server's identity lives in a signed chain. On first start the server
+creates the chain from its config, with its own key as founder. `-key` is the
+host key file and `-chain` is the chain file. Both default to
+`hermec-server.key` and `chain.jsonl` next to the config file, or in the current
+directory without `-config`; the key is generated when missing. Back both up;
+the key is what lets you change the group later. The server refuses to start
+when its key is not an approved host of the chain it loads. If a crash left a
+half-written last entry in the chain file, the server drops it, logs a
+warning and keeps the entries before it.
+
+Once a chain exists, the group settings in the TOML (`server_name`, `channels`,
+`voice_channels`, `max_voice`, `max_clients`, `max_per_ip`, `allowed_keys`,
+`roles`, `default_roles` and `[grants]`) are ignored, and the server logs a
+warning when it sees them. To change them from the file, edit the TOML and run
+`hermec-server -config server.toml -apply-config`. Stop the server first: the
+command refuses to run while something listens on the config's port, and the
+changes apply when the server starts. It needs `-config`, appends only the
+group keys the TOML actually sets (grants are compared only when `[grants]` is
+set), signed by the server's key, then prints what it appended and exits.
+Entries that an admin's app sends to a running server with `chain_append`
+(grants, bans, a new config) are different: `allowed_keys`, roles and bans
+apply at once, and the name, channels and limits from a later config apply at
+the next start. The founder always keeps every permission and always passes
+`allowed_keys`, as does every approved host. The password, port, TLS and the
+other machine settings stay in the TOML and never go into the chain.
+
+Everyone in a group needs HERMEC v0.6 or newer: an older app is told to update
+HERMEC, and a v0.6 app that meets an older server reports that the host runs an
+older version.
 
 Servers announce themselves on the LAN and on Tailscale (if the `tailscale` CLI
 is on PATH), so friends see them in the app's DISCOVERED list. To label your
@@ -337,11 +387,13 @@ To use voice channels, configure them in your server config:
 voice_channels = ["voice", "private-call"]
 ```
 
-Click a voice channel in the pane to join; the call bar appears at the bottom
-showing the channel name, elapsed time, mute button (Ctrl+M), leave button, and
-your mic level. Participants, occupancy, mute icons, and speaking indicators live
-in the channel pane under each voice channel; empty voice channels show only in
-the list.
+Click a voice channel in the pane to join. The call bar appears at the bottom
+showing the channel name, elapsed time, mute button (Ctrl+M), share button,
+leave button, and your mic level. The "voice connected" panel at the bottom of
+the channel column shows the channel and server, your ping, and buttons to
+disconnect and share; its signal bars open the connection quality panel.
+Participants, occupancy, mute icons, and speaking indicators live in the channel
+pane under each voice channel; empty voice channels show only in the list.
 
 **Important: Hermec does not perform acoustic echo cancellation. Using speakers
 will feed other participants' audio back into your microphone; headsets are
@@ -366,13 +418,22 @@ Show your screen to the people in your voice call.
 
 Leaving the voice call stops your share too.
 
+To see what you are sharing, click your own **LIVE** tag. The preview is drawn
+on your computer, so it costs no bandwidth. While you share, the strip on the
+video has **stop sharing** and **change screen**. Change screen swaps the
+monitor without ending the share; people watching keep watching (the picture is
+letterboxed if the new screen has a different shape).
+
 **Watch someone's screen** (Windows, macOS and Linux):
 
 1. Look at the voice channel list. People who share have a red **LIVE** tag.
 2. Click **LIVE**.
 3. The video replaces the chat.
-4. Press **Esc** to go back to chat.
-5. **Double-click** the video to go fullscreen, and double-click again to leave it.
+4. Move the mouse over the video to show a strip with **fullscreen** and
+   **close**.
+5. Press **Esc** to go back to chat. In fullscreen, the first **Esc** leaves
+   fullscreen and the second goes back to chat.
+6. **F11** or a **double-click** on the video toggles fullscreen.
 
 You can watch one screen at a time. The video is drawn clean, without the CRT
 effects, so text stays readable.
@@ -431,7 +492,10 @@ for joining. The app starts the server on your computer, opens it as a
 tile, and shows an invite address (your Tailscale address if you have one,
 otherwise your LAN address) that friends paste into **Join a server**. Windows
 asks once to allow HERMEC on your network; choose Allow so friends can connect.
-The server runs while the app is open.
+The server runs while the app is open. Its signed chain (the server's identity
+and group settings, with you as founder) is kept in a `chains` folder next to
+`hosted.toml`; a server created before v0.6 gets its chain the first time v0.6
+starts it.
 
 ## Use as a library
 
@@ -462,10 +526,16 @@ for ev := range c.Events() {
   network or a trusted LAN, as in the
   [friends quickstart](docs/quickstart-friends.md)). Plain `ws://` over the
   public internet means an on-path observer can read everything, including chat.
+- **The handshake does not bind the connection.** On plain `ws://`, someone on
+  the network path could relay a real host's proof and read your password. Use
+  TLS (`wss://`) or an encrypted network such as Tailscale.
 - **The host is trusted by design.** The room host can read all chat and
   relayed traffic, the same way a TeamSpeak host can. Choose hosts like you
-  choose group admins. See section 8 of
-  [the design spec](docs/specs/2026-10-06-hermec-design.md).
+  choose group admins. The host also sees who connects and when.
+- **End-to-end encryption is not built.** Voice is encrypted between you and the
+  host (WebRTC), and chat is encrypted only if the server uses TLS or the
+  network layer does. The protocol reserves message types for end-to-end
+  encryption later.
 
 ## Troubleshooting
 
@@ -493,7 +563,7 @@ someone else's server need no inbound exception.
 
 ## Test
 
-CI (`.github/workflows/ci.yml`) runs vet, `-race` tests, a fuzz smoke run and Windows/arm64 cross-builds.
+CI (`.github/workflows/ci.yml`) runs gofmt, vet and `-race` tests on Linux, tests on macOS and Linux ARM, a fuzz smoke run of the protocol decoder, and cross-builds of the pure-Go packages. The release workflow (`release.yml`) also builds all four client assets on every pull request as a dry run.
 
 ```sh
 go vet ./...

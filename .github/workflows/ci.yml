@@ -66,6 +66,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go test ./core/proto -run='^$' -fuzz=FuzzDecode -fuzztime=60s
+      - run: go test ./core/chain -run='^$' -fuzz=FuzzFromEntries -fuzztime=60s
 
   cross-build:
     runs-on: ubuntu-latest

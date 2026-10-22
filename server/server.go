@@ -16,6 +16,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pion/ice/v4"
 
+	"github.com/medeirosvictor/hermec/core/chain"
+	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
 )
@@ -24,6 +26,9 @@ import (
 type Config struct {
 	// Addr is the listen address; use "127.0.0.1:0" in tests.
 	Addr string
+	// ServerID is the machine-local ID of the chain this config belongs to (as
+	// chain.ID.String()); the app stores it in hosted.toml. Unused by Server.
+	ServerID string
 	// Password, when non-empty, must be presented by every client.
 	Password string
 	// AllowedKeys are permitted fingerprints. Empty means an open server.
@@ -52,11 +57,6 @@ type Config struct {
 	// This breaks remote peers, so it is for tests only; not exposed in the
 	// TOML file.
 	AllowLoopbackICE bool
-	// LegacyHost makes the server behave like a pre-v0.5 host: Opus-only media
-	// (no VP8 in its MediaEngine) and share_start, share_stop and watch
-	// answered as unsupported message types. For compatibility tests only; not
-	// exposed in the TOML file.
-	LegacyHost bool
 	// NoVP8 drops only the VP8 codec from the MediaEngine (share messages stay
 	// supported). For tests only; not exposed in the TOML file.
 	NoVP8 bool
@@ -84,6 +84,12 @@ type Config struct {
 	MaxPerIP int
 	// Logf receives every server log line; nil means log.Printf.
 	Logf func(format string, args ...any)
+	// HostKey is the host's own key. Nil makes New generate an ephemeral one.
+	HostKey *identity.Identity
+	// Chain is the server chain whose state supplies the group fields (name,
+	// channels, limits, allowed keys, roles). Nil makes New build an in-memory
+	// chain from this Config's own group fields, founded by HostKey.
+	Chain *chain.Chain
 }
 
 // logf writes a server log line through cfg.Logf, or log.Printf.
@@ -104,7 +110,9 @@ const (
 // Server accepts websocket connections and authenticates them.
 type Server struct {
 	cfg      Config
-	allowed  map[string]struct{}
+	chain    *chain.Chain
+	group    groupState
+	chainMu  sync.Mutex // serializes chain_append: append, refresh, broadcast, kick
 	upgrader websocket.Upgrader
 
 	mu      sync.Mutex
@@ -132,7 +140,24 @@ type Server struct {
 
 // New returns a Server for cfg. Call Start to begin serving.
 func New(cfg Config) *Server {
+	if cfg.HostKey == nil {
+		k, err := identity.Generate()
+		if err != nil {
+			panic(fmt.Sprintf("server: generate host key: %v", err))
+		}
+		cfg.HostKey = k
+	}
+	if cfg.Chain == nil {
+		c, err := newChain(cfg.HostKey, cfg)
+		if err != nil {
+			panic(fmt.Sprintf("server: build default chain: %v", err))
+		}
+		cfg.Chain = c
+	}
+	st := cfg.Chain.State()
+	cfg = chainCfg(cfg, st)
 	s := &Server{
+		chain: cfg.Chain,
 		cfg:   cfg,
 		clock: time.Now,
 		conns: make(map[*conn]struct{}),
@@ -143,15 +168,13 @@ func New(cfg Config) *Server {
 			CheckOrigin: func(r *http.Request) bool { return r.Header.Get("Origin") == "" },
 		},
 	}
+	if err := CheckHost(cfg.Chain, cfg.HostKey); err != nil {
+		s.logf("server: WARNING: %v; clients will refuse this host", err)
+	}
 	s.ipConns = make(map[string]int)
 	s.fails = make(map[string]*authFail)
+	s.refreshGroup()
 	s.initChannels()
-	if len(cfg.AllowedKeys) > 0 {
-		s.allowed = make(map[string]struct{}, len(cfg.AllowedKeys))
-		for _, fp := range cfg.AllowedKeys {
-			s.allowed[fp] = struct{}{}
-		}
-	}
 	return s
 }
 

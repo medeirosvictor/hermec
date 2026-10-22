@@ -178,12 +178,12 @@ func TestBadRosterBecomesErrEvent(t *testing.T) {
 			raw, _ := proto.Encode(typ, v)
 			_ = ws.WriteMessage(websocket.TextMessage, raw)
 		}
-		send(proto.TypeChallenge, proto.Challenge{Nonce: []byte("nonce-nonce-nonce")})
-		if _, _, err := ws.ReadMessage(); err != nil {
+		a, sid := stubHandshake(t, ws)
+		if a == nil {
 			return
 		}
-		send(proto.TypeAuthOK, proto.AuthOK{})
-		_ = ws.WriteMessage(websocket.TextMessage, []byte(`{"v":1,"type":"roster","data":"nope"}`))
+		send(proto.TypeAuthOK, proto.AuthOK{ServerID: sid})
+		_ = ws.WriteMessage(websocket.TextMessage, []byte(`{"v":2,"type":"roster","data":"nope"}`))
 		send(proto.TypeRoster, proto.Roster{Total: 7})
 		_, _, _ = ws.ReadMessage() // hold open until the client closes
 	}))

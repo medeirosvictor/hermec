@@ -212,7 +212,7 @@ func (s *Server) voiceJoin(c *conn, ch string) string {
 	if s.channelType(ch) != "voice" {
 		return "bad_request"
 	}
-	if !s.cfg.Roles.Has(c.fingerprint, roles.PermJoinChannel) {
+	if !s.roles().Has(c.fingerprint, roles.PermJoinChannel) {
 		return "forbidden"
 	}
 	s.chMu.Lock()
@@ -271,12 +271,6 @@ func (s *Server) voiceMute(c *conn, muted bool) string {
 
 // routeVoice handles voice_* messages. It reports whether env was one.
 func (c *conn) routeVoice(env proto.Envelope) bool {
-	if c.srv.cfg.LegacyHost {
-		switch env.Type {
-		case proto.TypeShareStart, proto.TypeShareStop, proto.TypeWatch:
-			return false // a v0.4 host does not know these
-		}
-	}
 	switch env.Type {
 	case proto.TypeVoiceJoin:
 		var m proto.VoiceJoin

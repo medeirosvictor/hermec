@@ -45,7 +45,7 @@ func (c *conn) member() proto.Member {
 	return proto.Member{
 		Fingerprint: c.fingerprint,
 		Name:        c.name,
-		Roles:       c.srv.cfg.Roles.RolesFor(c.fingerprint),
+		Roles:       c.srv.roles().RolesFor(c.fingerprint),
 	}
 }
 
@@ -232,7 +232,7 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 		s.chMu.Unlock()
 		return "not_joined"
 	}
-	if !s.cfg.Roles.Has(c.fingerprint, roles.PermSendChat) {
+	if !s.roles().Has(c.fingerprint, roles.PermSendChat) {
 		s.chMu.Unlock()
 		return "forbidden"
 	}
@@ -257,7 +257,7 @@ func (c *conn) route(env proto.Envelope) {
 			c.sendError("bad_request", "malformed join")
 			return
 		}
-		if !c.srv.cfg.Roles.Has(c.fingerprint, roles.PermJoinChannel) {
+		if !c.srv.roles().Has(c.fingerprint, roles.PermJoinChannel) {
 			c.sendError("forbidden", "not permitted to join channels")
 			return
 		}
@@ -289,6 +289,8 @@ func (c *conn) route(env proto.Envelope) {
 		case "forbidden":
 			c.sendError("forbidden", "not permitted to send chat")
 		}
+	case proto.TypeChainAppend:
+		c.handleChainAppend(env)
 	default:
 		if c.routeVoice(env) {
 			return

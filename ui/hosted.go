@@ -14,6 +14,7 @@ import (
 	"github.com/atotto/clipboard"
 
 	"github.com/medeirosvictor/hermec/client"
+	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/discover"
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/ui/state"
@@ -33,12 +34,17 @@ func hostedConfig(name, password string, port int, adminFP string) server.Config
 	return cfg
 }
 
-// saveHosted writes cfg atomically; the file holds the password, so 0600.
-func saveHosted(path string, cfg server.Config) error {
-	b, err := cfg.MarshalTOML()
+// saveHostedLocal writes only the machine-local keys, the password and the
+// server_id; the group fields live in the chain.
+func saveHostedLocal(path string, cfg server.Config) error {
+	b, err := cfg.MarshalLocalTOML()
 	if err != nil {
 		return err
 	}
+	return writeHosted(path, b)
+}
+
+func writeHosted(path string, b []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -128,14 +134,66 @@ const stoppedMsg = "not hosting — click ↻ to start"
 // clipboardWrite is a seam for tests.
 var clipboardWrite = clipboard.WriteAll
 
-// hostedServer is the server this app hosts: its saved config, the running
-// server (nil while stopped or failed to start) and the dial URL.
+// hostedServer is the server this app hosts: its machine-local config, its
+// chain, the running server (nil while stopped or failed to start) and the dial
+// URL.
 type hostedServer struct {
-	srv  *server.Server
-	cfg  server.Config
-	path string
-	url  string
-	err  string // why it is not running
+	srv   *server.Server
+	cfg   server.Config
+	chain *chain.Chain
+	id    string // chain.ID().String(), the pin the hosted session dials with
+	path  string
+	url   string
+	err   string // why it is not running
+}
+
+// name is the hosted server's name: the chain's, else the config's.
+func (h *hostedServer) name() string {
+	if h.chain != nil {
+		if st := h.chain.State(); st.HasConfig {
+			return st.Config.Name
+		}
+	}
+	return h.cfg.ServerName
+}
+
+// chainsDir is where chain files live, next to hosted.toml.
+func chainsDir(hostedPath string) string {
+	return filepath.Join(filepath.Dir(hostedPath), "chains")
+}
+
+// openHostedChain returns the chain for the hosted config at path. With a
+// server_id in cfg it loads chains/<id>.jsonl. Without one (a pre-chain
+// hosted.toml) it founds a chain from cfg's group fields, moves it to
+// chains/<id>.jsonl, sets cfg.ServerID and rewrites hosted.toml with only the
+// machine-local keys.
+func (g *game) openHostedChain(path string, cfg *server.Config) (c *chain.Chain, err error) {
+	dir := chainsDir(path)
+	if cfg.ServerID != "" {
+		return chain.Load(filepath.Join(dir, cfg.ServerID+".jsonl"))
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	tmpDir, err := os.MkdirTemp(dir, ".new-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmpDir)
+	c, _, err = server.OpenChain(filepath.Join(tmpDir, "chain.jsonl"), g.id, *cfg)
+	if err != nil {
+		return nil, err
+	}
+	id := c.ID().String()
+	final := filepath.Join(dir, id+".jsonl")
+	if err := c.SetPath(final); err != nil { // writes the whole chain at its final name
+		return nil, err
+	}
+	cfg.ServerID = id
+	if err := saveHostedLocal(path, *cfg); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // hostedFile is where the hosted config lives for this run.
@@ -166,7 +224,16 @@ func (g *game) bootHosted(path string) {
 	if !ok {
 		return
 	}
-	g.hosted = &hostedServer{cfg: cfg, path: path}
+	c, err := g.openHostedChain(path, &cfg)
+	if err != nil {
+		g.notice = fmt.Sprintf("hosted chain unreadable: %v", err)
+		return
+	}
+	if n := c.TornTail(); n > 0 {
+		g.logf("hosted chain ended in a torn entry; dropped %d bytes", n)
+		g.notice = "hosted chain: a half-written last entry was dropped (the app closed mid-write)"
+	}
+	g.hosted = &hostedServer{cfg: cfg, path: path, chain: c, id: c.ID().String()}
 	_ = g.startHosted() // the failure is in g.hosted.err and shows on the tile
 	g.openSession(hostedKey, g.defaultName())
 }
@@ -183,8 +250,15 @@ func (g *game) defaultName() string {
 // the server really got, which differs from cfg only for port 0.
 func (g *game) startHosted() error {
 	h := g.hosted
+	if err := server.CheckHost(h.chain, g.id); err != nil {
+		h.srv, h.err = nil, err.Error()
+		g.logf("hosted server not started: %v", err)
+		return err
+	}
 	serverLogf(&h.cfg)
-	srv := server.New(h.cfg)
+	cfg := h.cfg
+	cfg.HostKey, cfg.Chain = g.id, h.chain
+	srv := server.New(cfg)
 	if err := srv.Start(); err != nil {
 		h.srv = nil
 		if port := hostedPort(h.cfg); isPortInUse(err) {
@@ -203,7 +277,7 @@ func (g *game) startHosted() error {
 	}
 	h.srv, h.err = srv, ""
 	h.url = "ws://" + net.JoinHostPort("127.0.0.1", port) + "/"
-	g.logf("hosting %q on %s", h.cfg.ServerName, h.url)
+	g.logf("hosting %q on %s", h.name(), h.url)
 	return nil
 }
 
@@ -265,15 +339,18 @@ func (g *game) createHosted(name, password string, port int) error {
 	if g.hostedTweak != nil {
 		g.hostedTweak(&cfg)
 	}
-	if err := saveHosted(path, cfg); err != nil {
+	cfg.ServerID = "" // openHostedChain founds the chain and saves hosted.toml
+	c, err := g.openHostedChain(path, &cfg)
+	if err != nil {
 		return err
 	}
 	g.hostedPath = path
-	g.hosted = &hostedServer{cfg: cfg, path: path}
+	g.hosted = &hostedServer{cfg: cfg, path: path, chain: c, id: c.ID().String()}
 	if err := g.startHosted(); err != nil {
 		msg := g.hosted.err
 		g.hosted = nil
 		_ = os.Remove(path)
+		_ = os.Remove(filepath.Join(chainsDir(path), c.ID().String()+".jsonl"))
 		return errors.New(msg)
 	}
 	if s := g.openSession(hostedKey, g.defaultName()); s != nil {
@@ -337,6 +414,46 @@ func (g *game) copyInvite() {
 		ts, lan := self(ctx)
 		ch <- inviteResult{ts: ts, lan: lan, port: port}
 	}()
+}
+
+// serverIDFor is the known server ID of the tile at key: the live client's,
+// else (for the hosted tile) the hosted chain's, else the pin saved with the
+// entry. Empty when unknown.
+func (g *game) serverIDFor(key string) string {
+	if s := g.sess[key]; s != nil && s.c != nil {
+		if id := s.c.ServerID(); id != "" {
+			return id
+		}
+	}
+	if key == hostedKey && g.hosted != nil {
+		return g.hosted.id
+	}
+	if e, ok := g.entryFor(key); ok && e.ServerID != "" {
+		return e.ServerID
+	}
+	return ""
+}
+
+// shortID is the "srv-..." form of a full server ID, or id when unparseable.
+func shortID(id string) string {
+	if p, err := chain.ParseID(id); err == nil {
+		return p.Short()
+	}
+	return id
+}
+
+// copyID puts a full server ID on the clipboard and reports it on the viewed
+// session's status line.
+func (g *game) copyID(id string) {
+	s := g.cur()
+	if hs := g.sess[hostedKey]; hs != nil && g.hosted != nil && g.hosted.id == id {
+		s = hs
+	}
+	if err := clipboardWrite(id); err != nil {
+		s.st.Status = "copy failed: " + err.Error()
+	} else {
+		s.st.Status = "copied " + id
+	}
 }
 
 // pumpInvite applies a finished lookup: the address goes to the clipboard and

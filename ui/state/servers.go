@@ -31,6 +31,9 @@ type ServerEntry struct {
 	Name        string    `toml:"name,omitempty"` // announced by the server
 	Nick        string    `toml:"nick,omitempty"` // the user's own name for it
 
+	// ServerID pins the server's identity (chain.ID.String()) once first seen.
+	ServerID string `toml:"server_id,omitempty"`
+
 	// Pending marks an entry not yet connected; it is never saved.
 	Pending bool `toml:"-"`
 }
@@ -207,4 +210,19 @@ func RailHit(x, y, railW, top, tileH float64, count int, h float64) int {
 		return RailNone
 	}
 	return i
+}
+
+// PinID returns a copy of entries with the server ID of url set to id, only
+// when it has none yet: a pin is never replaced silently.
+func PinID(entries []ServerEntry, url, id string) []ServerEntry {
+	out := append([]ServerEntry(nil), entries...)
+	if id == "" {
+		return out
+	}
+	for i := range out {
+		if out[i].URL == url && out[i].ServerID == "" {
+			out[i].ServerID = id
+		}
+	}
+	return out
 }

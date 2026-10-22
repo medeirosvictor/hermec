@@ -3,15 +3,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/medeirosvictor/hermec/core/chain"
+	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/version"
 )
@@ -19,12 +24,26 @@ import (
 func main() {
 	configPath := flag.String("config", "", "path to a TOML config file (defaults apply without it)")
 	printConfig := flag.Bool("print-config", false, "print the effective config (password redacted) and exit")
+	keyPath := flag.String("key", "", "host key file (default hermec-server.key next to -config; generated when missing)")
+	chainPath := flag.String("chain", "", "server chain file (default chain.jsonl next to -config)")
+	applyConfig := flag.Bool("apply-config", false, "append the config file's group fields to the chain, print the count, and exit; stop the server first, the changes apply when it starts")
 	flag.Parse()
+	if *applyConfig && *configPath == "" {
+		log.Fatal("-apply-config requires -config")
+	}
 
 	cfg := server.DefaultConfig()
 	if *configPath != "" {
 		var err error
 		if cfg, err = server.LoadConfig(*configPath); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	if *applyConfig {
+		// A running server holds the chain in memory; appending to the file
+		// under it would fork the two.
+		if err := checkNotRunning(cfg.Addr); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -42,6 +61,62 @@ func main() {
 		return
 	}
 
+	dir := "."
+	if *configPath != "" {
+		dir = filepath.Dir(*configPath)
+	}
+	if *keyPath == "" {
+		*keyPath = filepath.Join(dir, "hermec-server.key")
+	}
+	if *chainPath == "" {
+		*chainPath = filepath.Join(dir, "chain.jsonl")
+	}
+	key, err := loadOrCreateKey(*keyPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	c, created, err := server.OpenChain(*chainPath, key, cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if n := c.TornTail(); n > 0 {
+		log.Printf("WARNING: %s ended in a torn entry (a crash during a write); dropped %d bytes and kept the %d entries before it",
+			*chainPath, n, len(c.Entries()))
+	}
+	if *applyConfig {
+		var applied []string
+		if created { // a fresh chain was just built from the config
+			for _, e := range c.Entries() {
+				applied = append(applied, string(e.Op))
+			}
+		} else {
+			set, err := server.GroupFieldsSet(*configPath)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if applied, err = server.ApplyTOML(c, key, cfg, set); err != nil {
+				log.Fatal(err)
+			}
+		}
+		for _, a := range applied {
+			fmt.Println(a)
+		}
+		fmt.Printf("appended %d entries to %s\n", len(applied), *chainPath)
+		return
+	}
+	if err := checkHostKey(*keyPath, c, key); err != nil {
+		log.Fatal(err)
+	}
+	cfg.HostKey, cfg.Chain = key, c
+	if !created && *configPath != "" {
+		if set, err := server.GroupFieldsSet(*configPath); err != nil {
+			log.Print(err)
+		} else if len(set) > 0 {
+			log.Printf("WARNING: chain exists; ignoring group keys in %s: %s (use -apply-config to append them)",
+				*configPath, strings.Join(set, ", "))
+		}
+	}
+
 	srv := server.New(cfg)
 	if err := srv.Start(); err != nil {
 		log.Fatal(err)
@@ -51,6 +126,7 @@ func main() {
 		scheme = "wss"
 	}
 	log.Printf("hermec-server %s", version.Version)
+	log.Printf("server id %s", c.ID().Short())
 	log.Printf("listening on %s (%s)", displayAddr(srv.Addr()), scheme)
 	if cfg.TLSCert == "" && !isLoopback(srv.Addr()) {
 		log.Print("WARNING: serving plain ws on a non-loopback address; traffic is unencrypted (set tls_cert/tls_key)")
@@ -66,6 +142,52 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("shutdown: %v", err)
 	}
+}
+
+// checkHostKey refuses to serve a chain with a key it does not list as a host:
+// every client would reject the proof. keyPath only names the file in the error.
+func checkHostKey(keyPath string, c *chain.Chain, key *identity.Identity) error {
+	if err := server.CheckHost(c, key); err != nil {
+		return fmt.Errorf("%s: %w (wrong key file, or the chain belongs to another server)", keyPath, err)
+	}
+	return nil
+}
+
+// checkNotRunning refuses when something already listens on addr, which for
+// -apply-config means a server is running on this chain. A port of 0 or none
+// cannot collide, so the check is skipped.
+func checkNotRunning(addr string) error {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" || port == "0" {
+		return nil
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("-apply-config: %s is in use; stop the running server first (changes apply when it starts): %w", addr, err)
+	}
+	return ln.Close()
+}
+
+// loadOrCreateKey loads the host key at path, generating and saving one when
+// the file does not exist.
+func loadOrCreateKey(path string) (*identity.Identity, error) {
+	key, err := identity.Load(path)
+	if err == nil {
+		return key, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if key, err = identity.Generate(); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	if err := key.Save(path); err != nil {
+		return nil, err
+	}
+	return key, nil
 }
 
 // isLoopback reports whether addr is bound to a loopback host only.

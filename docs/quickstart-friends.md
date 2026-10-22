@@ -5,8 +5,11 @@ for a group of friends, and the **friends**, who just run the app and connect.
 
 ## What you'll need
 
-- **One person hosts** a Hermec server (a small program that runs on any
-  computer, a home server or a cheap VPS).
+- **One person hosts** a Hermec server. The easiest way is from the app itself
+  (click **+**, then **Create my own**, see the
+  [README](../README.md#chat-with-friends)). You can also run the standalone
+  server (see [What the host runs](#what-the-host-runs)) on a home server or a
+  cheap VPS.
 - **Everyone else** only runs the Hermec app (`hermec.exe` on Windows) and
   points it at the host's address.
 - Headphones for everyone (see [Notes for friends](#what-friends-receive)).
@@ -14,9 +17,10 @@ for a group of friends, and the **friends**, who just run the app and connect.
 ## Connecting to a discovered server
 
 Hermec servers announce themselves on the local network and Tailscale (if the
-`tailscale` CLI is on PATH). When you run the app, the connect screen shows
-a "DISCOVERED" list of nearby servers—just **click one and you're in** (no need
-to type an address). Press **Ctrl+R** to refresh the list.
+`tailscale` CLI is on PATH; on macOS the Tailscale app's own CLI also works).
+The Join page (the **+** tile, then **Join**) shows a "DISCOVERED" list of
+nearby servers. Just **click one and you're in**, no need to type an address.
+Press **Ctrl+R** to refresh the list.
 
 To label your server so friends recognize it, set `server_name` in your config:
 
@@ -28,21 +32,18 @@ To hide your server from discovery, set `discoverable = false`.
 
 ## Fallback: type the address
 
-If you don't see your server in the DISCOVERED list, you can still type its
-address manually on the connect screen. This is also the way to reach servers
-outside your local network and Tailscale (for example, a public VPS).
+If you don't see your server in the DISCOVERED list, type its address on the
+Join page. This is also the way to reach servers outside your local network and
+Tailscale (for example, a public VPS).
 
-The rest of this guide covers the three network setups. Most of the time, you'll
-just use discovery—but here's the nitty-gritty if you want to understand it:
-
-## Three ways to connect (traditional paths)
+## Three ways to connect
 
 ### (a) Same network (LAN)
 
 Everyone is on the same Wi-Fi or router, for example a LAN party. The server is
 automatically discoverable; friends will see it in the DISCOVERED list. As a
 fallback, find the host's LAN IP with `ipconfig` on Windows (it looks like
-`192.168.1.20`), then friends type `ws://<that IP>:7697/` into the server field.
+`192.168.1.20`), then friends type `ws://<that IP>:7697/` into the address field.
 
 Nothing is exposed to the internet. Leave `public_ip` unset on a LAN.
 
@@ -54,11 +55,12 @@ between machines is encrypted in transit by WireGuard.
 
 1. The host and every friend install [Tailscale](https://tailscale.com/download)
    and sign in.
-2. The host invites each friend to their tailnet (Tailscale admin console,
-   share/invite users, or share the host machine with them).
+2. The host shares the hosting machine with each friend (Tailscale admin
+   console, Machines, the machine, Share). Sharing one machine is better than
+   inviting friends into your tailnet: they see that one machine only.
 3. The host starts the server (see below).
 4. The server will appear in friends' DISCOVERED lists (if the `tailscale` CLI
-   is on PATH). As a fallback, friends can connect to
+   is found). As a fallback, friends can connect to
    `ws://<your-machine-name>.<tailnet>.ts.net:7697/`, for example
    `ws://vito.tail1234.ts.net:7697/`. The host can read the exact name
    in the Tailscale app.
@@ -144,7 +146,8 @@ needed. Mac friends build from source with `scripts/build-mac.sh`; see
 *Fallback:* if a friend cannot reach GitHub, the host can send them their own
 `hermec.exe` directly.
 
-Then friends run:
+Then friends click **+**, then **Join**, and paste the address. Or they start
+the app with the address on the command line:
 
 ```sh
 hermec.exe -server ws://<address-from-above>:7697/ -name Alice
@@ -167,6 +170,8 @@ Notes:
   `password`, GUI friends cannot join. Use the allowlist instead: the host
   adds each friend's key fingerprint to `allowed_keys` and restarts.
   (Your fingerprint is shown on the connect and settings screens; send it to the host.)
+- **Screen share:** friends on Windows can share a screen from the call bar,
+  and everyone can watch. See [Screen share](../README.md#screen-share).
 
 ## Privacy and accountability
 

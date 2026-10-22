@@ -41,7 +41,8 @@ type fileConfig struct {
 	MaxClients    *int                `toml:"max_clients"`
 	MaxPerIP      *int                `toml:"max_per_ip"`
 	Discoverable  *bool               `toml:"discoverable"`
-	ServerName    string              `toml:"server_name"`
+	ServerName    string              `toml:"server_name,omitempty"`
+	ServerID      string              `toml:"server_id,omitempty"`
 }
 
 // DefaultConfig returns the configuration used when no file is given.
@@ -93,6 +94,7 @@ func LoadConfig(path string) (Config, error) {
 		cfg.Addr = fc.Addr
 	}
 	cfg.Password = fc.Password
+	cfg.ServerID = fc.ServerID
 	cfg.AllowedKeys = fc.AllowedKeys
 	if md.IsDefined("channels") {
 		cfg.Channels = fc.Channels
@@ -209,6 +211,7 @@ func (c Config) MarshalTOML() ([]byte, error) {
 		MaxPerIP:      omitLimit(c.MaxPerIP, DefaultMaxPerIP),
 		Discoverable:  &c.Discoverable,
 		ServerName:    c.ServerName,
+		ServerID:      c.ServerID,
 	}
 	for name, perms := range c.Roles.Roles {
 		ps := make([]string, len(perms))
@@ -216,6 +219,31 @@ func (c Config) MarshalTOML() ([]byte, error) {
 			ps[i] = string(p)
 		}
 		fc.Roles[name] = ps
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(fc); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// MarshalLocalTOML renders only the machine-local keys (addr, password, TLS,
+// public_ip, udp range, media_port, discoverable, msg rate, server_id). The
+// group fields live in the chain once one exists.
+func (c Config) MarshalLocalTOML() ([]byte, error) {
+	fc := fileConfig{
+		Addr:         c.Addr,
+		Password:     c.Password,
+		TLSCert:      c.TLSCert,
+		TLSKey:       c.TLSKey,
+		PublicIP:     c.PublicIP,
+		UDPPortMin:   c.UDPPortMin,
+		UDPPortMax:   c.UDPPortMax,
+		MediaPort:    c.MediaPort,
+		MsgRate:      c.MsgRate,
+		MsgBurst:     c.MsgBurst,
+		Discoverable: &c.Discoverable,
+		ServerID:     c.ServerID,
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(fc); err != nil {
