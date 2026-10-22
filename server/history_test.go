@@ -31,6 +31,7 @@ func openH(t *testing.T, path string) *History {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { h.Close() }) // an open handle would block removing the temp dir
 	return h
 }
 
@@ -214,7 +215,7 @@ func TestTrimDays(t *testing.T) {
 func TestTrimSize(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "h.jsonl")
 	h := openH(t, p)
-	h.SetLimits(30, 1)
+	h.SetLimits(30, 8)
 	pad := strings.Repeat("x", 1000)
 	n := 1500
 	for i := 0; i < n; i++ {
@@ -222,6 +223,7 @@ func TestTrimSize(t *testing.T) {
 		m.Text = pad
 		h.Add(m)
 	}
+	h.SetLimits(30, 1) // the cap shrinks after the lines are in
 	if h.Size() <= 1<<20 {
 		t.Fatalf("setup too small: %d", h.Size())
 	}
@@ -245,6 +247,55 @@ func TestTrimSize(t *testing.T) {
 	fi, _ := os.Stat(p)
 	if int(fi.Size()) != h.Size() {
 		t.Fatalf("file %d size %d", fi.Size(), h.Size())
+	}
+}
+
+// Add alone keeps memory and file within the cap, with no Trim in between.
+func TestAddEnforcesCapBetweenTrims(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "h.jsonl")
+	h := openH(t, p)
+	h.SetLimits(30, 1)
+	const limit = 1 << 20
+	// '<' would take six bytes each if the line encoder escaped it.
+	pad := strings.Repeat("<", 4000)
+	var maxLine, maxFile int
+	n := 2000 // about 8 MB of lines, eight times the cap
+	for i := 0; i < n; i++ {
+		m := hmsg("c", i, histBase.Add(time.Duration(i)*time.Second))
+		m.Text = pad
+		if err := h.Add(m); err != nil {
+			t.Fatal(err)
+		}
+		// The server compacts after each chat, outside its channel lock.
+		if err := h.Compact(histBase.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if h.Size() > limit {
+			t.Fatalf("after %d adds size = %d, over the cap", i+1, h.Size())
+		}
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		maxFile = max(maxFile, int(fi.Size()))
+		if i == 0 {
+			maxLine = h.Size()
+		}
+	}
+	if maxLine > 4200 {
+		t.Fatalf("line is %d bytes: html was escaped", maxLine)
+	}
+	if maxFile > 2*limit+maxLine {
+		t.Fatalf("file grew to %d bytes, cap is %d", maxFile, limit)
+	}
+	got, _ := h.Page("c", "", time.Time{}, 5000)
+	if len(got) == 0 || got[len(got)-1].ID != hmsg("", n-1, time.Time{}).ID {
+		t.Fatal("newest line not kept")
+	}
+	// What is on disk reloads to the same newest line.
+	h2 := openH(t, p)
+	if got, _ := h2.Page("c", "", time.Time{}, 1); len(got) != 1 || got[0].ID != hmsg("", n-1, time.Time{}).ID {
+		t.Fatal("newest line not in the file")
 	}
 }
 

@@ -358,9 +358,12 @@ warning and keeps the entries before it.
 Chat in text channels is kept in a JSON-lines file, `-history` (default
 `history.jsonl` next to the config file, or in the current directory without
 `-config`). The group keys `history_days` (default 30; 0 keeps nothing; at most
-3650) and `history_mb` (default 8; 1 to 64) cap it. The server trims the file
-at start, every hour, and at once when a config entry changes the limits
-(`history_days = 0` deletes the file). A member who joins a text channel
+3650) and `history_mb` (default 8; 1 to 64) cap it. Lines older than
+`history_days` are dropped at start, every hour, and at once when a config
+entry changes the limits (`history_days = 0` deletes the file). The size cap
+holds all the time: once the stored chat passes `history_mb`, each new message
+pushes out the oldest, and the file is rewritten whenever it has grown past
+twice `history_mb`. A member who joins a text channel
 receives the newest 100 messages, and the app asks for older pages as you
 scroll up. Lines in the file that cannot be read are skipped and dropped at the
 next trim.

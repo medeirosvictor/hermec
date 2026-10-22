@@ -341,9 +341,12 @@ Semantics:
   replaces its list for that channel and loads older pages again on demand. A
   client sends `history_before` only after its `join` of that channel has
   succeeded, and stops asking when an older page adds no new message.
-- **Retention.** The host trims the oldest lines when the file passes
-  `history_days` or `history_mb`, at start, every hour, and at once when a
-  `config` entry changes the limits. `history_days` 0 keeps nothing.
+- **Retention.** The host drops lines older than `history_days` at start,
+  every hour, and at once when a `config` entry changes the limits.
+  `history_mb` is enforced on every stored message: when the stored lines
+  would pass it, the oldest leave the host's memory (and so every page) at
+  once, and the file is rewritten whenever it has grown past twice
+  `history_mb`. `history_days` 0 keeps nothing.
 
 ### 4.10 `channel_list`
 

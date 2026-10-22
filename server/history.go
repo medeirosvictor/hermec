@@ -25,7 +25,9 @@ type History struct {
 	ids     map[string]lineMeta            // id -> where and how big the stored line is
 	size    int
 	skipped int
-	needNL  bool // file does not end in a newline; next append starts a fresh line
+	needNL  bool     // file does not end in a newline; next append starts a fresh line
+	f       *os.File // open append handle on path; nil until the first Add
+	fileLen int      // bytes in the file, stale lines and all
 
 	// write appends b to the open store file; nil means f.Write. Tests set it
 	// to force a failed or partial write.
@@ -95,6 +97,7 @@ func OpenHistory(path string) (*History, error) {
 		return nil, err
 	}
 	h.needNL = len(data) > 0 && data[len(data)-1] != '\n'
+	h.fileLen = len(data)
 	for len(data) > 0 {
 		var raw []byte
 		if i := bytes.IndexByte(data, '\n'); i >= 0 {
@@ -159,8 +162,22 @@ func (h *History) Size() int {
 	return h.size
 }
 
+// encodeLine is m as one JSON line, newline included. HTML is left unescaped:
+// escaping would turn each '<' into six bytes and inflate the stored size.
+func encodeLine(m proto.ChatMessage) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(m); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // Add stores m and appends it to the file (no fsync). It is a no-op while the
-// day cap is 0, and ignores an id already stored.
+// day cap is 0, and ignores an id already stored. If m pushes the store past
+// the megabyte cap, the oldest messages leave memory at once; the file is
+// shortened by Compact.
 func (h *History) Add(m proto.ChatMessage) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -170,38 +187,68 @@ func (h *History) Add(m proto.ChatMessage) error {
 	if _, dup := h.ids[m.ID]; dup {
 		return nil
 	}
-	b, err := json.Marshal(m)
+	b, err := encodeLine(m)
 	if err != nil {
 		return err
 	}
-	b = append(b, '\n')
 	if h.path != "" {
-		out := b
-		if h.needNL {
-			out = append([]byte{'\n'}, b...)
+		if err := h.appendLocked(b); err != nil {
+			return err
 		}
+	}
+	h.insert(m, len(b))
+	if limit := h.mb << 20; h.size > limit {
+		drop, size := h.plan(time.Time{}, limit)
+		h.chans, h.ids, h.size = h.without(drop), h.keptIDs(drop), size
+	}
+	return nil
+}
+
+// appendLocked appends line b to the store file through the open handle.
+func (h *History) appendLocked(b []byte) error {
+	if h.f == nil {
 		f, err := os.OpenFile(h.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
 			return err
 		}
-		write := h.write
-		if write == nil {
-			write = (*os.File).Write
-		}
-		_, werr := write(f, out)
-		cerr := f.Close()
-		if werr == nil {
-			werr = cerr
-		}
-		if werr != nil {
-			// Part of the line may be in the file; start the next one fresh.
-			h.needNL = true
-			return werr
-		}
-		h.needNL = false
+		h.f = f
 	}
-	h.insert(m, len(b))
+	out := b
+	if h.needNL {
+		out = append([]byte{'\n'}, b...)
+	}
+	write := h.write
+	if write == nil {
+		write = (*os.File).Write
+	}
+	n, err := write(h.f, out)
+	h.fileLen += n
+	if err != nil {
+		// Part of the line may be in the file; start the next one fresh, on a
+		// fresh handle.
+		h.needNL = true
+		h.closeFile()
+		return err
+	}
+	h.needNL = false
 	return nil
+}
+
+// closeFile closes the append handle; the next Add reopens it. Caller holds mu.
+func (h *History) closeFile() error {
+	if h.f == nil {
+		return nil
+	}
+	err := h.f.Close()
+	h.f = nil
+	return err
+}
+
+// Close releases the store file. The store stays usable: the next Add reopens it.
+func (h *History) Close() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.closeFile()
 }
 
 // Page returns up to n messages of channel, oldest first: the newest when
@@ -236,31 +283,12 @@ func (h *History) Page(channel, beforeID string, beforeTS time.Time, n int) (msg
 	return msgs, start > 0
 }
 
-// Trim drops messages older than the day cap, then the globally oldest ones
-// until Size() fits the megabyte cap, and rewrites the file if anything was
-// dropped or skipped. With a day cap of 0 it empties the store and removes the
-// file. On a rewrite error the in-memory state is left as it was.
-func (h *History) Trim(now time.Time) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if h.days == 0 {
-		// Clear memory first so nothing old is served even if the remove fails.
-		h.chans = map[string][]proto.ChatMessage{}
-		h.ids = map[string]lineMeta{}
-		h.size, h.skipped, h.needNL = 0, 0, false
-		if h.path != "" {
-			if err := os.Remove(h.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-		}
-		return nil
-	}
-
-	cutoff := now.Add(-time.Duration(h.days) * 24 * time.Hour)
-	// heads[ch] = number of leading messages dropped from each channel.
-	drop := map[string]int{}
-	size := h.size
+// plan decides what to drop: messages older than cutoff, then the globally
+// oldest ones until the stored size fits limit. It returns the number of
+// leading messages to drop from each channel and the size that leaves.
+func (h *History) plan(cutoff time.Time, limit int) (drop map[string]int, size int) {
+	drop = map[string]int{}
+	size = h.size
 	for ch, s := range h.chans {
 		k := sort.Search(len(s), func(i int) bool { return !s[i].TS.Before(cutoff) })
 		drop[ch] = k
@@ -268,7 +296,6 @@ func (h *History) Trim(now time.Time) error {
 			size -= h.ids[m.ID].n
 		}
 	}
-	limit := h.mb << 20
 	for size > limit {
 		var oldest *proto.ChatMessage
 		var oldestCh string
@@ -286,40 +313,97 @@ func (h *History) Trim(now time.Time) error {
 		size -= h.ids[oldest.ID].n
 		drop[oldestCh]++
 	}
+	return drop, size
+}
 
-	dropped := 0
-	for _, k := range drop {
-		dropped += k
-	}
-	if dropped == 0 && h.skipped == 0 {
-		return nil
-	}
-
+// without is the channels with the first drop[ch] messages of each removed.
+func (h *History) without(drop map[string]int) map[string][]proto.ChatMessage {
 	kept := make(map[string][]proto.ChatMessage, len(h.chans))
 	for ch, s := range h.chans {
 		if rest := s[drop[ch]:]; len(rest) > 0 {
 			kept[ch] = append([]proto.ChatMessage(nil), rest...)
 		}
 	}
-	if h.path != "" {
-		if err := h.rewrite(kept); err != nil {
-			return err
-		}
-	}
+	return kept
+}
+
+// keptIDs is the id index narrowed to the messages without(drop) keeps.
+func (h *History) keptIDs(drop map[string]int) map[string]lineMeta {
 	ids := make(map[string]lineMeta, len(h.ids))
-	for _, s := range kept {
-		for _, m := range s {
+	for ch, s := range h.chans {
+		for _, m := range s[drop[ch]:] {
 			ids[m.ID] = h.ids[m.ID]
 		}
 	}
-	h.chans, h.ids, h.size = kept, ids, size
+	return ids
+}
+
+// Trim drops messages older than the day cap, then the globally oldest ones
+// until Size() fits the megabyte cap, and rewrites the file if anything was
+// dropped or skipped. With a day cap of 0 it empties the store and removes the
+// file. On a rewrite error the in-memory state is left as it was.
+func (h *History) Trim(now time.Time) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.trimLocked(now, false)
+}
+
+// Compact is Trim for the file only: when the file has grown past twice the
+// megabyte cap (Add drops lines from memory but only appends to the file) it
+// is rewritten down to the live messages. Otherwise it does nothing, cheaply.
+func (h *History) Compact(now time.Time) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.path == "" || h.fileLen <= 2*h.mb<<20 {
+		return nil
+	}
+	return h.trimLocked(now, true)
+}
+
+// trimLocked is Trim; force rewrites the file even when nothing is dropped.
+func (h *History) trimLocked(now time.Time, force bool) error {
+	if h.days == 0 {
+		// Clear memory first so nothing old is served even if the remove fails.
+		h.chans = map[string][]proto.ChatMessage{}
+		h.ids = map[string]lineMeta{}
+		h.size, h.skipped, h.needNL, h.fileLen = 0, 0, false, 0
+		if h.path != "" {
+			h.closeFile() // Windows cannot remove an open file
+			if err := os.Remove(h.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+		return nil
+	}
+
+	cutoff := now.Add(-time.Duration(h.days) * 24 * time.Hour)
+	drop, size := h.plan(cutoff, h.mb<<20)
+	dropped := 0
+	for _, k := range drop {
+		dropped += k
+	}
+	if dropped == 0 && h.skipped == 0 && !force {
+		return nil
+	}
+
+	kept := h.without(drop)
+	if h.path != "" {
+		n, err := h.rewrite(kept)
+		if err != nil {
+			return err
+		}
+		h.fileLen = n
+	}
+	h.chans, h.ids, h.size = kept, h.keptIDs(drop), size
 	h.skipped, h.needNL = 0, false
 	return nil
 }
 
 // rewrite writes msgs to a temp file beside the store and renames it over the
-// store, in global (TS, ID) order. Caller holds mu.
-func (h *History) rewrite(msgs map[string][]proto.ChatMessage) error {
+// store, in global (TS, ID) order, and returns the new file length. The open
+// append handle is closed first (the rename fails over it on Windows); the
+// next Add reopens the new file. Caller holds mu.
+func (h *History) rewrite(msgs map[string][]proto.ChatMessage) (int, error) {
 	var all []proto.ChatMessage
 	for _, s := range msgs {
 		all = append(all, s...)
@@ -328,19 +412,18 @@ func (h *History) rewrite(msgs map[string][]proto.ChatMessage) error {
 
 	f, err := os.CreateTemp(filepath.Dir(h.path), tempPattern(filepath.Base(h.path)))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	tmp := f.Name()
 	var buf bytes.Buffer
 	for _, m := range all {
-		b, err := json.Marshal(m)
+		b, err := encodeLine(m)
 		if err != nil {
 			f.Close()
 			os.Remove(tmp)
-			return err
+			return 0, err
 		}
 		buf.Write(b)
-		buf.WriteByte('\n')
 	}
 	_, werr := f.Write(buf.Bytes())
 	if werr == nil {
@@ -351,11 +434,12 @@ func (h *History) rewrite(msgs map[string][]proto.ChatMessage) error {
 		werr = cerr
 	}
 	if werr == nil {
+		h.closeFile()
 		werr = os.Rename(tmp, h.path)
 	}
 	if werr != nil {
 		os.Remove(tmp)
-		return werr
+		return 0, werr
 	}
-	return nil
+	return buf.Len(), nil
 }

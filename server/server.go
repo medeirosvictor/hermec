@@ -339,6 +339,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	s.mu.Unlock()
 	s.stopOnce.Do(func() { close(s.stopHist) })
+	if s.hist != nil {
+		defer s.hist.Close() // after the goroutines below have stopped
+	}
 
 	var err error
 	if s.http != nil {
