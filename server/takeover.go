@@ -42,33 +42,53 @@ func (c *conn) handleTakeover() {
 	}
 	t := &s.takeover
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	promotedNow := false
 	if s.Mode() != ModeActive {
-		if s.Mode() != ModeStandby || t.standby == nil || !t.standby() {
+		if s.Mode() != ModeStandby || t.standby == nil || t.alive == nil || !t.standby() {
+			t.mu.Unlock()
 			c.sendError(proto.CodeNotStandby, "this host is not the standby")
 			return
 		}
-		if t.alive != nil && t.alive(s.clock()) {
+		if t.alive(s.clock()) {
+			t.mu.Unlock()
 			c.sendError(proto.CodeActiveAlive, "the active host is alive")
 			return
 		}
 		s.SetMode(ModeActive)
+		s.promoted.Store(true)
+		promotedNow = true
+	} else if !s.promoted.Load() && !s.isWarm(c) {
+		// Active from the start: there is nothing to take over.
+		t.mu.Unlock()
+		c.sendError(proto.CodeNotStandby, "this host is not the standby")
+		return
 	}
 	// Idempotent: conns promoted earlier are no longer warm.
 	s.PromoteWarm()
-	if s.announcePromotion() && t.onPromote != nil {
-		t.onPromote()
+	if promotedNow {
+		s.announcePromotion()
 	}
-	c.sendMsg(proto.TypeHosts, s.hostsInfo())
+	hook := t.onPromote
+	t.mu.Unlock()
+	if !promotedNow {
+		c.sendMsg(proto.TypeHosts, s.hostsInfo())
+	} else if hook != nil {
+		// The announcement's hosts frame already reached c. The hook runs
+		// outside the lock so it may call back into the server.
+		hook()
+	}
 }
 
-// announcePromotion reports whether this call is the first since the host
-// became active; on that call it tells the authenticated conns who the active
-// host is and adds the host-changed line to every text channel.
-func (s *Server) announcePromotion() bool {
-	if !s.promoted.CompareAndSwap(false, true) {
-		return false
-	}
+func (s *Server) isWarm(c *conn) bool {
+	s.chMu.Lock()
+	defer s.chMu.Unlock()
+	_, ok := s.warm[c]
+	return ok
+}
+
+// announcePromotion tells the authenticated conns who the active host is and
+// adds the host-changed line to every text channel.
+func (s *Server) announcePromotion() {
 	s.chMu.Lock()
 	var dead []*conn
 	if raw, err := proto.Encode(proto.TypeHosts, s.hostsInfo()); err == nil {
@@ -79,7 +99,6 @@ func (s *Server) announcePromotion() bool {
 	}
 	s.chMu.Unlock()
 	dropSlow(dead)
-	return true
 }
 
 // systemChatLocked adds a system line to ch's history and sends it to the

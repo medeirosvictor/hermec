@@ -90,21 +90,32 @@ func TestTakeoverPromotes(t *testing.T) {
 }
 
 func TestTakeoverConcurrent(t *testing.T) {
-	a, _, _, bURL, _, _, _, promotes := takeoverPair(t)
+	a, b, _, bURL, _, _, _, promotes := takeoverPair(t)
 	var cs []*websocket.Conn
 	for i := 0; i < 5; i++ {
 		cs = append(cs, warmClient(t, bURL))
 	}
 	killA(t, a)
+	raw, err := proto.Encode(proto.TypeTakeover, struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := make(chan error, len(cs))
 	var wg sync.WaitGroup
 	for _, c := range cs {
 		wg.Add(1)
 		go func(c *websocket.Conn) {
 			defer wg.Done()
-			sendEnv(t, c, proto.TypeTakeover, struct{}{})
+			errs <- c.WriteMessage(websocket.TextMessage, raw)
 		}(c)
 	}
 	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
 	for _, c := range cs {
 		for {
 			var r proto.Roster
@@ -113,10 +124,58 @@ func TestTakeoverConcurrent(t *testing.T) {
 				break
 			}
 		}
-		readType(t, c, proto.TypeHosts)
+		var h proto.Hosts
+		_ = json.Unmarshal(readType(t, c, proto.TypeHosts).Data, &h)
+		if h.Active.Name != "beta" {
+			t.Fatalf("hosts active = %+v", h.Active)
+		}
 	}
 	if n := promotes.Load(); n != 1 {
 		t.Fatalf("promote hook ran %d times", n)
+	}
+	waitFor(t, "system line", func() bool { return countSystem(b) >= 1 })
+	time.Sleep(100 * time.Millisecond)
+	if n := countSystem(b); n != 1 {
+		t.Fatalf("%d system lines", n)
+	}
+}
+
+func countSystem(s *Server) int {
+	msgs, _ := s.hist.Page("general", "", time.Time{}, 50)
+	n := 0
+	for _, m := range msgs {
+		if m.System {
+			n++
+		}
+	}
+	return n
+}
+
+// A host that was active all along has nothing to take over: no announcement,
+// no hook.
+func TestTakeoverOnActiveHost(t *testing.T) {
+	a, _, aURL, _, _, _, _, _ := takeoverPair(t)
+	var hooks atomic.Int32
+	a.SetPromoteHook(func() { hooks.Add(1) })
+	c := warmClient(t, aURL)
+	sendEnv(t, c, proto.TypeTakeover, struct{}{})
+	readType(t, c, proto.TypeHosts)
+	time.Sleep(100 * time.Millisecond)
+	if n := countSystem(a); n != 0 || hooks.Load() != 0 {
+		t.Fatalf("system lines %d, hook calls %d", n, hooks.Load())
+	}
+}
+
+func TestTakeoverNotStandby(t *testing.T) {
+	_, b, _, bURL, _, _, _, promotes := takeoverPair(t)
+	b.SetLinkView(func(time.Time) bool { return false }, func() bool { return false })
+	c := warmClient(t, bURL)
+	sendEnv(t, c, proto.TypeTakeover, struct{}{})
+	if code := nextErrCode(t, c); code != proto.CodeNotStandby {
+		t.Fatalf("code = %q", code)
+	}
+	if b.Mode() != ModeStandby || promotes.Load() != 0 {
+		t.Fatal("promoted though not the standby")
 	}
 }
 
