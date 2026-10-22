@@ -25,6 +25,11 @@ const (
 	// calling the sender dead.
 	HeartbeatInterval = 500 * time.Millisecond
 	HeartbeatGrace    = 1500 * time.Millisecond
+	// WarmChannelLabel names the data channel of a warm PeerConnection; the
+	// client sends WarmPing on it and the host answers WarmPong.
+	WarmChannelLabel = "hermec-warm"
+	WarmPing         = "ping"
+	WarmPong         = "pong"
 )
 
 // Message types.

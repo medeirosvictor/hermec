@@ -274,9 +274,7 @@ func TestStandbySkipsUnreachable(t *testing.T) {
 	linkUp(t, url, cc, proto.LinkHello{Name: "c"})
 	fpB, fpC := identity.Fingerprint(b.PublicKey()), identity.Fingerprint(cc.PublicKey())
 	waitFor(t, "links", func() bool { return len(s.Links()) == 2 })
-	if p := s.PickStandby(); p == nil || p.Fingerprint != fpB {
-		t.Fatalf("before reports: %+v", p)
-	}
+	waitFor(t, "standby B", func() bool { return standbyFP(s) == fpB })
 	for _, cl := range clients[:2] {
 		sendEnv(t, cl, proto.TypeReach, proto.Reach{Fingerprint: fpB, OK: false})
 	}
@@ -284,7 +282,15 @@ func TestStandbySkipsUnreachable(t *testing.T) {
 	for _, cl := range clients {
 		sendEnv(t, cl, proto.TypeReach, proto.Reach{Fingerprint: fpC, OK: true})
 	}
-	waitFor(t, "standby C", func() bool { p := s.PickStandby(); return p != nil && p.Fingerprint == fpC })
+	waitFor(t, "standby C", func() bool { return standbyFP(s) == fpC })
+}
+
+// standbyFP is the fingerprint of the host the server currently names standby.
+func standbyFP(s *Server) string {
+	if h := s.standby.Load(); h != nil {
+		return h.Fingerprint
+	}
+	return ""
 }
 
 func TestLinkProbe(t *testing.T) {
@@ -414,7 +420,7 @@ func TestStandbyRecomputedWhenClientsJoin(t *testing.T) {
 	linkUp(t, url, cc, proto.LinkHello{Name: "c"})
 	waitFor(t, "links", func() bool { return len(s.Links()) == 2 })
 	sendEnv(t, first, proto.TypeReach, proto.Reach{Fingerprint: fpB, OK: false})
-	waitFor(t, "standby C", func() bool { p := s.PickStandby(); return p != nil && p.Fingerprint == fpC })
+	waitFor(t, "standby C", func() bool { return standbyFP(s) == fpC })
 	hostsUntil(t, first, func(h proto.Hosts) bool { return h.Standby != nil && h.Standby.Fingerprint == fpC })
 	fullClient(t, url)
 	fullClient(t, url)

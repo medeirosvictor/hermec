@@ -24,6 +24,11 @@ type LinkPeer struct {
 	LastBeat    time.Time
 }
 
+// Info describes the peer as a host entry.
+func (p LinkPeer) Info() proto.HostInfo {
+	return proto.HostInfo{Fingerprint: p.Fingerprint, Name: p.Name, Addrs: p.Addrs, Priority: p.Priority}
+}
+
 // linkState is what a link conn carries. Fields after hello are guarded by
 // Server.chMu.
 type linkState struct {
@@ -86,15 +91,9 @@ func (s *Server) Links() []LinkPeer {
 	return out
 }
 
-// PickStandby returns the linked host that should be standby: the best
+// pickStandbyLocked returns the linked host that should be standby: the best
 // priority among those that at least half of the authenticated clients can
 // reach (a client that has not reported counts as reaching it), or nil.
-func (s *Server) PickStandby() *LinkPeer {
-	s.chMu.Lock()
-	defer s.chMu.Unlock()
-	return s.pickStandbyLocked()
-}
-
 func (s *Server) pickStandbyLocked() *LinkPeer {
 	st := s.chain.State()
 	var best *LinkPeer
@@ -143,7 +142,8 @@ func (s *Server) updateStandbyLocked() []*conn {
 	}
 	var next *proto.HostInfo
 	if pick != nil {
-		next = &proto.HostInfo{Fingerprint: pick.Fingerprint, Name: pick.Name, Addrs: pick.Addrs, Priority: pick.Priority}
+		info := pick.Info()
+		next = &info
 	}
 	if cur := s.standby.Load(); reflect.DeepEqual(cur, next) {
 		return dead

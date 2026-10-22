@@ -445,8 +445,8 @@ func TestMergeLinkIsNotAStandbyCandidate(t *testing.T) {
 	}
 	defer ws.Close()
 	waitFor(t, "merge link", func() bool { return len(a.Links()) == 1 })
-	if p := a.PickStandby(); p != nil {
-		t.Fatalf("a merge link was picked as standby: %+v", p)
+	if fp := standbyFP(a); fp != "" {
+		t.Fatalf("a merge link was picked as standby: %s", fp)
 	}
 }
 

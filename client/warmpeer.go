@@ -18,9 +18,8 @@ import (
 // AdoptCall then moves a live call onto it with one offer/answer.
 
 const (
-	warmChannelLabel = "hermec-warm"
-	warmPingEvery    = 5 * time.Second
-	warmGatherWait   = 5 * time.Second
+	warmPingEvery  = 5 * time.Second
+	warmGatherWait = 5 * time.Second
 )
 
 // adoptTeardownWait is how long AdoptCall waits for the dead call to stop
@@ -59,7 +58,7 @@ func (w *warmPeer) ping() {
 	t := time.NewTicker(warmPingEvery)
 	defer t.Stop()
 	for {
-		if w.dc.SendText("ping") != nil {
+		if w.dc.SendText(proto.WarmPing) != nil {
 			return
 		}
 		select {
@@ -82,7 +81,7 @@ func (c *Client) OpenWarmPeer(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	dc, err := pc.CreateDataChannel(warmChannelLabel, nil)
+	dc, err := pc.CreateDataChannel(proto.WarmChannelLabel, nil)
 	if err != nil {
 		_ = pc.Close()
 		return err

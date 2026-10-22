@@ -14,10 +14,7 @@ import (
 // the conn's voice_join adopts that PeerConnection (see takeWarmPeer in
 // newPC), and the client's next rtc_offer adds media to it.
 
-const (
-	warmChannelLabel = "hermec-warm"
-	warmGatherWait   = 5 * time.Second
-)
+const warmGatherWait = 5 * time.Second
 
 // handleWarmSignal routes warm_offer and warm_candidate. The server never
 // offers, so warm_answer is refused.
@@ -62,13 +59,13 @@ func (c *conn) handleWarmOffer(sdp string) {
 		return
 	}
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
-		if dc.Label() != warmChannelLabel {
+		if dc.Label() != proto.WarmChannelLabel {
 			_ = dc.Close()
 			return
 		}
 		dc.OnMessage(func(m webrtc.DataChannelMessage) {
-			if string(m.Data) == "ping" {
-				_ = dc.SendText("pong")
+			if string(m.Data) == proto.WarmPing {
+				_ = dc.SendText(proto.WarmPong)
 			}
 		})
 	})

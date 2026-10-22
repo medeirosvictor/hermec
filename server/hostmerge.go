@@ -211,7 +211,7 @@ func (h *Host) handback(p *LinkPeer) (*Link, bool) {
 		h.srv.resumeActive(promoted)
 		return nil, false
 	}
-	to := proto.HostInfo{Fingerprint: p.Fingerprint, Name: p.Name, Addrs: p.Addrs, Priority: p.Priority}
+	to := p.Info()
 	h.srv.Demote(to, "handback", nil)
 	h.setRole(RoleIdle, "")
 	return h.relink(to, nil, false), true

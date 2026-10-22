@@ -160,12 +160,12 @@ func TestWarmPeerDataChannel(t *testing.T) {
 	_, url := startModeServer(t, warmCfg())
 	w := newWarmClient(t, url)
 	w.waitOpen()
-	if err := w.dc.SendText("ping"); err != nil {
+	if err := w.dc.SendText(proto.WarmPing); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case m := <-w.msgs:
-		if m != "pong" {
+		if m != proto.WarmPong {
 			t.Fatalf("reply = %q, want pong", m)
 		}
 	case <-time.After(3 * time.Second):
