@@ -100,7 +100,7 @@ func (s *Server) pickStandbyLocked() *LinkPeer {
 	var best *LinkPeer
 	for c := range s.links {
 		prio, ok := hostPriority(&st, c.pub)
-		if !ok {
+		if !ok || c.link.hello.Yield != nil { // a merge link is leaving
 			continue
 		}
 		bad := 0
@@ -184,6 +184,14 @@ func (c *conn) handleLinkHello(env proto.Envelope) {
 // so a host_remove cannot slip between them; chainMu is not held while the
 // history is paged.
 func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
+	// A split-brain loser sends its load; if we would lose to it now, the merge
+	// is wrong way round and we refuse.
+	if h.Yield != nil {
+		voice, clients := s.load()
+		if loses(voice, clients, s.selfInfo().Priority, *h.Yield) {
+			return proto.CodeNotActive, "this host would yield to you"
+		}
+	}
 	// chainMu first, like joinLive: no entry is appended between the frames
 	// below and the first broadcast this link receives.
 	s.chainMu.Lock()
@@ -354,6 +362,8 @@ func (c *conn) routeLink(env proto.Envelope) {
 		c.srv.chMu.Unlock()
 	case proto.TypeLinkSync:
 		c.handleLinkSyncIn(env)
+	case proto.TypeChain:
+		c.handleLinkChainIn(env)
 	case proto.TypeLinkProbe:
 		c.handleLinkProbe()
 	default:

@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/proto"
 )
 
@@ -23,9 +22,20 @@ var (
 const (
 	dialTimeout   = 5 * time.Second
 	maxKnownHosts = 16
+)
+
+var (
+	// coldProbeEvery is how often a cold start probes again while no active
+	// host has answered.
+	coldProbeEvery = 200 * time.Millisecond
 	// handoverWait is how long the old active host waits for the receiver of
 	// a handover to report itself active.
 	handoverWait = 3 * time.Second
+
+	// Test seams, called at fixed points of a merge.
+	beforeLoop         func(*Host)
+	beforeYieldRecheck func(*Host)
+	beforeMergeHistory func(*Host)
 )
 
 // Role names reported by Host.Role.
@@ -152,7 +162,10 @@ func (h *Host) stopped() bool { return h.ctx.Err() != nil }
 // change; a nil link means the host is active (or stopping).
 func (h *Host) loop() {
 	defer close(h.done)
-	l := h.rejoin(nil)
+	if beforeLoop != nil {
+		beforeLoop(h)
+	}
+	l := h.rejoin(nil, coldStartWindow)
 	for !h.stopped() {
 		if l != nil {
 			l = h.runLinked(l)
@@ -278,38 +291,58 @@ func (h *Host) sameServer(r proto.LinkProbeReply) bool {
 
 // coldStart looks for an active host among the known ones (and extra) for up
 // to coldStartWindow and links to the first it finds.
-func (h *Host) coldStart(extra []string) *Link {
-	urls := h.targets(extra)
-	if len(urls) == 0 {
+func (h *Host) coldStart(extra []string, window time.Duration) *Link {
+	if len(h.targets(extra)) == 0 {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(h.ctx, coldStartWindow)
-	defer cancel()
-	var link *Link
-	h.probeEach(ctx, urls, func(url string, r proto.LinkProbeReply) bool {
-		if !h.sameServer(r) {
-			return false
+	mine := h.srv.selfInfo().Priority
+	start := time.Now()
+	end, hardEnd := start.Add(window), start.Add(3*window)
+	for {
+		// Probe again and again: a host that answers inactive may be about to
+		// become active, and a refused one may be starting.
+		var link *Link
+		better := false // a reachable, inactive host outranks us
+		ctx, cancel := context.WithTimeout(h.ctx, window)
+		h.probeEach(ctx, h.targets(extra), func(url string, r proto.LinkProbeReply) bool {
+			if !h.sameServer(r) {
+				better = better || (r.ServerID == h.srv.chain.ID().String() && r.Priority > 0 && r.Priority < mine)
+				return false
+			}
+			dctx, dcancel := context.WithTimeout(h.ctx, dialTimeout)
+			l, err := DialLink(dctx, url, h.srv)
+			dcancel()
+			if err != nil {
+				return false
+			}
+			link = l
+			h.mu.Lock()
+			h.active = r.Self
+			h.mu.Unlock()
+			return true
+		})
+		cancel()
+		if link != nil || h.stopped() {
+			return link
 		}
-		dctx, dcancel := context.WithTimeout(h.ctx, dialTimeout)
-		l, err := DialLink(dctx, url, h.srv)
-		dcancel()
-		if err != nil {
-			return false
+		// Past the window, only a better-ranked host that is still coming up
+		// keeps us waiting: it will become active, so we must not.
+		if now := time.Now(); !now.Before(end) && !(better && now.Before(hardEnd)) {
+			return nil
 		}
-		link = l
-		h.mu.Lock()
-		h.active = r.Self
-		h.mu.Unlock()
-		return true
-	})
-	return link
+		select {
+		case <-h.ctx.Done():
+			return nil
+		case <-time.After(coldProbeEvery):
+		}
+	}
 }
 
 // rejoin is the cold start: it links to an active host if one answers, else
 // makes this host active. It returns the link, or nil when the host is active
 // (or stopping).
-func (h *Host) rejoin(extra []string) *Link {
-	l := h.coldStart(extra)
+func (h *Host) rejoin(extra []string, window time.Duration) *Link {
+	l := h.coldStart(extra, window)
 	if h.stopped() {
 		if l != nil {
 			l.Close()
@@ -335,10 +368,6 @@ func (h *Host) rejoin(extra []string) *Link {
 // install starts l and makes it the host's link.
 func (h *Host) install(l *Link) {
 	h.hadLink = true
-	select { // a promotion signal from before this link is stale
-	case <-h.promoted:
-	default:
-	}
 	h.mu.Lock()
 	h.link = l
 	h.mu.Unlock()
@@ -362,11 +391,12 @@ func (h *Host) applyRole(l *Link) {
 	if hs, ok := l.Hosts(); ok {
 		name = hs.Active.Name
 	}
+	// A takeover may have promoted the host meanwhile; that stands.
 	if l.Standby() {
-		h.srv.SetMode(ModeStandby)
-		h.setRole(RoleStandby, name)
-	} else {
-		h.srv.SetMode(ModeIdle)
+		if h.srv.setFollowerMode(ModeStandby) {
+			h.setRole(RoleStandby, name)
+		}
+	} else if h.srv.setFollowerMode(ModeIdle) {
 		h.setRole(RoleIdle, "")
 	}
 }
@@ -400,6 +430,9 @@ func (h *Host) runLinked(l *Link) *Link {
 		case <-l.RoleChanged():
 			h.applyRole(l)
 		case <-h.promoted:
+			if h.srv.Mode() != ModeActive {
+				continue // a stale signal
+			}
 			// A client's takeover promoted us.
 			l.Close()
 			h.becomeActive(false)
@@ -434,15 +467,29 @@ func (h *Host) failover(l *Link) *Link {
 	h.mu.Lock()
 	h.link = nil
 	h.mu.Unlock()
-	select {
-	case <-h.ctx.Done():
-		return nil
-	case <-h.promoted:
-		h.becomeActive(false)
-		return nil
-	case <-time.After(heartbeatGrace):
+	// Only the standby may promote itself at once. Any other host gives it time
+	// to do so, and to be found by a cold start that outlasts it.
+	window := coldStartWindow
+	if !l.Standby() {
+		window = 2 * coldStartWindow
 	}
-	return h.rejoin(extra)
+	grace := time.NewTimer(heartbeatGrace)
+	defer grace.Stop()
+	for {
+		select {
+		case <-h.ctx.Done():
+			return nil
+		case <-h.promoted:
+			if h.srv.Mode() == ModeActive {
+				h.becomeActive(false)
+				return nil
+			}
+			continue // a stale signal
+		case <-grace.C:
+		}
+		break
+	}
+	return h.rejoin(extra, window)
 }
 
 // runActive serves as the active host until it is demoted, then returns the
@@ -486,7 +533,7 @@ func (h *Host) runActive() *Link {
 				if l, ok := h.handback(p); ok {
 					return l
 				}
-				emptySince = now // try again after another idle period
+				emptySince = time.Now() // try again after another idle period
 			}
 		}
 	}
@@ -503,138 +550,6 @@ func handbackCheck() time.Duration {
 		d = 5 * time.Second
 	}
 	return d
-}
-
-// loses is the yield rule: fewer voice members yields; on a tie fewer clients
-// yields; on a tie the larger priority number yields.
-func loses(voice, clients, prio int, r proto.LinkProbeReply) bool {
-	if voice != r.VoiceMembers {
-		return voice < r.VoiceMembers
-	}
-	if clients != r.Clients {
-		return clients < r.Clients
-	}
-	return prio > r.Priority
-}
-
-// probeAndYield looks for another active host. If there is one we lose to, it
-// merges into it; demoted reports that the host left the active role, and l is
-// then the link to the winner (nil if none could be made and the host became
-// active again).
-func (h *Host) probeAndYield() (l *Link, demoted bool) {
-	urls := h.targets(nil)
-	if len(urls) == 0 {
-		return nil, false
-	}
-	timeout := probeEvery
-	if timeout > 5*time.Second {
-		timeout = 5 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(h.ctx, timeout)
-	defer cancel()
-	var winURL string
-	var win proto.LinkProbeReply
-	h.probeEach(ctx, urls, func(url string, r proto.LinkProbeReply) bool {
-		if !h.sameServer(r) {
-			return false
-		}
-		voice, clients := h.srv.load()
-		if loses(voice, clients, h.srv.selfInfo().Priority, r) {
-			winURL, win = url, r
-			return true
-		}
-		return false
-	})
-	if winURL == "" {
-		return nil, false
-	}
-	return h.yield(winURL, win)
-}
-
-// yield merges this host into the winner of a split brain: it sends its chat
-// history, tells its clients to move, tells those who lost a chain change, takes
-// the winner's chain and links to it.
-func (h *Host) yield(url string, win proto.LinkProbeReply) (*Link, bool) {
-	ctx, cancel := context.WithTimeout(h.ctx, 30*time.Second)
-	defer cancel()
-	ws, theirs, err := dialMerge(ctx, url, h.srv)
-	if err != nil {
-		h.srv.logf("server: merge into %s: %v", url, err)
-		return nil, false
-	}
-	defer ws.Close()
-	mine := h.srv.chain.Entries()
-	full := append(mine[:1:1], theirs...)
-	if _, err := chain.FromEntries(full); err != nil {
-		h.srv.logf("server: merge into %s: its chain does not verify: %v", url, err)
-		return nil, false
-	}
-	// From here the host is no longer active: no chat or chain change lands
-	// after the history below was read.
-	h.srv.goIdle()
-	if err := h.srv.sendMergeHistory(ws); err != nil {
-		h.srv.logf("server: merge into %s: %v", url, err)
-	}
-	h.srv.Demote(win.Self, "merge", h.srv.lostAuthors(full))
-	if err := h.srv.replaceChain(full); err != nil {
-		h.srv.logf("server: merge into %s: taking its chain: %v", url, err)
-	}
-	h.learn(win.Self.Addrs...)
-	h.setRole(RoleIdle, "")
-	return h.relink(win.Self, []string{url}, true), true
-}
-
-// relink links to the host that is now active, retrying briefly; with none, it
-// cold-starts (which makes this host active when nobody answers).
-func (h *Host) relink(to proto.HostInfo, urls []string, full bool) *Link {
-	urls = append(append([]string(nil), urls...), to.Addrs...)
-	for attempt := 0; attempt < 10 && !h.stopped(); attempt++ {
-		for _, u := range urls {
-			dctx, cancel := context.WithTimeout(h.ctx, dialTimeout)
-			l, err := dialLinkOpts(dctx, u, h.srv, full)
-			cancel()
-			if err == nil {
-				h.mu.Lock()
-				h.active = to
-				h.mu.Unlock()
-				h.install(l)
-				return l
-			}
-		}
-		select {
-		case <-h.ctx.Done():
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-	return h.rejoin(urls)
-}
-
-// handbackCandidate is the linked host with the best priority among those
-// that outrank this host, or nil.
-func (h *Host) handbackCandidate() *LinkPeer {
-	mine := h.srv.selfInfo().Priority
-	for _, p := range h.srv.Links() { // best priority first
-		if p.Priority > 0 && p.Priority < mine && len(p.Addrs) > 0 {
-			return &p
-		}
-	}
-	return nil
-}
-
-// handback hands the active role to p: it sends handover, waits for p to
-// report itself active, then moves clients to it and links to it as idle or
-// standby. It reports false, leaving the host active, if p never became active.
-func (h *Host) handback(p *LinkPeer) (*Link, bool) {
-	if !h.srv.sendHandover(p.Fingerprint) {
-		return nil, false
-	}
-	if !h.waitActive(p.Addrs) {
-		return nil, false
-	}
-	to := proto.HostInfo{Fingerprint: p.Fingerprint, Name: p.Name, Addrs: p.Addrs, Priority: p.Priority}
-	h.srv.Demote(to, "handback", nil)
-	h.setRole(RoleIdle, "")
-	return h.relink(to, nil, false), true
 }
 
 // waitActive polls the host at addrs until it reports active, up to

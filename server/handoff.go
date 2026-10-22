@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/medeirosvictor/hermec/core/chain"
+	"github.com/medeirosvictor/hermec/core/hshake"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 )
@@ -14,6 +15,9 @@ const chainLostMsg = "your change was lost during a network split; please redo i
 
 // load is the host's load for the yield rule: voice members and clients.
 func (s *Server) load() (voice, clients int) {
+	if s.loadHook != nil {
+		return s.loadHook()
+	}
 	s.chMu.Lock()
 	defer s.chMu.Unlock()
 	for _, set := range s.voice {
@@ -78,6 +82,51 @@ func (s *Server) Promote() bool {
 	s.PromoteWarm()
 	s.announcePromotion()
 	return true
+}
+
+// setFollowerMode sets m (standby or idle) unless the host is active, which a
+// takeover may have made it meanwhile; it reports whether it set m.
+func (s *Server) setFollowerMode(m Mode) bool {
+	t := &s.takeover
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s.Mode() == ModeActive {
+		return false
+	}
+	s.SetMode(m)
+	return true
+}
+
+// resumeActive undoes goIdle when a handover or merge is called off, restoring
+// whether the host counted as promoted.
+func (s *Server) resumeActive(promoted bool) {
+	t := &s.takeover
+	t.mu.Lock()
+	s.SetMode(ModeActive)
+	s.promoted.Store(promoted)
+	t.mu.Unlock()
+}
+
+// handleLinkChainIn appends chain entries a linked host sends that extend our
+// head (a merge loser whose chain is a prefix-extension of ours). Entries that
+// do not extend it are dropped.
+func (c *conn) handleLinkChainIn(env proto.Envelope) {
+	var cf proto.ChainFrame
+	if json.Unmarshal(env.Data, &cf) != nil {
+		c.sendError(proto.CodeBadRequest, "malformed chain frame")
+		return
+	}
+	es, err := hshake.DecodeEntries(cf.Entries)
+	if err != nil {
+		c.sendError(proto.CodeBadRequest, "malformed chain frame")
+		return
+	}
+	for _, e := range es {
+		if err := c.srv.applyLinkEntry(e); err != nil {
+			c.srv.logf("server: link chain entry %d: %v", e.Seq, err)
+			return
+		}
+	}
 }
 
 // goIdle sets ModeIdle. chainMu is held so that no chain append lands after it

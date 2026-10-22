@@ -42,6 +42,22 @@ func TestReplaceSwapsContentsAndRewritesFile(t *testing.T) {
 	}
 }
 
+func TestReplaceRefusesPrefix(t *testing.T) {
+	f := newID(t)
+	b := newBuilder(t, f)
+	short, err := FromEntries(b.c.Entries())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.must(f, OpConfig, ConfigBody{Name: "newer"})
+	if err := b.c.Replace(short.Entries()); !errors.Is(err, ErrRollback) {
+		t.Fatalf("want ErrRollback, got %v", err)
+	}
+	if b.c.Head().Seq != 1 {
+		t.Fatal("the chain was rolled back")
+	}
+}
+
 func TestReplaceRefusesOtherChain(t *testing.T) {
 	a, b := newBuilder(t, newID(t)), newBuilder(t, newID(t))
 	if err := a.c.Replace(b.c.Entries()); !errors.Is(err, ErrBadChain) {

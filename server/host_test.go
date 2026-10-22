@@ -20,9 +20,12 @@ import (
 func fastHostTimers(t *testing.T) {
 	t.Helper()
 	oc, op, oh, hi, hg := coldStartWindow, probeEvery, handbackIdle, heartbeatInterval, heartbeatGrace
+	ocp := coldProbeEvery
 	coldStartWindow, probeEvery, handbackIdle = 300*time.Millisecond, 300*time.Millisecond, 300*time.Millisecond
 	heartbeatInterval, heartbeatGrace = 50*time.Millisecond, 150*time.Millisecond
+	coldProbeEvery = 50 * time.Millisecond
 	t.Cleanup(func() {
+		coldProbeEvery = ocp
 		coldStartWindow, probeEvery, handbackIdle, heartbeatInterval, heartbeatGrace = oc, op, oh, hi, hg
 	})
 }
@@ -232,7 +235,19 @@ func TestSplitBrainMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 	sendAppend(t, fc, e)
-	waitFor(t, "grant on B", func() bool { return hb.Server().chain.Head().Seq > ha.Server().chain.Head().Seq })
+	waitFor(t, "grant on B", func() bool { return hb.Server().chain.Head().Seq == e.Seq })
+	// A makes a different change at the same position: the chains fork, so B's
+	// grant is lost when B yields (a mere prefix would be kept; see
+	// TestYieldKeepsNewerEntriesOnWinner).
+	headA := ha.Server().chain.Head()
+	ea, err := chain.NewEntry(a, &headA, chain.OpGrant,
+		chain.GrantBody{Fingerprint: identity.Fingerprint(mustID(t).PublicKey()), Roles: []string{"admin"}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ha.Server().chain.Append(ea); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, "lines", func() bool { return len(histAll(ha.Server())) == 1 && len(histAll(hb.Server())) == 1 })
 
 	ha.setKnown(hb.url)

@@ -1,6 +1,9 @@
 package chain
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Replace swaps the chain's contents for es, a full chain (genesis first) that
 // must verify and share this chain's ID. A chain with a path is rewritten
@@ -17,6 +20,15 @@ func (c *Chain) Replace(es []Entry) error {
 	if n.state.ID != c.state.ID {
 		return fmt.Errorf("%w: different chain", ErrBadChain)
 	}
+	if len(n.entries) < len(c.entries) {
+		prefix := true
+		for i, e := range n.entries {
+			prefix = prefix && e.Hash() == c.entries[i].Hash()
+		}
+		if prefix {
+			return ErrRollback
+		}
+	}
 	oldEntries, oldSize, oldState := c.entries, c.size, c.state
 	c.entries, c.size, c.state = n.entries, n.size, n.state
 	if c.path != "" {
@@ -27,3 +39,7 @@ func (c *Chain) Replace(es []Entry) error {
 	}
 	return nil
 }
+
+// ErrRollback means a replacement chain is a strict prefix of the current one,
+// so taking it would drop entries without any fork to justify it.
+var ErrRollback = errors.New("chain: replacement would roll the chain back")

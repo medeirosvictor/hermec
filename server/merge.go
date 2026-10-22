@@ -32,10 +32,15 @@ func dialMerge(ctx context.Context, url string, s *Server) (*websocket.Conn, []c
 	}
 	_ = ws.SetReadDeadline(deadline)
 	_ = ws.SetWriteDeadline(deadline)
+	stop := watchClose(ctx, ws)
+	defer stop()
+	voice, clients := s.load()
 	hello := proto.LinkHello{
 		Addrs:         s.cfg.Advertise,
 		Name:          s.cfg.HostName,
 		HistoryLastTS: time.Now().AddDate(100, 0, 0), // no history back
+		// The winner checks it still wins against this load.
+		Yield: &proto.YieldLoad{VoiceMembers: voice, Clients: clients, Priority: s.selfInfo().Priority},
 	}
 	raw, err := proto.Encode(proto.TypeLinkHello, hello)
 	if err == nil {
@@ -71,6 +76,8 @@ func dialMerge(ctx context.Context, url string, s *Server) (*websocket.Conn, []c
 			}
 			entries = append(entries, es...)
 		case proto.TypeLinkSync:
+			_ = ws.SetReadDeadline(time.Time{})
+			_ = ws.SetWriteDeadline(time.Time{})
 			return ws, entries, nil
 		case proto.TypeError:
 			ws.Close()
@@ -89,9 +96,10 @@ func (s *Server) sendMergeHistory(ws *websocket.Conn) error {
 		for {
 			msgs, more := s.hist.After(ts, id, historyPage)
 			raw, n := encodeLinkSync(msgs, more)
-			if raw == nil {
+			if raw == nil || (n == 0 && len(msgs) > 0) || len(raw) > proto.MaxMessageSize {
 				return fmt.Errorf("server: merge: cannot encode history")
 			}
+			_ = ws.SetWriteDeadline(time.Now().Add(writeTimeout))
 			if err := ws.WriteMessage(websocket.TextMessage, raw); err != nil {
 				return fmt.Errorf("server: merge history: %w", err)
 			}
@@ -106,11 +114,13 @@ func (s *Server) sendMergeHistory(ws *websocket.Conn) error {
 	}
 	raw, err := proto.Encode(proto.TypeLinkProbe, struct{}{})
 	if err == nil {
+		_ = ws.SetWriteDeadline(time.Now().Add(writeTimeout))
 		err = ws.WriteMessage(websocket.TextMessage, raw)
 	}
 	if err != nil {
 		return fmt.Errorf("server: merge history: %w", err)
 	}
+	_ = ws.SetReadDeadline(time.Now().Add(30 * time.Second))
 	for {
 		_, raw, err := ws.ReadMessage()
 		if err != nil {
@@ -129,8 +139,23 @@ func (s *Server) sendMergeHistory(ws *websocket.Conn) error {
 	}
 }
 
+// watchClose closes ws when ctx ends, so a read or write blocked on it fails;
+// the returned stop ends the watch.
+func watchClose(ctx context.Context, ws *websocket.Conn) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			ws.Close()
+		case <-done:
+		}
+	}()
+	return func() { close(done) }
+}
+
 // replaceChain makes the chain es (genesis first) ours, in place, and applies
-// it as a link would: group state, history limits.
+// it as a link would: group state, history limits, links of removed hosts,
+// and the kick of everyone banned.
 func (s *Server) replaceChain(es []chain.Entry) error {
 	s.chainMu.Lock()
 	defer s.chainMu.Unlock()
@@ -140,6 +165,11 @@ func (s *Server) replaceChain(es []chain.Entry) error {
 	s.refreshGroup()
 	if s.applyHistoryLimits() {
 		s.trimHistory()
+	}
+	s.dropRemovedLinks()
+	st := s.chain.State()
+	for fp := range st.Bans {
+		s.kick(fp)
 	}
 	return nil
 }

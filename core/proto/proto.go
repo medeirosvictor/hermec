@@ -315,6 +315,16 @@ type LinkHello struct {
 	HistoryLastTS time.Time `json:"history_last_ts"`
 	Addrs         []string  `json:"addrs"`
 	Name          string    `json:"name"`
+	// Yield is set on the link a split-brain loser opens to merge into the
+	// winner: the loser's load, so the winner can check it still wins.
+	Yield *YieldLoad `json:"yield,omitempty"`
+}
+
+// YieldLoad is a host's load for the split-brain yield rule.
+type YieldLoad struct {
+	VoiceMembers int `json:"voice_members"`
+	Clients      int `json:"clients"`
+	Priority     int `json:"priority"`
 }
 
 // LinkSync carries chat history between linked hosts. PasswordKey is the
