@@ -70,6 +70,9 @@ type game struct {
 	joinCh  chan joinResult
 	sendCh  chan sendResult
 	voiceCh chan voiceResult
+	hostCh  chan hostResult // warm dials, failovers and moves; made on first use
+
+	onDialed func(*client.Client) // test seam: sees every client a dial made (loopback ICE); nil = none
 
 	fileLog    *log.Logger                                                     // session log file; nil = none
 	nextHealth time.Time                                                       // next call-health line; zero outside a call

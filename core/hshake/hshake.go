@@ -38,6 +38,9 @@ type ServerError struct {
 	Code    string
 	Message string
 	Gen     uint32 // gen of the refused watch request, 0 if none
+	// Hosts is the host list a standby sent just before refusing a full
+	// session with not_active; nil otherwise.
+	Hosts *proto.Hosts
 }
 
 func (e *ServerError) Error() string { return e.Code + ": " + e.Message }
@@ -232,6 +235,22 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 			return nil, fmt.Errorf("client: %w", &ServerError{Code: proto.CodeServerIDMismatch, Message: "the host reported a different server id"})
 		}
 		return &Result{OK: ok, Chain: verified, ServerID: ok.ServerID, Key: pwKey}, nil
+	case proto.TypeHosts:
+		// A standby lists the hosts, then refuses with not_active.
+		var hs proto.Hosts
+		if err := json.Unmarshal(env.Data, &hs); err != nil {
+			return nil, fmt.Errorf("client: bad hosts: %w", err)
+		}
+		env, err = readEnv(ws)
+		if err != nil {
+			return nil, fmt.Errorf("client: read auth result: %w", err)
+		}
+		if env.Type != proto.TypeError {
+			return nil, fmt.Errorf("client: unexpected %q during auth", env.Type)
+		}
+		se := handshakeError(env)
+		se.Hosts = &hs
+		return nil, fmt.Errorf("client: auth rejected: %w", se)
 	case proto.TypeError:
 		return nil, fmt.Errorf("client: auth rejected: %w", handshakeError(env))
 	default:

@@ -1,8 +1,10 @@
 package state
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -241,7 +243,7 @@ func TestSetNickCleans(t *testing.T) {
 		t.Fatalf("blank nick %q", out[0].Nick)
 	}
 	out = SetNick(in, "nope", "x")
-	if len(out) != len(in) || out[0] != in[0] || out[1] != in[1] {
+	if len(out) != len(in) || !reflect.DeepEqual(out, in) {
 		t.Fatalf("unknown url: %+v", out)
 	}
 	out[0].Nick = "z"
@@ -318,6 +320,42 @@ func TestSaveServersSkipsPending(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].URL != "a" {
 		t.Errorf("got %+v, want only a", got)
+	}
+}
+
+func TestServersHostsAndChainSeqPersist(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "servers.toml")
+	in := []ServerEntry{{URL: "ws://a:1/", Label: "a"}}
+	in = SetHosts(in, "ws://a:1/", []string{"ws://a:1/", "ws://b:2/"})
+	in = BumpChainSeq(in, "ws://a:1/", 7)
+	in = BumpChainSeq(in, "ws://a:1/", 3) // never lowers
+	if err := SaveServers(p, in); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadServers(p)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("load: %v %v", got, err)
+	}
+	if len(got[0].Hosts) != 2 || got[0].Hosts[1] != "ws://b:2/" || got[0].ChainSeq != 7 {
+		t.Fatalf("round trip lost hosts or seq: %+v", got[0])
+	}
+}
+
+func TestSetHostsDedupesAndCaps(t *testing.T) {
+	var hs []string
+	for i := 0; i < 40; i++ {
+		hs = append(hs, fmt.Sprintf("ws://h%d/", i%30), "")
+	}
+	out := SetHosts([]ServerEntry{{URL: "u"}}, "u", hs)
+	if n := len(out[0].Hosts); n != MaxHosts {
+		t.Fatalf("%d hosts, want %d", n, MaxHosts)
+	}
+	seen := map[string]bool{}
+	for _, h := range out[0].Hosts {
+		if h == "" || seen[h] {
+			t.Fatalf("empty or duplicate host %q in %v", h, out[0].Hosts)
+		}
+		seen[h] = true
 	}
 }
 

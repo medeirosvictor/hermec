@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -28,6 +26,17 @@ type session struct {
 	failed         bool      // the last dial failed; cleared by a retry or a success
 	dialGen        int       // generation of the latest dial; older results are stale
 	lastErr        string    // that dial's error, for the tooltip and the failed pane
+
+	// Host failover (hosts.go). The host serving the session is st.HostedBy.
+	warm        *client.Client // warm session to the standby; nil = none
+	standby     proto.HostInfo // the standby as last announced; zero = none
+	hint        []string       // the active host's addresses as last announced
+	switching   bool           // a failover or move is in flight: c is dead or leaving
+	warming     bool           // a warm dial is in flight
+	warmGen     int            // generation of the latest warm dial; older results are stale
+	warmFails   int            // warm dial or session failures in a row, for the backoff
+	warmRetryAt time.Time      // no warm dial before this
+	peerTried   bool           // the warm voice peer was opened for this warm session
 }
 
 func newSession(key, url, name string) *session {
@@ -137,25 +146,12 @@ func (g *game) dial(s *session) {
 	s.dialGen++
 	s.st.ConnectErr = ""
 	g.logf("dialing %s as %q", s.url, s.name)
-	pass := ""
-	var o client.DialOpts
-	if e, ok := g.entryFor(s.key); ok {
-		o.Pin = e.ServerID
-		if k, err := hex.DecodeString(e.PasswordKey); err == nil && len(k) == 32 {
-			o.PasswordKey = k // a corrupt cache is ignored; the password is used
-		}
-	}
-	if s.key == hostedKey && g.hosted != nil {
-		pass = g.hosted.cfg.Password
-		o.PasswordKey = g.hosted.cfg.PasswordKey
-		o.Pin = g.hosted.id
-	}
-	go func(s *session, key, url, name, pass string, o client.DialOpts, gen int) { // reads no session field
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		c, err := client.DialWith(ctx, url, g.id, name, pass, o)
+	pass, o := g.dialCreds(s)
+	urls := g.dialTargets(s)
+	go func(s *session, key, name, pass string, o client.DialOpts, gen int) { // reads no session field
+		c, err := g.dialAny(urls, name, pass, o)
 		g.dialCh <- dialResult{key: key, s: s, gen: gen, c: c, err: err}
-	}(s, s.key, s.url, s.name, pass, o, s.dialGen)
+	}(s, s.key, s.name, pass, o, s.dialGen)
 }
 
 // closeClient closes a client no session owns (a stale dial result).
@@ -216,6 +212,7 @@ func (g *game) disconnect(key string) {
 	}
 	viewed := g.curKey == key
 	g.endVoiceFor(key) // closing the client ends its call server-side
+	g.dropWarm(s)
 	if s.c != nil {
 		_ = s.c.Close()
 		s.c = nil
@@ -261,6 +258,15 @@ func (g *game) view(key string) {
 func (g *game) pumpSessions() {
 	for {
 		select {
+		case r := <-g.hostCh: // nil until a host operation starts
+			g.applyHost(r)
+			continue
+		default:
+		}
+		break
+	}
+	for {
+		select {
 		case r := <-g.dialCh:
 			g.applyDial(r)
 			continue
@@ -295,6 +301,7 @@ func (g *game) pumpSessions() {
 	for _, k := range g.sessionKeys() {
 		g.drainEvents(g.sess[k])
 	}
+	g.tickHosts(time.Now())
 }
 
 // noRetryCode reports whether a server error code means retrying cannot help.
@@ -326,7 +333,7 @@ func (g *game) dropCachedKey(s *session, err error) {
 
 func (g *game) applyDial(r dialResult) {
 	s := g.sess[r.key]
-	if s == nil || s != r.s || r.gen != s.dialGen || !s.dialing || s.c != nil { // stale: the session is gone, replaced, redialed or moved on
+	if s == nil || s != r.s || r.gen != s.dialGen || !s.dialing || (s.c != nil && !s.switching) { // stale: the session is gone, replaced, redialed or moved on
 		if r.c != nil {
 			g.closeClient(r.c)
 		}
@@ -336,6 +343,9 @@ func (g *game) applyDial(r dialResult) {
 	if r.err != nil {
 		g.logf("dial %s failed: %v", s.url, r.err)
 		g.dropCachedKey(s, r.err)
+		if s.switching { // the standby's takeover is still pending and decides
+			return
+		}
 		s.failed, s.lastErr = true, state.DialErrorText(r.err)
 		if !s.everUp {
 			return // keeps its tile and session; the user retries with the badge
@@ -350,6 +360,14 @@ func (g *game) applyDial(r dialResult) {
 		return
 	}
 	g.logf("connected to %s, channels %v", s.url, r.c.Channels())
+	if s.switching { // the active host answered before the standby could take over
+		s.switching = false
+		g.dropWarm(s)
+		g.endVoiceFor(s.key) // its call died with the connection
+		if s.c != nil {
+			_ = s.c.Close()
+		}
+	}
 	s.c = r.c
 	s.c.SetVideoSink(&g.vsink)
 	s.st.SetConnected(r.c.Channels(), r.c.Fingerprint())
@@ -358,6 +376,7 @@ func (g *game) applyDial(r dialResult) {
 	s.failed, s.lastErr = false, ""
 	s.attempt = 0
 	s.retryAt = time.Time{}
+	g.bumpChainSeq(s)
 	g.onConnected(s)
 }
 
@@ -396,22 +415,33 @@ func (g *game) noteEvent(s *session, ev client.Event) {
 // drainEvents applies up to maxEventsPerTick events of s. A closed stream
 // marks s disconnected.
 func (g *game) drainEvents(s *session) {
-	if s.c == nil {
+	if s.c == nil || s.switching { // a failover or move in flight owns the dead client
 		return
 	}
 	for i := 0; i < maxEventsPerTick; i++ {
 		select {
 		case ev, ok := <-s.c.Events():
-			if !ok {
-				g.logf("connection to %s lost", s.url)
-				s.st.Apply(ev, false)
-				g.endVoiceFor(s.key) // only s's call; other sessions' voice is untouched
-				s.c = nil
-				s.scheduleRetry(time.Now())
+			if !ok || (ev.ActiveLost && s.warm != nil) {
+				if s.warm != nil { // the standby takes over: no reconnect screen
+					g.failover(s)
+					return
+				}
+				g.connLost(s)
 				return
 			}
 			s.st.Apply(ev, true)
 			g.noteEvent(s, ev)
+			switch {
+			case ev.Hosts != nil:
+				g.onHosts(s, ev.Hosts)
+			case ev.Move != nil:
+				g.onMove(s, ev.Move)
+				if s.switching {
+					return
+				}
+			case ev.Chain != nil:
+				g.bumpChainSeq(s)
+			}
 		default:
 			return
 		}

@@ -48,6 +48,9 @@ type State struct {
 	// InCall is the voice channel this client is in, maintained from its own
 	// actions (SetInCall), never from events.
 	InCall string
+	// HostedBy is the name of the host serving this session, from the latest
+	// hosts frame; "" until one arrives.
+	HostedBy string
 	// Unread marks text channels with messages not yet seen. SetConnected
 	// never clears it, so unread survives a reconnect.
 	Unread map[string]bool
@@ -85,6 +88,7 @@ func (s *State) SetConnected(channels []proto.ChannelInfo, fingerprint string) {
 	s.VoiceChannels = nil
 	s.Voice = map[string][]proto.VoiceMember{}
 	s.InCall = ""
+	s.HostedBy = "" // the new connection's hosts frame names it
 	s.Roster, s.RosterTotal, s.HasRoster = nil, 0, false
 	s.Loading = map[string]bool{} // a request in flight is lost on reconnect
 	for _, ch := range channels {
@@ -143,6 +147,8 @@ func (s *State) Apply(ev client.Event, open bool) {
 			}
 			s.Voice[ev.Voice.Channel] = ms
 		}
+	case ev.Hosts != nil:
+		s.HostedBy = CleanName(ev.Hosts.Active.Name, MaxServerNameRunes)
 	case errors.Is(ev.Err, client.ErrShareUnsupported):
 		s.Status = ev.Err.Error() // a plain explanation, not an error code
 	case ev.Err != nil:

@@ -54,6 +54,12 @@ func (c *Client) Takeover(ctx context.Context) error {
 	}
 }
 
+// ReportReach tells the active host whether this client's warm dial to the
+// host with fingerprint fp succeeded, so it can pick a standby clients reach.
+func (c *Client) ReportReach(fp string, ok bool) error {
+	return c.send(proto.TypeReach, proto.Reach{Fingerprint: fp, OK: ok})
+}
+
 // failTakeover fails a pending Takeover with se when se is a code Takeover can
 // be answered with; any other error is not its answer.
 func (c *Client) failTakeover(se *ServerError) bool {

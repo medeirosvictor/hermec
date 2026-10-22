@@ -38,6 +38,14 @@ type ServerEntry struct {
 	// successful login, so scrypt runs once and the password is not kept.
 	PasswordKey string `toml:"password_key,omitempty"`
 
+	// Hosts are the known host URLs of this server (active and standby, at
+	// most MaxHosts), tried in order when URL does not answer.
+	Hosts []string `toml:"hosts,omitempty"`
+
+	// ChainSeq is the highest chain head seq seen; a host presenting a lower
+	// head is a rollback and is refused.
+	ChainSeq uint64 `toml:"chain_seq,omitempty"`
+
 	// Pending marks an entry not yet connected; it is never saved.
 	Pending bool `toml:"-"`
 }
@@ -226,6 +234,41 @@ func SetPasswordKey(entries []ServerEntry, url, key string) []ServerEntry {
 	for i := range out {
 		if out[i].URL == url {
 			out[i].PasswordKey = key
+		}
+	}
+	return out
+}
+
+// MaxHosts caps ServerEntry.Hosts.
+const MaxHosts = 16
+
+// SetHosts returns a copy of entries with the known hosts of url set to hosts,
+// without empty entries or duplicates, capped at MaxHosts.
+func SetHosts(entries []ServerEntry, url string, hosts []string) []ServerEntry {
+	out := append([]ServerEntry(nil), entries...)
+	var clean []string
+	seen := map[string]bool{}
+	for _, h := range hosts {
+		if h != "" && !seen[h] && len(clean) < MaxHosts {
+			seen[h] = true
+			clean = append(clean, h)
+		}
+	}
+	for i := range out {
+		if out[i].URL == url {
+			out[i].Hosts = clean
+		}
+	}
+	return out
+}
+
+// BumpChainSeq returns a copy of entries with the chain seq of url raised to
+// seq; it never lowers.
+func BumpChainSeq(entries []ServerEntry, url string, seq uint64) []ServerEntry {
+	out := append([]ServerEntry(nil), entries...)
+	for i := range out {
+		if out[i].URL == url && seq > out[i].ChainSeq {
+			out[i].ChainSeq = seq
 		}
 	}
 	return out
