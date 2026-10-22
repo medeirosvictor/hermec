@@ -47,11 +47,42 @@ func (r *recSink) WriteOpusFrame(_ string, frame []byte) {
 	r.mu.Unlock()
 }
 
-// arrival is when the n-th (0-based) frame with marker m arrived.
-func (r *recSink) arrival(m byte, n int) time.Time {
+// maxGap is the largest interval between consecutive frames with marker m,
+// counting the last frame before from as the start of the window.
+func (r *recSink) maxGap(m byte, from time.Time) time.Duration {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.arrived[m][n]
+	var prev time.Time
+	var worst time.Duration
+	for _, at := range r.arrived[m] {
+		if at.Before(from) {
+			prev = at
+			continue
+		}
+		if !prev.IsZero() && at.Sub(prev) > worst {
+			worst = at.Sub(prev)
+		}
+		prev = at
+	}
+	return worst
+}
+
+// overlapSource is a markerSource that notices overlapping reads.
+type overlapSource struct {
+	markerSource
+	inRead, maxRead atomic.Int32
+}
+
+func (s *overlapSource) ReadOpusFrame() ([]byte, error) {
+	n := s.inRead.Add(1)
+	for {
+		m := s.maxRead.Load()
+		if n <= m || s.maxRead.CompareAndSwap(m, n) {
+			break
+		}
+	}
+	defer s.inRead.Add(-1)
+	return s.markerSource.ReadOpusFrame()
 }
 
 func (r *recSink) marker(m byte) int {
@@ -120,6 +151,7 @@ func TestAdoptCallResumesAudio(t *testing.T) {
 	x, y := newCallee(t, p, 'X'), newCallee(t, p, 'Y')
 	waitUntil(t, "Y hears X", func() bool { return y.sink.marker('X') > 5 })
 	waitUntil(t, "warm peers ready", func() bool { return x.warm.WarmPeerReady() && y.warm.WarmPeerReady() })
+	tKill := time.Now()
 	killHost(t, p.a)
 
 	before := y.sink.marker('X') // A is dead: nothing arrives until B carries X again
@@ -140,9 +172,13 @@ func TestAdoptCallResumesAudio(t *testing.T) {
 	}
 	wg.Wait()
 	waitUntil(t, "Y hears X again", func() bool { return y.sink.marker('X') > before })
-	// The gap between X's last frame from A and its first from B.
-	if gap := y.sink.arrival('X', before).Sub(y.sink.arrival('X', before-1)); gap >= 1500*time.Millisecond {
-		t.Fatalf("audio gap across failover = %v, want < 1500ms", gap)
+	// The outage is the largest hole in X's frames from just before the kill
+	// to the resume. A and B frames look alike, so the whole window counts:
+	// a straggler from A cannot hide it. It must be a real outage (the kill
+	// alone takes 300 ms) and a short one.
+	gap := y.sink.maxGap('X', tKill)
+	if gap <= 100*time.Millisecond || gap >= 1500*time.Millisecond {
+		t.Fatalf("audio gap across failover = %v, want 100ms < gap < 1500ms", gap)
 	}
 	if x.warm.VoiceChannel() != warmVoiceCh || x.active.VoiceChannel() != "" {
 		t.Fatalf("call not moved: new=%q old=%q", x.warm.VoiceChannel(), x.active.VoiceChannel())
@@ -185,6 +221,43 @@ func mutedIn(st *proto.VoiceState, fp string) bool {
 		}
 	}
 	return false
+}
+
+// When the dead call's teardown hangs, its sender may still be reading the
+// source as the adopted call starts reading it. The reads must not overlap.
+func TestAdoptCallSerializesStuckSource(t *testing.T) {
+	old := adoptTeardownWait
+	adoptTeardownWait = 200 * time.Millisecond
+	defer func() { adoptTeardownWait = old }()
+
+	p := newPair(t)
+	x := newCallee(t, p, 'X')
+	src := &overlapSource{markerSource: markerSource{marker: 'X'}}
+	// Rejoin x's active session with the counting source.
+	if err := x.active.LeaveVoice(testCtx(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.active.JoinVoice(testCtx(t), warmVoiceCh, src, x.sink); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "warm peer ready", x.warm.WarmPeerReady)
+	release := make(chan struct{})
+	hook := func() { <-release }
+	teardownHook.Store(&hook)
+	defer teardownHook.Store(nil)
+	defer close(release)
+	killHost(t, p.a)
+	if err := x.warm.Takeover(testCtx(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := x.warm.AdoptCall(testCtx(t), x.active); err != nil {
+		t.Fatal(err)
+	}
+	n := src.markerSource.seq.Load()
+	waitUntil(t, "adopted call reads the source", func() bool { return src.markerSource.seq.Load() > n+5 })
+	if m := src.maxRead.Load(); m != 1 {
+		t.Fatalf("up to %d concurrent reads of the source, want 1", m)
+	}
 }
 
 // A refused adoption leaves from's call alone.

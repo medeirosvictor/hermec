@@ -47,6 +47,32 @@ const (
 	msgResetHint    = "send a new rtc_offer"
 )
 
+// teardownHook, when set, runs at the start of every call teardown. A test
+// seam for stalling it.
+var teardownHook atomic.Pointer[func()]
+
+// lockedSource serializes ReadOpusFrame. AdoptCall hands a call's source to
+// its successor while the old sender may still be inside a read (a stuck
+// teardown), and AudioSource promises nothing about concurrent reads.
+type lockedSource struct {
+	mu  sync.Mutex
+	src AudioSource
+}
+
+func (l *lockedSource) ReadOpusFrame() ([]byte, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.src.ReadOpusFrame()
+}
+
+// serialSource wraps src once; an already wrapped source is returned as is.
+func serialSource(src AudioSource) AudioSource {
+	if l, ok := src.(*lockedSource); ok {
+		return l
+	}
+	return &lockedSource{src: src}
+}
+
 // ErrNotInVoice is returned by voice operations outside a call.
 var ErrNotInVoice = errors.New("client: not in a voice channel")
 
@@ -190,6 +216,7 @@ func (c *Client) JoinVoice(ctx context.Context, channel string, src AudioSource,
 // muted, vid puts a video sender on its PeerConnections, and warm, if set, is
 // an already-connected PeerConnection the call negotiates its media on.
 func (c *Client) joinCall(ctx context.Context, channel string, src AudioSource, sink AudioSink, muted, vid bool, warm *webrtc.PeerConnection) error {
+	src = serialSource(src)
 	closeWarm := func() {
 		if warm != nil {
 			_ = warm.Close()
@@ -466,6 +493,9 @@ func (cl *call) teardownCtx(ctx context.Context) {
 	cl.tdOnce.Do(func() {
 		go func() {
 			defer close(cl.tdDone)
+			if h := teardownHook.Load(); h != nil {
+				(*h)()
+			}
 			close(cl.stop)
 			<-cl.adone
 			cl.tmu.Lock()

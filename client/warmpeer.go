@@ -23,6 +23,10 @@ const (
 	warmGatherWait   = 5 * time.Second
 )
 
+// adoptTeardownWait is how long AdoptCall waits for the dead call to stop
+// before joining anyway. A variable so tests can shorten it.
+var adoptTeardownWait = 2 * time.Second
+
 // ErrStillWarm is returned by AdoptCall on a session that has not been
 // promoted by Takeover yet.
 var ErrStillWarm = errors.New("client: session is still warm; Takeover first")
@@ -229,7 +233,9 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 		return ErrNotInVoice
 	}
 	_ = from.send(proto.TypeVoiceLeave, proto.VoiceLeave{}) // fails on the dead connection
-	old.teardownCtx(ctx)
+	tctx, cancel := context.WithTimeout(ctx, adoptTeardownWait)
+	old.teardownCtx(tctx)
+	cancel()
 	vid := false
 	select {
 	case <-old.tdDone:
