@@ -24,7 +24,9 @@ const (
 	DefaultHistoryDays = 30
 	DefaultHistoryMB   = 8
 	MaxHistoryDays     = 3650
-	MaxHistoryMB       = 1024
+	// MaxHistoryMB stays small: the store is held fully in memory and
+	// rewritten under its lock on every trim.
+	MaxHistoryMB = 64
 )
 
 // HistoryLimits returns the effective retention: days (0 keeps nothing) and

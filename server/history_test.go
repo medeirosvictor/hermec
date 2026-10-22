@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -224,6 +225,88 @@ func TestTrimZeroDaysDeletesFile(t *testing.T) {
 	}
 	if h.Size() != 0 {
 		t.Fatalf("size %d", h.Size())
+	}
+}
+
+func TestTrimZeroDaysClearsMemoryWhenRemoveFails(t *testing.T) {
+	h := openH(t, "")
+	h.Add(hmsg("c", 1, histBase))
+	// A non-empty directory cannot be removed, so os.Remove fails.
+	dir := filepath.Join(t.TempDir(), "h.jsonl")
+	if err := os.MkdirAll(filepath.Join(dir, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	h.path = dir
+	h.SetLimits(0, 8)
+	if err := h.Trim(histBase); err == nil {
+		t.Fatal("want remove error")
+	}
+	if got, more := h.Page("c", "", 10); len(got) != 0 || more || h.Size() != 0 {
+		t.Fatalf("memory not cleared: %v size %d", got, h.Size())
+	}
+}
+
+func TestAddWriteFailureStartsFreshLine(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "h.jsonl")
+	h := openH(t, p)
+	h.SetLimits(30, 8)
+	if err := h.Add(hmsg("c", 1, histBase)); err != nil {
+		t.Fatal(err)
+	}
+	h.write = func(f *os.File, b []byte) (int, error) {
+		n, _ := f.Write(b[:len(b)/2])
+		return n, errors.New("disk full")
+	}
+	if err := h.Add(hmsg("c", 2, histBase.Add(time.Second))); err == nil {
+		t.Fatal("want write error")
+	}
+	h.write = nil
+	if err := h.Add(hmsg("c", 3, histBase.Add(2*time.Second))); err != nil {
+		t.Fatal(err)
+	}
+	h2 := openH(t, p)
+	got, _ := h2.Page("c", "", 10)
+	if len(got) != 2 || got[0].Text != "msg 1" || got[1].Text != "msg 3" {
+		t.Fatalf("got %+v", got)
+	}
+	if h2.Skipped() != 1 {
+		t.Fatalf("skipped %d", h2.Skipped())
+	}
+}
+
+func TestOpenRemovesStaleTemps(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "h.jsonl")
+	stale := []string{"h.jsonl.tmp123", "h.jsonl.tmp4294967295"}
+	keep := []string{"h.jsonl.tmp", "h.jsonl.tmpx1", "other.jsonl.tmp123", "h.jsonl.tmp12.bak"}
+	for _, n := range append(append([]string{}, stale...), keep...) {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	openH(t, p)
+	for _, n := range stale {
+		if _, err := os.Stat(filepath.Join(dir, n)); !os.IsNotExist(err) {
+			t.Errorf("%s still there (err=%v)", n, err)
+		}
+	}
+	for _, n := range keep {
+		if _, err := os.Stat(filepath.Join(dir, n)); err != nil {
+			t.Errorf("%s removed: %v", n, err)
+		}
+	}
+}
+
+func TestHistoryNewest(t *testing.T) {
+	h := openH(t, "")
+	if !h.Newest().IsZero() {
+		t.Fatal("empty store has a newest time")
+	}
+	h.Add(hmsg("a", 1, histBase.Add(5*time.Second)))
+	h.Add(hmsg("b", 2, histBase.Add(9*time.Second)))
+	h.Add(hmsg("a", 3, histBase.Add(7*time.Second)))
+	if got := h.Newest(); !got.Equal(histBase.Add(9 * time.Second)) {
+		t.Fatalf("newest %v", got)
 	}
 }
 

@@ -204,6 +204,13 @@ func (s *Server) Start() error {
 			return fmt.Errorf("server: open history: %w", err)
 		}
 		s.hist = h
+		// New chat timestamps must sort after every stored line, even across
+		// a restart within one clock tick or after the clock was set back.
+		s.chMu.Lock()
+		if n := h.Newest(); n.After(s.lastChatTS) {
+			s.lastChatTS = n
+		}
+		s.chMu.Unlock()
 		s.applyHistoryLimits()
 		if n := h.Skipped(); n > 0 {
 			s.logf("server: history: skipped %d malformed lines in %s", n, s.cfg.HistoryPath)
@@ -275,11 +282,13 @@ func (s *Server) applyHistoryLimits() (changed bool) {
 	if s.hist == nil {
 		return false
 	}
-	days, mb := chainCfg(s.cfg, s.chain.State()).HistoryLimits()
+	// One hold over read, compare and set: otherwise a trim that read the
+	// state before a config append could write the old limits back after it.
 	s.limitMu.Lock()
+	defer s.limitMu.Unlock()
+	days, mb := chainCfg(s.cfg, s.chain.State()).HistoryLimits()
 	changed = !s.limitSet || days != s.limitDays || mb != s.limitMB
 	s.limitSet, s.limitDays, s.limitMB = true, days, mb
-	s.limitMu.Unlock()
 	s.hist.SetLimits(days, mb)
 	return changed
 }

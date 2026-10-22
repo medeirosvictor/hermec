@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,45 @@ type History struct {
 	size    int
 	skipped int
 	needNL  bool // file does not end in a newline; next append starts a fresh line
+
+	// write appends b to the open store file; nil means f.Write. Tests set it
+	// to force a failed or partial write.
+	write func(f *os.File, b []byte) (int, error)
+}
+
+// Newest returns the newest stored timestamp across channels; zero if empty.
+func (h *History) Newest() time.Time {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var t time.Time
+	for _, s := range h.chans {
+		if len(s) > 0 && s[len(s)-1].TS.After(t) {
+			t = s[len(s)-1].TS
+		}
+	}
+	return t
+}
+
+// tempPattern is the os.CreateTemp pattern rewrite uses for base.
+func tempPattern(base string) string { return base + ".tmp*" }
+
+// removeStaleTemps deletes temp files a crashed rewrite left beside path:
+// exactly base + ".tmp" + the digits os.CreateTemp puts in place of "*".
+func removeStaleTemps(path string) {
+	dir, base := filepath.Dir(path), filepath.Base(path)
+	prefix := strings.TrimSuffix(tempPattern(base), "*")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		rest, ok := strings.CutPrefix(name, prefix)
+		if !ok || rest == "" || e.IsDir() || strings.TrimLeft(rest, "0123456789") != "" {
+			continue
+		}
+		os.Remove(filepath.Join(dir, name))
+	}
 }
 
 // OpenHistory loads the store at path. "" keeps history in memory only. A
@@ -40,6 +80,7 @@ func OpenHistory(path string) (*History, error) {
 	if path == "" {
 		return h, nil
 	}
+	removeStaleTemps(path)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return h, nil
@@ -137,13 +178,19 @@ func (h *History) Add(m proto.ChatMessage) error {
 		if err != nil {
 			return err
 		}
-		_, werr := f.Write(out)
-		cerr := f.Close()
-		if werr != nil {
-			return werr
+		write := h.write
+		if write == nil {
+			write = (*os.File).Write
 		}
-		if cerr != nil {
-			return cerr
+		_, werr := write(f, out)
+		cerr := f.Close()
+		if werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			// Part of the line may be in the file; start the next one fresh.
+			h.needNL = true
+			return werr
 		}
 		h.needNL = false
 	}
@@ -193,14 +240,15 @@ func (h *History) Trim(now time.Time) error {
 	defer h.mu.Unlock()
 
 	if h.days == 0 {
+		// Clear memory first so nothing old is served even if the remove fails.
+		h.chans = map[string][]proto.ChatMessage{}
+		h.ids = map[string]int{}
+		h.size, h.skipped, h.needNL = 0, 0, false
 		if h.path != "" {
 			if err := os.Remove(h.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 		}
-		h.chans = map[string][]proto.ChatMessage{}
-		h.ids = map[string]int{}
-		h.size, h.skipped, h.needNL = 0, 0, false
 		return nil
 	}
 
@@ -273,7 +321,7 @@ func (h *History) rewrite(msgs map[string][]proto.ChatMessage) error {
 	}
 	sort.Slice(all, func(i, j int) bool { return histLess(all[i], all[j]) })
 
-	f, err := os.CreateTemp(filepath.Dir(h.path), filepath.Base(h.path)+".tmp*")
+	f, err := os.CreateTemp(filepath.Dir(h.path), tempPattern(filepath.Base(h.path)))
 	if err != nil {
 		return err
 	}
@@ -290,6 +338,9 @@ func (h *History) rewrite(msgs map[string][]proto.ChatMessage) error {
 		buf.WriteByte('\n')
 	}
 	_, werr := f.Write(buf.Bytes())
+	if werr == nil {
+		werr = f.Sync() // the rename must not land before the data
+	}
 	cerr := f.Close()
 	if werr == nil {
 		werr = cerr

@@ -182,22 +182,29 @@ func TestLoadConfigHistory(t *testing.T) {
 		t.Errorf("default limits = %d, %d", d, mb)
 	}
 	for key, body := range map[string]string{
-		"history_days": "history_days = -1",
+		"history_days":  "history_days = -1",
 		"history_days ": "history_days = 3651",
-		"history_mb":   "history_mb = 0",
-		"history_mb ":  "history_mb = 1025",
+		"history_mb":    "history_mb = 0",
+		"history_mb ":   "history_mb = 65",
 	} {
 		_, err := LoadConfig(writeTOML(t, body))
 		if err == nil || !strings.Contains(err.Error(), strings.TrimSpace(key)) {
 			t.Errorf("%q: err = %v", body, err)
 		}
 	}
+	_, err = LoadConfig(writeTOML(t, "history_mb = 65"))
+	if err == nil || !strings.Contains(err.Error(), "between 1 and 64") {
+		t.Errorf("history_mb = 65: err = %v", err)
+	}
+	if _, err := LoadConfig(writeTOML(t, "history_mb = 64")); err != nil {
+		t.Errorf("history_mb = 64: %v", err)
+	}
 }
 
 func TestHistoryLimitsClamp(t *testing.T) {
 	days, mb := -5, 5000
 	d, m := Config{HistoryDays: &days, HistoryMB: &mb}.HistoryLimits()
-	if d != 0 || m != MaxHistoryMB {
+	if d != 0 || m != 64 {
 		t.Errorf("limits = %d, %d", d, m)
 	}
 	days, mb = 9999, 0
