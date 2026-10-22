@@ -564,3 +564,106 @@ func (h *History) NewestBefore(limit time.Time) time.Time {
 	}
 	return t
 }
+
+// After returns up to max messages of every channel, ordered by (TS, ID),
+// strictly after (ts, id). A zero ts with an empty id means from the start.
+// more reports whether messages remain past the ones returned.
+func (h *History) After(ts time.Time, id string, max int) (msgs []proto.ChatMessage, more bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	key := proto.ChatMessage{ID: id, TS: ts}
+	from := make([][]proto.ChatMessage, 0, len(h.chans))
+	for _, s := range h.chans {
+		i := 0
+		if !ts.IsZero() || id != "" {
+			i = sort.Search(len(s), func(i int) bool { return histLess(key, s[i]) })
+		}
+		if i < len(s) {
+			from = append(from, s[i:])
+		}
+	}
+	if max < 0 {
+		max = 0
+	}
+	for {
+		best := -1
+		for i, s := range from {
+			if len(s) > 0 && (best < 0 || histLess(s[0], from[best][0])) {
+				best = i
+			}
+		}
+		if best < 0 {
+			return msgs, false
+		}
+		if len(msgs) == max {
+			return msgs, true
+		}
+		msgs = append(msgs, from[best][0])
+		from[best] = from[best][1:]
+	}
+}
+
+// Last returns the (TS, ID) of the newest stored message; zero values if empty.
+func (h *History) Last() (ts time.Time, id string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var last proto.ChatMessage
+	for _, s := range h.chans {
+		if len(s) > 0 && (last.ID == "" || histLess(last, s[len(s)-1])) {
+			last = s[len(s)-1]
+		}
+	}
+	return last.TS, last.ID
+}
+
+// Merge stores the messages whose ids are unknown, keeping (TS, ID) order, as
+// one append to the file, then enforces the megabyte cap as Add does. Messages
+// with an empty id are skipped. It returns how many were new, before the cap
+// evicts anything. Like Add it is a no-op while the day cap is 0.
+func (h *History) Merge(msgs []proto.ChatMessage) (added int, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return 0, errClosed
+	}
+	if h.days == 0 {
+		return 0, nil
+	}
+	var fresh []proto.ChatMessage
+	var sizes []int
+	var buf []byte
+	seen := make(map[string]struct{}, len(msgs))
+	for _, m := range msgs {
+		if m.ID == "" {
+			continue
+		}
+		if _, dup := h.ids[m.ID]; dup {
+			continue
+		}
+		if _, dup := seen[m.ID]; dup {
+			continue
+		}
+		b, err := encodeLine(m)
+		if err != nil {
+			return 0, err
+		}
+		seen[m.ID] = struct{}{}
+		fresh, sizes, buf = append(fresh, m), append(sizes, len(b)), append(buf, b...)
+	}
+	if len(fresh) == 0 {
+		return 0, nil
+	}
+	if h.path != "" {
+		if err := h.appendLocked(buf); err != nil {
+			return 0, err
+		}
+	}
+	for i, m := range fresh {
+		h.insert(m, sizes[i])
+	}
+	if limit := h.mb << 20; h.size > limit {
+		drop, size := h.plan(time.Time{}, limit)
+		h.evict(drop, size)
+	}
+	return len(fresh), nil
+}
