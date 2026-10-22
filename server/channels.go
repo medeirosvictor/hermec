@@ -192,7 +192,7 @@ func (s *Server) join(c *conn, ch string) bool {
 	if s.hist != nil {
 		// Under the same hold as the join, so no chat line falls between the
 		// page and the live stream.
-		if msgs, more := s.hist.Page(ch, "", historyPage); len(msgs) > 0 {
+		if msgs, more := s.hist.Page(ch, "", time.Time{}, historyPage); len(msgs) > 0 {
 			if !c.enqueue(encodeHistory(proto.History{Channel: ch, Messages: msgs, More: more})) {
 				dead = append(dead, c)
 			}
@@ -204,8 +204,9 @@ func (s *Server) join(c *conn, ch string) bool {
 }
 
 // historyBefore answers c's history_before: one page of lines older than
-// beforeID. It reports false when c is not in ch.
-func (s *Server) historyBefore(c *conn, ch, beforeID string) bool {
+// beforeID (placed by beforeTS if the store no longer holds it). It reports
+// false when c is not in ch.
+func (s *Server) historyBefore(c *conn, ch, beforeID string, beforeTS time.Time) bool {
 	s.chMu.Lock()
 	if _, ok := s.chans[ch][c]; !ok {
 		s.chMu.Unlock()
@@ -214,7 +215,7 @@ func (s *Server) historyBefore(c *conn, ch, beforeID string) bool {
 	var msgs []proto.ChatMessage
 	var more bool
 	if s.hist != nil {
-		msgs, more = s.hist.Page(ch, beforeID, historyPage)
+		msgs, more = s.hist.Page(ch, beforeID, beforeTS, historyPage)
 	}
 	var dead []*conn
 	if !c.enqueue(encodeHistory(proto.History{Channel: ch, Before: beforeID, Messages: msgs, More: more})) {
@@ -395,7 +396,7 @@ func (c *conn) route(env proto.Envelope) {
 			c.sendError("forbidden", "not permitted to join channels")
 			return
 		}
-		if !c.srv.historyBefore(c, m.Channel, m.BeforeID) {
+		if !c.srv.historyBefore(c, m.Channel, m.BeforeID, m.BeforeTS) {
 			c.sendError("not_joined", "not in channel "+m.Channel)
 		}
 	case proto.TypeChainAppend:

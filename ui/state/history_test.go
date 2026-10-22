@@ -61,8 +61,8 @@ func TestHistoryOlderPagePrepends(t *testing.T) {
 	if !s.CanLoadOlder("general") {
 		t.Fatal("want CanLoadOlder after More page")
 	}
-	if s.OldestID("general") != "c" {
-		t.Fatalf("oldest = %q", s.OldestID("general"))
+	if id, ts := s.Oldest("general"); id != "c" || !ts.Equal(time.Unix(3, 0)) {
+		t.Fatalf("oldest = %q %v", id, ts)
 	}
 	s.MarkLoading("general")
 	if s.CanLoadOlder("general") {

@@ -297,10 +297,13 @@ type History struct {
 	More     bool          `json:"more,omitempty"`
 }
 
-// HistoryBefore asks for the page of lines older than BeforeID.
+// HistoryBefore asks for the page of lines older than BeforeID. BeforeTS is
+// that line's ts, optional: the host uses it to place BeforeID when it no
+// longer holds that line.
 type HistoryBefore struct {
-	Channel  string `json:"channel"`
-	BeforeID string `json:"before_id"`
+	Channel  string    `json:"channel"`
+	BeforeID string    `json:"before_id"`
+	BeforeTS time.Time `json:"before_ts,omitzero"`
 }
 
 // Encode wraps payload in a versioned envelope and marshals it.

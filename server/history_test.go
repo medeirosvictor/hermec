@@ -51,11 +51,11 @@ func TestHistoryAddReopen(t *testing.T) {
 	h.Add(hmsg("random", 3, histBase.Add(3*time.Second)))
 	h.Add(hmsg("general", 1, histBase.Add(time.Second)))
 	h2 := openH(t, p)
-	got, more := h2.Page("general", "", 10)
+	got, more := h2.Page("general", "", time.Time{}, 10)
 	if more || len(got) != 2 || got[0].ID != hmsg("", 1, time.Time{}).ID || got[1].ID != hmsg("", 2, time.Time{}).ID {
 		t.Fatalf("got %+v more=%v", got, more)
 	}
-	if r, _ := h2.Page("random", "", 10); len(r) != 1 {
+	if r, _ := h2.Page("random", "", time.Time{}, 10); len(r) != 1 {
 		t.Fatalf("random: %+v", r)
 	}
 }
@@ -65,20 +65,69 @@ func TestHistoryPaging(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		h.Add(hmsg("c", i, histBase.Add(time.Duration(i)*time.Second)))
 	}
-	p1, more := h.Page("c", "", 10)
+	p1, more := h.Page("c", "", time.Time{}, 10)
 	if !more || len(p1) != 10 || p1[0].Text != "msg 15" || p1[9].Text != "msg 24" {
 		t.Fatalf("p1 %v more=%v", p1, more)
 	}
-	p2, more := h.Page("c", p1[0].ID, 10)
+	p2, more := h.Page("c", p1[0].ID, time.Time{}, 10)
 	if !more || len(p2) != 10 || p2[0].Text != "msg 5" || p2[9].Text != "msg 14" {
 		t.Fatalf("p2 %v more=%v", p2, more)
 	}
-	p3, more := h.Page("c", p2[0].ID, 10)
+	p3, more := h.Page("c", p2[0].ID, time.Time{}, 10)
 	if more || len(p3) != 5 || p3[0].Text != "msg 0" {
 		t.Fatalf("p3 %v more=%v", p3, more)
 	}
-	if m, more := h.Page("c", "nope", 10); m != nil || more {
+	if m, more := h.Page("c", "nope", time.Time{}, 10); m != nil || more {
 		t.Fatalf("unknown: %v %v", m, more)
+	}
+}
+
+// A page request with a known id works on a big store, and walking back from
+// the newest line reaches every line exactly once.
+func TestHistoryPageLargeStore(t *testing.T) {
+	h := openH(t, "")
+	const total = 5000
+	for i := 0; i < total; i++ {
+		h.Add(hmsg("c", i, histBase.Add(time.Duration(i)*time.Millisecond)))
+	}
+	seen, before := 0, ""
+	for {
+		page, more := h.Page("c", before, time.Time{}, 100)
+		if len(page) > 0 && seen+len(page) <= total && page[len(page)-1].Text != fmt.Sprintf("msg %d", total-seen-1) {
+			t.Fatalf("page after %d lines ends at %q", seen, page[len(page)-1].Text)
+		}
+		seen += len(page)
+		if !more {
+			break
+		}
+		before = page[0].ID
+	}
+	if seen != total {
+		t.Fatalf("paged %d of %d lines", seen, total)
+	}
+}
+
+// An id the store no longer holds is placed by the ts the client sends.
+func TestHistoryPageUnknownIDWithTS(t *testing.T) {
+	h := openH(t, "")
+	for i := 0; i < 10; i++ {
+		h.Add(hmsg("c", i, histBase.Add(time.Duration(i)*time.Second)))
+	}
+	gone := hmsg("c", 100, histBase.Add(5*time.Second+time.Millisecond)) // between msg 5 and 6, never stored
+	page, more := h.Page("c", gone.ID, gone.TS, 3)
+	if !more || len(page) != 3 || page[0].Text != "msg 3" || page[2].Text != "msg 5" {
+		t.Fatalf("page = %v more=%v", page, more)
+	}
+	// Equal ts: ordered by id, as everywhere else.
+	page, _ = h.Page("c", hmsg("c", 5, time.Time{}).ID[:31]+"~", histBase.Add(5*time.Second), 3)
+	if len(page) != 3 || page[2].Text != "msg 5" {
+		t.Fatalf("tie page = %v", page)
+	}
+	// Known id wins over a stale ts.
+	known := hmsg("c", 7, time.Time{})
+	page, _ = h.Page("c", known.ID, histBase, 2)
+	if len(page) != 2 || page[1].Text != "msg 6" {
+		t.Fatalf("known id page = %v", page)
 	}
 }
 
@@ -86,7 +135,7 @@ func TestHistoryOrderTiesByID(t *testing.T) {
 	h := openH(t, "")
 	h.Add(hmsg("c", 9, histBase))
 	h.Add(hmsg("c", 3, histBase))
-	got, _ := h.Page("c", "", 10)
+	got, _ := h.Page("c", "", time.Time{}, 10)
 	if len(got) != 2 || got[0].ID > got[1].ID {
 		t.Fatalf("got %+v", got)
 	}
@@ -99,7 +148,7 @@ func TestOpenSkipsMalformedLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := openH(t, p)
-	if got, _ := h.Page("c", "", 10); len(got) != 2 {
+	if got, _ := h.Page("c", "", time.Time{}, 10); len(got) != 2 {
 		t.Fatalf("got %d", len(got))
 	}
 	if h.Skipped() != 2 {
@@ -133,7 +182,7 @@ func TestOpenDedupesIDs(t *testing.T) {
 	b.Text = "second"
 	os.WriteFile(p, []byte(line(t, a)+line(t, b)), 0o600)
 	h := openH(t, p)
-	got, _ := h.Page("c", "", 10)
+	got, _ := h.Page("c", "", time.Time{}, 10)
 	if len(got) != 1 || got[0].Text != a.Text {
 		t.Fatalf("got %+v", got)
 	}
@@ -149,7 +198,7 @@ func TestTrimDays(t *testing.T) {
 	if err := h.Trim(now); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := h.Page("c", "", 10)
+	got, _ := h.Page("c", "", time.Time{}, 10)
 	if len(got) != 1 || got[0].Text != "msg 2" {
 		t.Fatalf("got %+v", got)
 	}
@@ -182,8 +231,8 @@ func TestTrimSize(t *testing.T) {
 	if h.Size() > 1<<20 {
 		t.Fatalf("size %d", h.Size())
 	}
-	a, _ := h.Page("a", "", 5000)
-	b, _ := h.Page("b", "", 5000)
+	a, _ := h.Page("a", "", time.Time{}, 5000)
+	b, _ := h.Page("b", "", time.Time{}, 5000)
 	if len(a)+len(b) < 900 {
 		t.Fatalf("dropped too many: %d", len(a)+len(b))
 	}
@@ -214,7 +263,7 @@ func TestTrimZeroDaysDeletesFile(t *testing.T) {
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Fatalf("file still there: %v", err)
 	}
-	if got, more := h.Page("c", "", 10); len(got) != 0 || more {
+	if got, more := h.Page("c", "", time.Time{}, 10); len(got) != 0 || more {
 		t.Fatalf("got %v", got)
 	}
 	if err := h.Add(hmsg("c", 2, histBase)); err != nil {
@@ -241,7 +290,7 @@ func TestTrimZeroDaysClearsMemoryWhenRemoveFails(t *testing.T) {
 	if err := h.Trim(histBase); err == nil {
 		t.Fatal("want remove error")
 	}
-	if got, more := h.Page("c", "", 10); len(got) != 0 || more || h.Size() != 0 {
+	if got, more := h.Page("c", "", time.Time{}, 10); len(got) != 0 || more || h.Size() != 0 {
 		t.Fatalf("memory not cleared: %v size %d", got, h.Size())
 	}
 }
@@ -265,7 +314,7 @@ func TestAddWriteFailureStartsFreshLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	h2 := openH(t, p)
-	got, _ := h2.Page("c", "", 10)
+	got, _ := h2.Page("c", "", time.Time{}, 10)
 	if len(got) != 2 || got[0].Text != "msg 1" || got[1].Text != "msg 3" {
 		t.Fatalf("got %+v", got)
 	}
@@ -314,13 +363,13 @@ func TestHistoryMemoryOnly(t *testing.T) {
 	h := openH(t, "")
 	h.Add(hmsg("c", 1, histBase.Add(-100*24*time.Hour)))
 	h.Add(hmsg("c", 2, histBase))
-	if got, _ := h.Page("c", "", 10); len(got) != 2 {
+	if got, _ := h.Page("c", "", time.Time{}, 10); len(got) != 2 {
 		t.Fatalf("got %d", len(got))
 	}
 	if err := h.Trim(histBase); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := h.Page("c", "", 10); len(got) != 1 {
+	if got, _ := h.Page("c", "", time.Time{}, 10); len(got) != 1 {
 		t.Fatalf("after trim %d", len(got))
 	}
 }
@@ -329,7 +378,7 @@ func TestHistoryDuplicateAddIgnored(t *testing.T) {
 	h := openH(t, "")
 	h.Add(hmsg("c", 1, histBase))
 	h.Add(hmsg("c", 1, histBase))
-	if got, _ := h.Page("c", "", 10); len(got) != 1 {
+	if got, _ := h.Page("c", "", time.Time{}, 10); len(got) != 1 {
 		t.Fatalf("got %d", len(got))
 	}
 }

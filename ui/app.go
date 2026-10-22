@@ -74,7 +74,7 @@ type game struct {
 	fileLog    *log.Logger          // session log file; nil = none
 	nextHealth time.Time            // next call-health line; zero outside a call
 	closeStale func(*client.Client) // test seam: closes stale dial results; nil = Close
-	reqOlder   func(s *session, ch, beforeID string) error // test seam: sends history_before; nil = s.c.HistoryBefore
+	reqOlder   func(s *session, ch, beforeID string, beforeTS time.Time) error // test seam: sends history_before; nil = s.c.HistoryBefore
 
 	muteCh     chan muteReq
 	muteFailCh chan muteFail

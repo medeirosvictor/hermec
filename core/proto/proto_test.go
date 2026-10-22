@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEncodeDecodeRoundTrip(t *testing.T) {
@@ -270,5 +271,10 @@ func TestHistoryRoundTrip(t *testing.T) {
 	hb, err := json.Marshal(HistoryBefore{Channel: "general", BeforeID: "ab"})
 	if err != nil || string(hb) != `{"channel":"general","before_id":"ab"}` {
 		t.Errorf("HistoryBefore = %s, %v", hb, err)
+	}
+	ts := time.Date(2026, 10, 1, 12, 0, 0, 5, time.UTC)
+	hb, err = json.Marshal(HistoryBefore{Channel: "general", BeforeID: "ab", BeforeTS: ts})
+	if err != nil || string(hb) != `{"channel":"general","before_id":"ab","before_ts":"2026-10-01T12:00:00.000000005Z"}` {
+		t.Errorf("HistoryBefore with ts = %s, %v", hb, err)
 	}
 }

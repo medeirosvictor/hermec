@@ -186,12 +186,13 @@ func (s *State) CanLoadOlder(ch string) bool {
 	return s.Older[ch] && !s.Loading[ch] && len(s.Messages[ch])+HistoryPage <= MaxMessages
 }
 
-// OldestID is the id of the oldest message shown in ch ("" if none).
-func (s *State) OldestID(ch string) string {
+// Oldest is the id and timestamp of the oldest message shown in ch (id ""
+// if none).
+func (s *State) Oldest(ch string) (id string, ts time.Time) {
 	if ms := s.Messages[ch]; len(ms) > 0 {
-		return ms[0].ID
+		return ms[0].ID, ms[0].TS
 	}
-	return ""
+	return "", time.Time{}
 }
 
 // MarkLoading records that a history_before for ch is in flight.

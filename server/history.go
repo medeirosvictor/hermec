@@ -22,7 +22,7 @@ type History struct {
 	days    int
 	mb      int
 	chans   map[string][]proto.ChatMessage // sorted by (TS, ID)
-	ids     map[string]int                 // id -> encoded line length, newline included
+	ids     map[string]lineMeta            // id -> where and how big the stored line is
 	size    int
 	skipped int
 	needNL  bool // file does not end in a newline; next append starts a fresh line
@@ -30,6 +30,12 @@ type History struct {
 	// write appends b to the open store file; nil means f.Write. Tests set it
 	// to force a failed or partial write.
 	write func(f *os.File, b []byte) (int, error)
+}
+
+// lineMeta is what the store remembers about each line by id.
+type lineMeta struct {
+	n  int       // encoded line length, newline included
+	ts time.Time // lets Page place an id without scanning
 }
 
 // Newest returns the newest stored timestamp across channels; zero if empty.
@@ -75,7 +81,7 @@ func OpenHistory(path string) (*History, error) {
 		days:  DefaultHistoryDays,
 		mb:    DefaultHistoryMB,
 		chans: map[string][]proto.ChatMessage{},
-		ids:   map[string]int{},
+		ids:   map[string]lineMeta{},
 	}
 	if path == "" {
 		return h, nil
@@ -128,7 +134,7 @@ func (h *History) insert(m proto.ChatMessage, n int) {
 	copy(s[i+1:], s[i:])
 	s[i] = m
 	h.chans[m.Channel] = s
-	h.ids[m.ID] = n
+	h.ids[m.ID] = lineMeta{n, m.TS}
 	h.size += n
 }
 
@@ -199,24 +205,23 @@ func (h *History) Add(m proto.ChatMessage) error {
 }
 
 // Page returns up to n messages of channel, oldest first: the newest when
-// beforeID is empty, else those strictly older than beforeID. more reports
-// whether older messages remain. An unknown beforeID yields nil, false.
-func (h *History) Page(channel, beforeID string, n int) (msgs []proto.ChatMessage, more bool) {
+// beforeID is empty, else those strictly older than beforeID in (TS, ID)
+// order. A stored beforeID supplies its own TS; for one the store no longer
+// holds, beforeTS stands in when non-zero. more reports whether older
+// messages remain. An unknown beforeID without beforeTS yields nil, false.
+func (h *History) Page(channel, beforeID string, beforeTS time.Time, n int) (msgs []proto.ChatMessage, more bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	s := h.chans[channel]
 	end := len(s)
 	if beforeID != "" {
-		end = -1
-		for i := range s {
-			if s[i].ID == beforeID {
-				end = i
-				break
-			}
-		}
-		if end < 0 {
+		if meta, ok := h.ids[beforeID]; ok {
+			beforeTS = meta.ts
+		} else if beforeTS.IsZero() {
 			return nil, false
 		}
+		key := proto.ChatMessage{ID: beforeID, TS: beforeTS}
+		end = sort.Search(len(s), func(i int) bool { return !histLess(s[i], key) })
 	}
 	if n < 0 {
 		n = 0
@@ -242,7 +247,7 @@ func (h *History) Trim(now time.Time) error {
 	if h.days == 0 {
 		// Clear memory first so nothing old is served even if the remove fails.
 		h.chans = map[string][]proto.ChatMessage{}
-		h.ids = map[string]int{}
+		h.ids = map[string]lineMeta{}
 		h.size, h.skipped, h.needNL = 0, 0, false
 		if h.path != "" {
 			if err := os.Remove(h.path); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -260,7 +265,7 @@ func (h *History) Trim(now time.Time) error {
 		k := sort.Search(len(s), func(i int) bool { return !s[i].TS.Before(cutoff) })
 		drop[ch] = k
 		for _, m := range s[:k] {
-			size -= h.ids[m.ID]
+			size -= h.ids[m.ID].n
 		}
 	}
 	limit := h.mb << 20
@@ -278,7 +283,7 @@ func (h *History) Trim(now time.Time) error {
 		if oldest == nil {
 			break
 		}
-		size -= h.ids[oldest.ID]
+		size -= h.ids[oldest.ID].n
 		drop[oldestCh]++
 	}
 
@@ -301,7 +306,7 @@ func (h *History) Trim(now time.Time) error {
 			return err
 		}
 	}
-	ids := make(map[string]int, len(h.ids))
+	ids := make(map[string]lineMeta, len(h.ids))
 	for _, s := range kept {
 		for _, m := range s {
 			ids[m.ID] = h.ids[m.ID]

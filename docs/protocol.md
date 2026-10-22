@@ -312,6 +312,7 @@ The host keeps text-channel chat in a file, capped by the chain `config` entry's
 |-------------|--------|-------------------------------------------------------|
 | `channel`   | string | A text channel the sender has joined.                 |
 | `before_id` | string | Id of a message; the host returns the messages just older than it. |
+| `before_ts` | string | Optional. The `ts` of that message (RFC 3339), used when the host no longer holds `before_id`. |
 
 Semantics:
 
@@ -323,11 +324,15 @@ Semantics:
   `more` is true.
 - **Older pages.** `history_before` is answered with a `history` whose
   `before` echoes `before_id` and whose `messages` are the up to 100 messages
-  just older than that one (same size rule), oldest first. An unknown
-  `before_id` (for instance a message trimmed since) yields empty `messages`
-  and `more` false.
+  just older than that one (same size rule), oldest first. "Older" is by
+  `(ts, id)`. A `before_id` the host holds is placed by its own `ts`. One it
+  no longer holds (for instance a message trimmed since) is placed by
+  `before_ts` together with `before_id`; without `before_ts` the answer has
+  empty `messages` and `more` false. A client sends the `ts` of the message it
+  names.
 - **Errors.** A `history_before` for a channel the sender has not joined gets
-  `error` `not_joined`; a malformed one (not a JSON object, or an empty
+  `error` `not_joined`; one from a sender who no longer holds the permission
+  to join channels gets `error` `forbidden`; a malformed one (not a JSON object, or an empty
   `channel` or `before_id`) gets `bad_request`. It counts against the normal
   message rate limit.
 - **Client behavior.** A client merges messages by `id` and may receive the same

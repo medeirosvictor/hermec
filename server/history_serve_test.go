@@ -226,6 +226,20 @@ func TestHistoryBeforeUnknownID(t *testing.T) {
 	}
 }
 
+func TestHistoryBeforeUnknownIDWithTS(t *testing.T) {
+	s, url := startServerS(t, chatCfg())
+	all := seedHistory(t, s, 5)
+	a, _ := authed(t, url)
+	joinGeneral(t, a)
+	readHistory(t, a)
+	// The client's oldest line was trimmed away since; its ts still pages.
+	sendEnv(t, a, proto.TypeHistoryBefore, proto.HistoryBefore{Channel: "general", BeforeID: "gone", BeforeTS: all[3].TS.Add(time.Millisecond)})
+	h := readHistory(t, a)
+	if len(h.Messages) != 4 || h.Messages[3].ID != all[3].ID || h.More || h.Before != "gone" {
+		t.Fatalf("history = %+v", h)
+	}
+}
+
 func TestHistoryFrameFitsLimit(t *testing.T) {
 	hs, err := OpenHistory("")
 	if err != nil {
@@ -239,7 +253,7 @@ func TestHistoryFrameFitsLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	msgs, more := hs.Page("general", "", historyPage)
+	msgs, more := hs.Page("general", "", time.Time{}, historyPage)
 	if len(msgs) != 20 || more {
 		t.Fatalf("page = %d, %v", len(msgs), more)
 	}

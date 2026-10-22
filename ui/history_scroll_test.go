@@ -22,8 +22,8 @@ func olderTestGame(t *testing.T, msgs []state.Message) (*game, *session, *int32)
 	s.ms.confirmed["general"] = true
 	g.sess["k"], g.curKey = s, "k"
 	var n int32
-	g.reqOlder = func(_ *session, ch, id string) error {
-		if ch != "general" || id != msgs[0].ID {
+	g.reqOlder = func(_ *session, ch, id string, ts time.Time) error {
+		if ch != "general" || id != msgs[0].ID || !ts.Equal(msgs[0].TS) {
 			t.Errorf("request for %q before %q", ch, id)
 		}
 		atomic.AddInt32(&n, 1)
@@ -100,7 +100,7 @@ func TestNoOlderRequestBeforeJoinConfirmed(t *testing.T) {
 
 func TestScrollTopSendErrorClearsLoading(t *testing.T) {
 	g, s, _ := olderTestGame(t, []state.Message{{ID: "b", TS: time.Unix(2, 0)}})
-	g.reqOlder = func(*session, string, string) error { return errors.New("boom") }
+	g.reqOlder = func(*session, string, string, time.Time) error { return errors.New("boom") }
 	g.maybeLoadOlder(s, 3, 10)
 	pumpUntil(t, g, func() bool { return !s.st.Loading["general"] })
 }

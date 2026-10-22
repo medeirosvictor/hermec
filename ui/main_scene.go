@@ -262,7 +262,7 @@ func (g *game) maybeLoadOlder(s *session, total, visible int) {
 		return
 	}
 	ch := s.st.Channels[s.st.Active]
-	id := s.st.OldestID(ch)
+	id, ts := s.st.Oldest(ch)
 	// Before the join is answered the host would refuse with not_joined, and
 	// the client would charge that to the pending join.
 	if id == "" || !s.ms.confirmed[ch] || !s.st.CanLoadOlder(ch) {
@@ -274,11 +274,11 @@ func (g *game) maybeLoadOlder(s *session, total, visible int) {
 			return
 		}
 		c := s.c
-		send = func(_ *session, ch, id string) error { return c.HistoryBefore(ch, id) }
+		send = func(_ *session, ch, id string, ts time.Time) error { return c.HistoryBefore(ch, id, ts) }
 	}
 	s.st.MarkLoading(ch)
 	go func(key string) {
-		g.sendCh <- sendResult{key: key, err: send(s, ch, id), older: ch}
+		g.sendCh <- sendResult{key: key, err: send(s, ch, id, ts), older: ch}
 	}(s.key)
 }
 

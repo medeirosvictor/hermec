@@ -80,16 +80,26 @@ func TestClientHistoryEvent(t *testing.T) {
 	if oldest == "" {
 		t.Fatal("history message has no id")
 	}
-	if err := b.HistoryBefore("general", oldest); err != nil {
+	if err := b.HistoryBefore("general", oldest, h.Messages[0].TS); err != nil {
 		t.Fatal(err)
 	}
 	h2 := nextHistory(t, b).History
 	if h2.Before != oldest || len(h2.Messages) != 0 {
 		t.Fatalf("older page = %+v", h2)
 	}
+	// An id the host does not know is placed by the ts that goes with it (the id
+	// sorts before any real one, so only the ts decides).
+	second := h.Messages[1]
+	if err := b.HistoryBefore("general", "!gone", second.TS); err != nil {
+		t.Fatal(err)
+	}
+	h3 := nextHistory(t, b).History
+	if h3.Before != "!gone" || len(h3.Messages) != 1 || h3.Messages[0].ID != oldest {
+		t.Fatalf("page by ts = %+v", h3)
+	}
 
 	_ = b.Close()
-	if err := b.HistoryBefore("general", oldest); err != ErrClosed {
+	if err := b.HistoryBefore("general", oldest, time.Time{}); err != ErrClosed {
 		t.Fatalf("HistoryBefore on closed client = %v, want ErrClosed", err)
 	}
 }

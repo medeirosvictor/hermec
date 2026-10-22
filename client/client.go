@@ -439,9 +439,11 @@ func (c *Client) SendChat(ctx context.Context, channel, text string) error {
 }
 
 // HistoryBefore asks for the page of messages older than beforeID in channel.
-// The answer arrives as an Event with History set and Before == beforeID.
-func (c *Client) HistoryBefore(channel, beforeID string) error {
-	return c.send(proto.TypeHistoryBefore, proto.HistoryBefore{Channel: channel, BeforeID: beforeID})
+// beforeTS is that message's timestamp; the host uses it when it no longer
+// holds beforeID (zero omits it). The answer arrives as an Event with History
+// set and Before == beforeID.
+func (c *Client) HistoryBefore(channel, beforeID string, beforeTS time.Time) error {
+	return c.send(proto.TypeHistoryBefore, proto.HistoryBefore{Channel: channel, BeforeID: beforeID, BeforeTS: beforeTS})
 }
 
 // Close tears down the connection. It is safe to call more than once and
