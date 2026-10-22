@@ -97,9 +97,9 @@ type conn struct {
 	srv *Server
 	ws  *websocket.Conn
 
-	sendMu sync.Mutex
-	send   chan []byte // closed (under sendMu) when the connection ends
-	closed bool
+	sendMu  sync.Mutex
+	send    chan []byte // closed (under sendMu) when the connection ends
+	closed  bool
 	drained chan struct{} // signaled (cap 1) when the writer took a message or send closed; wakes enqueueWait
 
 	ip           string      // remote IP

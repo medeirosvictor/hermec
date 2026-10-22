@@ -43,7 +43,6 @@ var (
 	// handoverWait is how long the old active host waits for the receiver of
 	// a handover to report itself active.
 	handoverWait = 3 * time.Second
-
 )
 
 // Role names reported by Host.Role.
