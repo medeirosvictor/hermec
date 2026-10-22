@@ -29,21 +29,19 @@ func main() {
 	} else if err != nil {
 		os.Exit(2)
 	}
-	configPath, printConfig, keyPath := &f.config, &f.printConfig, &f.key
-	chainPath, historyPath, applyConfig := &f.chain, &f.history, &f.applyConfig
-	if *applyConfig && *configPath == "" {
+	if f.applyConfig && f.config == "" {
 		log.Fatal("-apply-config requires -config")
 	}
 
 	cfg := server.DefaultConfig()
-	if *configPath != "" {
+	if f.config != "" {
 		var err error
-		if cfg, err = server.LoadConfig(*configPath); err != nil {
+		if cfg, err = server.LoadConfig(f.config); err != nil {
 			log.Fatal(err)
 		}
 	}
 
-	if *printConfig {
+	if f.printConfig {
 		shown := cfg
 		shown.PasswordKey = nil
 		if shown.Password != "" {
@@ -58,42 +56,42 @@ func main() {
 	}
 
 	dir := "."
-	if *configPath != "" {
-		dir = filepath.Dir(*configPath)
+	if f.config != "" {
+		dir = filepath.Dir(f.config)
 	}
-	if *keyPath == "" {
-		*keyPath = filepath.Join(dir, "hermec-server.key")
+	if f.key == "" {
+		f.key = filepath.Join(dir, "hermec-server.key")
 	}
-	if *chainPath == "" {
-		*chainPath = filepath.Join(dir, "chain.jsonl")
+	if f.chain == "" {
+		f.chain = filepath.Join(dir, "chain.jsonl")
 	}
-	if *historyPath == "" {
-		*historyPath = filepath.Join(dir, "history.jsonl")
+	if f.history == "" {
+		f.history = filepath.Join(dir, "history.jsonl")
 	}
-	if *applyConfig {
-		if err := applyConfigFile(*configPath, *keyPath, *chainPath, cfg, os.Stdout); err != nil {
+	if f.applyConfig {
+		if err := applyConfigFile(f.config, f.key, f.chain, cfg, os.Stdout); err != nil {
 			log.Fatal(err)
 		}
 		return
 	}
-	key, err := loadOrCreateKey(*keyPath)
+	key, err := loadOrCreateKey(f.key)
 	if err != nil {
 		log.Fatal(err)
 	}
-	c, created, err := openChain(*chainPath, key, cfg)
+	c, created, err := openChain(f.chain, key, cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := checkHostKey(*keyPath, c, key); err != nil {
+	if err := checkHostKey(f.key, c, key); err != nil {
 		log.Fatal(err)
 	}
-	cfg.HostKey, cfg.Chain, cfg.HistoryPath = key, c, *historyPath
-	if !created && *configPath != "" {
-		if set, err := server.GroupFieldsSet(*configPath); err != nil {
+	cfg.HostKey, cfg.Chain, cfg.HistoryPath = key, c, f.history
+	if !created && f.config != "" {
+		if set, err := server.GroupFieldsSet(f.config); err != nil {
 			log.Print(err)
 		} else if len(set) > 0 {
 			log.Printf("WARNING: chain exists; ignoring group keys in %s: %s (use -apply-config to append them)",
-				*configPath, strings.Join(set, ", "))
+				f.config, strings.Join(set, ", "))
 		}
 	}
 

@@ -2,7 +2,9 @@ package main
 
 import (
 	"flag"
+	"log"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,7 +43,8 @@ func parseFlags(args []string) (flags, error) {
 	if err := fs.Parse(args); err != nil {
 		return flags{}, err
 	}
-	f.advertise, f.hosts = splitList(advertise), splitList(hosts)
+	f.advertise = cleanURLs(splitList(advertise), "-advertise")
+	f.hosts = cleanURLs(splitList(hosts), "-hosts")
 	return f, nil
 }
 
@@ -59,10 +62,13 @@ func splitList(s string) []string {
 // buildHostConfig turns cfg and the host flags into the config of a
 // server.Host. dir holds known_hosts.txt. notify gets the role lines.
 func buildHostConfig(f flags, cfg server.Config, dir string, notify func(string)) server.HostConfig {
-	kh := &knownHosts{path: filepath.Join(dir, knownHostsFile), flagged: f.hosts, configured: cfg.KnownHosts}
+	kh := &knownHosts{path: filepath.Join(dir, knownHostsFile), flagged: f.hosts, configured: cleanURLs(cfg.KnownHosts, "known_hosts")}
 	cfg.Advertise = f.advertise
 	if len(cfg.Advertise) == 0 {
-		ips, _ := localIPs()
+		ips, err := localIPs()
+		if err != nil {
+			log.Printf("WARNING: listing interface addresses: %v", err)
+		}
 		cfg.Advertise = defaultAdvertise(cfg.Addr, cfg.TLSCert != "", ips)
 	}
 	cfg.HostName = f.name
@@ -115,6 +121,34 @@ type knownHosts struct {
 	flagged    []string
 	configured []string
 	mu         sync.Mutex
+	saveFailed bool // the save error was logged
+}
+
+// warned holds the bad entries already reported, so repeated reads of
+// known_hosts.txt warn once.
+var warned sync.Map
+
+// cleanURLs keeps the entries of items that are ws or wss URLs with a host,
+// gives each an explicit path (ws://a:1 becomes ws://a:1/) and drops
+// duplicates. It warns once about each entry it skips; what names the source.
+func cleanURLs(items []string, what string) []string {
+	var out []string
+	for _, s := range items {
+		u, err := url.Parse(s)
+		if err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Host == "" {
+			if _, dup := warned.LoadOrStore(what+" "+s, true); !dup {
+				log.Printf("WARNING: %s: ignoring %q (want a ws:// or wss:// URL with a host)", what, s)
+			}
+			continue
+		}
+		if u.Path == "" {
+			u.Path = "/"
+		}
+		if n := u.String(); !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // fileURLs reads known_hosts.txt; a missing file is empty.
@@ -123,7 +157,7 @@ func (k *knownHosts) fileURLs() []string {
 	if err != nil {
 		return nil
 	}
-	return splitLines(string(b))
+	return cleanURLs(splitLines(string(b)), knownHostsFile)
 }
 
 func splitLines(s string) []string {
@@ -161,12 +195,15 @@ func (k *knownHosts) save(urls []string) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	file := k.fileURLs()
-	for _, u := range urls {
+	for _, u := range cleanURLs(urls, "learned host") {
 		if !slices.Contains(file, u) {
 			file = append(file, u)
 		}
 	}
-	_ = writeFile0600(k.path, []byte(strings.Join(file, "\n")+"\n"))
+	if err := writeFile0600(k.path, []byte(strings.Join(file, "\n")+"\n")); err != nil && !k.saveFailed {
+		k.saveFailed = true
+		log.Printf("WARNING: saving %s: %v", k.path, err)
+	}
 }
 
 // writeFile0600 replaces path through a temp file so a crash leaves the old one.

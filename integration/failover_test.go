@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -424,44 +425,71 @@ func (f *follower) lost(c *client.Client) {
 }
 
 func (f *follower) recover(old, w *client.Client) {
-	deadline := time.Now().Add(8 * time.Second)
-	for time.Now().Before(deadline) {
-		f.mu.Lock()
-		closed := f.closed
-		urls := []string{f.url}
-		if !f.urlOnly {
-			urls = append(urls, f.active.Addrs...)
-			urls = append(urls, f.standby.Addrs...)
-		}
-		f.mu.Unlock()
-		if closed {
-			return
-		}
-		if w != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			err := w.Takeover(ctx)
-			cancel()
-			if err == nil {
-				f.installPromoted(w, old)
+	// Like the UI: Takeover is repeated while the standby answers active_alive,
+	// for takeoverWindow; the first refusal also starts one redial of the
+	// previous active host, which wins if the host only dropped us.
+	const takeoverWindow = 3 * time.Second
+	var decided atomic.Bool
+	f.mu.Lock()
+	urls := []string{f.url}
+	if !f.urlOnly {
+		urls = append(urls, f.active.Addrs...)
+	}
+	f.mu.Unlock()
+	redial := func() {
+		deadline := time.Now().Add(8 * time.Second)
+		for time.Now().Before(deadline) && !decided.Load() {
+			if c2, err := f.dial(urls, f.fullOpts()); err == nil {
+				if !decided.CompareAndSwap(false, true) {
+					c2.Close()
+					return
+				}
+				f.mu.Lock()
+				f.redials++
+				f.mu.Unlock()
+				f.swap(c2, old, false)
 				return
 			}
-			var se *client.ServerError
-			if errors.As(err, &se) && se.Code == proto.CodeActiveAlive {
-				f.mu.Lock()
-				f.alive++
-				f.mu.Unlock()
-			}
+			time.Sleep(100 * time.Millisecond)
 		}
-		if c2, err := f.dial(urls, f.fullOpts()); err == nil {
-			f.mu.Lock()
-			f.redials++
-			f.mu.Unlock()
-			f.swap(c2, old, false)
+	}
+	if w == nil { // nothing warm: only the redial can recover
+		redial()
+		if !decided.Load() {
+			f.fail("no recovery after losing the active host")
+		}
+		return
+	}
+	deadline := time.Now().Add(takeoverWindow)
+	started := false
+	for !decided.Load() {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		err := w.Takeover(ctx)
+		cancel()
+		if err == nil {
+			if !decided.CompareAndSwap(false, true) {
+				f.fail("promoted after the redial won")
+				return
+			}
+			f.installPromoted(w, old)
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		var se *client.ServerError
+		if !errors.As(err, &se) || se.Code != proto.CodeActiveAlive || time.Now().After(deadline) {
+			if decided.CompareAndSwap(false, true) {
+				f.fail("takeover failed: %v", err)
+			}
+			return
+		}
+		f.mu.Lock()
+		f.alive++
+		f.mu.Unlock()
+		if !started {
+			started = true
+			go redial()
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
-	f.fail("no recovery after losing the active host")
 }
 
 // installPromoted makes the promoted warm session the current one.
@@ -661,8 +689,10 @@ func TestFailoverWithin2s(t *testing.T) {
 	if h := historyOf(t, hs.urls[1]); !hasText(h, "host changed to host-1", true) {
 		t.Fatalf("history of general has no host-changed line: %+v", h)
 	}
-	if _, takeovers, _, _ := a.counts(); takeovers != 1 {
-		t.Errorf("alice took over %d times, want 1", takeovers)
+	for _, f := range []*follower{a, b} {
+		if _, takeovers, redials, _ := f.counts(); takeovers != 1 || redials != 0 {
+			t.Errorf("%s: takeovers = %d, redials = %d; want 1 and 0", f.name, takeovers, redials)
+		}
 	}
 }
 

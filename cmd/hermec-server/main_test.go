@@ -64,6 +64,27 @@ func TestFlagsAdvertiseHosts(t *testing.T) {
 	}
 }
 
+func TestHostURLsValidatedAndNormalised(t *testing.T) {
+	dir := t.TempDir()
+	f, err := parseFlags([]string{"-hosts", "ws://a:1,ws://a:1/,http://b:2/,nonsense,wss://c:3,ws:///x", "-advertise", "ws://d:4,ftp://e"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"ws://a:1/", "wss://c:3/"}; !slices.Equal(f.hosts, want) {
+		t.Errorf("hosts = %v, want %v", f.hosts, want)
+	}
+	if want := []string{"ws://d:4/"}; !slices.Equal(f.advertise, want) {
+		t.Errorf("advertise = %v, want %v", f.advertise, want)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "known_hosts.txt"), []byte("ws://a:1\nbogus\nws://z:9\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hc := buildHostConfig(f, server.DefaultConfig(), dir, nil)
+	if want := []string{"ws://a:1/", "wss://c:3/", "ws://z:9/"}; !slices.Equal(hc.Known(), want) {
+		t.Errorf("Known = %v, want %v", hc.Known(), want)
+	}
+}
+
 func TestDefaultAdvertise(t *testing.T) {
 	ips := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("192.168.1.5"), net.ParseIP("fe80::1"), net.ParseIP("2001:db8::7")}
 	got := defaultAdvertise("0.0.0.0:7777", false, ips)

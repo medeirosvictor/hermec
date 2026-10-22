@@ -154,7 +154,7 @@ type Server struct {
 	// shutdown is set when Shutdown begins: the host no longer announces a
 	// standby change, as its links close before its clients do.
 	shutdown atomic.Bool
-	wg     sync.WaitGroup // per-connection goroutines and the accept loop
+	wg       sync.WaitGroup // per-connection goroutines and the accept loop
 
 	lastChatTS time.Time  // newest chat timestamp issued; guarded by chMu
 	chMu       sync.Mutex // guards chans, voice, authed, conn.voiceCh, lastChatTS; see channels.go, voice.go
