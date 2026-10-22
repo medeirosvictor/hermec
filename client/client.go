@@ -40,7 +40,8 @@ type Event struct {
 	Voice    *proto.VoiceState
 	Roster   *proto.Roster // full member list, re-sent on every connect/disconnect
 	Chain    *chain.Entry  // a new entry, already applied to Client.Chain()
-	Err      error
+	History  *proto.History // a page of stored chat history
+	Err     error
 }
 
 // ServerError is an error message sent by the server.
@@ -437,6 +438,12 @@ func (c *Client) SendChat(ctx context.Context, channel, text string) error {
 	return c.send(proto.TypeChatSend, proto.ChatSend{Channel: channel, Text: text})
 }
 
+// HistoryBefore asks for the page of messages older than beforeID in channel.
+// The answer arrives as an Event with History set and Before == beforeID.
+func (c *Client) HistoryBefore(channel, beforeID string) error {
+	return c.send(proto.TypeHistoryBefore, proto.HistoryBefore{Channel: channel, BeforeID: beforeID})
+}
+
 // Close tears down the connection. It is safe to call more than once and
 // from any goroutine; it returns after the read loop has exited.
 func (c *Client) Close() error {
@@ -564,6 +571,13 @@ func (c *Client) readLoop() {
 				continue
 			}
 			c.emit(Event{Chat: &m})
+		case proto.TypeHistory:
+			var h proto.History
+			if err := json.Unmarshal(env.Data, &h); err != nil {
+				c.emit(Event{Err: fmt.Errorf("client: bad history: %w", err)})
+				continue
+			}
+			c.emit(Event{History: &h})
 		case proto.TypeVoiceState:
 			var st proto.VoiceState
 			if err := json.Unmarshal(env.Data, &st); err != nil {
