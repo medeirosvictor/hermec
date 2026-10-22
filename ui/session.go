@@ -54,6 +54,9 @@ type joinResult struct {
 type sendResult struct {
 	key string
 	err error
+	// older is set for a history_before request: the channel whose Loading
+	// mark an error must clear.
+	older string
 }
 
 // cur returns the viewed session, or g.none (a PhaseConnect placeholder that
@@ -271,6 +274,10 @@ func (g *game) pumpSessions() {
 		select {
 		case r := <-g.sendCh:
 			if s := g.sess[r.key]; s != nil && r.err != nil {
+				if r.older != "" {
+					delete(s.st.Loading, r.older)
+					continue
+				}
 				s.st.Status = fmt.Sprintf("send failed: %v", r.err)
 			}
 			continue
