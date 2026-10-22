@@ -137,13 +137,14 @@ func TestChainAppendConflictRetries(t *testing.T) {
 			t.Fatalf("ChainAppend: %v", err)
 		}
 	}
-	want := a.Chain().Head().Seq
+	// Either client may hold the last entry before the other receives it, so
+	// both heads are re-read until they agree.
 	deadline := time.Now().Add(5 * time.Second)
-	for b.Chain().Head().Seq != want && time.Now().Before(deadline) {
+	for a.Chain().Head().Seq != b.Chain().Head().Seq && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got := b.Chain().Head().Seq; got != want {
-		t.Fatalf("heads differ: %d vs %d", got, want)
+	if ha, hb := a.Chain().Head().Seq, b.Chain().Head().Seq; ha != hb {
+		t.Fatalf("heads differ: a=%d b=%d", ha, hb)
 	}
 }
 

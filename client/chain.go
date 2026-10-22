@@ -119,24 +119,26 @@ func (c *Client) resolveChain(sig []byte) {
 	}
 }
 
-// maxChainRetries bounds how often ChainAppend rebuilds on a newer head after
-// chain_conflict. One retry is not enough when several admins append at once:
-// the same caller can lose twice in a row.
-const maxChainRetries = 4
+// chainRetryBudget bounds how long ChainAppend keeps rebuilding on a newer
+// head after chain_conflict. A count does not work: the loser hears of its
+// conflict one frame after the winner hears of its success, so an admin
+// appending back to back can win every race until it stops.
+const chainRetryBudget = 5 * time.Second
 
 // ChainAppend signs an entry on the local head with the client's identity,
 // sends it and returns once the server has broadcast it back (so Chain()
 // already holds it) or refused it with a *ServerError. If another entry won
 // the head (chain_conflict) it waits for the local chain to catch up and
-// rebuilds the entry, up to maxChainRetries times.
+// rebuilds the entry, for up to chainRetryBudget.
 func (c *Client) ChainAppend(ctx context.Context, op chain.Op, body any) error {
 	c.chainCallMu.Lock()
 	defer c.chainCallMu.Unlock()
-	for retries := 0; ; retries++ {
+	giveUp := time.Now().Add(chainRetryBudget)
+	for {
 		behind := c.chain.Head().Seq
 		err := c.chainAppendOnce(ctx, op, body)
 		var se *ServerError
-		if !errors.As(err, &se) || se.Code != proto.CodeChainConflict || retries == maxChainRetries {
+		if !errors.As(err, &se) || se.Code != proto.CodeChainConflict || time.Now().After(giveUp) {
 			return err
 		}
 		// The winning entry normally reached us before the refusal; wait for
