@@ -419,6 +419,9 @@ type wsProxy struct {
 	t        *testing.T
 	upstream string
 	srv      *httptest.Server
+	blocked  atomic.Bool // set by cut: new connections are refused
+	connMu   sync.Mutex
+	conns    []*websocket.Conn // every websocket the proxy holds, for cut
 
 	// hooks; return (replacement, forward). Called from the pump goroutines.
 	fromClient func(env proto.Envelope, raw []byte) ([]byte, bool)
@@ -429,6 +432,10 @@ func newWSProxy(t *testing.T, upstream string) *wsProxy {
 	p := &wsProxy{t: t, upstream: upstream}
 	up := websocket.Upgrader{}
 	p.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p.blocked.Load() {
+			http.Error(w, "cut", http.StatusServiceUnavailable)
+			return
+		}
 		cws, err := up.Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -438,6 +445,9 @@ func newWSProxy(t *testing.T, upstream string) *wsProxy {
 			cws.Close()
 			return
 		}
+		p.connMu.Lock()
+		p.conns = append(p.conns, cws, sws)
+		p.connMu.Unlock()
 		var cmu, smu sync.Mutex
 		toClient := func(b []byte) { cmu.Lock(); _ = cws.WriteMessage(websocket.TextMessage, b); cmu.Unlock() }
 		toServer := func(b []byte) { smu.Lock(); _ = sws.WriteMessage(websocket.TextMessage, b); smu.Unlock() }
@@ -484,6 +494,20 @@ func newWSProxy(t *testing.T, upstream string) *wsProxy {
 	t.Cleanup(func() { p.srv.CloseClientConnections(); p.srv.Close() })
 	return p
 }
+
+// cut drops every connection through the proxy and refuses new ones until
+// restore: a client-only network blip.
+func (p *wsProxy) cut() {
+	p.blocked.Store(true)
+	p.connMu.Lock()
+	for _, c := range p.conns {
+		_ = c.Close() // hijacked connections are not closed by the test server
+	}
+	p.conns = nil
+	p.connMu.Unlock()
+}
+
+func (p *wsProxy) restore() { p.blocked.Store(false) }
 
 func (p *wsProxy) url() string { return "ws" + strings.TrimPrefix(p.srv.URL, "http") }
 

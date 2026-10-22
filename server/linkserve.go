@@ -126,6 +126,9 @@ func (s *Server) pickStandbyLocked() *LinkPeer {
 // to every authenticated client. Caller holds chMu and closes the returned
 // conns after unlocking.
 func (s *Server) updateStandbyLocked() []*conn {
+	if s.shutdown.Load() { // our links close before our clients: say nothing
+		return nil
+	}
 	pick := s.pickStandbyLocked()
 	var dead []*conn
 	for c := range s.links {

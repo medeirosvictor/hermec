@@ -23,13 +23,14 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "", "path to a TOML config file (defaults apply without it)")
-	printConfig := flag.Bool("print-config", false, "print the effective config (password redacted) and exit")
-	keyPath := flag.String("key", "", "host key file (default hermec-server.key next to -config; generated when missing)")
-	chainPath := flag.String("chain", "", "server chain file (default chain.jsonl next to -config)")
-	historyPath := flag.String("history", "", "chat history file (default history.jsonl next to -config)")
-	applyConfig := flag.Bool("apply-config", false, "append the config file's group fields to the chain, print the count, and exit; stop the server first, the changes apply when it starts")
-	flag.Parse()
+	f, err := parseFlags(os.Args[1:])
+	if errors.Is(err, flag.ErrHelp) {
+		return
+	} else if err != nil {
+		os.Exit(2)
+	}
+	configPath, printConfig, keyPath := &f.config, &f.printConfig, &f.key
+	chainPath, historyPath, applyConfig := &f.chain, &f.history, &f.applyConfig
 	if *applyConfig && *configPath == "" {
 		log.Fatal("-apply-config requires -config")
 	}
@@ -100,10 +101,11 @@ func main() {
 		log.Print("NOTICE: server.toml stores the plain password; set password_key instead (the server derives it on every start)")
 	}
 
-	srv := server.New(cfg)
-	if err := srv.Start(); err != nil {
+	host := server.NewHost(buildHostConfig(f, cfg, dir, func(s string) { log.Print(s) }))
+	if err := host.Start(); err != nil {
 		log.Fatal(err)
 	}
+	srv := host.Server()
 	scheme := "ws"
 	if cfg.TLSCert != "" {
 		scheme = "wss"
@@ -122,7 +124,7 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := host.Shutdown(ctx); err != nil {
 		log.Fatalf("shutdown: %v", err)
 	}
 }

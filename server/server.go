@@ -151,7 +151,10 @@ type Server struct {
 	mu      sync.Mutex
 	conns   map[*conn]struct{}
 	closing bool
-	wg      sync.WaitGroup // per-connection goroutines and the accept loop
+	// shutdown is set when Shutdown begins: the host no longer announces a
+	// standby change, as its links close before its clients do.
+	shutdown atomic.Bool
+	wg     sync.WaitGroup // per-connection goroutines and the accept loop
 
 	lastChatTS time.Time  // newest chat timestamp issued; guarded by chMu
 	chMu       sync.Mutex // guards chans, voice, authed, conn.voiceCh, lastChatTS; see channels.go, voice.go
@@ -375,6 +378,7 @@ func (s *Server) Addr() string {
 // Shutdown stops accepting, closes all connections, and waits for every
 // server goroutine to exit or ctx to expire.
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.shutdown.Store(true)
 	s.mu.Lock()
 	s.closing = true
 	open := make([]*conn, 0, len(s.conns))
