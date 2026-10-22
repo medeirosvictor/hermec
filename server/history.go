@@ -28,10 +28,24 @@ type History struct {
 	needNL  bool     // file does not end in a newline; next append starts a fresh line
 	f       *os.File // open append handle on path; nil until the first Add
 	fileLen int      // bytes in the file, stale lines and all
+	closed  bool     // Close was called; Add fails
+
+	// rewriteMu serializes rewrites. The rest is guarded by mu: while a
+	// rewrite writes its temp file without mu, rewriting is set and Add keeps
+	// the lines it appends in pending; gen changes when the store is emptied.
+	rewriteMu sync.Mutex
+	rewriting bool
+	pending   []byte
+	gen       int
+	retryAt   time.Time // Compact leaves the file alone until then
 
 	// write appends b to the open store file; nil means f.Write. Tests set it
 	// to force a failed or partial write.
 	write func(f *os.File, b []byte) (int, error)
+	// tmpWrite writes a rewrite's temp file and rename moves it into place;
+	// nil means f.Write and os.Rename. Tests set them to slow or fail a rewrite.
+	tmpWrite func(f *os.File, b []byte) (int, error)
+	rename   func(oldpath, newpath string) error
 }
 
 // lineMeta is what the store remembers about each line by id.
@@ -174,6 +188,9 @@ func encodeLine(m proto.ChatMessage) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// errClosed is returned by Add once the store has been closed.
+var errClosed = errors.New("history: store is closed")
+
 // Add stores m and appends it to the file (no fsync). It is a no-op while the
 // day cap is 0, and ignores an id already stored. If m pushes the store past
 // the megabyte cap, the oldest messages leave memory at once; the file is
@@ -181,6 +198,9 @@ func encodeLine(m proto.ChatMessage) ([]byte, error) {
 func (h *History) Add(m proto.ChatMessage) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed {
+		return errClosed
+	}
 	if h.days == 0 {
 		return nil
 	}
@@ -199,9 +219,30 @@ func (h *History) Add(m proto.ChatMessage) error {
 	h.insert(m, len(b))
 	if limit := h.mb << 20; h.size > limit {
 		drop, size := h.plan(time.Time{}, limit)
-		h.chans, h.ids, h.size = h.without(drop), h.keptIDs(drop), size
+		h.evict(drop, size)
 	}
 	return nil
+}
+
+// evict removes the first drop[ch] messages of each channel in place and sets
+// the stored size to size (what plan computed). Caller holds mu.
+func (h *History) evict(drop map[string]int, size int) {
+	for ch, k := range drop {
+		if k == 0 {
+			continue
+		}
+		s := h.chans[ch]
+		for i := range s[:k] {
+			delete(h.ids, s[i].ID)
+			s[i] = proto.ChatMessage{} // let the text go
+		}
+		if k == len(s) {
+			delete(h.chans, ch)
+		} else {
+			h.chans[ch] = s[k:]
+		}
+	}
+	h.size = size
 }
 
 // appendLocked appends line b to the store file through the open handle.
@@ -231,6 +272,9 @@ func (h *History) appendLocked(b []byte) error {
 		return err
 	}
 	h.needNL = false
+	if h.rewriting {
+		h.pending = append(h.pending, b...) // the rewrite must carry it over
+	}
 	return nil
 }
 
@@ -244,10 +288,12 @@ func (h *History) closeFile() error {
 	return err
 }
 
-// Close releases the store file. The store stays usable: the next Add reopens it.
+// Close releases the store file for good: later Adds fail, and a rewrite in
+// flight is abandoned. Page still answers from memory.
 func (h *History) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.closed = true
 	return h.closeFile()
 }
 
@@ -287,7 +333,7 @@ func (h *History) Page(channel, beforeID string, beforeTS time.Time, n int) (msg
 // oldest ones until the stored size fits limit. It returns the number of
 // leading messages to drop from each channel and the size that leaves.
 func (h *History) plan(cutoff time.Time, limit int) (drop map[string]int, size int) {
-	drop = map[string]int{}
+	drop = make(map[string]int, len(h.chans))
 	size = h.size
 	for ch, s := range h.chans {
 		k := sort.Search(len(s), func(i int) bool { return !s[i].TS.Before(cutoff) })
@@ -316,64 +362,60 @@ func (h *History) plan(cutoff time.Time, limit int) (drop map[string]int, size i
 	return drop, size
 }
 
-// without is the channels with the first drop[ch] messages of each removed.
-func (h *History) without(drop map[string]int) map[string][]proto.ChatMessage {
-	kept := make(map[string][]proto.ChatMessage, len(h.chans))
-	for ch, s := range h.chans {
-		if rest := s[drop[ch]:]; len(rest) > 0 {
-			kept[ch] = append([]proto.ChatMessage(nil), rest...)
-		}
-	}
-	return kept
-}
-
-// keptIDs is the id index narrowed to the messages without(drop) keeps.
-func (h *History) keptIDs(drop map[string]int) map[string]lineMeta {
-	ids := make(map[string]lineMeta, len(h.ids))
-	for ch, s := range h.chans {
-		for _, m := range s[drop[ch]:] {
-			ids[m.ID] = h.ids[m.ID]
-		}
-	}
-	return ids
-}
-
 // Trim drops messages older than the day cap, then the globally oldest ones
 // until Size() fits the megabyte cap, and rewrites the file if anything was
 // dropped or skipped. With a day cap of 0 it empties the store and removes the
-// file. On a rewrite error the in-memory state is left as it was.
+// file. Memory is trimmed first; if the rewrite fails the file keeps its old
+// lines until a later rewrite and the error is returned.
 func (h *History) Trim(now time.Time) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.trimLocked(now, false)
+	h.rewriteMu.Lock()
+	defer h.rewriteMu.Unlock()
+	return h.trim(now, false)
 }
 
 // Compact is Trim for the file only: when the file has grown past twice the
 // megabyte cap (Add drops lines from memory but only appends to the file) it
-// is rewritten down to the live messages. Otherwise it does nothing, cheaply.
+// is rewritten down to the live messages. Otherwise, while another rewrite
+// runs, or for a minute after a failed one, it does nothing, cheaply.
 func (h *History) Compact(now time.Time) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.path == "" || h.fileLen <= 2*h.mb<<20 {
+	if !h.rewriteMu.TryLock() {
 		return nil
 	}
-	return h.trimLocked(now, true)
+	defer h.rewriteMu.Unlock()
+	return h.trim(now, true)
 }
 
-// trimLocked is Trim; force rewrites the file even when nothing is dropped.
-func (h *History) trimLocked(now time.Time, force bool) error {
+// retryAfter is how long Compact leaves a failed rewrite alone.
+const retryAfter = time.Minute
+
+// snapLine is one message copied for a rewrite, with its size when copied.
+type snapLine struct {
+	m proto.ChatMessage
+	n int
+}
+
+// trim does Trim, or Compact when compact is set. Caller holds rewriteMu.
+func (h *History) trim(now time.Time, compact bool) error {
+	h.mu.Lock()
+	if compact && (h.path == "" || h.closed || h.fileLen <= 2*h.mb<<20 || now.Before(h.retryAt)) {
+		h.mu.Unlock()
+		return nil
+	}
 	if h.days == 0 {
 		// Clear memory first so nothing old is served even if the remove fails.
 		h.chans = map[string][]proto.ChatMessage{}
 		h.ids = map[string]lineMeta{}
 		h.size, h.skipped, h.needNL, h.fileLen = 0, 0, false, 0
+		h.gen++ // a rewrite that began earlier must not bring the file back
+		var err error
 		if h.path != "" {
 			h.closeFile() // Windows cannot remove an open file
-			if err := os.Remove(h.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
+			if err = os.Remove(h.path); errors.Is(err, os.ErrNotExist) {
+				err = nil
 			}
 		}
-		return nil
+		h.mu.Unlock()
+		return err
 	}
 
 	cutoff := now.Add(-time.Duration(h.days) * 24 * time.Hour)
@@ -382,64 +424,143 @@ func (h *History) trimLocked(now time.Time, force bool) error {
 	for _, k := range drop {
 		dropped += k
 	}
-	if dropped == 0 && h.skipped == 0 && !force {
+	if dropped == 0 && h.skipped == 0 && !compact {
+		h.mu.Unlock()
 		return nil
 	}
-
-	kept := h.without(drop)
-	if h.path != "" {
-		n, err := h.rewrite(kept)
-		if err != nil {
-			return err
-		}
-		h.fileLen = n
+	h.evict(drop, size)
+	if h.path == "" {
+		h.skipped = 0
+		h.mu.Unlock()
+		return nil
 	}
-	h.chans, h.ids, h.size = kept, h.keptIDs(drop), size
+	var snap []snapLine
+	for _, s := range h.chans {
+		for _, m := range s {
+			snap = append(snap, snapLine{m, h.ids[m.ID].n})
+		}
+	}
+	h.rewriting, h.pending = true, nil
+	gen, write := h.gen, h.tmpWrite
+	h.mu.Unlock()
+
+	return h.rewrite(snap, gen, write, now)
+}
+
+// rewrite writes snap, in global (TS, ID) order, to a temp file beside the
+// store without holding mu, then takes mu to add the lines Add appended in the
+// meantime and rename the file over the store. The open append handle is
+// closed first (the rename fails over it on Windows); the next Add reopens
+// the new file. Caller holds rewriteMu, so only one rewrite runs at a time.
+func (h *History) rewrite(snap []snapLine, gen int, write func(*os.File, []byte) (int, error), now time.Time) error {
+	sort.Slice(snap, func(i, j int) bool { return histLess(snap[i].m, snap[j].m) })
+	var buf bytes.Buffer
+	var resized []snapLine // lines whose re-encoded length differs
+	var err error
+	for _, l := range snap {
+		var b []byte
+		if b, err = encodeLine(l.m); err != nil {
+			break
+		}
+		buf.Write(b)
+		if len(b) != l.n {
+			resized = append(resized, snapLine{l.m, len(b)})
+		}
+	}
+	var tmp string
+	if err == nil {
+		tmp, err = h.writeTemp(buf.Bytes(), write)
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	pending := h.pending
+	h.rewriting, h.pending = false, nil
+	if err == nil && (h.gen != gen || h.closed) {
+		os.Remove(tmp) // the store was emptied or closed meanwhile
+		return nil
+	}
+	if err == nil && len(pending) > 0 {
+		err = appendTemp(tmp, pending)
+	}
+	if err == nil {
+		h.closeFile()
+		rename := h.rename
+		if rename == nil {
+			rename = os.Rename
+		}
+		err = rename(tmp, h.path)
+	}
+	if err != nil {
+		if tmp != "" {
+			os.Remove(tmp)
+		}
+		h.retryAt = now.Add(retryAfter)
+		return err
+	}
+	h.fileLen = buf.Len() + len(pending)
 	h.skipped, h.needNL = 0, false
+	for _, l := range resized {
+		if meta, ok := h.ids[l.m.ID]; ok {
+			h.size += l.n - meta.n
+			h.ids[l.m.ID] = lineMeta{l.n, meta.ts}
+		}
+	}
 	return nil
 }
 
-// rewrite writes msgs to a temp file beside the store and renames it over the
-// store, in global (TS, ID) order, and returns the new file length. The open
-// append handle is closed first (the rename fails over it on Windows); the
-// next Add reopens the new file. Caller holds mu.
-func (h *History) rewrite(msgs map[string][]proto.ChatMessage) (int, error) {
-	var all []proto.ChatMessage
-	for _, s := range msgs {
-		all = append(all, s...)
-	}
-	sort.Slice(all, func(i, j int) bool { return histLess(all[i], all[j]) })
-
+// writeTemp writes data to a fresh synced temp file beside the store and
+// returns its name; on error the file is gone.
+func (h *History) writeTemp(data []byte, write func(*os.File, []byte) (int, error)) (string, error) {
 	f, err := os.CreateTemp(filepath.Dir(h.path), tempPattern(filepath.Base(h.path)))
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 	tmp := f.Name()
-	var buf bytes.Buffer
-	for _, m := range all {
-		b, err := encodeLine(m)
-		if err != nil {
-			f.Close()
-			os.Remove(tmp)
-			return 0, err
-		}
-		buf.Write(b)
+	if write == nil {
+		write = (*os.File).Write
 	}
-	_, werr := f.Write(buf.Bytes())
+	_, werr := write(f, data)
 	if werr == nil {
 		werr = f.Sync() // the rename must not land before the data
 	}
-	cerr := f.Close()
-	if werr == nil {
+	if cerr := f.Close(); werr == nil {
 		werr = cerr
-	}
-	if werr == nil {
-		h.closeFile()
-		werr = os.Rename(tmp, h.path)
 	}
 	if werr != nil {
 		os.Remove(tmp)
-		return 0, werr
+		return "", werr
 	}
-	return buf.Len(), nil
+	return tmp, nil
+}
+
+// appendTemp appends data to the temp file at path and syncs it.
+func appendTemp(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, werr := f.Write(data)
+	if werr == nil {
+		werr = f.Sync()
+	}
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	return werr
+}
+
+// NewestBefore returns the newest stored timestamp that is not after limit;
+// zero if there is none.
+func (h *History) NewestBefore(limit time.Time) time.Time {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var t time.Time
+	for _, s := range h.chans {
+		i := sort.Search(len(s), func(i int) bool { return s[i].TS.After(limit) })
+		if i > 0 && s[i-1].TS.After(t) {
+			t = s[i-1].TS
+		}
+	}
+	return t
 }

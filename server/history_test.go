@@ -433,3 +433,140 @@ func TestHistoryDuplicateAddIgnored(t *testing.T) {
 		t.Fatalf("got %d", len(got))
 	}
 }
+
+// Once the store is at its cap an Add evicts in place: its cost must not
+// grow with the number of stored lines (a rebuild of the indexes would).
+func TestAddAtCapDoesNotRebuild(t *testing.T) {
+	allocs := func(stored int) float64 {
+		h := openH(t, "")
+		h.SetLimits(30, 64)
+		for i := 0; i < stored; i++ {
+			h.Add(hmsg("c", i, histBase.Add(time.Duration(i)*time.Second)))
+		}
+		h.SetLimits(30, 1)
+		h.Trim(histBase.Add(time.Hour)) // down to the cap
+		i := stored
+		return testing.AllocsPerRun(50, func() {
+			i++
+			h.Add(hmsg("c", i, histBase.Add(time.Duration(i)*time.Second)))
+		})
+	}
+	small, big := allocs(8000), allocs(30000)
+	if big > 40 || big > small+10 {
+		t.Fatalf("allocs per Add at cap: %.0f with 8000 stored lines, %.0f with 30000", small, big)
+	}
+}
+
+// A rewrite does not hold the lock while it writes: Add and Page go on, and
+// lines added meanwhile survive in the new file.
+func TestRewriteDoesNotBlockAdd(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "h.jsonl")
+	h := openH(t, p)
+	h.SetLimits(30, 8)
+	for i := 0; i < 10; i++ {
+		h.Add(hmsg("c", i, histBase.Add(time.Duration(i)*time.Second)))
+	}
+	started, release := make(chan struct{}), make(chan struct{})
+	h.tmpWrite = func(f *os.File, b []byte) (int, error) {
+		close(started)
+		<-release
+		return f.Write(b)
+	}
+	h.SetLimits(1, 8) // days cap: everything before the cutoff goes
+	done := make(chan error, 1)
+	go func() { done <- h.Trim(histBase.Add(36*time.Hour + 5*time.Second)) }()
+	<-started
+	during := make(chan struct{})
+	go func() {
+		defer close(during)
+		h.Add(hmsg("c", 50, histBase.Add(36*time.Hour+10*time.Second)))
+		h.Page("c", "", time.Time{}, 10)
+	}()
+	select {
+	case <-during:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Add/Page blocked while the rewrite was writing")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	h.Close()
+	h2 := openH(t, p)
+	got, _ := h2.Page("c", "", time.Time{}, 100)
+	if len(got) != 1 || got[0].Text != "msg 50" {
+		t.Fatalf("after reopen: %+v", got)
+	}
+	if h.Size() != h2.Size() {
+		t.Fatalf("size %d, reopened %d", h.Size(), h2.Size())
+	}
+}
+
+// A rename that keeps failing must not be retried on every chat.
+func TestCompactBacksOffAfterFailure(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "h.jsonl")
+	h := openH(t, p)
+	h.SetLimits(30, 64)
+	pad := strings.Repeat("x", 1000)
+	for i := 0; i < 2500; i++ {
+		m := hmsg("c", i, histBase.Add(time.Duration(i)*time.Second))
+		m.Text = pad
+		h.Add(m)
+	}
+	h.SetLimits(30, 1) // file is now over twice the cap
+	renames := 0
+	h.rename = func(string, string) error { renames++; return errors.New("locked") }
+	now := histBase.Add(time.Hour)
+	if err := h.Compact(now); err == nil {
+		t.Fatal("want the rename error")
+	}
+	if err := h.Compact(now.Add(30 * time.Second)); err != nil || renames != 1 {
+		t.Fatalf("inside the backoff: err=%v renames=%d", err, renames)
+	}
+	if err := h.Compact(now.Add(2 * time.Minute)); err == nil || renames != 2 {
+		t.Fatalf("after the backoff: err=%v renames=%d", err, renames)
+	}
+}
+
+// A rewrite re-encodes lines without HTML escapes; the size follows.
+func TestRewriteUpdatesSize(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "h.jsonl")
+	m := hmsg("c", 1, histBase)
+	m.Text = "<<<<<<<<<<"
+	os.WriteFile(p, []byte(line(t, m)+"garbage\n"), 0o600) // old escaped line, one bad line
+	h := openH(t, p)
+	if err := h.Trim(histBase); err != nil { // the bad line forces a rewrite
+		t.Fatal(err)
+	}
+	fi, _ := os.Stat(p)
+	if h.Size() != int(fi.Size()) {
+		t.Fatalf("size %d, file %d", h.Size(), fi.Size())
+	}
+}
+
+func TestNewestBefore(t *testing.T) {
+	h := openH(t, "")
+	h.Add(hmsg("a", 1, histBase))
+	h.Add(hmsg("b", 2, histBase.Add(time.Hour)))
+	h.Add(hmsg("a", 3, histBase.Add(48*time.Hour)))
+	if got := h.NewestBefore(histBase.Add(2 * time.Hour)); !got.Equal(histBase.Add(time.Hour)) {
+		t.Fatalf("got %v", got)
+	}
+	if got := h.NewestBefore(histBase.Add(-time.Second)); !got.IsZero() {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestAddAfterCloseFails(t *testing.T) {
+	for _, p := range []string{"", filepath.Join(t.TempDir(), "h.jsonl")} {
+		h := openH(t, p)
+		h.Add(hmsg("c", 1, histBase))
+		h.Close()
+		if err := h.Add(hmsg("c", 2, histBase.Add(time.Second))); err == nil {
+			t.Fatalf("path %q: Add after Close succeeded", p)
+		}
+		if got, _ := h.Page("c", "", time.Time{}, 10); len(got) != 1 {
+			t.Fatalf("path %q: page %v", p, got)
+		}
+	}
+}
