@@ -20,6 +20,11 @@ const (
 	MaxMessageSize = 64 * 1024
 	// MaxRosterMembers caps the members listed in one Roster frame.
 	MaxRosterMembers = 200
+	// HeartbeatInterval is how often a host sends hb to its clients and
+	// links; HeartbeatGrace is how long a receiver waits without one before
+	// calling the sender dead.
+	HeartbeatInterval = 500 * time.Millisecond
+	HeartbeatGrace    = 1500 * time.Millisecond
 )
 
 // Message types.

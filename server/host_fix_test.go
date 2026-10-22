@@ -16,13 +16,6 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 )
 
-// setHooks installs the merge seams for one test.
-func setHooks(t *testing.T, recheck, history func(*Host)) {
-	t.Helper()
-	beforeYieldRecheck, beforeMergeHistory = recheck, history
-	t.Cleanup(func() { beforeYieldRecheck, beforeMergeHistory = nil, nil })
-}
-
 func fixedLoad(clients int) func() (int, int) {
 	return func() (int, int) { return 0, clients }
 }
@@ -51,8 +44,9 @@ func TestColdStartSimultaneousStartsOneActive(t *testing.T) {
 	var ready sync.WaitGroup
 	ready.Add(3)
 	gate := make(chan struct{})
-	beforeLoop = func(*Host) { ready.Done(); <-gate }
-	t.Cleanup(func() { beforeLoop = nil })
+	for _, h := range []*testHost{ha, hb, hc} {
+		h.testHooks.beforeLoop = func() { ready.Done(); <-gate }
+	}
 	ha.start(t)
 	hb.start(t)
 	hc.start(t)
@@ -263,14 +257,10 @@ func TestMutualYieldNeverLeavesNoneActive(t *testing.T) {
 	hb := newTestHost(t, base, b, "beta")
 	var bClients atomic.Int32
 	bClients.Store(1)
-	ha.Server().loadHook = func() (int, int) { return 1, 2 } // voice keeps B from handing back
-	hb.Server().loadHook = func() (int, int) { return 1, int(bClients.Load()) }
+	ha.Server().load = func() (int, int) { return 1, 2 } // voice keeps B from handing back
+	hb.Server().load = func() (int, int) { return 1, int(bClients.Load()) }
 	// B loses when it first looks; before it commits its load flips.
-	setHooks(t, func(h *Host) {
-		if h == hb.Host {
-			bClients.Store(5)
-		}
-	}, nil)
+	hb.testHooks.beforeYieldRecheck = func() { bClients.Store(5) }
 	ha.start(t)
 	hb.start(t)
 	waitRole(t, ha, RoleActive, time.Second)
@@ -292,8 +282,8 @@ func TestMutualYieldNeverLeavesNoneActive(t *testing.T) {
 
 func TestMergeRefusedWhenWinnerWouldLose(t *testing.T) {
 	a, b, aURL, _, _, _, _ := linkPair(t, "pw")
-	a.loadHook = fixedLoad(1)
-	b.loadHook = fixedLoad(3) // the loser claims more clients than the winner has
+	a.load = fixedLoad(1)
+	b.load = fixedLoad(3) // the loser claims more clients than the winner has
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	ws, _, err := dialMerge(ctx, aURL, b)
@@ -313,32 +303,16 @@ func TestYieldNeedsWinnerOnOurChain(t *testing.T) {
 	}
 	hd := newTestHost(t, base, d, "gamma")
 	hb := newTestHost(t, short, b, "beta")
-	hd.Server().loadHook = fixedLoad(3)
-	hb.Server().loadHook = fixedLoad(0)
+	hd.Server().load = fixedLoad(3)
+	hb.Server().load = fixedLoad(0)
 	hd.start(t)
 	hb.start(t)
 	waitRole(t, hd, RoleActive, time.Second)
 	waitRole(t, hb, RoleActive, time.Second)
 	hb.setKnown(hd.url)
-	time.Sleep(4 * probeEvery)
+	time.Sleep(2 * probeEvery) // at least one probe tick after setKnown
 	if hb.Server().Mode() != ModeActive {
 		t.Fatal("B yielded to a host that is not on its chain")
-	}
-}
-
-func TestHostOnChain(t *testing.T) {
-	base, _, b, d := threeHostChain(t)
-	es := base.Entries()
-	short, err := chain.FromEntries(es[:len(es)-1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	hb := newTestHost(t, short, b, "beta")
-	if !hb.hostOnChain(identity.Fingerprint(b.PublicKey())) {
-		t.Fatal("B is not a host on its own chain")
-	}
-	if hb.hostOnChain(identity.Fingerprint(d.PublicKey())) {
-		t.Fatal("D is a host on a chain that lacks its host_add")
 	}
 }
 
@@ -347,8 +321,8 @@ func TestYieldKeepsNewerEntriesOnWinner(t *testing.T) {
 	base, a, b, _ := threeHostChain(t)
 	ha := newTestHost(t, base, a, "alpha")
 	hb := newTestHost(t, base, b, "beta")
-	ha.Server().loadHook = fixedLoad(2)
-	hb.Server().loadHook = fixedLoad(1)
+	ha.Server().load = fixedLoad(2)
+	hb.Server().load = fixedLoad(1)
 	ha.start(t)
 	hb.start(t)
 	waitRole(t, ha, RoleActive, time.Second)
@@ -376,15 +350,13 @@ func TestYieldAbortsWhenHistoryFails(t *testing.T) {
 	base, a, b, _ := threeHostChain(t)
 	ha := newTestHost(t, base, a, "alpha")
 	hb := newTestHost(t, base, b, "beta")
-	ha.Server().loadHook = fixedLoad(2)
-	hb.Server().loadHook = fixedLoad(1)
-	setHooks(t, nil, func(h *Host) {
-		if h == hb.Host {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = ha.Shutdown(ctx) // the merge link dies under B
-		}
-	})
+	ha.Server().load = fixedLoad(2)
+	hb.Server().load = fixedLoad(1)
+	hb.testHooks.beforeMergeHistory = func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = ha.Shutdown(ctx) // the merge link dies under B
+	}
 	ha.start(t)
 	hb.start(t)
 	waitRole(t, ha, RoleActive, time.Second)
@@ -392,7 +364,7 @@ func TestYieldAbortsWhenHistoryFails(t *testing.T) {
 	client := clientOn(t, hb.url, mustID(t))
 	ha.setKnown(hb.url)
 	hb.setKnown(ha.url)
-	time.Sleep(4 * probeEvery)
+	time.Sleep(2 * probeEvery) // at least one probe tick after setKnown
 	if hb.Server().Mode() != ModeActive {
 		t.Fatal("B did not stay active after the merge failed")
 	}
@@ -414,19 +386,17 @@ func TestShutdownMidMergeReturns(t *testing.T) {
 	hb := newTestHost(t, base, b, "beta")
 	var stall atomic.Bool
 	release := make(chan struct{})
-	ha.Server().loadHook = func() (int, int) {
+	ha.Server().load = func() (int, int) {
 		if stall.Load() {
 			<-release
 		}
 		return 0, 2
 	}
-	hb.Server().loadHook = fixedLoad(1)
+	hb.Server().load = fixedLoad(1)
 	t.Cleanup(func() { close(release) }) // runs before the hosts shut down
-	setHooks(t, nil, func(h *Host) {
-		if h == hb.Host {
-			stall.Store(true) // A stops answering the probe that ends the merge
-		}
-	})
+	hb.testHooks.beforeMergeHistory = func() {
+		stall.Store(true) // A stops answering the probe that ends the merge
+	}
 	ha.start(t)
 	hb.start(t)
 	waitRole(t, ha, RoleActive, time.Second)
@@ -465,8 +435,8 @@ func TestApplyRoleKeepsPromotion(t *testing.T) {
 
 func TestMergeLinkIsNotAStandbyCandidate(t *testing.T) {
 	a, b, aURL, _, _, _, _ := linkPair(t, "pw")
-	a.loadHook = fixedLoad(1)
-	b.loadHook = fixedLoad(0)
+	a.load = fixedLoad(1)
+	b.load = fixedLoad(0)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	ws, _, err := dialMerge(ctx, aURL, b)

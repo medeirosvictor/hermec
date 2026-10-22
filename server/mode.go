@@ -23,10 +23,11 @@ const (
 )
 
 // Heartbeat timing. The grace is how long a receiver waits without an hb
-// before calling the sender dead. Variables so tests can shorten them.
+// before calling the sender dead (proto.Heartbeat*). Variables so tests can
+// shorten them, through SetHeartbeatForTest.
 var (
-	heartbeatInterval = 500 * time.Millisecond
-	heartbeatGrace    = 1500 * time.Millisecond
+	heartbeatInterval = proto.HeartbeatInterval
+	heartbeatGrace    = proto.HeartbeatGrace
 )
 
 // serverMode holds the current mode and the host list the orchestrator set.

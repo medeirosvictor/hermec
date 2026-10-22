@@ -164,7 +164,7 @@ type Server struct {
 	warm       map[*conn]struct{} // warm (paused) sessions: chain frames and hb only; guarded by chMu
 	modeState  serverMode
 	takeover   takeoverState
-	loadHook   func() (voice, clients int)      // tests: replaces the measured load
+	load       func() (voice, clients int)      // the host load for the yield rule; tests replace it
 	promoted   atomic.Bool                      // takeover promoted this host; reset when it leaves active mode
 	warmSlots  int                              // warm sessions holding a slot of the warm cap; guarded by mu
 	warmMu     sync.Mutex                       // guards warmPeers
@@ -230,6 +230,7 @@ func New(cfg Config) *Server {
 	if err := CheckHost(cfg.Chain, cfg.HostKey); err != nil {
 		s.logf("server: WARNING: %v; clients will refuse this host", err)
 	}
+	s.load = s.measureLoad
 	s.modeState.mode.Store(int32(cfg.Mode))
 	s.ipConns = make(map[string]int)
 	s.fails = make(map[string]*authFail)

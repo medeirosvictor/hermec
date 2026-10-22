@@ -44,10 +44,6 @@ var (
 	// a handover to report itself active.
 	handoverWait = 3 * time.Second
 
-	// Test seams, called at fixed points of a merge.
-	beforeLoop         func(*Host)
-	beforeYieldRecheck func(*Host)
-	beforeMergeHistory func(*Host)
 )
 
 // Role names reported by Host.Role.
@@ -86,6 +82,14 @@ type Host struct {
 	promoted chan struct{} // signaled by the server's promote hook (cap 1)
 	started  bool
 	runs     sync.WaitGroup // link Run goroutines
+
+	// testHooks are called at fixed points so in-package tests can inject
+	// races; set before Start. Test only.
+	testHooks struct {
+		beforeLoop         func() // before the cold start
+		beforeYieldRecheck func() // in yield, before the last look at the winner
+		beforeMergeHistory func() // in yield, once the host went idle
+	}
 
 	// Owned by the loop goroutine.
 	seen    []string // host URLs learned from hosts frames and probe replies
@@ -181,8 +185,8 @@ func (h *Host) stopped() bool { return h.ctx.Err() != nil }
 // change; a nil link means the host is active (or stopping).
 func (h *Host) loop() {
 	defer close(h.done)
-	if beforeLoop != nil {
-		beforeLoop(h)
+	if f := h.testHooks.beforeLoop; f != nil {
+		f()
 	}
 	l := h.rejoin(nil, coldStartWindow)
 	for !h.stopped() {

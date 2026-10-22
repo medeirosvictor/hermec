@@ -13,11 +13,8 @@ import (
 // chain entry of theirs.
 const chainLostMsg = "your change was lost during a network split; please redo it"
 
-// load is the host's load for the yield rule: voice members and clients.
-func (s *Server) load() (voice, clients int) {
-	if s.loadHook != nil {
-		return s.loadHook()
-	}
+// measureLoad is the host load for the yield rule: voice members and clients.
+func (s *Server) measureLoad() (voice, clients int) {
 	s.chMu.Lock()
 	defer s.chMu.Unlock()
 	for _, set := range s.voice {

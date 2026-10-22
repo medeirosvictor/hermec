@@ -9,10 +9,6 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 )
 
-// heartbeatGrace is how long the watchdog tolerates silence after the first
-// hb before it reports ActiveLost. A variable so tests can shorten it.
-var heartbeatGrace = 1500 * time.Millisecond
-
 // takeoverKey marks the joinWaiter of a pending Takeover (no real channel has
 // this name), so a refusal reaches it and a promotion resolves it.
 const takeoverKey = "\x00takeover"
@@ -125,11 +121,11 @@ func (c *Client) onMove(env proto.Envelope) {
 	c.emit(Event{Move: &m})
 }
 
-// watchdog reports ActiveLost once when no hb has arrived for heartbeatGrace.
+// watchdog reports ActiveLost once when no hb has arrived for proto.HeartbeatGrace.
 // It stays quiet until the first hb: hosts before v0.7 send none. now is the
 // clock, and must be the one stamping c.lastHB.
 func (c *Client) watchdog(now func() time.Time) {
-	grace := c.grace
+	grace := proto.HeartbeatGrace
 	t := time.NewTicker(grace / 5)
 	defer t.Stop()
 	for {

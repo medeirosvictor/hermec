@@ -19,15 +19,9 @@ import (
 // fastHostTimers shortens the orchestrator and heartbeat timers for a test.
 func fastHostTimers(t *testing.T) {
 	t.Helper()
-	oc, op, oh, hi, hg := coldStartWindow, probeEvery, handbackIdle, heartbeatInterval, heartbeatGrace
-	ocp := coldProbeEvery
-	coldStartWindow, probeEvery, handbackIdle = 300*time.Millisecond, 300*time.Millisecond, 300*time.Millisecond
-	heartbeatInterval, heartbeatGrace = 50*time.Millisecond, 150*time.Millisecond
-	coldProbeEvery = 50 * time.Millisecond
-	t.Cleanup(func() {
-		coldProbeEvery = ocp
-		coldStartWindow, probeEvery, handbackIdle, heartbeatInterval, heartbeatGrace = oc, op, oh, hi, hg
-	})
+	ms := time.Millisecond
+	t.Cleanup(SetHeartbeatForTest(50*ms, 150*ms))
+	t.Cleanup(SetHostTimersForTest(300*ms, 300*ms, 300*ms, 50*ms))
 }
 
 // threeHostChain is a chain with three hosts at priorities 1, 2 and 3, and

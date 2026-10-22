@@ -102,8 +102,8 @@ func (h *Host) yield(url string, win proto.LinkProbeReply) (*Link, bool) {
 		h.srv.logf("server: merge into %s: its chain does not verify: %v", url, err)
 		return nil, false
 	}
-	if beforeYieldRecheck != nil {
-		beforeYieldRecheck(h)
+	if f := h.testHooks.beforeYieldRecheck; f != nil {
+		f()
 	}
 	// Loads change: look again, right before committing.
 	pctx, pcancel := context.WithTimeout(h.ctx, dialTimeout)
@@ -118,8 +118,8 @@ func (h *Host) yield(url string, win proto.LinkProbeReply) (*Link, bool) {
 	// after what is read below.
 	promoted := h.srv.promoted.Load()
 	h.srv.goIdle()
-	if beforeMergeHistory != nil {
-		beforeMergeHistory(h)
+	if f := h.testHooks.beforeMergeHistory; f != nil {
+		f()
 	}
 	mine := h.srv.chain.Entries()
 	fastForward := commonPrefix(mine, full) == len(full) && len(mine) > len(full)

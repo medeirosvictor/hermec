@@ -90,7 +90,6 @@ type Client struct {
 	warm      atomic.Bool   // paused session until a takeover promotes it
 	lastHB    atomic.Int64  // clock time of the newest hb in unix nanoseconds; 0 before the first
 	lostFired atomic.Bool   // ActiveLost was emitted
-	grace     time.Duration // heartbeatGrace at Dial time
 
 	loopbackICE atomic.Bool
 	audioOnly   atomic.Bool
@@ -208,7 +207,6 @@ func DialWith(ctx context.Context, url string, id *identity.Identity, name, pass
 		started:     time.Now(),
 	}
 	c.warm.Store(o.Warm)
-	c.grace = heartbeatGrace
 	// Only the pong handler is set: the default ping handler keeps answering
 	// the server's keepalive pings.
 	ws.SetPongHandler(func(p string) error {

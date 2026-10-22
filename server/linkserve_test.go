@@ -340,9 +340,7 @@ func TestHostRemoveDropsLink(t *testing.T) {
 // A long history takes several frames; live chats and heartbeats flowing
 // meanwhile must not get the link dropped as slow, and every line arrives.
 func TestLinkSyncMultiPageWithLiveTraffic(t *testing.T) {
-	old := heartbeatInterval
-	heartbeatInterval = 10 * time.Millisecond
-	defer func() { heartbeatInterval = old }()
+	t.Cleanup(SetHeartbeatForTest(10*time.Millisecond, proto.HeartbeatGrace))
 	c, a, b := twoHostChain(t)
 	s, url := startLinkServer(t, c, a, "pw")
 	cl := fullClient(t, url)

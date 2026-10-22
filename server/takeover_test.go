@@ -18,9 +18,7 @@ import (
 // with B's link view and promote hook wired; promotes counts hook calls.
 func takeoverPair(t *testing.T) (a, b *Server, aURL, bURL string, ak, bk *identity.Identity, ac *chain.Chain, promotes *atomic.Int32) {
 	t.Helper()
-	oldI, oldG := heartbeatInterval, heartbeatGrace
-	heartbeatInterval, heartbeatGrace = 50*time.Millisecond, 150*time.Millisecond
-	t.Cleanup(func() { heartbeatInterval, heartbeatGrace = oldI, oldG })
+	t.Cleanup(SetHeartbeatForTest(50*time.Millisecond, 150*time.Millisecond))
 	a, b, aURL, bURL, ak, bk, ac = linkPair(t, "pw")
 	l := dialLink(t, aURL, b)
 	waitFor(t, "role", func() bool { return l.Standby() })
