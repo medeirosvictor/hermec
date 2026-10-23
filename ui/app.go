@@ -176,8 +176,10 @@ type game struct {
 	// watchRefused is set by the media worker when the server refused a Watch
 	// for that fingerprint; updateVideo (game goroutine) then leaves the view.
 	watchRefused atomic.Pointer[string]
-	vid          videoView     // newest frame for the watch view
-	vsink        videoSink     // receives decoded frames from the clients
+	vid          videoView   // newest frame for the watch view
+	vsink        videoSink   // receives decoded frames from the clients
+	mframes      mediaFrames // receives concurrent modern camera/screen frames
+	mediaViews   map[mediaViewKey]*videoView
 	previewOn    atomic.Bool   // the self preview is in view: the capture tap feeds vsink
 	tapGen       atomic.Uint64 // bumped when a share starts or stops: older taps are dropped
 	media        mediaWorker   // serialized StartShare / StopShare / Watch

@@ -476,6 +476,7 @@ func (g *game) install(s *session, nu, old *client.Client) {
 	s.dialing = false
 	s.dialGen++ // a redial of the active host still in flight is now stale
 	nu.SetVideoSink(&g.vsink)
+	nu.SetMediaSink(&g.mframes)
 	s.ms.joined, s.ms.confirmed = map[string]bool{}, map[string]bool{}
 	s.st.Phase = state.PhaseMain
 	s.st.ConnectErr = ""

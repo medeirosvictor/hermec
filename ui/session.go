@@ -467,6 +467,7 @@ func (g *game) applyDial(r dialResult) {
 	}
 	s.c = r.c
 	s.c.SetVideoSink(&g.vsink)
+	s.c.SetMediaSink(&g.mframes)
 	s.st.SetConnected(r.c.Channels(), r.c.Fingerprint())
 	s.ms = newMainScene()
 	s.everUp = true
