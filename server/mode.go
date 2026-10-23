@@ -167,13 +167,20 @@ func (s *Server) sendHeartbeat() {
 			dead = append(dead, m)
 		}
 	}
+	var silent []*conn
+	now := s.clock()
 	for m := range s.links {
 		if !m.enqueue(raw) {
 			dead = append(dead, m)
+		} else if now.Sub(m.link.lastBeat) > heartbeatGrace {
+			silent = append(silent, m) // a standby that died without a TCP close
 		}
 	}
 	s.chMu.Unlock()
 	dropSlow(dead)
+	for _, m := range silent {
+		m.closeSend() // leaveAll then picks the standby again
+	}
 }
 
 // restricted reports whether c may only send the messages a standby or warm
