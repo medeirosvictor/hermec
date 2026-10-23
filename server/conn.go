@@ -484,7 +484,7 @@ func (c *conn) authenticate() error {
 	if c.name == "" {
 		c.name = "anon"
 	}
-	accepted := acceptedCapabilities(auth.Capabilities)
+	accepted := acceptedCapabilities(auth.Capabilities, !c.srv.cfg.NoVP8)
 	c.capabilities = make(map[string]bool, len(accepted))
 	for _, capability := range accepted {
 		c.capabilities[capability] = true
@@ -516,7 +516,10 @@ func (c *conn) authenticate() error {
 	return nil
 }
 
-func acceptedCapabilities(offered []string) []string {
+func acceptedCapabilities(offered []string, mediaLanes bool) []string {
+	if !mediaLanes {
+		return nil
+	}
 	for _, capability := range offered {
 		if capability == proto.CapabilityMediaLanesV1 {
 			return []string{proto.CapabilityMediaLanesV1}

@@ -532,7 +532,8 @@ func (cl *call) newPC() error {
 			return err
 		}
 	}
-	vsenders, err := addInitialMediaTracks(pc, cl.track, cl.vtracks, cl.c.mediaLanes, cl.vidWanted)
+	modern := cl.c.mediaLanes && !cl.c.audioOnly.Load()
+	vsenders, err := addInitialMediaTracks(pc, cl.track, cl.vtracks, modern, cl.vidWanted)
 	if err != nil {
 		_ = pc.Close()
 		return err

@@ -143,6 +143,8 @@ type testPeer struct {
 	wmu sync.Mutex
 
 	video   *webrtc.TrackLocalStaticRTP // nil for a pure viewer
+	camera  *webrtc.TrackLocalStaticRTP
+	screen  *webrtc.TrackLocalStaticRTP
 	vtracks chan *webrtc.TrackRemote
 	vpkts   atomic.Int64
 	apkts   atomic.Int64
@@ -154,6 +156,14 @@ type testPeer struct {
 	audio  *webrtc.TrackLocalStaticRTP // the audio track this peer publishes
 	errs   chan string                 // messages of server error frames
 	vsrc   chan proto.VideoSource      // video_source messages received
+	msrc   chan proto.MediaSource      // media_source messages received
+	mpkts  chan mediaPacket            // received modern slot packets
+}
+
+type mediaPacket struct {
+	trackID string
+	seq     uint16
+	tag     byte
 }
 
 func newTestPeer(t *testing.T, url string, publish bool) *testPeer {
@@ -175,7 +185,8 @@ func newTestPeerMode(t *testing.T, url string, publish, modern bool) *testPeer {
 	}
 	p := &testPeer{t: t, ws: ws, fp: fpOf(id), vtracks: make(chan *webrtc.TrackRemote, 8),
 		states: make(chan proto.VoiceState, 64),
-		errs:   make(chan string, 16), vsrc: make(chan proto.VideoSource, 16)}
+		errs:   make(chan string, 16), vsrc: make(chan proto.VideoSource, 16),
+		msrc: make(chan proto.MediaSource, 64), mpkts: make(chan mediaPacket, 256)}
 	me := &webrtc.MediaEngine{}
 	_ = me.RegisterCodec(webrtc.RTPCodecParameters{RTPCodecCapability: webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}, PayloadType: 111}, webrtc.RTPCodecTypeAudio)
@@ -197,7 +208,35 @@ func newTestPeerMode(t *testing.T, url string, publish, modern bool) *testPeer {
 		t.Fatal(err)
 	}
 	p.audio = audio
-	if publish {
+	if modern {
+		for _, spec := range []struct {
+			kind proto.MediaKind
+			id   string
+		}{{proto.MediaCamera, cameraPublishTrackID}, {proto.MediaScreen, screenPublishTrackID}} {
+			track, _ := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000}, spec.id, p.fp)
+			sender, err := pc.AddTransceiverFromTrack(track, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if spec.kind == proto.MediaCamera {
+				p.camera = track
+			} else {
+				p.screen = track
+			}
+			go func(s *webrtc.RTPSender) {
+				for {
+					if _, _, err := s.ReadRTCP(); err != nil {
+						return
+					}
+				}
+			}(sender.Sender())
+		}
+		for i := 0; i < proto.MaxCameraSlots+1; i++ {
+			if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	} else if publish {
 		v, _ := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000}, "video-"+p.fp, p.fp)
 		snd, err := pc.AddTrack(v)
 		if err != nil {
@@ -241,6 +280,16 @@ func newTestPeerMode(t *testing.T, url string, publish, modern bool) *testPeer {
 						p.vtag.Store(int32(pkt.Payload[3]))
 					}
 					p.vpkts.Add(1)
+					if key, ok := parseSlotTrackID(tr.ID()); ok {
+						tag := byte(0)
+						if len(pkt.Payload) > 3 {
+							tag = pkt.Payload[3]
+						}
+						select {
+						case p.mpkts <- mediaPacket{trackID: slotTrackID(key), seq: pkt.SequenceNumber, tag: tag}:
+						default:
+						}
+					}
 				} else {
 					p.apkts.Add(1)
 				}
@@ -277,6 +326,14 @@ func (p *testPeer) readLoop() {
 			if json.Unmarshal(env.Data, &m) == nil {
 				select {
 				case p.vsrc <- m:
+				default:
+				}
+			}
+		case proto.TypeMediaSource:
+			var m proto.MediaSource
+			if json.Unmarshal(env.Data, &m) == nil {
+				select {
+				case p.msrc <- m:
 				default:
 				}
 			}

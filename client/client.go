@@ -483,6 +483,13 @@ func (c *Client) readLoop() {
 			if json.Unmarshal(env.Data, &vsrc) == nil {
 				c.onVideoSource(vsrc)
 			}
+		case proto.TypeMediaSource:
+			var source proto.MediaSource
+			if json.Unmarshal(env.Data, &source) == nil && source.Kind == proto.MediaScreen && source.Slot == 0 {
+				// Keep the current screen-watch API working while modern camera
+				// slots are handled independently by the call media receiver.
+				c.onVideoSource(proto.VideoSource{Fingerprint: source.Fingerprint, Seq: source.Seq, Gen: source.Gen})
+			}
 		case proto.TypeError:
 			var em proto.ErrorMsg
 			_ = json.Unmarshal(env.Data, &em)

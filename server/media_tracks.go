@@ -124,9 +124,8 @@ func classifyModernOffer(media []offeredMedia) modernOfferLayout {
 
 func (vs *voiceSession) configureModernAnswer(p *peer, pc *webrtc.PeerConnection, layout modernOfferLayout) error {
 	p.videoReceivers = make(map[*webrtc.RTPReceiver]proto.MediaKind)
-	if p.mediaSenders == nil {
-		p.mediaSenders = make(map[slotKey]*webrtc.RTPSender)
-		p.mediaTracks = make(map[slotKey]*webrtc.TrackLocalStaticRTP)
+	if p.slots == nil {
+		p.slots = make(map[slotKey]*videoSlot)
 	}
 	if !layout.valid {
 		return nil
@@ -143,7 +142,7 @@ func (vs *voiceSession) configureModernAnswer(p *peer, pc *webrtc.PeerConnection
 		if !ok {
 			continue
 		}
-		if _, exists := p.mediaSenders[key]; exists {
+		if _, exists := p.slots[key]; exists {
 			continue
 		}
 		track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
@@ -160,10 +159,9 @@ func (vs *voiceSession) configureModernAnswer(p *peer, pc *webrtc.PeerConnection
 		if tr.Sender() != sender {
 			return fmt.Errorf("media slot %s bound to unexpected transceiver", slotTrackID(key))
 		}
-		p.mediaSenders[key] = sender
-		p.mediaTracks[key] = track
+		p.slots[key] = &videoSlot{key: key, sender: sender, track: track}
 		vs.wg.Add(1)
-		go vs.drainRTCP(sender)
+		go vs.readMediaRTCP(sender, p, key)
 	}
 	return nil
 }
