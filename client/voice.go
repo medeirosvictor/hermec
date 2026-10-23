@@ -92,9 +92,9 @@ type call struct {
 	vtrack  *webrtc.TrackLocalStaticSample // VP8 screen share; sender added on first StartShare
 	api     *webrtc.API
 
-	smu     sync.Mutex // guards share
-	share   *shareLoop
-	sclosed bool // teardown has run: StartShare must refuse
+	smu        sync.Mutex // guards publishers
+	publishers map[proto.MediaKind]*videoPublisher
+	sclosed    bool // teardown has run: no publisher may start
 
 	// actor queue
 	qmu   sync.Mutex
@@ -238,7 +238,8 @@ func (c *Client) joinCall(ctx context.Context, channel string, src AudioSource, 
 	}
 	cl := &call{
 		c: c, channel: channel, src: src, sink: sink, track: track, vtrack: vtrack, api: c.newAPI(),
-		wake: make(chan struct{}, 1), stop: make(chan struct{}), adone: make(chan struct{}),
+		publishers: make(map[proto.MediaKind]*videoPublisher),
+		wake:       make(chan struct{}, 1), stop: make(chan struct{}), adone: make(chan struct{}),
 		ready: make(chan struct{}), failCh: make(chan struct{}), tdDone: make(chan struct{}),
 		muteCh: make(chan struct{}, 1), vidWanted: vid, warmPC: warm,
 	}
@@ -345,7 +346,7 @@ func (c *Client) onVoiceState(st proto.VoiceState) {
 			if cl.joined.CompareAndSwap(false, true) {
 				cl.post(cl.startOffer)
 			}
-			if m.Sharing && cl.curShare() != nil {
+			if m.Sharing && cl.curPublisher(proto.MediaScreen) != nil {
 				cl.post(cl.ensureVideo) // the host confirmed the share: it can take video
 			}
 			return
@@ -501,8 +502,8 @@ func (cl *call) teardownCtx(ctx context.Context) {
 			cl.tmu.Lock()
 			cl.tclosed = true
 			cl.tmu.Unlock()
-			if sl := cl.closeShare(); sl != nil {
-				sl.stop()
+			for _, publisher := range cl.closePublishers() {
+				publisher.stop()
 			}
 			if cl.pc != nil {
 				_ = cl.pc.Close()

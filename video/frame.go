@@ -2,7 +2,13 @@
 // as VP8 (pure-Go govpx).
 package video
 
-import "image"
+import (
+	"errors"
+	"image"
+)
+
+// ErrNoFrame means a non-blocking capture source has no newer picture.
+var ErrNoFrame = errors.New("video: no new frame")
 
 // Frame is a tightly packed I420 (4:2:0 planar) picture: Y has stride W and
 // U/V have stride (W+1)/2.

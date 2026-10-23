@@ -233,13 +233,13 @@ func TestStartShareOnClosedCall(t *testing.T) {
 	newEncoder = func(w, h, fps, kbps int) (frameEncoder, error) { return enc, nil }
 	defer func() { newEncoder = old }()
 
-	if sl := cl.closeShare(); sl != nil {
-		t.Fatal("unexpected loop")
+	if publishers := cl.closePublishers(); len(publishers) != 0 {
+		t.Fatalf("unexpected publishers: %v", publishers)
 	}
 	if err := c.StartShare(&countSource{}, 16, 16, 15, 100); err != ErrNotInVoice {
 		t.Fatalf("StartShare on a torn-down call = %v, want ErrNotInVoice", err)
 	}
-	if cl.share != nil {
+	if cl.curPublisher(proto.MediaScreen) != nil {
 		t.Fatal("loop installed on a dead call")
 	}
 	if !enc.isClosed() {

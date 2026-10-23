@@ -21,13 +21,15 @@ import (
 // stubServer speaks just enough of the protocol to drive JoinVoice: auth,
 // voice_join -> voice_state, and (optionally) a real pion answerer.
 type stubServer struct {
-	t      *testing.T
-	url    string
-	answer bool // act as an SFU answerer; false = never answer offers
+	t          *testing.T
+	url        string
+	answer     bool // act as an SFU answerer; false = never answer offers
+	mediaLanes bool // advertise the modern media control plane
 
-	mu   sync.Mutex
-	seen []string // client message types, in order
-	pc   *webrtc.PeerConnection
+	mu     sync.Mutex
+	seen   []string // client message types, in order
+	seenCh chan struct{}
+	pc     *webrtc.PeerConnection
 }
 
 func (s *stubServer) sawType(typ string) bool {
@@ -41,8 +43,23 @@ func (s *stubServer) sawType(typ string) bool {
 	return false
 }
 
+func (s *stubServer) waitType(typ string) bool {
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for {
+		if s.sawType(typ) {
+			return true
+		}
+		select {
+		case <-s.seenCh:
+		case <-deadline.C:
+			return false
+		}
+	}
+}
+
 func newStub(t *testing.T, answer bool) *stubServer {
-	s := &stubServer{t: t, answer: answer}
+	s := &stubServer{t: t, answer: answer, seenCh: make(chan struct{}, 1)}
 	up := websocket.Upgrader{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := up.Upgrade(w, r, nil)
@@ -78,8 +95,12 @@ func (s *stubServer) serve(ws *websocket.Conn) {
 		return
 	}
 	fp := identity.Fingerprint(a.PubKey)
-	send(proto.TypeAuthOK, proto.AuthOK{Fingerprint: fp, Roles: []string{"user"}, ServerID: sid,
-		Channels: []proto.ChannelInfo{{Name: "lobby", Type: "voice"}}})
+	ok := proto.AuthOK{Fingerprint: fp, Roles: []string{"user"}, ServerID: sid,
+		Channels: []proto.ChannelInfo{{Name: "lobby", Type: "voice"}}}
+	if s.mediaLanes {
+		ok.Capabilities = []string{proto.CapabilityMediaLanesV1}
+	}
+	send(proto.TypeAuthOK, ok)
 	for {
 		_, raw, err := ws.ReadMessage()
 		if err != nil {
@@ -92,6 +113,10 @@ func (s *stubServer) serve(ws *websocket.Conn) {
 		s.mu.Lock()
 		s.seen = append(s.seen, env.Type)
 		s.mu.Unlock()
+		select {
+		case s.seenCh <- struct{}{}:
+		default:
+		}
 		switch env.Type {
 		case proto.TypeVoiceJoin:
 			send(proto.TypeVoiceState, proto.VoiceState{Channel: "lobby",
