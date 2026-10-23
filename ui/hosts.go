@@ -250,7 +250,11 @@ func (g *game) drainWarm(s *session) {
 				s.warmRetryAt = time.Now().Add(state.JitteredBackoff(s.warmFails, nil))
 				return
 			}
-			if !s.warm.Warm() { // promoted by someone else; back off like a loss
+			if !s.warm.Warm() { // promoted by someone else: it is the active host now
+				if s.c != nil {
+					g.failover(s) // Takeover on a full client returns at once; install moves the call
+					return
+				}
 				g.dropWarm(s)
 				s.warmFails++
 				s.warmRetryAt = time.Now().Add(state.JitteredBackoff(s.warmFails, nil))
