@@ -28,6 +28,10 @@ func (s *Server) measureLoad() (voice, clients int) {
 // links.
 func (c *conn) handleLinkSyncIn(env proto.Envelope) {
 	s := c.srv
+	if c.link.hello.Yield == nil { // only a merge link may push history
+		c.sendError(proto.CodeForbidden, "only a merge link may send history")
+		return
+	}
 	var ls proto.LinkSync
 	if json.Unmarshal(env.Data, &ls) != nil {
 		c.sendError(proto.CodeBadRequest, "malformed link_sync")
@@ -108,6 +112,10 @@ func (s *Server) resumeActive(promoted bool) {
 // head (a merge loser whose chain is a prefix-extension of ours). Entries that
 // do not extend it are dropped.
 func (c *conn) handleLinkChainIn(env proto.Envelope) {
+	if c.link.hello.Yield == nil { // only a merge link may push entries
+		c.sendError(proto.CodeForbidden, "only a merge link may send chain entries")
+		return
+	}
 	var cf proto.ChainFrame
 	if json.Unmarshal(env.Data, &cf) != nil {
 		c.sendError(proto.CodeBadRequest, "malformed chain frame")
