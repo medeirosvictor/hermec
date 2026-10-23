@@ -154,7 +154,7 @@ func (g *game) drawCallView(screen *ebiten.Image, gm geometry) {
 		}
 		vector.FillRect(screen, float32(r.x0), float32(r.y0), float32(max(0, r.x1-r.x0)), float32(max(0, r.y1-r.y0)), bg, false)
 		if facts.camera {
-			g.drawViewIn(screen, g.mediaViews[mediaViewKey{Kind: proto.MediaCamera, Fingerprint: participant.Fingerprint}], r)
+			g.drawCameraTile(screen, participant, r)
 		} else {
 			initials := personInitials(participant.Name)
 			x := (r.x0 + r.x1 - text.Advance(initials, g.face)) / 2
@@ -180,7 +180,21 @@ func (g *game) drawCallView(screen *ebiten.Image, gm geometry) {
 	}
 }
 
-func (g *game) drawViewIn(dst *ebiten.Image, view *videoView, r rectF) {
+func cameraTileTransform(viewW, viewH int, r rectF, participant state.CallParticipant) ebiten.GeoM {
+	x, y, w, h := state.Letterbox(viewW, viewH, r.x0, r.y0, r.x1, r.y1)
+	var transform ebiten.GeoM
+	if participant.Self {
+		transform.Scale(-w/float64(viewW), h/float64(viewH))
+		transform.Translate(x+w, y)
+	} else {
+		transform.Scale(w/float64(viewW), h/float64(viewH))
+		transform.Translate(x, y)
+	}
+	return transform
+}
+
+func (g *game) drawCameraTile(dst *ebiten.Image, participant state.CallParticipant, r rectF) {
+	view := g.mediaViews[mediaViewKey{Kind: proto.MediaCamera, Fingerprint: participant.Fingerprint}]
 	if view == nil || view.rgba == nil || view.w <= 0 || view.h <= 0 {
 		return
 	}
@@ -197,9 +211,7 @@ func (g *game) drawViewIn(dst *ebiten.Image, view *videoView, r rectF) {
 	if view.img == nil {
 		return
 	}
-	x, y, w, h := state.Letterbox(view.w, view.h, r.x0, r.y0, r.x1, r.y1)
 	op := &ebiten.DrawImageOptions{Filter: ebiten.FilterLinear}
-	op.GeoM.Scale(w/float64(view.w), h/float64(view.h))
-	op.GeoM.Translate(x, y)
+	op.GeoM = cameraTileTransform(view.w, view.h, r, participant)
 	dst.DrawImage(view.img, op)
 }

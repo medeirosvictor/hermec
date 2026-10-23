@@ -81,6 +81,22 @@ func TestCallTileFallsBackToAvatarWhenCameraStops(t *testing.T) {
 	}
 }
 
+func TestCameraTileMirrorsOnlyTheLocalParticipant(t *testing.T) {
+	r := rectF{0, 0, 2, 1}
+	local := cameraTileTransform(2, 1, r, state.CallParticipant{Self: true})
+	remote := cameraTileTransform(2, 1, r, state.CallParticipant{Self: false})
+	localLeft, _ := local.Apply(0, 0)
+	localRight, _ := local.Apply(2, 0)
+	remoteLeft, _ := remote.Apply(0, 0)
+	remoteRight, _ := remote.Apply(2, 0)
+	if localLeft != 2 || localRight != 0 {
+		t.Fatalf("local x mapping = %v→%v, want 2→0", localLeft, localRight)
+	}
+	if remoteLeft != 0 || remoteRight != 2 {
+		t.Fatalf("remote x mapping = %v→%v, want 0→2", remoteLeft, remoteRight)
+	}
+}
+
 func TestCallViewControlsAreIndependent(t *testing.T) {
 	g, s := shareGame(t)
 	s.st.OpenCallView()
