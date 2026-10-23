@@ -4,38 +4,41 @@ package state
 type HitKind int
 
 const (
-	HitChannel       HitKind = iota // text channel row; ID is the channel index
-	HitVoice                        // voice channel row; Key is the channel name
-	HitRailTile                     // server tile in the rail; ID is the server index
-	HitRailAdd                      // the "+" rail tile
-	HitGear                         // the settings (gear) rail tile
-	HitSettingsRow                  // a row on the settings page; ID is the row
-	HitBarMute                      // call-bar mute button
-	HitBarLeave                     // call-bar leave button
-	HitBanner                       // the update banner
-	HitSignal                       // connection-quality bars
-	HitText                         // text input area (text cursor); ID is the field
-	HitDiscovered                   // discovered-server row on the connect page; ID is the row
-	HitMenuItem                     // context-menu item; ID is the item index
-	HitMembersToggle                // members panel toggle in the channel header
-	HitDialogBtn                    // dialog button; ID 0 = primary (Save / Leave), 1 = Cancel
-	HitFingerprint                  // the user's fingerprint line (hover tooltip only)
-	HitHelpBack                     // the back row of the settings help view
-	HitRailRetry                    // retry on a failed rail tile; ID is the tile index
-	HitAddChoice                    // Add a Server choice; ID 0 = Create my own, 1 = Join a server
-	HitCreateField                  // create-form field (text cursor); ID 0 name, 1 port
-	HitCreateBtn                    // the Create button
-	HitBarShare                     // call-bar share / stop share button
-	HitBarCamera                    // call-bar camera / stop camera button
-	HitLive                         // LIVE tag on a sharing occupant; Key is their fingerprint
-	HitVideo                        // the watch view (double-click toggles fullscreen)
-	HitVideoFull                    // on-video strip: toggle fullscreen
-	HitVideoStop                    // on-video strip: stop watching (stop sharing in the self preview)
-	HitVideoChange                  // on-video strip, self preview: change screen
-	HitVoiceLeave                   // voice panel: disconnect
-	HitVoiceShare                   // voice panel: share / stop share
-	HitVoiceCamera                  // voice panel: camera / stop camera
-	HitMember                       // roster member row; Key is their fingerprint
+	HitChannel         HitKind = iota // text channel row; ID is the channel index
+	HitVoice                          // voice channel row; Key is the channel name
+	HitRailTile                       // server tile in the rail; ID is the server index
+	HitRailAdd                        // the "+" rail tile
+	HitGear                           // the settings (gear) rail tile
+	HitSettingsRow                    // a row on the settings page; ID is the row
+	HitBarMute                        // call-bar mute button
+	HitBarLeave                       // call-bar leave button
+	HitBanner                         // the update banner
+	HitSignal                         // connection-quality bars
+	HitText                           // text input area (text cursor); ID is the field
+	HitDiscovered                     // discovered-server row on the connect page; ID is the row
+	HitMenuItem                       // context-menu item; ID is the item index
+	HitMembersToggle                  // members panel toggle in the channel header
+	HitDialogBtn                      // dialog button; ID 0 = primary (Save / Leave), 1 = Cancel
+	HitFingerprint                    // the user's fingerprint line (hover tooltip only)
+	HitHelpBack                       // the back row of the settings help view
+	HitRailRetry                      // retry on a failed rail tile; ID is the tile index
+	HitAddChoice                      // Add a Server choice; ID 0 = Create my own, 1 = Join a server
+	HitCreateField                    // create-form field (text cursor); ID 0 name, 1 port
+	HitCreateBtn                      // the Create button
+	HitBarShare                       // call-bar share / stop share button
+	HitBarCamera                      // call-bar camera / stop camera button
+	HitLive                           // LIVE tag on a sharing occupant; Key is their fingerprint
+	HitVideo                          // the watch view (double-click toggles fullscreen)
+	HitVideoFull                      // on-video strip: toggle fullscreen
+	HitVideoStop                      // on-video strip: stop watching (stop sharing in the self preview)
+	HitVideoChange                    // on-video strip, self preview: change screen
+	HitVoiceLeave                     // voice panel: disconnect
+	HitVoiceShare                     // voice panel: share / stop share
+	HitVoiceCamera                    // voice panel: camera / stop camera
+	HitMember                         // roster member row; Key is their fingerprint
+	HitCallBack                       // call view: return to chat without leaving
+	HitCallParticipant                // call view participant tile; Key is fingerprint
+	HitCallScreen                     // call view selected-screen presentation
 )
 
 // Hit is one click target: the half-open rect [X0,X1) x [Y0,Y1).

@@ -104,12 +104,17 @@ func (v *videoView) reset() {
 // videoActive reports that the watch view replaces the chat on screen.
 func (g *game) videoActive() bool {
 	return g.watch.fp != "" && g.callKey != "" && g.callKey == g.curKey &&
-		g.cur().st.Phase == state.PhaseMain && !g.settingsOpen
+		g.cur().st.Phase == state.PhaseMain && g.cur().st.CallViewOpen && !g.settingsOpen
 }
 
 // videoPane is the flat rect the picture is letterboxed into: the chat area
 // below its header row.
 func (g *game) videoPane(gm geometry) rectF {
+	if g.callViewActive() {
+		if presentation := g.callLayout(gm).presentation; presentation != nil {
+			return *presentation
+		}
+	}
 	return rectF{gm.chatR.x0 + 2, gm.paneY0, gm.chatR.x1 - 2, gm.chatR.y1 - 2}
 }
 
