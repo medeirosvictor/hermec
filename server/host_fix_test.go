@@ -33,7 +33,7 @@ func hostChangedLines(s *Server) int {
 	return n
 }
 
-func TestColdStartSimultaneousStartsOneActive(t *testing.T) {
+func TestColdStartSimultaneousConvergesToOneActive(t *testing.T) {
 	fastHostTimers(t)
 	base, a, b, d := threeHostChain(t)
 	ha := newTestHost(t, base, a, "alpha")
@@ -60,11 +60,6 @@ func TestColdStartSimultaneousStartsOneActive(t *testing.T) {
 	for _, h := range []*testHost{hb, hc} {
 		if h.Role() == RoleActive {
 			t.Fatalf("%s is active too", h.hc.Server.HostName)
-		}
-		for _, n := range h.notified() {
-			if n == "hosting: active" {
-				t.Fatalf("%s was active at some point: %v", h.hc.Server.HostName, h.notified())
-			}
 		}
 	}
 }

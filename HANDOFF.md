@@ -13,18 +13,18 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 2. Repo state: `main` == `origin/main`, released through **v0.5.1**; chat
    history (PR #9) is merged but not released. PR 3 (host link, warm standby,
    failover) is **done** on branch `worktree-hermec-failover` (worktree
-   `.claude/worktrees/hermec-failover`) and **not merged yet**: it waits for
-   Victor's real test (checklist below) and the final review. Untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
+   `.claude/worktrees/hermec-failover`) and **not merged yet**: its final review
+   and fix wave are complete, and it waits for Victor's real test (checklist
+   below). Untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.
-3. **Current round: always-on.** Spec (approved design):
-   `docs/superpowers/specs/2026-10-21-hermec-always-on-design.md`. Three PRs:
-   identity and chain, chat history, host link with warm standby and failover.
-   **PR 1 (identity and chain) and PR 2 (chat history, PR #9) are merged;
-   PR 3 is built, see above.** At merge, delete the spec and the plan
-   (`docs/superpowers/plans/2026-10-22-hermec-host-failover.md`) and tag
-   v0.7.0 on `main`. After always-on and webcam, Victor moves to stress testing
-   and use-case scenarios.
+3. **Current round: always-on.** The approved design is implemented across
+   three PRs: identity and chain, chat history, and host link with warm standby
+   and failover. **PR 1 (identity and chain) and PR 2 (chat history, PR #9) are
+   merged; PR 3 is built, see above.** The finished spec and implementation
+   plan were deleted per docs hygiene. Tag v0.7.0 on `main` after PR 3 merges.
+   After always-on and webcam, Victor moves to stress testing and use-case
+   scenarios.
 4. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload:
    `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In Victor's real settings,
    CRT and curvature are off: F1 toggles CRT, F3 curvature, F2 cycles themes.
@@ -54,7 +54,7 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 ## Next-session pipeline (Victor's order)
 
-1. **Always-on (PR 3 awaiting Victor's real test).** See the spec. Later idea
+1. **Always-on (PR 3 awaiting Victor's real test).** Later idea
    riding the same synced store: file sharing (a capped shared folder).
    vitoserver stays parked (Victor: do not bring it back for now).
    - **Decisions (Victor, 2026-10-22):** the password never travels (scrypt

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -256,7 +257,10 @@ func TestFriendHostKeepsGroupPassword(t *testing.T) {
 	f.shutdown() // the friend host cold-restarts into active
 	fh := g.friends[id]
 	pumpUntil(t, g, func() bool { return fh.h.Role() == server.RoleActive })
-	url := "ws://" + fh.h.Server().Addr() + "/"
+	// Server.Addr is the wildcard listener ([::]:port), which proxy-aware
+	// dialers may send through a proxy. Use the concrete loopback address that
+	// this test configured the friend host to advertise.
+	url := fmt.Sprintf("ws://127.0.0.1:%d/", fh.port)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if c, err := client.Dial(ctx, url, mustIdentity(t), "x", ""); err == nil {
@@ -265,7 +269,7 @@ func TestFriendHostKeepsGroupPassword(t *testing.T) {
 	} else {
 		var se *client.ServerError
 		if !errors.As(err, &se) || se.Code != proto.CodeAuthFailed {
-			t.Fatalf("err = %v, want auth_failed", err)
+			t.Fatalf("dial %s (friend port %d): err = %v, want auth_failed", url, fh.port, err)
 		}
 	}
 	c, err := client.DialWith(ctx, url, mustIdentity(t), "x", "", client.DialOpts{PasswordKey: key})
