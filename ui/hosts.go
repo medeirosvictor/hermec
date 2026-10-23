@@ -75,7 +75,7 @@ func (g *game) dialCreds(s *session) (pass string, o client.DialOpts) {
 		pass = g.hosted.cfg.Password
 		o.PasswordKey = g.hosted.cfg.PasswordKey
 		o.Pin = g.hosted.id
-		o.MinChainSeq = 0
+		o.MinChainSeq = 0 // the local host's own chain; dialAny raises it for a friend host
 	}
 	return pass, o
 }
@@ -116,7 +116,7 @@ func (g *game) dialAny(urls []string, name, pass string, o client.DialOpts) (*cl
 	ctx, cancel := context.WithTimeout(context.Background(), dialAnyTimeout)
 	defer cancel()
 	queue := slices.Clone(urls)
-	tried := map[string]bool{}
+	tried, followed := map[string]bool{}, map[string]bool{}
 	var refusal, last error
 	for len(queue) > 0 && ctx.Err() == nil {
 		u := queue[0]
@@ -125,8 +125,12 @@ func (g *game) dialAny(urls []string, name, pass string, o client.DialOpts) (*cl
 			continue
 		}
 		tried[u] = true
+		do := o
+		if followed[u] && g.hosted != nil && o.Pin == g.hosted.id { // a friend host, not the local one
+			do.MinChainSeq = max(do.MinChainSeq, g.hosted.chain.Head().Seq)
+		}
 		dctx, dcancel := context.WithTimeout(ctx, dialOneTimeout)
-		c, err := client.DialWith(dctx, u, g.id, name, pass, o)
+		c, err := client.DialWith(dctx, u, g.id, name, pass, do)
 		dcancel()
 		if err == nil {
 			if g.onDialed != nil {
@@ -144,6 +148,9 @@ func (g *game) dialAny(urls []string, name, pass string, o client.DialOpts) (*cl
 			refusal = err
 		}
 		if se.Code == proto.CodeNotActive && se.Hosts != nil {
+			for _, a := range se.Hosts.Active.Addrs {
+				followed[a] = true
+			}
 			queue = append(slices.Clone(se.Hosts.Active.Addrs), queue...)
 		}
 	}
