@@ -30,6 +30,17 @@ func TestSettingsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCameraDeviceRoundTrip(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	if err := SaveSettings(p, Settings{CameraDevice: "camera-id"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadSettings(p)
+	if err != nil || got.CameraDevice != "camera-id" {
+		t.Fatalf("camera device = %q, err=%v", got.CameraDevice, err)
+	}
+}
+
 func TestSettingsUnsetScanlinesStaysUnset(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "settings.toml")
 	if err := SaveSettings(p, Settings{Name: "a"}); err != nil {

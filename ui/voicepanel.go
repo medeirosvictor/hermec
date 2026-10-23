@@ -29,7 +29,7 @@ func voiceTextW(chanR rectF) float64 { return chanR.x1 - chanR.x0 - 2*pad }
 // label, so the layout does not change when sharing starts) do not fit side by
 // side in textW at the real font; each button then gets its own row.
 func (g *game) voiceStacked(textW float64) bool {
-	need := text.Advance(disconnectLabel, g.face) + text.Advance(shareLabelOn, g.face) + 3*pad
+	need := text.Advance(disconnectLabel, g.face) + text.Advance(shareLabelOn, g.face) + text.Advance("stop camera", g.face) + 5*pad
 	return need > textW
 }
 
@@ -38,7 +38,7 @@ func (g *game) voiceStacked(textW float64) bool {
 func (g *game) voicePanelH(lh, textW float64) float64 {
 	rows := 3.0
 	if g.voiceStacked(textW) {
-		rows = 4
+		rows = 5
 	}
 	return rows*lh + pad
 }
@@ -59,13 +59,15 @@ func (g *game) voicePanelRect(chanR rectF, lh float64) rectF {
 
 // voiceLayout is the pixel layout of the panel, shared by hits and draw.
 type voiceLayout struct {
-	line1Y, line2Y   float64
-	leaveY, shareY   float64 // button row tops
-	btnH             float64
-	textX, textW     float64
-	leaveX0, leaveX1 float64
-	shareX0, shareX1 float64
-	signalX          float64 // left edge of the signal bars on line 1
+	line1Y, line2Y     float64
+	leaveY, shareY     float64 // button row tops
+	cameraY            float64
+	btnH               float64
+	textX, textW       float64
+	leaveX0, leaveX1   float64
+	shareX0, shareX1   float64
+	cameraX0, cameraX1 float64
+	signalX            float64 // left edge of the signal bars on line 1
 }
 
 func (g *game) voiceLayout(gm geometry) voiceLayout {
@@ -80,15 +82,19 @@ func (g *game) voiceLayout(gm geometry) voiceLayout {
 	gap := float64(pad) / 2
 	if g.voiceStacked(l.textW) {
 		l.shareY = l.leaveY + gm.lh
+		l.cameraY = l.shareY + gm.lh
 		l.leaveX0, l.leaveX1 = l.textX, l.textX+l.textW
 		l.shareX0, l.shareX1 = l.leaveX0, l.leaveX1
+		l.cameraX0, l.cameraX1 = l.leaveX0, l.leaveX1
 		return l
 	}
-	l.shareY = l.leaveY
+	l.shareY, l.cameraY = l.leaveY, l.leaveY
 	wl := text.Advance(disconnectLabel, g.face) + pad
 	ws := text.Advance(g.shareLabel(), g.face) + pad
 	l.leaveX0, l.leaveX1 = l.textX, l.textX+wl
 	l.shareX0, l.shareX1 = l.leaveX1+gap, l.leaveX1+gap+ws
+	wc := text.Advance(g.cameraLabel(), g.face) + pad
+	l.cameraX0, l.cameraX1 = l.shareX1+gap, l.shareX1+gap+wc
 	return l
 }
 
@@ -133,6 +139,7 @@ func (g *game) addVoicePanelHits(gm geometry) {
 	g.hits.Add(state.Hit{X0: l.signalX - pad/2, Y0: l.line1Y, X1: l.signalX + signalW(gm.lh) + pad/2, Y1: l.line1Y + gm.lh, Kind: state.HitSignal, ID: signalBars})
 	g.hits.Add(state.Hit{X0: l.leaveX0, Y0: l.leaveY, X1: l.leaveX1, Y1: l.leaveY + l.btnH, Kind: state.HitVoiceLeave})
 	g.hits.Add(state.Hit{X0: l.shareX0, Y0: l.shareY, X1: l.shareX1, Y1: l.shareY + l.btnH, Kind: state.HitVoiceShare})
+	g.hits.Add(state.Hit{X0: l.cameraX0, Y0: l.cameraY, X1: l.cameraX1, Y1: l.cameraY + l.btnH, Kind: state.HitVoiceCamera})
 }
 
 func (g *game) drawVoicePanel(screen *ebiten.Image, gm geometry) {
@@ -178,8 +185,15 @@ func (g *game) drawVoicePanel(screen *ebiten.Image, gm geometry) {
 	if !live {
 		leaveCol, shareCol = th.Dim, th.Dim
 	}
+	cameraCol := th.FG
+	if !live || !g.cameraSupported() {
+		cameraCol = th.Dim
+	} else if g.camera.on {
+		cameraCol = th.Bright
+	}
 	g.drawVoiceButton(dst, l.leaveX0, l.leaveX1, l.leaveY, gm.lh, disconnectLabel, leaveCol)
 	g.drawVoiceButton(dst, l.shareX0, l.shareX1, l.shareY, gm.lh, g.shareLabel(), shareCol)
+	g.drawVoiceButton(dst, l.cameraX0, l.cameraX1, l.cameraY, gm.lh, g.cameraLabel(), cameraCol)
 }
 
 func (g *game) drawVoiceButton(dst *ebiten.Image, x0, x1, y, h float64, label string, col color.RGBA) {

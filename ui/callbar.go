@@ -117,8 +117,11 @@ func (g *game) clickVoice(ch string) {
 	if g.cur().c == nil || g.vc.busy {
 		return
 	}
-	if g.cur().st.VoiceClickAction(ch) == "join" {
+	switch g.cur().st.VoiceClickAction(ch) {
+	case "join":
 		g.joinCall(ch)
+	case "open":
+		g.cur().st.OpenCallView()
 	}
 }
 
@@ -249,6 +252,7 @@ func (g *game) endVoiceFor(key string) {
 func (g *game) updateVoice() {
 	g.applyMuteFail()
 	g.stepShare()
+	g.stepCamera()
 	select {
 	case r := <-g.voiceCh:
 		g.applyVoice(r)
@@ -353,6 +357,7 @@ type barLayout struct {
 	nameX                            float64
 	muteX0, muteX1, leaveX0, leaveX1 float64
 	shareX0, shareX1                 float64
+	cameraX0, cameraX1               float64
 	meterX, meterW                   float64
 }
 
@@ -384,7 +389,17 @@ func (g *game) barLayout(gm geometry) barLayout {
 	right = l.muteX0 - pad
 	sw := text.Advance(g.shareLabel(), g.face)
 	l.shareX1, l.shareX0 = right, right-sw-pad
+	right = l.shareX0 - pad
+	cw := text.Advance(g.cameraLabel(), g.face)
+	l.cameraX1, l.cameraX0 = right, right-cw-pad
 	return l
+}
+
+func (g *game) cameraLabel() string {
+	if g.camera.on {
+		return "stop camera"
+	}
+	return "camera"
 }
 
 // inCall reports whether a settled call exists (bar controls are live).
@@ -426,6 +441,7 @@ func (g *game) addBarHits(gm geometry) {
 		return
 	}
 	g.hits.Add(state.Hit{X0: l.shareX0, Y0: y0, X1: l.shareX1, Y1: y1, Kind: state.HitBarShare})
+	g.hits.Add(state.Hit{X0: l.cameraX0, Y0: y0, X1: l.cameraX1, Y1: y1, Kind: state.HitBarCamera})
 	g.hits.Add(state.Hit{X0: l.muteX0, Y0: y0, X1: l.muteX1, Y1: y1, Kind: state.HitBarMute})
 	g.hits.Add(state.Hit{X0: l.leaveX0, Y0: y0, X1: l.leaveX1, Y1: y1, Kind: state.HitBarLeave})
 }
@@ -443,7 +459,7 @@ func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
 		}
 		return
 	}
-	title := fitCallTitle(g.callTitle(), state.FormatElapsed(time.Since(g.vc.start)), int((l.shareX0-pad-l.nameX)/gm.adv))
+	title := fitCallTitle(g.callTitle(), state.FormatElapsed(time.Since(g.vc.start)), int((l.cameraX0-pad-l.nameX)/gm.adv))
 	g.drawText(dst, title, l.nameX, l.y, th.Bright)
 
 	shareCol := th.FG
@@ -454,6 +470,13 @@ func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
 		shareCol = th.Bright
 	}
 	g.drawText(dst, g.shareLabel(), l.shareX0+pad/2, l.y, shareCol)
+	cameraCol := th.FG
+	if !g.cameraSupported() {
+		cameraCol = th.Dim
+	} else if g.camera.on {
+		cameraCol = th.Bright
+	}
+	g.drawText(dst, g.cameraLabel(), l.cameraX0+pad/2, l.y, cameraCol)
 
 	col, label := th.FG, muteLabel
 	if g.vc.muted {

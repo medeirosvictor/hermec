@@ -26,6 +26,7 @@ const (
 	HitCreateField                  // create-form field (text cursor); ID 0 name, 1 port
 	HitCreateBtn                    // the Create button
 	HitBarShare                     // call-bar share / stop share button
+	HitBarCamera                    // call-bar camera / stop camera button
 	HitLive                         // LIVE tag on a sharing occupant; Key is their fingerprint
 	HitVideo                        // the watch view (double-click toggles fullscreen)
 	HitVideoFull                    // on-video strip: toggle fullscreen
@@ -33,6 +34,7 @@ const (
 	HitVideoChange                  // on-video strip, self preview: change screen
 	HitVoiceLeave                   // voice panel: disconnect
 	HitVoiceShare                   // voice panel: share / stop share
+	HitVoiceCamera                  // voice panel: camera / stop camera
 	HitMember                       // roster member row; Key is their fingerprint
 )
 

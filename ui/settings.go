@@ -14,6 +14,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"github.com/medeirosvictor/hermec/audio"
+	"github.com/medeirosvictor/hermec/cameracap"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/ui/theme"
 )
@@ -28,6 +29,7 @@ const (
 	rowCurvature
 	rowInput
 	rowOutput
+	rowCamera
 	rowShare
 	rowUpdate
 	rowLogs
@@ -260,7 +262,7 @@ func (g *game) toggleSettings() {
 	g.refreshDevices()
 }
 
-// refreshDevices enumerates audio devices. Called once on settings scene
+// refreshDevices enumerates audio and camera devices. Called once on settings scene
 // entry (never per frame). A failure leaves the lists empty: the rows then
 // just show the saved value and cycling selects "default".
 func (g *game) refreshDevices() {
@@ -270,6 +272,15 @@ func (g *game) refreshDevices() {
 		ins, outs = nil, nil
 	}
 	g.devIn, g.devOut = ins, outs
+	devices := g.cameraOps.devices
+	if devices == nil {
+		devices = cameracap.Devices
+	}
+	g.devCamera, err = devices()
+	if err != nil {
+		g.logf("list camera devices: %v", err)
+		g.devCamera = nil
+	}
 }
 
 // savedDevicesNotice reports, at startup, saved devices that are no longer
@@ -306,6 +317,21 @@ func (g *game) cycleOutput() {
 	g.set.OutputDevice = state.NextDevice(g.set.OutputDevice, g.devOut)
 	g.logf("output device: %q", g.set.OutputDevice)
 	g.persistSettings()
+}
+
+func (g *game) cameraDeviceLabel() string {
+	if !g.cameraSupported() {
+		return "unsupported"
+	}
+	if g.set.CameraDevice == "" {
+		return "default"
+	}
+	for _, device := range g.devCamera {
+		if device.ID == g.set.CameraDevice {
+			return device.Name
+		}
+	}
+	return g.set.CameraDevice + " (missing)"
 }
 
 // settingsTailLines is the height, in lines, of what follows the rows: a blank
@@ -418,6 +444,8 @@ func (g *game) activateSetting(row int) {
 		g.cycleInput()
 	case rowOutput:
 		g.cycleOutput()
+	case rowCamera:
+		g.cycleCameraDevice()
 	case rowSize:
 		g.cycleSize()
 	case rowShare:
@@ -471,6 +499,7 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 		"curvature: " + curv,
 		"input:     " + deviceLabel(g.set.InputDevice, g.devIn),
 		"output:    " + deviceLabel(g.set.OutputDevice, g.devOut),
+		"camera:    " + g.cameraDeviceLabel(),
 		"share quality: " + g.set.ShareQualityID(),
 		updateRowLabel(g.updStatus, g.update, g.version()),
 		"logs:      open folder ›",

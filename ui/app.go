@@ -18,6 +18,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 
+	"github.com/medeirosvictor/hermec/cameracap"
 	"github.com/medeirosvictor/hermec/client"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/roles"
@@ -134,8 +135,9 @@ type game struct {
 	settingsOpen  bool     // settings scene replaces the connect/main scene
 	setRow        int      // focused settings row
 	devIn, devOut []string // device names, enumerated on settings scene entry
-	autoName      string   // name in effect at startup; not persisted unless edited
-	nameDirty     bool     // settings name field edited, not yet saved
+	devCamera     []cameracap.Device
+	autoName      string // name in effect at startup; not persisted unless edited
+	nameDirty     bool   // settings name field edited, not yet saved
 
 	sw, sh  int        // screen size; w, h above are the scene (screen minus title bar)
 	tzone   state.Zone // title-bar zone under the mouse, ZoneNone elsewhere
@@ -183,8 +185,10 @@ type game struct {
 	previewOn    atomic.Bool   // the self preview is in view: the capture tap feeds vsink
 	tapGen       atomic.Uint64 // bumped when a share starts or stops: older taps are dropped
 	media        mediaWorker   // serialized StartShare / StopShare / Watch
-	fullscreen   bool          // window is fullscreen: no custom title bar
-	menuSpent    bool          // a menu press already took this tick's click
+	cameraOps    cameraOps
+	camera       cameraState
+	fullscreen   bool // window is fullscreen: no custom title bar
+	menuSpent    bool // a menu press already took this tick's click
 
 	helpOpen   bool    // the settings help view is showing
 	helpScroll int     // first visible help line
@@ -347,6 +351,8 @@ func Run(opts Options) error {
 	ebiten.SetWindowIcon(icons)
 	err = ebiten.RunGame(g)
 	g.flushName()
+	g.endCallMedia()
+	g.media.drain()
 	if g.vc.src != nil || g.vc.sink != nil {
 		if s := g.callSess(); s != nil && s.c != nil {
 			c := s.c

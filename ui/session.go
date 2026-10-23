@@ -455,7 +455,6 @@ func (g *game) applyDial(r dialResult) {
 		g.dropWarm(s)
 		if old := s.c; old != nil {
 			// Keep the call: it rejoins on the host that answered, same mute.
-			g.endOldMedia(s, old)
 			s.c = r.c
 			ch := s.st.InCall
 			if g.carryCall(s, r.c, old) {

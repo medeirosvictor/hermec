@@ -44,13 +44,14 @@ const (
 // hostResult is the outcome of a background host operation. s identifies the
 // session instance it was started for, old the client it replaces.
 type hostResult struct {
-	kind hostKind
-	key  string
-	s    *session
-	gen  int            // hostWarm: the session's warmGen at the start
-	old  *client.Client // the client the op was started for
-	c    *client.Client // dialed or promoted; the adopting client for hostAdopt
-	err  error
+	kind      hostKind
+	key       string
+	s         *session
+	gen       int            // hostWarm: the session's warmGen at the start
+	old       *client.Client // the client the op was started for
+	c         *client.Client // dialed or promoted; the adopting client for hostAdopt
+	err       error
+	mediaLost bool // AdoptCall failed and the fallback join could not retain publishers
 }
 
 // hostChan is the channel of hostResults, made on first use.
@@ -405,6 +406,18 @@ func (g *game) applyAdopt(r hostResult, s *session, live bool) {
 		s.st.Status = "voice call ended"
 		return
 	}
+	if r.mediaLost {
+		g.stopCamera()
+		g.stopShare()
+		s.st.Status = "camera or screen failed to resume after host failover"
+	} else {
+		if g.camera.on {
+			g.camera.c = r.c
+		}
+		if g.share.on {
+			g.share.c = r.c
+		}
+	}
 	g.logf("call moved to %s", s.st.HostedBy)
 }
 
@@ -484,7 +497,6 @@ func (g *game) install(s *session, nu, old *client.Client) {
 	s.attempt = 0
 	s.retryAt = time.Time{}
 	s.st.HostedBy = "" // the new host's hosts frame names it
-	g.endOldMedia(s, old)
 	s.restoreSendNotice()
 	if !g.carryCall(s, nu, old) {
 		_ = old.Close()
@@ -499,20 +511,6 @@ func (g *game) install(s *session, nu, old *client.Client) {
 	}
 	g.noteChainSeq(s)
 	g.saveServer(s, ch) // one write for the seq and the touch
-}
-
-// endOldMedia ends what does not carry over to a new client: our screen share
-// and a stream we watch.
-func (g *game) endOldMedia(s *session, old *client.Client) {
-	if g.share.on && g.share.c == old {
-		// The share does not carry over: end it cleanly, the user starts it again.
-		g.stopShare()
-		s.st.Status = "screen share ended: the host changed"
-	}
-	if g.watch.fp != "" && !g.watch.self && g.callKey == s.key {
-		g.watch = watchState{}
-		g.resetVideo()
-	}
 }
 
 // carryCall moves the call of s from old to nu in the background and closes
@@ -534,14 +532,15 @@ func (g *game) carryCall(s *session, nu, old *client.Client) bool {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		err := nu.AdoptCall(ctx, old)
-		if err != nil && src != nil && sink != nil { // an ordinary join instead
+		mediaLost := err != nil
+		if mediaLost && src != nil && sink != nil { // an ordinary join instead
 			g.logf("adopt call: %v; joining %s again", err, ch)
 			if err = nu.JoinVoice(ctx, ch, src, sink); err == nil && muted {
 				_ = nu.SetMuted(true)
 			}
 		}
 		_ = old.Close()
-		hc <- hostResult{kind: hostAdopt, key: key, s: s, c: nu, err: err}
+		hc <- hostResult{kind: hostAdopt, key: key, s: s, c: nu, err: err, mediaLost: mediaLost}
 	}(s, s.key)
 	return true
 }
