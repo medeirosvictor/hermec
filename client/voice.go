@@ -369,7 +369,7 @@ func (c *Client) onError(em proto.ErrorMsg) bool {
 	if em.Code == proto.CodeNotSharing || em.Code == "not_joined" {
 		c.watchFailed(em.Gen, &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen}) // the error itself still reaches the UI below
 	}
-	if em.Code == "bad_request" {
+	if em.Code == proto.CodeBadRequest {
 		switch em.Message {
 		case msgShareStartUnsupported:
 			c.shareUnsupported()
@@ -382,7 +382,7 @@ func (c *Client) onError(em proto.ErrorMsg) bool {
 	if cl == nil {
 		return false
 	}
-	if em.Code == "bad_request" {
+	if em.Code == proto.CodeBadRequest {
 		switch {
 		case em.Message == msgOfferPending:
 			cl.post(cl.onGlare)
