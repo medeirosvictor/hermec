@@ -221,16 +221,30 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 	if w := c.takeReadyWarmPeer(); w != nil {
 		pc = w.pc
 	}
+	watch := from.watchSnapshot()
+	c.adoptMu.Lock()
+	from.adoptMu.Lock()
 	from.mu.Lock()
 	old := from.call
-	from.call = nil
-	from.mu.Unlock()
 	if old == nil { // raced with a leave
+		from.mu.Unlock()
+		from.adoptMu.Unlock()
+		c.adoptMu.Unlock()
 		if pc != nil {
 			_ = pc.Close()
 		}
 		return ErrNotInVoice
 	}
+	publishers := old.detachPublishers()
+	for _, publisher := range publishers {
+		publisher.bind(nil, nil, nil)
+	}
+	c.adoptPending = publishers
+	from.adoptRedirect = c
+	from.call = nil
+	from.mu.Unlock()
+	from.adoptMu.Unlock()
+	c.adoptMu.Unlock()
 	_ = from.send(proto.TypeVoiceLeave, proto.VoiceLeave{}) // fails on the dead connection
 	tctx, cancel := context.WithTimeout(ctx, adoptTeardownWait)
 	old.teardownCtx(tctx)
@@ -241,5 +255,44 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 		vid = old.vidWanted // the actor has exited, so its state is ours to read
 	default: // a stuck teardown must not cost the user the call: join anyway
 	}
-	return c.joinCall(ctx, old.channel, old.src, old.sink, old.muted.Load(), vid, pc)
+	if err := c.joinCall(ctx, old.channel, old.src, old.sink, old.muted.Load(), vid, pc); err != nil {
+		_ = c.finishAdoption(nil, true)
+		return err
+	}
+	if err := c.finishAdoption(c.getCall(), false); err != nil {
+		return err
+	}
+	if watch.fp != "" {
+		return c.SubscribeScreen(watch.fp)
+	}
+	return nil
+}
+
+// finishAdoption installs the publishers that were not stopped during the
+// handoff. Holding adoptMu serializes installation with StopCamera/StopShare.
+func (c *Client) finishAdoption(cl *call, failed bool) error {
+	c.adoptMu.Lock()
+	defer c.adoptMu.Unlock()
+	publishers := c.adoptPending
+	c.adoptPending = nil
+	var firstErr error
+	for kind, publisher := range publishers {
+		if failed || cl == nil {
+			publisher.stop()
+			continue
+		}
+		c.bindPublisher(cl, publisher)
+		cl.smu.Lock()
+		cl.publishers[kind] = publisher
+		cl.smu.Unlock()
+		if err := c.sendPublisherStart(kind); err != nil {
+			if cl.dropPublisher(kind, publisher) {
+				publisher.stop()
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
 }

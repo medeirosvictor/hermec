@@ -25,6 +25,7 @@ type stubServer struct {
 	url        string
 	answer     bool // act as an SFU answerer; false = never answer offers
 	mediaLanes bool // advertise the modern media control plane
+	offerGate  <-chan struct{}
 
 	mu     sync.Mutex
 	seen   []string // client message types, in order
@@ -151,6 +152,9 @@ func (s *stubServer) serve(ws *websocket.Conn) {
 }
 
 func (s *stubServer) answerOffer(env proto.Envelope, send func(string, any)) {
+	if s.offerGate != nil {
+		<-s.offerGate
+	}
 	var m proto.RTCOffer
 	_ = json.Unmarshal(env.Data, &m)
 	se := webrtc.SettingEngine{}

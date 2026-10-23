@@ -205,6 +205,14 @@ func (sl *videoPublisher) stop() {
 // requestKey makes the next encoded frame a keyframe.
 func (sl *videoPublisher) requestKey() { sl.forceKey.Store(true) }
 
+// bind changes the call that owns this publisher. A nil write pauses output
+// while preserving capture and encoder state during host adoption.
+func (sl *videoPublisher) bind(write func([]byte, time.Duration) error, onFail, onEncodeErr func(error)) {
+	sl.mu.Lock()
+	sl.write, sl.onFail, sl.onEncodeErr = write, onFail, onEncodeErr
+	sl.mu.Unlock()
+}
+
 // onSenderRTCP handles RTCP read from the video sender: a PLI or FIR forces a
 // keyframe.
 func (sl *videoPublisher) onSenderRTCP(pkts []rtcp.Packet) {
@@ -252,8 +260,11 @@ func (sl *videoPublisher) grabLoop() {
 		}
 		sl.mu.Unlock()
 		if err != nil && !errors.Is(err, ErrNoFrame) {
-			if sl.onFail != nil {
-				sl.onFail(err)
+			sl.mu.Lock()
+			onFail := sl.onFail
+			sl.mu.Unlock()
+			if onFail != nil {
+				onFail(err)
 			}
 			return
 		}
@@ -294,8 +305,11 @@ func (sl *videoPublisher) encodeLoop() {
 			if key {
 				sl.forceKey.Store(true) // the request must survive a failed encode
 			}
-			if sl.onEncodeErr != nil {
-				sl.onEncodeErr(err)
+			sl.mu.Lock()
+			onEncodeErr := sl.onEncodeErr
+			sl.mu.Unlock()
+			if onEncodeErr != nil {
+				onEncodeErr(err)
 			}
 			continue
 		}
@@ -308,7 +322,12 @@ func (sl *videoPublisher) encodeLoop() {
 			d = min(max(now.Sub(last), time.Millisecond), time.Second)
 		}
 		last = now
-		_ = sl.write(pkt, d)
+		sl.mu.Lock()
+		write := sl.write
+		sl.mu.Unlock()
+		if write != nil {
+			_ = write(pkt, d)
+		}
 	}
 }
 
@@ -332,20 +351,8 @@ func (c *Client) StartShare(src FrameSource, w, h, fps, kbps int) error {
 	if err != nil {
 		return err
 	}
-	sl := newVideoPublisher(proto.MediaScreen, src, enc, w, h, fps, func(pkt []byte, d time.Duration) error {
-		c.vstats.sentBytes.Add(uint64(len(pkt)))
-		c.vstats.sentFrames.Add(1)
-		return cl.vtracks[proto.MediaScreen].WriteSample(media.Sample{Data: pkt, Duration: d})
-	})
-	sl.onFail = func(err error) {
-		c.emitNB(Event{Err: fmt.Errorf("client: screen share ended: %w", err)})
-		go func() { _ = c.stopShare(cl, sl) }() // only this share, not a later one
-	}
-	sl.onEncodeErr = func(err error) {
-		if c.vstats.encodeErrors.Add(1) == 1 {
-			c.emitNB(Event{Err: fmt.Errorf("client: screen share encode: %w", err)})
-		}
-	}
+	sl := newVideoPublisher(proto.MediaScreen, src, enc, w, h, fps, nil)
+	c.bindPublisher(cl, sl)
 	cl.smu.Lock()
 	if cl.sclosed { // the call is being torn down: nobody would ever stop this loop
 		cl.smu.Unlock()
@@ -429,21 +436,35 @@ func (c *Client) ShareKeyframe() {
 
 // StopShare stops sharing and tells the server. It is a no-op when not sharing.
 func (c *Client) StopShare() error {
-	cl := c.getCall()
-	if cl == nil {
-		return nil
-	}
-	return c.stopShare(cl, nil)
+	return c.stopOwnedPublisher(proto.MediaScreen)
 }
 
-// stopShare stops cl's share (only sl if non-nil) and tells the server.
-func (c *Client) stopShare(cl *call, only *videoPublisher) error {
-	sl := cl.takePublisherIf(proto.MediaScreen, only)
-	if sl == nil {
+func (c *Client) bindPublisher(cl *call, publisher *videoPublisher) {
+	label := "screen share"
+	if publisher.kind == proto.MediaCamera {
+		label = "camera"
+	}
+	publisher.bind(func(pkt []byte, d time.Duration) error {
+		c.vstats.sentBytes.Add(uint64(len(pkt)))
+		c.vstats.sentFrames.Add(1)
+		return cl.vtracks[publisher.kind].WriteSample(media.Sample{Data: pkt, Duration: d})
+	}, func(err error) {
+		c.emitNB(Event{Err: fmt.Errorf("client: %s ended: %w", label, err)})
+		go func() { _ = c.stopPublisher(cl, publisher.kind, publisher) }()
+	}, func(err error) {
+		if c.vstats.encodeErrors.Add(1) == 1 {
+			c.emitNB(Event{Err: fmt.Errorf("client: %s encode: %w", label, err)})
+		}
+	})
+}
+
+func (c *Client) stopPublisher(cl *call, kind proto.MediaKind, only *videoPublisher) error {
+	publisher := cl.takePublisherIf(kind, only)
+	if publisher == nil {
 		return nil
 	}
-	sl.stop()
-	return c.sendPublisherStop(proto.MediaScreen)
+	publisher.stop()
+	return c.sendPublisherStop(kind)
 }
 
 func (c *Client) sendPublisherStart(kind proto.MediaKind) error {
@@ -726,6 +747,19 @@ func (cl *call) closePublishers() []*videoPublisher {
 	all := make([]*videoPublisher, 0, len(cl.publishers))
 	for kind, publisher := range cl.publishers {
 		all = append(all, publisher)
+		delete(cl.publishers, kind)
+	}
+	return all
+}
+
+// detachPublishers transfers ownership without stopping the capture loops.
+func (cl *call) detachPublishers() map[proto.MediaKind]*videoPublisher {
+	cl.smu.Lock()
+	defer cl.smu.Unlock()
+	cl.sclosed = true
+	all := make(map[proto.MediaKind]*videoPublisher, len(cl.publishers))
+	for kind, publisher := range cl.publishers {
+		all[kind] = publisher
 		delete(cl.publishers, kind)
 	}
 	return all

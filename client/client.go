@@ -98,6 +98,10 @@ type Client struct {
 	wpMu sync.Mutex // guards wp
 	wp   *warmPeer  // data-channel PeerConnection to the standby, if opened
 
+	adoptMu       sync.Mutex
+	adoptPending  map[proto.MediaKind]*videoPublisher
+	adoptRedirect *Client
+
 	started        time.Time // Dial time; baseline of the first VideoStats window
 	vstats         videoStats
 	vsinkMu        sync.RWMutex
