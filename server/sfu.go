@@ -711,8 +711,9 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 				}
 			}
 			for _, g := range p.fwds {
-				if g.video == isVideo && !g.isDead() {
-					// One audio and one screen-share track per peer; discard extras.
+				sameLane := !isVideo || mediaKind == "" || g.kind == mediaKind
+				if g.video == isVideo && sameLane && !g.isDead() {
+					// One audio track and one track per negotiated video lane; discard extras.
 					vs.srv.logf("voice %q: %s sent a second %s track; ignoring it", vs.channel, p.c.fingerprint, remote.Kind())
 					vs.wg.Add(1)
 					go vs.discardTrack(remote)

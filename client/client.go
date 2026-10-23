@@ -100,6 +100,7 @@ type Client struct {
 
 	adoptMu       sync.Mutex
 	adoptPending  map[proto.MediaKind]*videoPublisher
+	adoptDetached map[proto.MediaKind]*videoPublisher
 	adoptRedirect *Client
 
 	started        time.Time // Dial time; baseline of the first VideoStats window
@@ -118,6 +119,7 @@ type Client struct {
 	prevWatch      *watchState // state before that Watch, restored if the server refuses it
 	wireCtr        uint32      // last gen handed out; watchWire may be restored below it
 	watchWait      chan error  // answer channel of the pending Watch, nil if none
+	watchQuiet     uint32      // adoption retry whose transient refusal is not user-visible
 	watchCallMu    sync.Mutex  // serializes Watch calls
 	srcHave        bool        // a video_source for watchFP arrived since the last Watch
 	srcSeq         uint16      // first RTP sequence number of that source
@@ -334,7 +336,18 @@ func (c *Client) Close() error {
 	})
 	<-c.loopDone
 	<-c.pingDone
+	for _, publisher := range c.takeDetachedPublishers() {
+		publisher.stop()
+	}
 	return err
+}
+
+func (c *Client) takeDetachedPublishers() map[proto.MediaKind]*videoPublisher {
+	c.adoptMu.Lock()
+	defer c.adoptMu.Unlock()
+	publishers := c.adoptDetached
+	c.adoptDetached = nil
+	return publishers
 }
 
 func (c *Client) send(typ string, payload any) error {
@@ -412,6 +425,7 @@ func (c *Client) readLoop() {
 		}
 		c.ws.Close()
 		if cl != nil {
+			c.detachPublishersForAdoption(cl)
 			cl.teardown()
 		}
 	}()

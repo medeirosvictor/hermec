@@ -75,8 +75,8 @@ The standby checks that the active host really is silent, becomes active and
 sends everyone the new host list. Clients move over by themselves, and a voice
 call carries on over a connection that was already set up. The whole switch
 takes about a second and needs no clicks. Chat gets a "host changed to
-`<name>`" line. A screen share ends on failover; the sharer must start it
-again.
+`<name>`" line. Active camera and screen publications, plus the selected
+screen, move with the call onto the standby connection.
 
 The standby is the best-priority host that at least half of the clients can
 reach. Clients report this, because a standby that most people cannot reach is
@@ -121,10 +121,10 @@ from the server's name.
 
 Current release: v0.5.1. This repository ships a Go server with Ed25519
 key-based authentication, roles, channels, presence and text chat, a headless
-client library, a desktop GUI client, and integration tests. Voice works, with
-audio relayed through the self-hosted server. Screen share works too (sharing
-from Windows, watching on Windows, macOS or Linux). Camera video and direct
-peer-to-peer media are not built yet. The wire protocol is specified in
+client library, a desktop GUI client, and integration tests. Voice, the
+multi-participant call view, Windows webcam publishing, and screen share work;
+watching works on Windows, macOS and Linux. Direct peer-to-peer media is not
+built. The wire protocol is specified in
 [docs/protocol.md](docs/protocol.md).
 
 ## Install
@@ -233,7 +233,7 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Members button** (top right of the chat): Show or hide the member list of everyone on the server. The list hides itself in narrow windows; your choice is saved in `settings.toml`
 - **Click "+" tile**: Add a server
 - **Click the signal bars** (status line, or the call bar in a call): Show connection quality (ping, jitter, per-participant concealment); Esc or a second click closes it
-- **Click a voice channel in the pane**: Join it (moves your call if you are in another one). Clicking the channel you are already in does nothing; leave with the call bar or the "voice connected" panel.
+- **Click a voice channel in the pane**: Join it (moves your call if you are in another one). Clicking the channel you are already in opens the call view; leave with the call bar, call view, or the "voice connected" panel.
 - **Click share** (call bar or "voice connected" panel): Share a screen, see [Screen share](#screen-share). **Click LIVE** next to a person in the voice list to watch them. **Esc** goes back to chat (out of fullscreen first); **F11** or **double-click** the video toggles fullscreen.
 - **Title bar** (Windows): a Discord-style app bar replaces the default frame. Drag it to move the window (double-click to maximize or restore), use the buttons on the right to minimize, maximize and close, and drag the window edges and corners to resize.
 - **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, text size as a percentage, share quality (720p or 1080p), logs (open folder), update status, a help section; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono, and existing settings files keep VT323.
@@ -393,8 +393,8 @@ Any OS, once HERMEC is running:
    host and its standby can read and keep chat for up to `history_days`; set it
    to 0 to keep nothing. Every host also holds the server's login key (the
    scrypt key above), so any approved host can check passwords. The founder
-   decides who is a host. A screen share ends when the host fails over and must
-   be restarted. Messages are not signed by their authors, so a host can forge or
+   decides who is a host. Active camera and screen media move with the call on
+   failover. Messages are not signed by their authors, so a host can forge or
    drop lines. There are no edits or deletes, and a ban keeps the banned
    member's past messages.
 5. **Names are not verified.** Anyone can pick any name. The fingerprint (hover
@@ -505,8 +505,10 @@ voice_channels = ["voice", "private-call"]
 ```
 
 Click a voice channel in the pane to join. The call bar appears at the bottom
-showing the channel name, elapsed time, mute button (Ctrl+M), share button,
-leave button, and your mic level. The "voice connected" panel at the bottom of
+showing the channel name, elapsed time, mute button (Ctrl+M), camera and share
+buttons, leave button, and your mic level. Clicking the current voice channel
+opens the call view with participant tiles, cameras, mute/speaking state and a
+selected-screen presentation area. The "voice connected" panel at the bottom of
 the channel column shows the channel and server, your ping, and buttons to
 disconnect and share; its signal bars open the connection quality panel.
 Participants, occupancy, mute icons, and speaking indicators live in the channel
@@ -521,6 +523,21 @@ and, for firewall policy, note that all media uses one UDP port (the server's
 port number by default; `media_port` overrides it, and `udp_port_min`/
 `udp_port_max` select the older random-port range instead). See
 [example.server.toml](example.server.toml) for details.
+
+### Camera and call view
+
+On Windows, join a voice channel and click **camera** in the call bar or call
+view. The first use may prompt for camera permission. Choose the saved camera
+in Settings; camera capture never starts automatically. The local tile is a
+local preview, while other participants receive VP8 at 640x360, 15 fps and
+about 300 kbps. Up to ten cameras can be active in one room.
+
+Camera, microphone and screen share have independent controls and can all run
+at once. Audio is the highest semantic priority, then the selected screen,
+then cameras; this release records that ordering but does not yet adapt bitrate
+or packet scheduling from it. Leaving the call, disabling camera, closing the
+app, or losing the device stops camera capture. Camera publishing from macOS
+and Linux is not implemented yet, though those clients can view cameras.
 
 ### Screen share
 
@@ -567,7 +584,7 @@ effects, so text stays readable.
 So a host with a slow upload should keep the number of watchers small.
 
 **Not yet:** sound from the shared screen, sharing a single window, and sharing
-from macOS or Linux.
+the screen from macOS or Linux.
 
 **Ports.** Voice and video use one UDP port, the same number as the server
 port (7697). To let shared friends reach only that port, see the Tailscale

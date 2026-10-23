@@ -18,8 +18,10 @@ import (
 // AdoptCall then moves a live call onto it with one offer/answer.
 
 const (
-	warmPingEvery  = 5 * time.Second
-	warmGatherWait = 5 * time.Second
+	warmPingEvery            = 5 * time.Second
+	warmGatherWait           = 5 * time.Second
+	adoptSubscribeRetryEvery = 25 * time.Millisecond
+	adoptSubscribeRetryFor   = 3 * time.Second
 )
 
 // adoptTeardownWait is how long AdoptCall waits for the dead call to stop
@@ -236,6 +238,10 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 		return ErrNotInVoice
 	}
 	publishers := old.detachPublishers()
+	for kind, publisher := range from.adoptDetached {
+		publishers[kind] = publisher
+	}
+	from.adoptDetached = nil
 	for _, publisher := range publishers {
 		publisher.bind(nil, nil, nil)
 	}
@@ -263,9 +269,48 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 		return err
 	}
 	if watch.fp != "" {
-		return c.SubscribeScreen(watch.fp)
+		return c.restoreScreen(ctx, watch.fp)
 	}
 	return nil
+}
+
+// detachPublishersForAdoption pauses publishers before an unexpectedly lost
+// call is torn down. Close stops any publishers that no promoted session takes.
+func (c *Client) detachPublishersForAdoption(cl *call) {
+	c.adoptMu.Lock()
+	defer c.adoptMu.Unlock()
+	for kind, publisher := range cl.detachPublishers() {
+		publisher.bind(nil, nil, nil)
+		if c.adoptDetached == nil {
+			c.adoptDetached = make(map[proto.MediaKind]*videoPublisher)
+		}
+		c.adoptDetached[kind] = publisher
+	}
+}
+
+// restoreScreen tolerates the brief ordering window in which this viewer has
+// adopted its call but the selected publisher has not redeclared its screen
+// on the promoted host yet. These internal refusals are not user-visible.
+func (c *Client) restoreScreen(ctx context.Context, fp string) error {
+	deadline := time.NewTimer(adoptSubscribeRetryFor)
+	defer deadline.Stop()
+	for {
+		err := c.watchScreen(fp, c.SupportsMediaLanes(), true)
+		var serverErr *ServerError
+		if err == nil || !errors.As(err, &serverErr) || serverErr.Code != proto.CodeNotPublishing {
+			return err
+		}
+		timer := time.NewTimer(adoptSubscribeRetryEvery)
+		select {
+		case <-timer.C:
+		case <-deadline.C:
+			timer.Stop()
+			return err
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		}
+	}
 }
 
 // finishAdoption installs the publishers that were not stopped during the

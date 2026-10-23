@@ -4,12 +4,28 @@ package proto
 type MediaKind string
 
 const (
+	MediaAudio  MediaKind = "audio"
 	MediaCamera MediaKind = "camera"
 	MediaScreen MediaKind = "screen"
 
 	CapabilityMediaLanesV1 = "media_lanes_v1"
 	MaxCameraSlots         = 10
 )
+
+// Priority is the lane's semantic importance; lower values are protected
+// first. It is metadata for future congestion policy, not transport behavior.
+func (kind MediaKind) Priority() int {
+	switch kind {
+	case MediaAudio:
+		return 0
+	case MediaScreen:
+		return 1
+	case MediaCamera:
+		return 2
+	default:
+		return 3
+	}
+}
 
 // MediaStart declares one of the sender's media lanes active.
 type MediaStart struct {

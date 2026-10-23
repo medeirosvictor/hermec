@@ -71,3 +71,10 @@ func TestVoiceMemberMediaOmitEmpty(t *testing.T) {
 		t.Fatalf("old payload = %+v", old)
 	}
 }
+
+func TestMediaPriorityMetadata(t *testing.T) {
+	if MediaAudio.Priority() >= MediaScreen.Priority() || MediaScreen.Priority() >= MediaCamera.Priority() {
+		t.Fatalf("media priority order = audio:%d screen:%d camera:%d; want audio < screen < camera",
+			MediaAudio.Priority(), MediaScreen.Priority(), MediaCamera.Priority())
+	}
+}

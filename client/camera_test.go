@@ -47,6 +47,25 @@ func TestCameraUnsupportedWithoutMediaLanes(t *testing.T) {
 	}
 }
 
+func TestE2EMixedVersionScreenCompatibility(t *testing.T) {
+	s := newStub(t, true)
+	c := dialStub(t, s)
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	if err := c.JoinVoice(testCtx(t), "lobby", nopSource{stop: stop}, nopSink{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.StartShare(&countSource{}, 16, 16, 15, 100); err != nil {
+		t.Fatalf("legacy screen share: %v", err)
+	}
+	if !s.waitType(proto.TypeShareStart) {
+		t.Fatal("screen share did not use the legacy share_start message")
+	}
+	if err := c.StartCamera(&countSource{}); !errors.Is(err, ErrCameraUnsupported) {
+		t.Fatalf("camera on legacy server = %v, want ErrCameraUnsupported", err)
+	}
+}
+
 func TestAdoptCallCarriesActivePublishersAndScreenSubscription(t *testing.T) {
 	oldServer, newServer := newStub(t, true), newStub(t, true)
 	oldServer.mediaLanes, newServer.mediaLanes = true, true

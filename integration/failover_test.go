@@ -158,16 +158,31 @@ func startHostSet(t *testing.T, n int) *hostSet {
 // startHosts is startHostSet for tests that need only the hosts.
 func startHosts(t *testing.T, n int) []*server.Host { return startHostSet(t, n).hosts }
 
-// freeLoopbackAddr returns a loopback address that was free a moment ago, so
-// a host can advertise it before it starts.
+// freeLoopbackAddr returns a loopback address whose TCP and UDP ports were
+// both free a moment ago, so a host can advertise it before it starts.
 func freeLoopbackAddr(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for range 100 {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr := ln.Addr().String()
+		udpAddr, err := net.ResolveUDPAddr("udp", addr)
+		if err != nil {
+			ln.Close()
+			t.Fatal(err)
+		}
+		udp, err := net.ListenUDP("udp", udpAddr)
+		if err == nil {
+			udp.Close()
+			ln.Close()
+			return addr
+		}
+		ln.Close()
 	}
-	defer ln.Close()
-	return ln.Addr().String()
+	t.Fatal("could not find a loopback port free for both TCP and UDP")
+	return ""
 }
 
 func hostURL(h *server.Host) string { return "ws://" + h.Server().Addr() + "/" }
@@ -202,6 +217,7 @@ type follower struct {
 	lastFrom  *client.Client
 	chats     []proto.ChatMessage
 	history   []proto.ChatMessage
+	voices    []proto.VoiceState
 	moves     []proto.Move
 	alive     int // Takeover refusals with active_alive
 	takeovers int // promotions of the warm session
@@ -295,6 +311,8 @@ func (f *follower) handle(c *client.Client, ev client.Event) {
 		f.chats = append(f.chats, *ev.Chat)
 	case ev.History != nil:
 		f.history = append(f.history, ev.History.Messages...)
+	case ev.Voice != nil:
+		f.voices = append(f.voices, *ev.Voice)
 	case ev.Hosts != nil:
 		h := *ev.Hosts
 		f.lastHosts, f.lastFrom = &h, c
@@ -312,6 +330,28 @@ func (f *follower) handle(c *client.Client, ev client.Event) {
 	case ev.Move != nil && isCur:
 		f.move(*ev.Move)
 	}
+}
+
+func (f *follower) publishing(fp string, kinds ...proto.MediaKind) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.voices) - 1; i >= 0; i-- {
+		if f.voices[i].Channel != voiceCh {
+			continue
+		}
+		for _, member := range f.voices[i].Members {
+			if member.Fingerprint != fp {
+				continue
+			}
+			for _, kind := range kinds {
+				if !slices.Contains(member.Media, kind) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // applyHostsLocked follows a hosts event: it keeps one warm session on the

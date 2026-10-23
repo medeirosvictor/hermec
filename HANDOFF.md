@@ -1,6 +1,6 @@
 # Hermec: session handoff
 
-Compact brief for picking up work in a fresh Claude session. It describes the
+Compact brief for picking up work in a fresh development session. It describes the
 app as it is now. Update it at every milestone and delete what is resolved.
 User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 [docs/quickstart-friends.md](docs/quickstart-friends.md). Roadmap:
@@ -10,21 +10,18 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and
    the memory note `hermec-project`.
-2. Repo state: `main` == `origin/main`, released through **v0.5.1**; chat
-   history (PR #9) is merged but not released. PR 3 (host link, warm standby,
-   failover) is **done** on branch `worktree-hermec-failover` (worktree
-   `.claude/worktrees/hermec-failover`) and **not merged yet**: its final review
-   and fix wave are complete, and it waits for Victor's real test (checklist
-   below). Untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
+2. Repo state: `main` == `origin/main` at PR #10 (host link, warm standby and
+   failover), released through **v0.5.1**. The current
+   `feature/call-view-media-lanes` branch adds independent media lanes, Windows
+   webcam capture and the call view. Untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.
-3. **Current round: always-on.** The approved design is implemented across
-   three PRs: identity and chain, chat history, and host link with warm standby
-   and failover. **PR 1 (identity and chain) and PR 2 (chat history, PR #9) are
-   merged; PR 3 is built, see above.** The finished spec and implementation
-   plan were deleted per docs hygiene. Tag v0.7.0 on `main` after PR 3 merges.
-   After always-on and webcam, Victor moves to stress testing and use-case
-   scenarios.
+3. **Current round: webcam + call view.** The vertical slice is implemented:
+   camera and screen publish simultaneously, modern clients receive up to ten
+   camera slots and one selected screen slot, the Windows camera uses a fixed
+   640x360/15 fps/300 kbps profile, and active media survives host takeover.
+   macOS/Linux camera capture and adaptive priority enforcement remain future
+   work. After this round Victor moves to stress testing and use-case scenarios.
 4. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload:
    `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In Victor's real settings,
    CRT and curvature are off: F1 toggles CRT, F3 curvature, F2 cycles themes.
@@ -54,8 +51,9 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 ## Next-session pipeline (Victor's order)
 
-1. **Always-on (PR 3 awaiting Victor's real test).** Later idea
-   riding the same synced store: file sharing (a capped shared folder).
+1. **Friends adjustments.** Per-person volume, mic gain, live names, audio
+   device switching mid-call, bandwidth metrics and ping fixes (details below).
+   Later idea riding the synced store: file sharing (a capped shared folder).
    vitoserver stays parked (Victor: do not bring it back for now).
    - **Decisions (Victor, 2026-10-22):** the password never travels (scrypt
      key + HMAC login; v0.6 clients may still send the plain password for one
@@ -80,12 +78,7 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
      as torn; missing tests for 0600 mode, mutation isolation, the sync/close
      rollback branches, a replayed host proof, and an `auth_ok.server_id`
      mismatch.
-2. **Webcam + call view.** Same pipeline as screen share (govpx VP8), camera
-   source, call-bar toggle. Camera capture per OS is new work. Victor
-   (2026-10-22): clicking the voice channel you are in opens a Discord-style
-   call view with participant tiles (speaking glow, mute, webcam or avatar,
-   LIVE streams); today that click does nothing.
-3. **Signed membership + connection modes** (Victor, 2026-10-22; brainstorm
+2. **Signed membership + connection modes** (Victor, 2026-10-22; brainstorm
    first). Invite tree on the chain: the inviter signs, the invitee co-signs,
    so there is an audit trail of who brought whom; ban or review a whole
    branch; invite as a role; k-of-n admin signatures for host and role
@@ -94,7 +87,7 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
    (pure Go) on a group tailnet (Tailscale account or Headscale) so Victor's
    private tailnet stays separate; public mode (port forward or VPS) requires
    `wss://` and invites. Author-signed chat (Plan C) comes after.
-4. **Friends adjustments** (designed in chat 2026-10-19, not yet specced):
+3. **Friends adjustments detail** (designed in chat 2026-10-19, not yet specced):
    - Volume: per-person volume (right-click a person, 0 to 200%, saved per
      fingerprint), a mic gain settings row (0 to 200%), and a soft limiter.
      Friends were too quiet in both directions. Volume for a shared stream
@@ -114,7 +107,7 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
      (`pongTimeout` in `client/rtt.go`, recorded by `check`). Victor saw 1400 ms
      spikes with fine voice. Check Tailscale DERP versus direct
      (`tailscale ping`, `tailscale status`, `tailscale netcheck`).
-5. **B.3: icon editor.** In-app pixel-art editor for a server icon.
+4. **B.3: icon editor.** In-app pixel-art editor for a server icon.
 
 ## Open checklists
 
@@ -131,7 +124,7 @@ Needs a friend whose PC is node-shared on Tailscale and who runs HERMEC.
   menu). Victor quits HERMEC in the middle of the call. The friend's call
   should carry on within about a second with no clicks, the voice panel should
   show "hosted by <friend>", chat should show "host changed to <friend>", and a
-  screen share (if any) ends and has to be restarted.
+  camera, screen share and the selected screen should resume without clicks.
 - **Handback.** Victor starts HERMEC again after the call. Once voice has been
   empty for 2 minutes, the role goes back to Victor's PC and the friend's
   client moves over. Nobody should be moved while someone is in voice.
@@ -154,7 +147,28 @@ Needs a friend whose PC is node-shared on Tailscale and who runs HERMEC.
 - Apply the Tailscale grant (README, "How safe is this?") and confirm voice and
   video still work.
 
-### v0.5.1 call and stream controls (hand test)
+### Camera + simultaneous-media real-device checklist (unchecked)
+
+Run only with a disposable test server/config; never point automated or agent
+work at Victor's real HERMEC configuration. Required physical hardware and a
+second endpoint were unavailable during implementation, so none of these items
+is claimed as manually passed yet.
+
+- [ ] Windows permission prompt and camera open succeed; the visible camera
+  indicator turns off after camera stop, call leave and app exit.
+- [ ] Settings lists cameras, saves a selected device, and the explicit camera
+  control uses it without starting capture automatically.
+- [ ] Two endpoints publish webcams while one selected screen is active; audio,
+  both camera tiles and the screen presentation remain usable together.
+- [ ] Unplugging the active camera reports a visible camera failure, releases
+  capture, and leaves microphone audio and screen share running.
+- [ ] Camera, screen and mute controls operate independently from both the call
+  bar and call view; leaving the call tears all capture down.
+- [ ] With active and standby hosts, fail over during the simultaneous-media
+  call: voice, camera publications, screen publication and selected screen all
+  resume without a reconnect screen.
+
+### Call view and stream controls (hand test)
 
 - Watch a stream, then leave fullscreen with Esc, F11 and the strip button. In
   fullscreen the first Esc only leaves fullscreen; the second goes back to chat.
@@ -165,7 +179,8 @@ Needs a friend whose PC is node-shared on Tailscale and who runs HERMEC.
   opens. It shows `stop sharing` and `change screen`.
 - Change screen while a friend watches: they keep watching; a screen with a
   different shape is letterboxed.
-- Click the voice channel you are already in: nothing happens (you stay in).
+- Click the voice channel you are already in: the multi-participant call view
+  opens without leaving or rejoining the call; Esc returns to chat.
 - The "voice connected" panel at the bottom of the channel column: disconnect,
   share and stop share, the signal bars opening the quality panel, and the
   panel while viewing a different server than the call's.

@@ -500,22 +500,22 @@ func (c *Client) Watch(fp string) error {
 		}
 		return err
 	}
-	return c.watchScreen(fp, false)
+	return c.watchScreen(fp, false, false)
 }
 
 // SubscribeScreen selects the modern screen lane. On a legacy server it
 // preserves Watch's compatibility behavior.
 func (c *Client) SubscribeScreen(fp string) error {
-	return c.watchScreen(fp, c.SupportsMediaLanes())
+	return c.watchScreen(fp, c.SupportsMediaLanes(), false)
 }
 
-func (c *Client) watchScreen(fp string, modern bool) error {
+func (c *Client) watchScreen(fp string, modern, quiet bool) error {
 	if c.getCall() == nil {
 		return ErrNotInVoice
 	}
 	c.watchCallMu.Lock()
 	defer c.watchCallMu.Unlock()
-	wire, wait := c.beginWatch(fp)
+	wire, wait := c.beginWatchMode(fp, quiet)
 	var err error
 	if modern {
 		err = c.send(proto.TypeMediaSubscribe, proto.MediaSubscribe{Kind: proto.MediaScreen, Fingerprint: fp, Gen: wire})
@@ -556,6 +556,10 @@ var ErrWatchTimeout = errors.New("client: no answer to watch")
 // and, when an answer is to be awaited, the channel it will arrive on. Calls
 // are serialized by Watch, so at most one watch is ever pending.
 func (c *Client) beginWatch(fp string) (wire uint32, wait chan error) {
+	return c.beginWatchMode(fp, false)
+}
+
+func (c *Client) beginWatchMode(fp string, quiet bool) (wire uint32, wait chan error) {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
 	// Re-watching the sharer we already have a boundary for changes nothing;
@@ -567,6 +571,11 @@ func (c *Client) beginWatch(fp string) (wire uint32, wait chan error) {
 		c.watchGen++
 		c.wireCtr++ // gens are never reused, even across a refused watch
 		c.watchWire = c.wireCtr
+		if quiet {
+			c.watchQuiet = c.watchWire
+		} else {
+			c.watchQuiet = 0
+		}
 		c.watchAt = time.Now()
 		c.srcHave = false
 		if fp != "" {
@@ -602,13 +611,15 @@ func (c *Client) watchAnsweredLocked(err error) {
 // earlier request (after a timeout) or an error without a gen is ignored.
 // watchWire goes back to the gen the server knows (the previous source's),
 // while wireCtr keeps counting, so gens stay unique.
-func (c *Client) watchFailed(gen uint32, err error) {
+func (c *Client) watchFailed(gen uint32, err error) bool {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
 	p := c.prevWatch
 	if p == nil || c.watchWait == nil || gen == 0 || gen != c.watchWire {
-		return
+		return false
 	}
+	quiet := c.watchQuiet == gen
+	c.watchQuiet = 0
 	c.prevWatch = nil
 	c.watchFP, c.watchWire = p.fp, p.wire
 	c.srcHave, c.srcSeq = p.have, p.seq
@@ -616,6 +627,7 @@ func (c *Client) watchFailed(gen uint32, err error) {
 	c.srcID++
 	c.watchAt = time.Now()
 	c.watchAnsweredLocked(err)
+	return quiet
 }
 
 // onVideoSource records the server's source boundary. Messages for a sharer
@@ -635,6 +647,7 @@ func (c *Client) onVideoSource(m proto.VideoSource) bool {
 		return false // not the sharer / not the watch request we are waiting on
 	}
 	c.srcHave, c.srcSeq = true, m.Seq
+	c.watchQuiet = 0
 	c.srcID++
 	c.prevWatch = nil
 	c.watchAnsweredLocked(nil)
