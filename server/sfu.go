@@ -122,6 +122,10 @@ type peer struct {
 	wgen    uint32     // gen of the viewer's latest watch request, echoed in video_source
 
 	sharing atomic.Bool // this peer is sharing (set by the actor, read by forwarders)
+
+	videoReceivers map[*webrtc.RTPReceiver]proto.MediaKind
+	mediaSenders   map[slotKey]*webrtc.RTPSender
+	mediaTracks    map[slotKey]*webrtc.TrackLocalStaticRTP
 }
 
 // outStream is the outgoing RTP numbering of one viewer's video sender.
@@ -197,6 +201,7 @@ type forwarder struct {
 	pub    *peer
 	remote *webrtc.TrackRemote
 	video  bool // VP8 screen share; fanned out only to the publisher's watchers
+	kind   proto.MediaKind
 
 	mu    sync.Mutex
 	sinks map[*peer]sink
@@ -654,6 +659,17 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 			vs.wg.Add(1)
 			go vs.drainReceiverRTCP(recv)
 			isVideo := remote.Kind() == webrtc.RTPCodecTypeVideo
+			mediaKind := proto.MediaKind("")
+			if isVideo && p.c.hasCapability(proto.CapabilityMediaLanesV1) {
+				var ok bool
+				mediaKind, ok = p.videoReceivers[recv]
+				if !ok {
+					vs.srv.logf("voice %q: %s sent an unexpected video track; ignoring it", vs.channel, p.c.fingerprint)
+					vs.wg.Add(1)
+					go vs.discardTrack(remote)
+					return
+				}
+			}
 			for _, g := range p.fwds {
 				if g.video == isVideo && !g.isDead() {
 					// One audio and one screen-share track per peer; discard extras.
@@ -663,7 +679,7 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 					return
 				}
 			}
-			f := &forwarder{pub: p, remote: remote, video: isVideo, sinks: make(map[*peer]sink)}
+			f := &forwarder{pub: p, remote: remote, video: isVideo, kind: mediaKind, sinks: make(map[*peer]sink)}
 			p.fwds = append(p.fwds, f)
 			vs.wg.Add(1)
 			go vs.runForwarder(f)
@@ -716,9 +732,20 @@ func (vs *voiceSession) handleOffer(p *peer, sdp string) {
 		}
 	}
 	pc := p.pc
+	modern := p.c.hasCapability(proto.CapabilityMediaLanesV1)
+	layout := modernOfferLayout{}
+	if modern {
+		layout = classifyModernOffer(parseOfferedMedia(sdp))
+	}
 	if err := pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}); err != nil {
 		fail("invalid rtc_offer")
 		return
+	}
+	if modern {
+		if err := vs.configureModernAnswer(p, pc, layout); err != nil {
+			fail("cannot bind media slots")
+			return
+		}
 	}
 	vs.flushPending(p)
 	answer, err := pc.CreateAnswer(nil)
@@ -1043,6 +1070,9 @@ func (vs *voiceSession) releaseMedia(p *peer) {
 	// A fresh PC gets a fresh video transceiver; syncVideo re-arms kfWanted
 	// when it re-attaches a watched stream.
 	p.vsender, p.vfwd, p.vout, p.vrw, p.kfInOffer = nil, nil, nil, nil, false
+	p.videoReceivers = nil
+	p.mediaSenders = nil
+	p.mediaTracks = nil
 	if pc != nil {
 		_ = pc.Close()
 	}

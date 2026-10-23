@@ -145,6 +145,7 @@ type testPeer struct {
 	video   *webrtc.TrackLocalStaticRTP // nil for a pure viewer
 	vtracks chan *webrtc.TrackRemote
 	vpkts   atomic.Int64
+	apkts   atomic.Int64
 	vtag    atomic.Int32 // payload tag of the last video packet received
 	tag     byte         // payload tag this peer stamps on the video it sends
 	plis    atomic.Int64
@@ -156,8 +157,22 @@ type testPeer struct {
 }
 
 func newTestPeer(t *testing.T, url string, publish bool) *testPeer {
+	return newTestPeerMode(t, url, publish, false)
+}
+
+func newModernTestPeer(t *testing.T, url string, publish bool) *testPeer {
+	return newTestPeerMode(t, url, publish, true)
+}
+
+func newTestPeerMode(t *testing.T, url string, publish, modern bool) *testPeer {
 	t.Helper()
-	ws, id := authed(t, url)
+	var ws *websocket.Conn
+	var id *identity.Identity
+	if modern {
+		ws, id = authedMedia(t, url)
+	} else {
+		ws, id = authed(t, url)
+	}
 	p := &testPeer{t: t, ws: ws, fp: fpOf(id), vtracks: make(chan *webrtc.TrackRemote, 8),
 		states: make(chan proto.VoiceState, 64),
 		errs:   make(chan string, 16), vsrc: make(chan proto.VideoSource, 16)}
@@ -226,6 +241,8 @@ func newTestPeer(t *testing.T, url string, publish bool) *testPeer {
 						p.vtag.Store(int32(pkt.Payload[3]))
 					}
 					p.vpkts.Add(1)
+				} else {
+					p.apkts.Add(1)
 				}
 			}
 		}()

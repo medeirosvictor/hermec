@@ -89,7 +89,7 @@ type call struct {
 	src     AudioSource
 	sink    AudioSink
 	track   *webrtc.TrackLocalStaticSample
-	vtrack  *webrtc.TrackLocalStaticSample // VP8 screen share; sender added on first StartShare
+	vtracks map[proto.MediaKind]*webrtc.TrackLocalStaticSample
 	api     *webrtc.API
 
 	smu        sync.Mutex // guards publishers
@@ -132,8 +132,8 @@ type call struct {
 	senderOn   bool
 	vidWanted  bool                   // a video sender belongs on every PC of this call
 	warmPC     *webrtc.PeerConnection // connected PC to negotiate on instead of a new one; consumed by newPC
-	vsnd       *webrtc.RTPSender      // video sender on the current PC, if added
-	offerDirty bool                   // PC changed while an exchange was running: offer once it ends
+	vsenders   map[proto.MediaKind]*webrtc.RTPSender
+	offerDirty bool // PC changed while an exchange was running: offer once it ends
 	retryGen   uint64
 	glareSeen  bool // the server already rejected our current offer as glare
 }
@@ -229,15 +229,13 @@ func (c *Client) joinCall(ctx context.Context, channel string, src AudioSource, 
 		closeWarm()
 		return err
 	}
-	vtrack, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
-		MimeType: webrtc.MimeTypeVP8, ClockRate: videoClock,
-	}, "video-"+c.fingerprint, c.fingerprint)
+	vtracks, err := newVideoTracks(c.fingerprint)
 	if err != nil {
 		closeWarm()
 		return err
 	}
 	cl := &call{
-		c: c, channel: channel, src: src, sink: sink, track: track, vtrack: vtrack, api: c.newAPI(),
+		c: c, channel: channel, src: src, sink: sink, track: track, vtracks: vtracks, api: c.newAPI(),
 		publishers: make(map[proto.MediaKind]*videoPublisher),
 		wake:       make(chan struct{}, 1), stop: make(chan struct{}), adone: make(chan struct{}),
 		ready: make(chan struct{}), failCh: make(chan struct{}), tdDone: make(chan struct{}),
@@ -534,7 +532,7 @@ func (cl *call) newPC() error {
 			return err
 		}
 	}
-	snd, err := pc.AddTrack(cl.track)
+	vsenders, err := addInitialMediaTracks(pc, cl.track, cl.vtracks, cl.c.mediaLanes, cl.vidWanted)
 	if err != nil {
 		_ = pc.Close()
 		return err
@@ -588,6 +586,17 @@ func (cl *call) newPC() error {
 	}
 	cl.wg.Add(1)
 	cl.tmu.Unlock()
+	var snd *webrtc.RTPSender
+	for _, candidate := range pc.GetSenders() {
+		if candidate.Track() == cl.track {
+			snd = candidate
+			break
+		}
+	}
+	if snd == nil {
+		_ = pc.Close()
+		return errors.New("client: audio sender missing")
+	}
 	go func() { // sender-side RTCP must be drained for interceptors
 		defer cl.wg.Done()
 		buf := make([]byte, 1500)
@@ -599,13 +608,9 @@ func (cl *call) newPC() error {
 	}()
 	cl.pc = pc
 	cl.offerOut, cl.answered, cl.pending = false, false, nil
-	cl.vsnd = nil
-	if cl.vidWanted { // a share is (or was) active: the new PC carries the sender from its first offer
-		if err := cl.addVideoSender(pc); err != nil {
-			cl.pc = nil
-			_ = pc.Close()
-			return err
-		}
+	cl.vsenders = vsenders
+	for kind, videoSender := range vsenders {
+		cl.startVideoRTCP(videoSender, kind)
 	}
 	cl.startSender()
 	return nil

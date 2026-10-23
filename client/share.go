@@ -335,7 +335,7 @@ func (c *Client) StartShare(src FrameSource, w, h, fps, kbps int) error {
 	sl := newVideoPublisher(proto.MediaScreen, src, enc, w, h, fps, func(pkt []byte, d time.Duration) error {
 		c.vstats.sentBytes.Add(uint64(len(pkt)))
 		c.vstats.sentFrames.Add(1)
-		return cl.vtrack.WriteSample(media.Sample{Data: pkt, Duration: d})
+		return cl.vtracks[proto.MediaScreen].WriteSample(media.Sample{Data: pkt, Duration: d})
 	})
 	sl.onFail = func(err error) {
 		c.emitNB(Event{Err: fmt.Errorf("client: screen share ended: %w", err)})
@@ -727,8 +727,10 @@ func (cl *call) curPublisher(kind proto.MediaKind) *videoPublisher {
 // keyAfterNegotiation forces a keyframe once an answer has been applied: the
 // first keyframe may have been written before the sender was bound.
 func (cl *call) keyAfterNegotiation() {
-	if sl := cl.curPublisher(proto.MediaScreen); sl != nil {
-		sl.requestKey()
+	for _, kind := range []proto.MediaKind{proto.MediaCamera, proto.MediaScreen} {
+		if publisher := cl.curPublisher(kind); publisher != nil {
+			publisher.requestKey()
+		}
 	}
 }
 
@@ -736,7 +738,7 @@ func (cl *call) keyAfterNegotiation() {
 // it had to add one, renegotiates. Actor only.
 func (cl *call) ensureVideo() {
 	cl.vidWanted = true
-	if cl.pc == nil || cl.vsnd != nil {
+	if cl.pc == nil || cl.vsenders[proto.MediaScreen] != nil {
 		return // no PC yet: newPC adds the sender to the offer it is about to make
 	}
 	if err := cl.addVideoSender(cl.pc); err != nil {
@@ -757,16 +759,24 @@ func (cl *call) offerSoon() {
 }
 
 func (cl *call) addVideoSender(pc *webrtc.PeerConnection) error {
-	tr, err := pc.AddTransceiverFromTrack(cl.vtrack, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
+	tr, err := pc.AddTransceiverFromTrack(cl.vtracks[proto.MediaScreen], webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
 	if err != nil {
 		return err
 	}
 	snd := tr.Sender()
-	cl.vsnd = snd
+	if cl.vsenders == nil {
+		cl.vsenders = make(map[proto.MediaKind]*webrtc.RTPSender)
+	}
+	cl.vsenders[proto.MediaScreen] = snd
+	cl.startVideoRTCP(snd, proto.MediaScreen)
+	return nil
+}
+
+func (cl *call) startVideoRTCP(snd *webrtc.RTPSender, kind proto.MediaKind) {
 	cl.tmu.Lock()
 	if cl.tclosed {
 		cl.tmu.Unlock()
-		return nil
+		return
 	}
 	cl.wg.Add(1)
 	cl.tmu.Unlock()
@@ -777,12 +787,11 @@ func (cl *call) addVideoSender(pc *webrtc.PeerConnection) error {
 			if err != nil {
 				return
 			}
-			if sl := cl.curPublisher(proto.MediaScreen); sl != nil {
-				sl.onSenderRTCP(pkts)
+			if publisher := cl.curPublisher(kind); publisher != nil {
+				publisher.onSenderRTCP(pkts)
 			}
 		}
 	}()
-	return nil
 }
 
 // pliLimiter spaces a viewer's keyframe requests at least pliInterval apart
