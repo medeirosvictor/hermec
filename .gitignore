@@ -14,6 +14,7 @@ Thumbs.db
 # SDD workspace dirs must never be committed
 .superpowers/
 .claude/
+.worktrees/
 
 # Local secrets and server configs
 *.key
