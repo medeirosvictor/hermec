@@ -197,6 +197,7 @@ func TestVoiceNotSentBeforeAuth(t *testing.T) {
 	if env := readEnv(t, pre); env.Type != proto.TypeAuthOK {
 		t.Fatalf("first message = %q, want auth_ok", env.Type)
 	}
+	expectHosts(t, pre)
 	if v := readVoiceState(t, pre); len(v.Members) != 1 {
 		t.Fatalf("snapshot = %+v", v)
 	}

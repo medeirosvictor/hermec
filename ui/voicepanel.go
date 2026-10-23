@@ -108,7 +108,11 @@ func (g *game) voicePanelLine() string {
 	if name == "" {
 		name = state.HostPort(s.url)
 	}
-	return s.st.InCall + " / " + name
+	line := s.st.InCall + " / " + name
+	if by := s.st.HostedBy; by != "" && by != name {
+		line += " · hosted by " + by // clipped to the panel by the caller
+	}
+	return line
 }
 
 // voicePingText is the call connection's round trip, "" without a reading.

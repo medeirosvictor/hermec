@@ -47,6 +47,32 @@ const (
 	msgResetHint    = "send a new rtc_offer"
 )
 
+// teardownHook, when set, runs at the start of every call teardown. A test
+// seam for stalling it.
+var teardownHook atomic.Pointer[func()]
+
+// lockedSource serializes ReadOpusFrame. AdoptCall hands a call's source to
+// its successor while the old sender may still be inside a read (a stuck
+// teardown), and AudioSource promises nothing about concurrent reads.
+type lockedSource struct {
+	mu  sync.Mutex
+	src AudioSource
+}
+
+func (l *lockedSource) ReadOpusFrame() ([]byte, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.src.ReadOpusFrame()
+}
+
+// serialSource wraps src once; an already wrapped source is returned as is.
+func serialSource(src AudioSource) AudioSource {
+	if l, ok := src.(*lockedSource); ok {
+		return l
+	}
+	return &lockedSource{src: src}
+}
+
 // ErrNotInVoice is returned by voice operations outside a call.
 var ErrNotInVoice = errors.New("client: not in a voice channel")
 
@@ -104,9 +130,10 @@ type call struct {
 	resetting  bool   // a local reset is in flight: server offers belong to discarded state
 	held       string // latest server offer received while resetting; answered only if the server reports glare
 	senderOn   bool
-	vidWanted  bool              // a video sender belongs on every PC of this call
-	vsnd       *webrtc.RTPSender // video sender on the current PC, if added
-	offerDirty bool              // PC changed while an exchange was running: offer once it ends
+	vidWanted  bool                   // a video sender belongs on every PC of this call
+	warmPC     *webrtc.PeerConnection // connected PC to negotiate on instead of a new one; consumed by newPC
+	vsnd       *webrtc.RTPSender      // video sender on the current PC, if added
+	offerDirty bool                   // PC changed while an exchange was running: offer once it ends
 	retryGen   uint64
 	glareSeen  bool // the server already rejected our current offer as glare
 }
@@ -182,31 +209,49 @@ func (c *Client) getCall() *call {
 // outgoing frames, sink receives frames from others. If ctx ends or the
 // negotiation fails the call is torn down and the client stays usable.
 func (c *Client) JoinVoice(ctx context.Context, channel string, src AudioSource, sink AudioSink) error {
+	return c.joinCall(ctx, channel, src, sink, false, false, nil)
+}
+
+// joinCall is JoinVoice with a call's carried-over state: muted starts the call
+// muted, vid puts a video sender on its PeerConnections, and warm, if set, is
+// an already-connected PeerConnection the call negotiates its media on.
+func (c *Client) joinCall(ctx context.Context, channel string, src AudioSource, sink AudioSink, muted, vid bool, warm *webrtc.PeerConnection) error {
+	src = serialSource(src)
+	closeWarm := func() {
+		if warm != nil {
+			_ = warm.Close()
+		}
+	}
 	track, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2,
 	}, "audio-"+c.fingerprint, c.fingerprint)
 	if err != nil {
+		closeWarm()
 		return err
 	}
 	vtrack, err := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{
 		MimeType: webrtc.MimeTypeVP8, ClockRate: videoClock,
 	}, "video-"+c.fingerprint, c.fingerprint)
 	if err != nil {
+		closeWarm()
 		return err
 	}
 	cl := &call{
 		c: c, channel: channel, src: src, sink: sink, track: track, vtrack: vtrack, api: c.newAPI(),
 		wake: make(chan struct{}, 1), stop: make(chan struct{}), adone: make(chan struct{}),
 		ready: make(chan struct{}), failCh: make(chan struct{}), tdDone: make(chan struct{}),
-		muteCh: make(chan struct{}, 1),
+		muteCh: make(chan struct{}, 1), vidWanted: vid, warmPC: warm,
 	}
+	cl.muted.Store(muted)
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
+		closeWarm()
 		return ErrClosed
 	}
 	if c.call != nil {
 		c.mu.Unlock()
+		closeWarm()
 		return ErrInVoice
 	}
 	c.call = cl
@@ -216,6 +261,12 @@ func (c *Client) JoinVoice(ctx context.Context, channel string, src AudioSource,
 	if err := c.send(proto.TypeVoiceJoin, proto.VoiceJoin{Channel: channel}); err != nil {
 		c.abortCall(cl, false)
 		return err
+	}
+	if muted { // the server's copy of the mute flag starts false
+		if err := c.send(proto.TypeVoiceMute, proto.VoiceMute{Muted: true}); err != nil {
+			c.abortCall(cl, false)
+			return err
+		}
 	}
 	select {
 	case <-cl.ready:
@@ -318,7 +369,7 @@ func (c *Client) onError(em proto.ErrorMsg) bool {
 	if em.Code == proto.CodeNotSharing || em.Code == "not_joined" {
 		c.watchFailed(em.Gen, &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen}) // the error itself still reaches the UI below
 	}
-	if em.Code == "bad_request" {
+	if em.Code == proto.CodeBadRequest {
 		switch em.Message {
 		case msgShareStartUnsupported:
 			c.shareUnsupported()
@@ -331,7 +382,7 @@ func (c *Client) onError(em proto.ErrorMsg) bool {
 	if cl == nil {
 		return false
 	}
-	if em.Code == "bad_request" {
+	if em.Code == proto.CodeBadRequest {
 		switch {
 		case em.Message == msgOfferPending:
 			cl.post(cl.onGlare)
@@ -442,6 +493,9 @@ func (cl *call) teardownCtx(ctx context.Context) {
 	cl.tdOnce.Do(func() {
 		go func() {
 			defer close(cl.tdDone)
+			if h := teardownHook.Load(); h != nil {
+				(*h)()
+			}
 			close(cl.stop)
 			<-cl.adone
 			cl.tmu.Lock()
@@ -453,6 +507,10 @@ func (cl *call) teardownCtx(ctx context.Context) {
 			if cl.pc != nil {
 				_ = cl.pc.Close()
 				cl.pc = nil
+			}
+			if cl.warmPC != nil { // never negotiated on
+				_ = cl.warmPC.Close()
+				cl.warmPC = nil
 			}
 			cl.wg.Wait()
 		}()
@@ -467,9 +525,13 @@ func (cl *call) teardownCtx(ctx context.Context) {
 // newPC builds a fresh PeerConnection with our audio track attached and the
 // receive/connection callbacks wired. Actor only.
 func (cl *call) newPC() error {
-	pc, err := cl.api.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		return err
+	pc := cl.warmPC // already connected: the first offer only adds media
+	cl.warmPC = nil
+	if pc == nil {
+		var err error
+		if pc, err = cl.api.NewPeerConnection(webrtc.Configuration{}); err != nil {
+			return err
+		}
 	}
 	snd, err := pc.AddTrack(cl.track)
 	if err != nil {

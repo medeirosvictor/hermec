@@ -164,7 +164,7 @@ func TestCreateHostedWritesChainAndLocalConfig(t *testing.T) {
 	}
 	b, _ := os.ReadFile(path)
 	text := string(b)
-	if !strings.Contains(text, id) || !strings.Contains(text, `password = "pw"`) {
+	if !strings.Contains(text, id) || !strings.Contains(text, "password_key = ") || strings.Contains(text, "password =") {
 		t.Errorf("hosted.toml:\n%s", text)
 	}
 	for _, k := range []string{"server_name", "channels", "grants", "allowed_keys"} {

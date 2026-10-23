@@ -73,7 +73,7 @@ func readChainEntry(t *testing.T, c *websocket.Conn) chain.Entry {
 	for {
 		env := readEnv(t, c)
 		switch env.Type {
-		case proto.TypeRoster, proto.TypeVoiceState:
+		case proto.TypeRoster, proto.TypeVoiceState, proto.TypeHosts:
 			continue
 		case proto.TypeChain:
 			var f proto.ChainFrame

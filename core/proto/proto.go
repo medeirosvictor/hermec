@@ -20,6 +20,16 @@ const (
 	MaxMessageSize = 64 * 1024
 	// MaxRosterMembers caps the members listed in one Roster frame.
 	MaxRosterMembers = 200
+	// HeartbeatInterval is how often a host sends hb to its clients and
+	// links; HeartbeatGrace is how long a receiver waits without one before
+	// calling the sender dead.
+	HeartbeatInterval = 500 * time.Millisecond
+	HeartbeatGrace    = 1500 * time.Millisecond
+	// WarmChannelLabel names the data channel of a warm PeerConnection; the
+	// client sends WarmPing on it and the host answers WarmPong.
+	WarmChannelLabel = "hermec-warm"
+	WarmPing         = "ping"
+	WarmPong         = "pong"
 )
 
 // Message types.
@@ -58,6 +68,23 @@ const (
 	TypeWatch      = "watch"
 	// TypeVideoSource (S) marks the boundary of a viewer's video stream.
 	TypeVideoSource = "video_source"
+
+	// Host failover: the host list, liveness, the host-to-host link and warm
+	// standby sessions (WebRTC signalling for a standby's pre-connected media).
+	TypeHosts          = "hosts"
+	TypeHeartbeat      = "hb"
+	TypeTakeover       = "takeover"
+	TypeMove           = "move"
+	TypeLinkHello      = "link_hello"
+	TypeLinkSync       = "link_sync"
+	TypeLinkRole       = "link_role"
+	TypeLinkProbe      = "link_probe"
+	TypeLinkProbeReply = "link_probe_reply"
+	TypeReach          = "reach"
+	TypeHandover       = "handover"
+	TypeWarmOffer      = "warm_offer"
+	TypeWarmAnswer     = "warm_answer"
+	TypeWarmCandidate  = "warm_candidate"
 )
 
 // CodeNotSharing is the error code for a watch whose target is not sharing in
@@ -79,6 +106,7 @@ const CodeAuthFailed = "auth_failed"
 // Error codes added with protocol version 2.
 const (
 	CodeUpdateRequired    = "update_required"
+	CodeServerBusy        = "server_busy" // also the HTTP 503 refusal, which the client synthesizes
 	CodeServerOutdated    = "server_outdated"
 	CodeServerIDMismatch  = "server_id_mismatch"
 	CodeHostNotAuthorized = "host_not_authorized"
@@ -86,6 +114,16 @@ const (
 	CodeChainConflict     = "chain_conflict"
 	CodeChainFull         = "chain_full"
 	CodeBanned            = "banned"
+)
+
+// Error codes added with the host failover messages.
+const (
+	CodeNotActive   = "not_active"
+	CodeActiveAlive = "active_alive"
+	CodeNotStandby  = "not_standby"
+	CodeChainLost   = "chain_lost"
+	CodeForbidden   = "forbidden"
+	CodeBadRequest  = "bad_request"
 )
 
 // HostProofReq asks the peer to prove it holds a host key by signing Nonce.
@@ -109,6 +147,7 @@ type ChainFrame struct {
 // ChainAppend proposes or announces one new chain entry (raw JSON).
 type ChainAppend struct {
 	Entry json.RawMessage `json:"entry"`
+	Ref   string          `json:"ref,omitempty"`
 }
 
 // Reserved for future end-to-end encryption. They have no handler yet.
@@ -134,7 +173,12 @@ type Auth struct {
 	PubKey   []byte `json:"pubkey"`
 	Name     string `json:"name"`
 	Sig      []byte `json:"sig"`
-	Password string `json:"password,omitempty"`
+	Password string `json:"password,omitempty"` // v0.6 clients only
+	// Proof replaces Password: PasswordProof over the nonces and server ID.
+	Proof []byte `json:"proof,omitempty"`
+	// Warm marks a standby's pre-connection, which the host may hold open
+	// before the client is promoted to a live session.
+	Warm bool `json:"warm,omitempty"`
 }
 
 // ChannelInfo describes a server channel. Type is "text" or "voice".
@@ -225,17 +269,107 @@ type RTCCandidate struct {
 	Candidate string `json:"candidate"`
 }
 
+// Warm standby signalling reuses the RTC payloads.
+type (
+	WarmOffer     = RTCOffer
+	WarmAnswer    = RTCAnswer
+	WarmCandidate = RTCCandidate
+)
+
 // ErrorMsg reports a failure. Codes: "auth_failed", "forbidden",
 // "bad_request", "not_joined", "rate_limited", "not_sharing", "voice_full",
 // "server_full", "update_required", "server_outdated", "server_id_mismatch",
-// "host_not_authorized", "bad_chain", "chain_conflict", "chain_full", "banned".
+// "host_not_authorized", "bad_chain", "chain_conflict", "chain_full", "banned",
+// "not_active", "active_alive", "not_standby", "chain_lost".
 type ErrorMsg struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 	// Gen is the Gen of the watch request this error answers (only set for
 	// refused watches whose request carried a gen).
 	Gen uint32 `json:"gen,omitempty"`
+	// Ref is the ID of the client request this error answers, when it has one.
+	Ref string `json:"ref,omitempty"`
 }
+
+// HostInfo describes one server host: its key fingerprint, display name,
+// dialable addresses and failover priority (lower is preferred).
+type HostInfo struct {
+	Fingerprint string   `json:"fingerprint"`
+	Name        string   `json:"name"`
+	Addrs       []string `json:"addrs"`
+	Priority    int      `json:"priority"`
+}
+
+// Hosts lists the active host and, when one is set, the standby.
+type Hosts struct {
+	Active  HostInfo  `json:"active"`
+	Standby *HostInfo `json:"standby,omitempty"`
+}
+
+// Heartbeat is the periodic liveness ping between hosts.
+type Heartbeat struct {
+	Seq uint64 `json:"seq"`
+}
+
+// Move tells a client to reconnect to another host. Reason is "handback"
+// (the active host returns to its place) or "merge" (two hosts join).
+type Move struct {
+	To     HostInfo `json:"to"`
+	Reason string   `json:"reason"`
+}
+
+// LinkHello opens a host-to-host link: the sender's chain position, the ID and
+// time of its newest stored chat line, and how to dial it.
+type LinkHello struct {
+	ChainSeq      uint64    `json:"chain_seq"`
+	HistoryLastID string    `json:"history_last_id"`
+	HistoryLastTS time.Time `json:"history_last_ts"`
+	Addrs         []string  `json:"addrs"`
+	Name          string    `json:"name"`
+	// Yield is set on the link a split-brain loser opens to merge into the
+	// winner: the loser's load, so the winner can check it still wins.
+	Yield *YieldLoad `json:"yield,omitempty"`
+}
+
+// YieldLoad is a host's load for the split-brain yield rule.
+type YieldLoad struct {
+	VoiceMembers int `json:"voice_members"`
+	Clients      int `json:"clients"`
+	Priority     int `json:"priority"`
+}
+
+// LinkSync carries chat history between linked hosts. PasswordKey is the
+// derived key (never the password itself); More says further frames follow.
+type LinkSync struct {
+	PasswordKey []byte        `json:"password_key,omitempty"`
+	Messages    []ChatMessage `json:"messages,omitempty"`
+	More        bool          `json:"more,omitempty"`
+}
+
+// LinkRole sets whether the linked host is the standby (true) or the active.
+type LinkRole struct {
+	Standby bool `json:"standby"`
+}
+
+// LinkProbeReply reports a host's state: whether it is active, its chain
+// identity, its load (voice members and clients) and its failover priority.
+type LinkProbeReply struct {
+	Active       bool     `json:"active"`
+	ServerID     string   `json:"server_id"`
+	VoiceMembers int      `json:"voice_members"`
+	Clients      int      `json:"clients"`
+	Priority     int      `json:"priority"`
+	Self         HostInfo `json:"self"`
+}
+
+// Reach reports whether a host could reach the peer with this fingerprint.
+type Reach struct {
+	Fingerprint string `json:"fingerprint"`
+	OK          bool   `json:"ok"`
+}
+
+// Handover tells the active host to hand its role to the standby.
+type Handover struct{}
 
 // Join requests joining a channel.
 type Join struct {
@@ -252,6 +386,7 @@ type Member struct {
 	Fingerprint string   `json:"fingerprint"`
 	Name        string   `json:"name"`
 	Roles       []string `json:"roles"`
+	PubKey      []byte   `json:"pub_key,omitempty"`
 }
 
 // Presence lists the members of a channel.
@@ -285,6 +420,8 @@ type ChatMessage struct {
 	From    Member    `json:"from"`
 	Text    string    `json:"text"`
 	TS      time.Time `json:"ts"`
+	// System marks a host-change line (not a message from a member).
+	System bool `json:"system,omitempty"`
 }
 
 // History is a page of stored chat lines for a text channel, oldest first.

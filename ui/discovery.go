@@ -33,7 +33,7 @@ func (g *game) selfHostPort() int {
 	if h == nil || h.srv == nil {
 		return 0
 	}
-	_, p, err := net.SplitHostPort(h.srv.Addr())
+	_, p, err := net.SplitHostPort(h.srv.Server().Addr())
 	if err != nil {
 		return 0
 	}

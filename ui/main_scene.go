@@ -161,6 +161,7 @@ func (g *game) addMainHits(gm geometry) {
 	}
 	g.hits.Add(state.Hit{X0: gm.inputR.x0, Y0: gm.inputR.y0, X1: gm.inputR.x1, Y1: gm.inputR.y1, Kind: state.HitText})
 	g.hits.Add(state.Hit{X0: gm.toggleR.x0, Y0: gm.toggleR.y0, X1: gm.toggleR.x1, Y1: gm.toggleR.y1, Kind: state.HitMembersToggle})
+	g.addMemberHits(gm)
 	g.addVoicePanelHits(gm)
 	g.addVideoHit(gm)
 	g.addBarHits(gm)
@@ -222,11 +223,17 @@ func (g *game) sendChat() {
 	if txt == "" || s.c == nil || len(s.st.Channels) == 0 {
 		return
 	}
+	if s.switching {
+		s.sendNotice = interruptedSendNotice
+		s.st.Status = s.sendNotice
+		return
+	}
 	ch := s.st.Channels[s.st.Active]
+	id := s.queueChat(s.c, ch, txt)
 	go func(key string, c *client.Client) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		g.sendCh <- sendResult{key: key, err: c.SendChat(ctx, ch, txt)}
+		g.sendCh <- sendResult{key: key, chatID: id, err: c.SendChat(ctx, ch, txt)}
 	}(s.key, s.c)
 }
 

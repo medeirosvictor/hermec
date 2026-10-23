@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -33,6 +34,18 @@ type ServerEntry struct {
 
 	// ServerID pins the server's identity (chain.ID.String()) once first seen.
 	ServerID string `toml:"server_id,omitempty"`
+
+	// PasswordKey caches proto.PasswordKey(password, server ID) as hex after a
+	// successful login, so scrypt runs once and the password is not kept.
+	PasswordKey string `toml:"password_key,omitempty"`
+
+	// Hosts are the known host URLs of this server (active and standby, at
+	// most MaxHosts), tried in order when URL does not answer.
+	Hosts []string `toml:"hosts,omitempty"`
+
+	// ChainSeq is the highest chain head seq seen; a host presenting a lower
+	// head is a rollback and is refused.
+	ChainSeq uint64 `toml:"chain_seq,omitempty"`
 
 	// Pending marks an entry not yet connected; it is never saved.
 	Pending bool `toml:"-"`
@@ -210,6 +223,61 @@ func RailHit(x, y, railW, top, tileH float64, count int, h float64) int {
 		return RailNone
 	}
 	return i
+}
+
+// SetPasswordKey returns a copy of entries with the cached password key of url
+// set to key (hex); an empty key leaves the entries as they are.
+func SetPasswordKey(entries []ServerEntry, url, key string) []ServerEntry {
+	out := append([]ServerEntry(nil), entries...)
+	if key == "" {
+		return out
+	}
+	for i := range out {
+		if out[i].URL == url {
+			out[i].PasswordKey = key
+		}
+	}
+	return out
+}
+
+// MaxHosts caps ServerEntry.Hosts.
+const MaxHosts = 16
+
+// MergeAddrs returns a copy of have with the entries of add appended that are
+// non-empty and not already there, up to max entries in all.
+func MergeAddrs(have, add []string, max int) []string {
+	out := slices.Clone(have)
+	for _, u := range add {
+		if u != "" && !slices.Contains(out, u) && len(out) < max {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// SetHosts returns a copy of entries with the known hosts of url set to hosts,
+// without empty entries or duplicates, capped at MaxHosts.
+func SetHosts(entries []ServerEntry, url string, hosts []string) []ServerEntry {
+	out := append([]ServerEntry(nil), entries...)
+	clean := MergeAddrs(nil, hosts, MaxHosts)
+	for i := range out {
+		if out[i].URL == url {
+			out[i].Hosts = clean
+		}
+	}
+	return out
+}
+
+// BumpChainSeq returns a copy of entries with the chain seq of url raised to
+// seq; it never lowers.
+func BumpChainSeq(entries []ServerEntry, url string, seq uint64) []ServerEntry {
+	out := append([]ServerEntry(nil), entries...)
+	for i := range out {
+		if out[i].URL == url && seq > out[i].ChainSeq {
+			out[i].ChainSeq = seq
+		}
+	}
+	return out
 }
 
 // PinID returns a copy of entries with the server ID of url set to id, only

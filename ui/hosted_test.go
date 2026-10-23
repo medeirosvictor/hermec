@@ -349,7 +349,7 @@ func TestLeaveHostedDeleteFailure(t *testing.T) {
 	old := removeFile
 	removeFile = func(string) error { return errors.New("access denied") }
 	t.Cleanup(func() { removeFile = old })
-	srv := g.hosted.srv
+	srv := g.hosted.srv.Server()
 	g.leaveHosted()
 	if g.hosted != nil || g.notice != "couldn't delete hosted.toml: access denied" {
 		t.Fatalf("hosted=%+v notice=%q", g.hosted, g.notice)
@@ -393,7 +393,7 @@ func TestLeaveHostedDeletesFile(t *testing.T) {
 	if got := g.leaveSuffixFor("k"); got != leaveSuffix {
 		t.Fatalf("plain suffix = %q", got)
 	}
-	addr := g.hosted.srv.Addr()
+	addr := g.hosted.srv.Server().Addr()
 	g.dialogConfirm()
 	if g.hosted != nil || g.sess[hostedKey] != nil {
 		t.Fatalf("hosted=%+v sess=%v", g.hosted, g.sess)

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -45,7 +46,8 @@ func (c Config) HistoryLimits() (days, mb int) {
 // fileConfig is the on-disk TOML shape of Config.
 type fileConfig struct {
 	Addr          string              `toml:"addr"`
-	Password      string              `toml:"password"`
+	Password      string              `toml:"password,omitempty"`
+	PasswordKey   string              `toml:"password_key,omitempty"` // hex
 	AllowedKeys   []string            `toml:"allowed_keys"`
 	Channels      []string            `toml:"channels"`
 	VoiceChannels []string            `toml:"voice_channels"`
@@ -68,6 +70,7 @@ type fileConfig struct {
 	HistoryMB     *int                `toml:"history_mb"`
 	ServerName    string              `toml:"server_name,omitempty"`
 	ServerID      string              `toml:"server_id,omitempty"`
+	KnownHosts    []string            `toml:"known_hosts,omitempty"`
 }
 
 // DefaultConfig returns the configuration used when no file is given.
@@ -119,7 +122,15 @@ func LoadConfig(path string) (Config, error) {
 		cfg.Addr = fc.Addr
 	}
 	cfg.Password = fc.Password
+	if fc.PasswordKey != "" {
+		key, err := hex.DecodeString(fc.PasswordKey)
+		if err != nil || len(key) != 32 {
+			return Config{}, fmt.Errorf("server: load config: password_key must be 64 hex characters")
+		}
+		cfg.PasswordKey = key
+	}
 	cfg.ServerID = fc.ServerID
+	cfg.KnownHosts = fc.KnownHosts
 	cfg.AllowedKeys = fc.AllowedKeys
 	if md.IsDefined("channels") {
 		cfg.Channels = fc.Channels
@@ -215,6 +226,14 @@ func LoadConfig(path string) (Config, error) {
 	return cfg, nil
 }
 
+// hexKey renders a password key for the TOML file; nil renders as "".
+func hexKey(k []byte) string {
+	if len(k) == 0 {
+		return ""
+	}
+	return hex.EncodeToString(k)
+}
+
 // MarshalTOML renders c in the same TOML shape LoadConfig reads. The limit keys
 // (max_voice, max_clients, max_per_ip) are written only when they differ from
 // their defaults, so a file that keeps the defaults has no keys an older app
@@ -229,6 +248,7 @@ func (c Config) MarshalTOML() ([]byte, error) {
 	fc := fileConfig{
 		Addr:          c.Addr,
 		Password:      c.Password,
+		PasswordKey:   hexKey(c.PasswordKey),
 		AllowedKeys:   c.AllowedKeys,
 		Channels:      c.Channels,
 		VoiceChannels: c.VoiceChannels,
@@ -273,6 +293,7 @@ func (c Config) MarshalLocalTOML() ([]byte, error) {
 	fc := fileConfig{
 		Addr:         c.Addr,
 		Password:     c.Password,
+		PasswordKey:  hexKey(c.PasswordKey),
 		TLSCert:      c.TLSCert,
 		TLSKey:       c.TLSKey,
 		PublicIP:     c.PublicIP,
@@ -283,6 +304,7 @@ func (c Config) MarshalLocalTOML() ([]byte, error) {
 		MsgBurst:     c.MsgBurst,
 		Discoverable: &c.Discoverable,
 		ServerID:     c.ServerID,
+		KnownHosts:   c.KnownHosts,
 	}
 	var buf bytes.Buffer
 	if err := toml.NewEncoder(&buf).Encode(fc); err != nil {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/hex"
 	"fmt"
 	"image/color"
 	"math"
@@ -117,6 +118,9 @@ func (g *game) saveServer(s *session, channel string) {
 	live := func(u string) bool { _, ok := g.sess[u]; return ok }
 	g.servers = state.Touch(g.servers, s.key, label, serverNameOf(s.c), channel, live)
 	g.servers = state.PinID(g.servers, s.key, s.c.ServerID())
+	if s.key != hostedKey { // the hosted key lives in hosted.toml
+		g.servers = state.SetPasswordKey(g.servers, s.key, hex.EncodeToString(s.c.PasswordKey()))
+	}
 	if err := state.SaveServers(g.serversPath, g.servers); err != nil {
 		g.notice = fmt.Sprintf("save servers: %v", err)
 		s.st.Status = g.notice
@@ -196,9 +200,6 @@ func (g *game) addServer() {
 }
 
 func (g *game) updateRail() {
-	if g.railW() == 0 {
-		return
-	}
 	right := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight)
 	if !right && !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		return
@@ -215,6 +216,9 @@ func (g *game) updateRail() {
 // (x, y). A right press opens the tile menu; a left press acts on the target.
 func (g *game) clickRail(h state.Hit, ok, right bool, x, y float64) {
 	if right {
+		if ok && h.Kind == state.HitMember {
+			g.openMemberMenu(h.Key, x, y)
+		}
 		if ok && (h.Kind == state.HitRailTile || h.Kind == state.HitRailRetry) && h.ID >= 0 && h.ID < len(g.servers) {
 			g.openTileMenu(g.servers[h.ID].URL, x, y)
 		}

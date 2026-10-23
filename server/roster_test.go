@@ -27,6 +27,7 @@ func authNamed(t *testing.T, url string, id *identity.Identity, name string) *we
 	if env := readEnv(t, c); env.Type != proto.TypeAuthOK {
 		t.Fatalf("auth type = %q", env.Type)
 	}
+	expectHosts(t, c)
 	return c
 }
 

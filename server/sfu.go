@@ -554,14 +554,14 @@ func (vs *voiceSession) handleRTC(c *conn, env proto.Envelope) {
 		case proto.TypeRTCOffer:
 			var m proto.RTCOffer
 			if json.Unmarshal(env.Data, &m) != nil {
-				c.sendError("bad_request", "malformed rtc_offer")
+				c.sendError(proto.CodeBadRequest, "malformed rtc_offer")
 				return
 			}
 			vs.handleOffer(p, m.SDP)
 		case proto.TypeRTCAnswer:
 			var m proto.RTCAnswer
 			if json.Unmarshal(env.Data, &m) != nil {
-				c.sendError("bad_request", "malformed rtc_answer")
+				c.sendError(proto.CodeBadRequest, "malformed rtc_answer")
 				return
 			}
 			vs.handleAnswer(p, m.SDP)
@@ -569,7 +569,7 @@ func (vs *voiceSession) handleRTC(c *conn, env proto.Envelope) {
 			var m proto.RTCCandidate
 			var ci webrtc.ICECandidateInit
 			if json.Unmarshal(env.Data, &m) != nil || json.Unmarshal([]byte(m.Candidate), &ci) != nil {
-				c.sendError("bad_request", "malformed rtc_candidate")
+				c.sendError(proto.CodeBadRequest, "malformed rtc_candidate")
 				return
 			}
 			vs.handleCandidate(p, ci)
@@ -586,9 +586,21 @@ func (vs *voiceSession) reply(p *peer, msgType string, payload any) {
 }
 
 func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
-	pc, err := vs.api.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		return nil, err
+	// A promoted warm client brings the PeerConnection it already connected
+	// (ICE and DTLS done); its next rtc_offer renegotiates it. Ownership moves
+	// here. One mid-negotiation or dead is not worth reusing.
+	pc := vs.srv.takeWarmPeer(p.c)
+	if pc != nil && (pc.SignalingState() != webrtc.SignalingStateStable ||
+		pc.ConnectionState() == webrtc.PeerConnectionStateFailed || pc.ConnectionState() == webrtc.PeerConnectionStateClosed) {
+		_ = pc.Close()
+		pc = nil
+	}
+	if pc == nil {
+		var err error
+		pc, err = vs.api.NewPeerConnection(webrtc.Configuration{})
+		if err != nil {
+			return nil, err
+		}
 	}
 	// pion goroutines: only post, never touch session state directly.
 	pc.OnICECandidate(func(ci *webrtc.ICECandidate) {
@@ -650,23 +662,23 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 
 func (vs *voiceSession) handleOffer(p *peer, sdp string) {
 	if p.negotiating {
-		p.c.sendError("bad_request", errOfferPending)
+		p.c.sendError(proto.CodeBadRequest, errOfferPending)
 		return
 	}
 	fresh := false
 	if p.pc == nil {
 		pc, err := vs.newPC(p)
 		if err != nil {
-			p.c.sendError("bad_request", "cannot create peer connection")
+			p.c.sendError(proto.CodeBadRequest, "cannot create peer connection")
 			return
 		}
 		p.pc, fresh = pc, true
 	} else if p.pc.SignalingState() != webrtc.SignalingStateStable {
-		p.c.sendError("bad_request", "rtc_offer in unexpected signaling state")
+		p.c.sendError(proto.CodeBadRequest, "rtc_offer in unexpected signaling state")
 		return
 	}
 	fail := func(msg string) {
-		p.c.sendError("bad_request", msg)
+		p.c.sendError(proto.CodeBadRequest, msg)
 		if fresh {
 			pc := p.pc
 			p.pc = nil
@@ -725,13 +737,13 @@ func videoRefused(offer, answer string) bool {
 
 func (vs *voiceSession) handleAnswer(p *peer, sdp string) {
 	if p.pc == nil || !p.negotiating {
-		p.c.sendError("bad_request", "unexpected rtc_answer")
+		p.c.sendError(proto.CodeBadRequest, "unexpected rtc_answer")
 		return
 	}
 	if err := p.pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: sdp}); err != nil {
 		// pion stays in have-local-offer; start over so the peer can recover
 		// by sending a fresh rtc_offer.
-		p.c.sendError("bad_request", "invalid rtc_answer; media reset, send a new rtc_offer")
+		p.c.sendError(proto.CodeBadRequest, "invalid rtc_answer; media reset, send a new rtc_offer")
 		vs.releaseMedia(p)
 		return
 	}
@@ -787,7 +799,7 @@ func (vs *voiceSession) renegotiate(p *peer) {
 	}
 	if err != nil {
 		vs.srv.logf("voice %q: renegotiation offer failed: %v", vs.channel, err)
-		p.c.sendError("bad_request", "renegotiation failed; media reset, send a new rtc_offer")
+		p.c.sendError(proto.CodeBadRequest, "renegotiation failed; media reset, send a new rtc_offer")
 		vs.releaseMedia(p)
 		return
 	}
@@ -799,7 +811,7 @@ func (vs *voiceSession) renegotiate(p *peer) {
 		} else {
 			vs.srv.logf("voice %q: rtc_offer for %s is %d bytes (max %d); resetting its media", vs.channel, p.c.fingerprint, len(raw), vs.srv.offerLimit())
 		}
-		p.c.sendError("bad_request", "rtc_offer too large; media reset, send a new rtc_offer")
+		p.c.sendError(proto.CodeBadRequest, "rtc_offer too large; media reset, send a new rtc_offer")
 		vs.releaseMedia(p)
 		return
 	}
@@ -812,7 +824,7 @@ func (vs *voiceSession) renegotiate(p *peer) {
 		vs.post(func() {
 			if p.negotiating && p.offerGen == gen && p.pc == pc {
 				vs.srv.logf("voice %q: no rtc_answer from %s; resetting its media", vs.channel, p.c.fingerprint)
-				p.c.sendError("bad_request", "rtc_answer timeout; media reset, send a new rtc_offer")
+				p.c.sendError(proto.CodeBadRequest, "rtc_answer timeout; media reset, send a new rtc_offer")
 				vs.releaseMedia(p)
 			}
 		})
@@ -888,7 +900,7 @@ func (vs *voiceSession) syncTracks(q *peer) {
 	// releaseMedia re-syncs everyone else, the room tends to reset together.
 	if q.retired > maxInactiveLines {
 		vs.srv.logf("voice %q: %s has %d inactive audio lines; resetting its media", vs.channel, q.c.fingerprint, q.retired)
-		q.c.sendError("bad_request", "too many retired audio lines; media reset, send a new rtc_offer")
+		q.c.sendError(proto.CodeBadRequest, "too many retired audio lines; media reset, send a new rtc_offer")
 		vs.releaseMedia(q)
 		return
 	}

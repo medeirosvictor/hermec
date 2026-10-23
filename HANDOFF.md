@@ -10,18 +10,21 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and
    the memory note `hermec-project`.
-2. Repo state: `main` == `origin/main`, released through **v0.5.1**. The
-   worktree `.claude/worktrees/hermec-portable` is on branch `chat-history`.
-   Untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
+2. Repo state: `main` == `origin/main`, released through **v0.5.1**; chat
+   history (PR #9) is merged but not released. PR 3 (host link, warm standby,
+   failover) is **done** on branch `worktree-hermec-failover` (worktree
+   `.claude/worktrees/hermec-failover`) and **not merged yet**: its final review
+   and fix wave are complete, and it waits for Victor's real test (checklist
+   below). Untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.
-3. **Current round: always-on.** Spec (approved design):
-   `docs/superpowers/specs/2026-10-21-hermec-always-on-design.md`. Three PRs:
-   identity and chain, chat history, host link with warm standby and failover.
-   **PR 1 (identity and chain) and PR 2 (chat history) are done** (protocol v2;
-   history on branch `chat-history`); next is PR 3, the host link with warm
-   standby and failover. After always-on and webcam, Victor moves to stress
-   testing and use-case scenarios.
+3. **Current round: always-on.** The approved design is implemented across
+   three PRs: identity and chain, chat history, and host link with warm standby
+   and failover. **PR 1 (identity and chain) and PR 2 (chat history, PR #9) are
+   merged; PR 3 is built, see above.** The finished spec and implementation
+   plan were deleted per docs hygiene. Tag v0.7.0 on `main` after PR 3 merges.
+   After always-on and webcam, Victor moves to stress testing and use-case
+   scenarios.
 4. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload:
    `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In Victor's real settings,
    CRT and curvature are off: F1 toggles CRT, F3 curvature, F2 cycles themes.
@@ -51,20 +54,22 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 ## Next-session pipeline (Victor's order)
 
-1. **Always-on (now).** See the spec. Later idea riding the same synced
-   store: file sharing (a capped shared folder). vitoserver stays parked
-   (Victor: do not bring it back for now).
-   - **For PR 3 (from the PR 1 final review):** persist the last seen chain
-     head per pin (rollback protection: a host could serve an older valid
-     prefix); rate-limit pre-auth chain sends (an unauthenticated peer can
-     re-fetch up to 512 KiB repeatedly); move error-to-request matching off
-     FIFO (errors carry no correlation id); a live grant/revoke does not
-     re-broadcast the roster, so role badges lag until the next join.
-   - README 'How safe is this?': once standby ships, say the active host and
-     its standby can read and keep chat.
-   - **No UI yet** for ban, grant or host changes; the protocol and server
-     enforce them (`chain_append`). PR 3 adds Allow hosting / Stop hosting /
-     Move up; ban/grant UI is still to be placed.
+1. **Always-on (PR 3 awaiting Victor's real test).** Later idea
+   riding the same synced store: file sharing (a capped shared folder).
+   vitoserver stays parked (Victor: do not bring it back for now).
+   - **Decisions (Victor, 2026-10-22):** the password never travels (scrypt
+     key + HMAC login; v0.6 clients may still send the plain password for one
+     release, and plain passwords are refused from v0.8); friend hosts
+     node-share their PC on Tailscale, and the standby must be reachable by at
+     least half the clients.
+   - **PR 2 leftovers (low, from the fix re-reviews):** lines evicted during a
+     rewrite are written back to the file and trimmed at the next start; the
+     `gen` check in a rewrite is dead code; the rewrite swap fsyncs under the
+     store lock (milliseconds of chat stall); untested: eviction or Close
+     during a rewrite, Compact skipping while a rewrite runs.
+   - The founder's member menu has Allow hosting, Stop hosting and Move up.
+     There is **no UI yet** for ban or grant; the protocol and server enforce
+     them (`chain_append`). Still to be placed.
    - **PR 1 parked minors** (can wait): the client accepts any server nonce
      length; voice_join has no ban check (a just-banned member can flash back
      into voice until its socket drains); an oversize single entry would be
@@ -75,9 +80,21 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
      as torn; missing tests for 0600 mode, mutation isolation, the sync/close
      rollback branches, a replayed host proof, and an `auth_ok.server_id`
      mismatch.
-2. **Webcam.** Same pipeline as screen share (govpx VP8), camera source,
-   call-bar toggle. Camera capture per OS is new work.
-3. **Friends adjustments** (designed in chat 2026-10-19, not yet specced):
+2. **Webcam + call view.** Same pipeline as screen share (govpx VP8), camera
+   source, call-bar toggle. Camera capture per OS is new work. Victor
+   (2026-10-22): clicking the voice channel you are in opens a Discord-style
+   call view with participant tiles (speaking glow, mute, webcam or avatar,
+   LIVE streams); today that click does nothing.
+3. **Signed membership + connection modes** (Victor, 2026-10-22; brainstorm
+   first). Invite tree on the chain: the inviter signs, the invitee co-signs,
+   so there is an audit trail of who brought whom; ban or review a whole
+   branch; invite as a role; k-of-n admin signatures for host and role
+   changes. Connection modes: group policy in the chain (`tailnet`, `public`,
+   `lan`), per-host reachability; tailnet mode embeds Tailscale via tsnet
+   (pure Go) on a group tailnet (Tailscale account or Headscale) so Victor's
+   private tailnet stays separate; public mode (port forward or VPS) requires
+   `wss://` and invites. Author-signed chat (Plan C) comes after.
+4. **Friends adjustments** (designed in chat 2026-10-19, not yet specced):
    - Volume: per-person volume (right-click a person, 0 to 200%, saved per
      fingerprint), a mic gain settings row (0 to 200%), and a soft limiter.
      Friends were too quiet in both directions. Volume for a shared stream
@@ -97,12 +114,35 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
      (`pongTimeout` in `client/rtt.go`, recorded by `check`). Victor saw 1400 ms
      spikes with fine voice. Check Tailscale DERP versus direct
      (`tailscale ping`, `tailscale status`, `tailscale netcheck`).
-4. **B.3: icon editor.** In-app pixel-art editor for a server icon.
+5. **B.3: icon editor.** In-app pixel-art editor for a server icon.
 
 ## Open checklists
 
 Run these on a released build or `go run ./cmd/hermec -local` plus a second
 server. Agents must not run the GUI against the real `%APPDATA%\hermec`.
+
+### Host failover real test (PR 3; Victor, before merge)
+
+Needs a friend whose PC is node-shared on Tailscale and who runs HERMEC.
+
+- **Failover mid-call.** The founder (Victor) and the friend are in a voice
+  call; the friend's PC is the standby (the founder's roster menu, Allow
+  hosting; the friend switches on "let my PC host this server" in the tile
+  menu). Victor quits HERMEC in the middle of the call. The friend's call
+  should carry on within about a second with no clicks, the voice panel should
+  show "hosted by <friend>", chat should show "host changed to <friend>", and a
+  screen share (if any) ends and has to be restarted.
+- **Handback.** Victor starts HERMEC again after the call. Once voice has been
+  empty for 2 minutes, the role goes back to Victor's PC and the friend's
+  client moves over. Nobody should be moved while someone is in voice.
+- **Roster menu.** Right-click a member: Allow hosting for a non-host; Stop
+  hosting and Move up for a host (Move up is absent for the first host below the
+  founder). Check the host order after Move up.
+- **Friend toggle.** The friend switches "let my PC host this server" off and
+  on in the tile menu; the first time they see the reach notice. Quit and
+  restart the app: the choice holds.
+- Also look at: the standby is picked only when most clients can reach it (turn
+  the friend's node share off and check no standby shows up).
 
 ### Screen-share real test
 
@@ -196,6 +236,39 @@ server. Agents must not run the GUI against the real `%APPDATA%\hermec`.
 ## Deferred and parked
 
 Lists checked against the code on 2026-10-21; items already fixed were dropped.
+
+**Host failover (PR 3):**
+- Failover and merge edges: merged chat lines are not pushed live to the
+  winner's current clients (they appear on rejoin); a failed append on the
+  winner during a fast-forward merge is not reported to the loser; the winner
+  does not recheck that it is still active before appending link chain entries;
+  there is a tiny window where two hosts can both yield.
+- Failover on the client side: a Takeover that succeeds at the same moment as a
+  winning redial is only code-checked; `carryCall` ends the call if a voice op
+  is in flight; the failover goroutine can outlive app close by up to 8 s; a
+  failed `joinCall` after the old call was detached drops the call (the UI
+  falls back to a normal rejoin); if the old audio source read hangs forever,
+  outgoing audio of the new call stays silent.
+- Warm peers: no cap on warm data channels or pings per PeerConnection; a
+  promoted conn that never joins voice keeps its warm PeerConnection; a race
+  between a warm offer and a demotion.
+- Friend host: its own advertised URL is briefly not excluded from probe
+  targets at start; stopping during a start can move the port; `hostflags`
+  overwrites an `advertise` value from the config file.
+- Passwords: there is no tool to compute `password_key` for `hermec-server`
+  (the server derives it from `password` at start; Victor's call whether to
+  add one); the app has no password
+  field for joined servers; every plain-password login (v0.6 clients) runs
+  scrypt (32 MiB) on the server.
+- Errors and copy: a rolled-back chain shows the generic "the server sent an
+  invalid chain"; its own rollback-specific message is Victor's call; a
+  `ChainAppend` against a host that does not echo `ref` waits for its context.
+- The Move up menu's two appends can leave a brief priority tie if the second
+  fails; the GUI right-click path is not exercised by tests.
+- Test gaps and seams: heartbeat tests wait real time; `server.SetHeartbeatForTest`
+  is exported non-test code; a warm slot freed on plain disconnect, the 60 KiB
+  chain frame packing, and the `not_standby` answer to a non-warm conn are
+  untested.
 
 **Hardening and server:**
 - Wire correlation IDs for `rtc_*` messages and errors (retires the 300 ms glare
@@ -339,7 +412,9 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
 - **Packages:** `core/proto` (wire types and codec), `core/identity`,
   `core/roles`, `core/names`, `core/chain` (signed server chain: entries,
   state, server ID); `server` (WebSocket server, handshake in `conn.go` and
-  `handshake.go`, chain bootstrap, `-apply-config` and live chain updates in
+  `handshake.go`, host roles in `host.go` (the state machine), `mode.go`,
+  `takeover.go`, `warmpeer.go`, `linkserve.go`, `linkdial.go`,
+  `hostmerge.go` and `handoff.go`, chain bootstrap, `-apply-config` and live chain updates in
   `chain.go`, SFU in `sfu.go` and `voice.go`, limits in `guards.go`, UDP media mux in `mediaport.go`, discovery
   responder in `discovery.go`); `client` (headless library: connect, voice,
   share, RTT); `audio` (malgo capture and playback, jitter buffer, gopus);
@@ -352,7 +427,8 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
 - **Files on the user's machine** (`<user config dir>/hermec/`): `identity.key`,
   `settings.toml`, `servers.toml`, `hosted.toml` (the server hosted from the
   app), `chains/` and `history/` (chain and chat history of the hosted
-  server), `logs/`. Saved servers keep the last `server_name` the server sent
+  server), `hosting/<server-id>.toml` (port, password key, known hosts and the
+  on/off choice for a server this PC hosts as a friend), `logs/`. Saved servers keep the last `server_name` the server sent
   (`Name`) and the user's own nickname (`Nick`).
 - **Sessions:** every server opened this session stays connected; one `session`
   struct per server (`ui/session.go`). Connection lost: a call on that session
@@ -364,6 +440,12 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
   config dir, started at launch when it exists, stable key `hermec://hosted`
   mapped to `ws://127.0.0.1:<port>/`; `-local` uses `hermec://local`. The hosted
   server's media port equals its own port.
+- **Failover in the app:** `ui/hosts.go` keeps a second, warm session to the
+  standby and swaps to it on `ActiveLost` (takeover, then the call moves with
+  one offer/answer; `hostAlive` redials the old active host); `ui/hosting.go`
+  runs a `server.Host` for a server this PC is approved to host;
+  `ui/membermenu.go` is the founder's roster menu; the voice panel shows
+  "hosted by <name>". The tile never shows failed during a failover.
 - **Tiles:** a new tile is pending (greyed, pulsing, not saved) until its first
   successful connect. A failed dial shows a red x (bottom right) and a retry
   arrow (bottom left); Retry and Leave Server are in the right-click menu.
@@ -392,8 +474,8 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
   next to `-config`) for `hermec-server`. Caps `history_days` (30; at most
   3650) and `history_mb` (8; at most 64, since the store is held in memory and
   rewritten under its lock) come from the chain config entry and apply at once
-  on a config append; code in `server/history.go` and `ui/state`. PR 3 must
-  carry history to the standby.
+  on a config append; code in `server/history.go` and `ui/state`. The standby
+  gets the history over the host link.
 - **Changing history caps of an app-hosted server:** the app has no group
   settings UI and ignores group keys in `hosted.toml` (it logs a warning and
   shows a notice). The way is `hermec-server -config <file>.toml -apply-config

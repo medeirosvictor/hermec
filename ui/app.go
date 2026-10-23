@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -64,12 +65,21 @@ type game struct {
 	fp      string
 	keyAt   string
 
-	sess    map[string]*session // one per server, by saved-list key
-	none    *session            // connect-scene placeholder returned by cur()
-	dialCh  chan dialResult
-	joinCh  chan joinResult
-	sendCh  chan sendResult
-	voiceCh chan voiceResult
+	sess     map[string]*session // one per server, by saved-list key
+	none     *session            // connect-scene placeholder returned by cur()
+	dialCh   chan dialResult
+	joinCh   chan joinResult
+	sendCh   chan sendResult
+	voiceCh  chan voiceResult
+	hostCh   chan hostResult        // warm dials, failovers and moves; made on first use
+	friends  map[string]*friendHost // friend hosts running here, by server ID
+	friendCh chan friendStarted     // finished background friend host starts
+
+	friendStop    map[string]chan struct{} // closed when a stopping friend host has released its port
+	friendWG      sync.WaitGroup           // friend host shutdowns in flight
+	friendBackoff map[string]time.Time     // no start attempt before this, per server ID
+
+	onDialed func(*client.Client) // test seam: sees every client a dial made (loopback ICE); nil = none
 
 	fileLog    *log.Logger                                                     // session log file; nil = none
 	nextHealth time.Time                                                       // next call-health line; zero outside a call
@@ -314,8 +324,10 @@ func Run(opts Options) error {
 	g.loadServers(opts.ServersPath)
 	if !opts.Local {
 		g.bootHosted(opts.HostedPath)
+		g.bootFriends()
 	}
 	defer g.stopHosted()
+	defer g.stopFriends()
 	if !opts.Local {
 		url = startupURL(g.servers, url) // one Enter reconnects the most recent dialable
 	}
@@ -342,12 +354,19 @@ func Run(opts Options) error {
 		}
 		closeAll(g.vc.src, g.vc.sink)
 	}
+	g.closeSessions()
+	return err
+}
+
+// closeSessions closes every session's client and warm session.
+func (g *game) closeSessions() {
 	for _, k := range g.sessionKeys() {
-		if c := g.sess[k].c; c != nil {
-			_ = c.Close()
+		s := g.sess[k]
+		g.dropWarm(s)
+		if s.c != nil {
+			_ = s.c.Close()
 		}
 	}
-	return err
 }
 
 func (g *game) Update() error {

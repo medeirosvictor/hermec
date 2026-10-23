@@ -15,6 +15,7 @@ require (
 	github.com/pion/webrtc/v4 v4.2.23
 	github.com/thesyncim/gopus v0.2.2
 	github.com/thesyncim/govpx v0.0.0-20261018202535-159dce5b931a
+	golang.org/x/crypto v0.48.0
 	golang.org/x/image v0.46.0
 	golang.org/x/sys v0.48.0
 )
@@ -38,7 +39,6 @@ require (
 	github.com/pion/turn/v5 v5.1.2 // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/text v0.42.0 // indirect

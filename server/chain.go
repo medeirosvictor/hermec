@@ -360,16 +360,16 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 	var m proto.ChainAppend
 	var e chain.Entry
 	if json.Unmarshal(env.Data, &m) != nil || json.Unmarshal(m.Entry, &e) != nil {
-		c.sendError("bad_request", "malformed chain_append")
+		c.sendErrorRef(proto.CodeBadRequest, "malformed chain_append", m.Ref)
 		return
 	}
 	if len(e.Author) != ed25519.PublicKeySize || identity.Fingerprint(ed25519.PublicKey(e.Author)) != c.fingerprint {
-		c.sendError("forbidden", "entries may only be appended by their author")
+		c.sendErrorRef(proto.CodeForbidden, "entries may only be appended by their author", m.Ref)
 		return
 	}
 	frames, err := chainFrames([]chain.Entry{e})
 	if err != nil || len(frames) != 1 {
-		c.sendError("bad_request", "malformed chain entry")
+		c.sendErrorRef(proto.CodeBadRequest, "malformed chain entry", m.Ref)
 		return
 	}
 
@@ -381,32 +381,37 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 	case err == nil:
 	case errors.Is(err, chain.ErrConflict):
 		s.chainMu.Unlock()
-		c.sendError(proto.CodeChainConflict, "the chain moved on; retry")
+		c.sendErrorRef(proto.CodeChainConflict, "the chain moved on; retry", m.Ref)
 		return
 	case errors.Is(err, chain.ErrFull):
 		s.chainMu.Unlock()
-		c.sendError(proto.CodeChainFull, "the chain is full")
+		c.sendErrorRef(proto.CodeChainFull, "the chain is full", m.Ref)
 		return
 	case errors.As(err, &ruleErr):
 		s.chainMu.Unlock()
-		c.sendError("forbidden", ruleErr.Reason)
+		c.sendErrorRef(proto.CodeForbidden, ruleErr.Reason, m.Ref)
 		return
 	default:
 		s.chainMu.Unlock()
 		s.logf("server: chain_append from %s: %v", c.fingerprint, err)
-		c.sendError("bad_request", "entry rejected")
+		c.sendErrorRef(proto.CodeBadRequest, "entry rejected", m.Ref)
 		return
 	}
-	s.refreshGroup()
-	if s.applyHistoryLimits() {
-		// New caps take effect at once, not at the next hourly trim. Done
-		// before the broadcast, outside chMu (History is a leaf lock).
-		s.trimHistory()
-	}
+	s.afterChainChange()
 	s.chMu.Lock()
-	dead := s.broadcastAuthedLocked(frames[0])
+	dead := s.broadcastChainLocked(frames[0])
 	s.chMu.Unlock()
 	dropSlow(dead)
+	if e.Op == chain.OpGrant || e.Op == chain.OpRevoke {
+		// Role changes show in the roster's per-member roles.
+		s.chMu.Lock()
+		dead = s.broadcastAuthedLocked(s.rosterLocked())
+		s.chMu.Unlock()
+		dropSlow(dead)
+	}
+	if e.Op == chain.OpHostRemove || e.Op == chain.OpBan {
+		s.dropRemovedLinks()
+	}
 	if e.Op == chain.OpBan {
 		var b chain.FPBody
 		if e.DecodeBody(&b) == nil {
@@ -416,6 +421,16 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 	s.chainMu.Unlock()
 }
 
+// afterChainChange applies a chain change to the group state and history
+// limits. New caps take effect at once, not at the next hourly trim; call it
+// before broadcasting, outside chMu (History is a leaf lock).
+func (s *Server) afterChainChange() {
+	s.refreshGroup()
+	if s.applyHistoryLimits() {
+		s.trimHistory()
+	}
+}
+
 // kick tells every connection of fp that it is banned and ends it. The voice
 // seat is released here; the rest of the cleanup runs when the connection's
 // read loop sees the socket close.
@@ -423,6 +438,11 @@ func (s *Server) kick(fp string) {
 	s.chMu.Lock()
 	var hit []*conn
 	for c := range s.authed {
+		if c.fingerprint == fp {
+			hit = append(hit, c)
+		}
+	}
+	for c := range s.warm {
 		if c.fingerprint == fp {
 			hit = append(hit, c)
 		}

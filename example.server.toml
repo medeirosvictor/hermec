@@ -16,8 +16,20 @@
 # Listen address (host:port). ":7697" listens on all interfaces.
 addr = ":7697"
 
-# If set, every client must present this password. Leave empty for none.
+# If set, every client must prove it knows this password (the password itself
+# never goes over the network). Leave empty for none.
 # password = "change-me"
+# Better: store the key instead of the password. It is a 64-character hex
+# string, scrypt(password, "hermec-pw\0" || server_id), and every host of the
+# server must hold the same one. With only `password` set, the server derives
+# the key at every start and logs a notice.
+# password_key = ""
+
+# Other hosts of this server, as ws:// or wss:// URLs. They are merged with the
+# -hosts flag and with known_hosts.txt next to this file, which the host
+# updates as it learns about other hosts. Use -advertise to say where clients
+# reach this host, and -name for the name shown as "hosted by".
+# known_hosts = ["ws://100.64.0.9:7697/"]
 
 # Only these key fingerprints may connect. Empty or omitted = open server.
 # allowed_keys = ["k7mv-q3xp-9dfw-02hj"]

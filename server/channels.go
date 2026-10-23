@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
+	"github.com/pion/webrtc/v4"
 
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
@@ -44,6 +45,9 @@ func (s *Server) initChannels() {
 		s.voice[name] = make(map[*conn]bool)
 	}
 	s.authed = make(map[*conn]struct{})
+	s.warm = make(map[*conn]struct{})
+	s.warmPeers = make(map[*conn]*webrtc.PeerConnection)
+	s.links = make(map[*conn]struct{})
 	s.sessions = make(map[string]*voiceSession)
 }
 
@@ -52,6 +56,7 @@ func (c *conn) member() proto.Member {
 		Fingerprint: c.fingerprint,
 		Name:        c.name,
 		Roles:       c.srv.roles().RolesFor(c.fingerprint),
+		PubKey:      c.pub,
 	}
 }
 
@@ -292,9 +297,15 @@ func (s *Server) leaveAll(c *conn) {
 		delete(set, c)
 		dead = append(dead, s.broadcastLocked(ch, s.presenceLocked(ch))...)
 	}
+	delete(s.warm, c)
+	if _, was := s.links[c]; was {
+		delete(s.links, c)
+		dead = append(dead, s.updateStandbyLocked()...)
+	}
 	if _, was := s.authed[c]; was {
 		delete(s.authed, c)
 		dead = append(dead, s.broadcastAuthedLocked(s.rosterLocked())...)
+		dead = append(dead, s.updateStandbyLocked()...)
 	}
 	if vch := s.removeVoiceLocked(c); vch != "" {
 		dead = append(dead, s.broadcastVoiceLocked(vch)...)
@@ -311,7 +322,7 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 	}
 	if !s.roles().Has(c.fingerprint, roles.PermSendChat) {
 		s.chMu.Unlock()
-		return "forbidden"
+		return proto.CodeForbidden
 	}
 	id, err := newMessageID()
 	if err != nil {
@@ -340,6 +351,7 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 	if err == nil {
 		dead = s.broadcastLocked(ch, raw)
 	}
+	dead = append(dead, s.forwardChatLocked(msg)...)
 	s.chMu.Unlock()
 	dropSlow(dead)
 	if s.hist != nil {
@@ -353,24 +365,32 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 
 // route handles one post-auth message.
 func (c *conn) route(env proto.Envelope) {
+	if c.link != nil {
+		c.routeLink(env)
+		return
+	}
+	if !allowedWhenRestricted(env.Type) && c.srv.restricted(c) {
+		c.sendError(proto.CodeNotActive, "this host is not serving clients")
+		return
+	}
 	switch env.Type {
 	case proto.TypeJoin:
 		var m proto.Join
 		if json.Unmarshal(env.Data, &m) != nil {
-			c.sendError("bad_request", "malformed join")
+			c.sendError(proto.CodeBadRequest, "malformed join")
 			return
 		}
 		if !c.srv.roles().Has(c.fingerprint, roles.PermJoinChannel) {
-			c.sendError("forbidden", "not permitted to join channels")
+			c.sendError(proto.CodeForbidden, "not permitted to join channels")
 			return
 		}
 		if !c.srv.join(c, m.Channel) {
-			c.sendError("bad_request", "unknown channel "+m.Channel)
+			c.sendError(proto.CodeBadRequest, "unknown channel "+m.Channel)
 		}
 	case proto.TypeLeave:
 		var m proto.Leave
 		if json.Unmarshal(env.Data, &m) != nil {
-			c.sendError("bad_request", "malformed leave")
+			c.sendError(proto.CodeBadRequest, "malformed leave")
 			return
 		}
 		if !c.srv.leave(c, m.Channel) {
@@ -379,27 +399,27 @@ func (c *conn) route(env proto.Envelope) {
 	case proto.TypeChatSend:
 		var m proto.ChatSend
 		if json.Unmarshal(env.Data, &m) != nil {
-			c.sendError("bad_request", "malformed chat_send")
+			c.sendError(proto.CodeBadRequest, "malformed chat_send")
 			return
 		}
 		if len(m.Text) > maxChatBytes {
-			c.sendError("bad_request", "message too long")
+			c.sendError(proto.CodeBadRequest, "message too long")
 			return
 		}
 		switch c.srv.chat(c, m.Channel, m.Text) {
 		case "not_joined":
 			c.sendError("not_joined", "not in channel "+m.Channel)
-		case "forbidden":
-			c.sendError("forbidden", "not permitted to send chat")
+		case proto.CodeForbidden:
+			c.sendError(proto.CodeForbidden, "not permitted to send chat")
 		}
 	case proto.TypeHistoryBefore:
 		var m proto.HistoryBefore
 		if json.Unmarshal(env.Data, &m) != nil || m.Channel == "" || m.BeforeID == "" {
-			c.sendError("bad_request", "malformed history_before")
+			c.sendError(proto.CodeBadRequest, "malformed history_before")
 			return
 		}
 		if !c.srv.roles().Has(c.fingerprint, roles.PermJoinChannel) {
-			c.sendError("forbidden", "not permitted to join channels")
+			c.sendError(proto.CodeForbidden, "not permitted to join channels")
 			return
 		}
 		if !c.srv.historyBefore(c, m.Channel, m.BeforeID, m.BeforeTS) {
@@ -407,11 +427,21 @@ func (c *conn) route(env proto.Envelope) {
 		}
 	case proto.TypeChainAppend:
 		c.handleChainAppend(env)
+	case proto.TypeWarmOffer, proto.TypeWarmAnswer, proto.TypeWarmCandidate:
+		c.handleWarmSignal(env)
+	case proto.TypeLinkHello:
+		c.handleLinkHello(env)
+	case proto.TypeLinkProbe:
+		c.handleLinkProbe()
+	case proto.TypeTakeover:
+		c.handleTakeover()
+	case proto.TypeReach:
+		c.handleReach(env)
 	default:
 		if c.routeVoice(env) {
 			return
 		}
-		c.sendError("bad_request", "unsupported message type "+env.Type)
+		c.sendError(proto.CodeBadRequest, "unsupported message type "+env.Type)
 	}
 }
 

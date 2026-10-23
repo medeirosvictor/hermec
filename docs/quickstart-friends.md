@@ -87,6 +87,37 @@ TLS, anyone on the path can read chat. Voice media is always encrypted
 regardless. This setup exposes the **host's** IP only; participants never see
 each other's IPs, because media is relayed through the server by default.
 
+## Being a host as a friend
+
+The server does not have to die when the first host quits. The founder can
+approve friends as **hosts**. One host is active, and one is the standby with a
+live copy of the server. If the active host disappears, the standby takes over
+in about a second and nobody has to click anything. See the
+[README](../README.md#hosting-standby-and-failover) for how it works.
+
+To be a host, a friend needs three things:
+
+1. **Share your PC on Tailscale.** Do what the first host did: in the Tailscale
+   admin console, Machines, your PC, Share, and send the invite to every
+   member of the group. The standby must be reachable by at least half of the
+   clients, or the server will not pick it. Without the share, you will be an
+   idle host at best.
+2. **Ask the founder to approve you.** The founder right-clicks your name in the
+   member list and picks **Allow hosting**. (**Move up** changes who is
+   preferred; **Stop hosting** takes it away.)
+3. **Switch it on.** Right-click the server's tile and choose "let my PC host
+   this server". Windows may ask to allow HERMEC on your network; choose Allow.
+   The app then runs a small server on your PC (the first free port from 7697 to
+   7707) while the app is open. Switch it off the same way.
+
+Your PC hosts with the password key your own login to the server used, so if
+it ever starts as the active host, people still need the server password to
+join it. Keep the app open while the call is on; your PC only hosts while
+HERMEC runs.
+
+Being a host means your PC can read and keep the server's chat, and holds the
+server's login key. Only host for servers whose people you trust.
+
 ## What the host runs
 
 Easiest: download the server for your machine from the
@@ -166,7 +197,8 @@ Notes:
   `<user config dir>/hermec/identity.key` (on Windows, typically under
   `%AppData%`). It *is* your account, so back it up. Lose it and you become a
   new person.
-- **Passwords:** the GUI has no password field yet. If the host sets a
+- **Passwords:** the password never goes over the network (only a proof of
+  it). The GUI has no password field yet. If the host sets a
   `password`, GUI friends cannot join. Use the allowlist instead: the host
   adds each friend's key fingerprint to `allowed_keys` and restarts.
   (Your fingerprint is shown on the connect and settings screens; send it to the host.)

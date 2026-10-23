@@ -11,10 +11,12 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/pion/ice/v4"
+	"github.com/pion/webrtc/v4"
 
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
@@ -29,8 +31,13 @@ type Config struct {
 	// ServerID is the machine-local ID of the chain this config belongs to (as
 	// chain.ID.String()); the app stores it in hosted.toml. Unused by Server.
 	ServerID string
-	// Password, when non-empty, must be presented by every client.
+	// Password, when non-empty, is what every client must know. The server
+	// derives its key from it with the chain ID, so it is never compared on
+	// the wire; prefer PasswordKey.
 	Password string
+	// PasswordKey, when set, is proto.PasswordKey(password, server ID); clients
+	// then prove they know the password without sending it.
+	PasswordKey []byte
 	// AllowedKeys are permitted fingerprints. Empty means an open server.
 	AllowedKeys []string
 	// Roles maps fingerprints to roles and roles to permissions.
@@ -95,6 +102,15 @@ type Config struct {
 	// channels, limits, allowed keys, roles). Nil makes New build an in-memory
 	// chain from this Config's own group fields, founded by HostKey.
 	Chain *chain.Chain
+	// Mode is the host's starting mode. The zero value is ModeActive.
+	Mode Mode
+	// HostName and Advertise describe this host to its peers and clients: a
+	// display name and the addresses it can be dialed at.
+	HostName  string
+	Advertise []string
+	// KnownHosts are the other hosts of the server this machine has learned,
+	// kept in the local config file (hosted.toml).
+	KnownHosts []string
 }
 
 // logf writes a server log line through cfg.Logf, or log.Printf.
@@ -120,16 +136,41 @@ type Server struct {
 	chainMu  sync.Mutex // serializes chain_append: append, refresh, broadcast, kick
 	upgrader websocket.Upgrader
 
+	pwOnce sync.Once // derives pwKey from cfg.Password on first use
+	pwKey  []byte
+
+	pwMu       sync.RWMutex // guards pwMirrored and pwMirror
+	pwMirrored bool         // the key below came from the active host and overrides cfg
+	pwMirror   []byte
+
+	advMu   sync.RWMutex // guards adv, advSet and keyHook
+	adv     []string
+	advSet  bool
+	keyHook func([]byte)
+
 	mu      sync.Mutex
 	conns   map[*conn]struct{}
 	closing bool
-	wg      sync.WaitGroup // per-connection goroutines and the accept loop
+	// shutdown is set when Shutdown begins: the host no longer announces a
+	// standby change, as its links close before its clients do.
+	shutdown atomic.Bool
+	wg       sync.WaitGroup // per-connection goroutines and the accept loop
 
 	lastChatTS time.Time  // newest chat timestamp issued; guarded by chMu
 	chMu       sync.Mutex // guards chans, voice, authed, conn.voiceCh, lastChatTS; see channels.go, voice.go
 	chans      channelSet
 	voice      voiceSet
 	authed     map[*conn]struct{} // authenticated conns; voice_state goes to all
+	warm       map[*conn]struct{} // warm (paused) sessions: chain frames and hb only; guarded by chMu
+	modeState  serverMode
+	takeover   takeoverState
+	load       func() (voice, clients int)      // the host load for the yield rule; tests replace it
+	promoted   atomic.Bool                      // takeover promoted this host; reset when it leaves active mode
+	warmSlots  int                              // warm sessions holding a slot of the warm cap; guarded by mu
+	warmMu     sync.Mutex                       // guards warmPeers
+	warmPeers  map[*conn]*webrtc.PeerConnection // data-channel-only PCs of warm clients; survive promotion until voice_join adopts them
+	links      map[*conn]struct{}               // host links being served; guarded by chMu
+	standby    atomic.Pointer[proto.HostInfo]   // the host picked as standby, nil for none
 	// sessions holds the media session of each occupied voice channel; guarded by chMu.
 	sessions map[string]*voiceSession
 
@@ -189,8 +230,11 @@ func New(cfg Config) *Server {
 	if err := CheckHost(cfg.Chain, cfg.HostKey); err != nil {
 		s.logf("server: WARNING: %v; clients will refuse this host", err)
 	}
+	s.load = s.measureLoad
+	s.modeState.mode.Store(int32(cfg.Mode))
 	s.ipConns = make(map[string]int)
 	s.fails = make(map[string]*authFail)
+	s.sent = make(map[string]*chainSend)
 	s.refreshGroup()
 	s.initChannels()
 	return s
@@ -269,7 +313,11 @@ func (s *Server) start() error {
 		Handler:           http.HandlerFunc(s.handleWS),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	s.wg.Add(2)
+	s.wg.Add(3)
+	go func() {
+		defer s.wg.Done()
+		s.heartbeatLoop()
+	}()
 	go func() {
 		defer s.wg.Done()
 		_ = s.http.Serve(ln) // always returns on Shutdown
@@ -331,6 +379,7 @@ func (s *Server) Addr() string {
 // Shutdown stops accepting, closes all connections, and waits for every
 // server goroutine to exit or ctx to expire.
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.shutdown.Store(true)
 	s.mu.Lock()
 	s.closing = true
 	open := make([]*conn, 0, len(s.conns))

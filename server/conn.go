@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
@@ -20,23 +21,99 @@ import (
 
 const nonceSize = 32
 
+// passwordKey is the key clients must prove they know: the configured
+// PasswordKey, else one derived from Password for this server ID. nil means no
+// password is set.
+func (s *Server) passwordKey(serverID []byte) []byte {
+	key, _ := s.passwordState(serverID)
+	return key
+}
+
+// passwordState returns the password key and whether a password is required,
+// from one snapshot of the mirrored key. A required password whose key cannot
+// be derived yields (nil, true).
+func (s *Server) passwordState(serverID []byte) (key []byte, set bool) {
+	s.pwMu.RLock()
+	mirrored, mkey := s.pwMirrored, s.pwMirror
+	s.pwMu.RUnlock()
+	if mirrored {
+		return mkey, len(mkey) > 0
+	}
+	if len(s.cfg.PasswordKey) > 0 {
+		return s.cfg.PasswordKey, true
+	}
+	if s.cfg.Password == "" {
+		return nil, false
+	}
+	s.pwOnce.Do(func() {
+		s.pwKey, _ = proto.PasswordKey(s.cfg.Password, serverID)
+	})
+	return s.pwKey, true
+}
+
+// setPasswordKey makes k, the active host's password key, the one clients must
+// prove (nil: no password), replacing whatever the config says.
+func (s *Server) setPasswordKey(k []byte) {
+	s.pwMu.Lock()
+	old, _ := s.passwordStateLocked()
+	s.pwMirrored, s.pwMirror = true, append([]byte(nil), k...)
+	s.pwMu.Unlock()
+	s.keyChanged(old, k)
+}
+
+// passwordStateLocked is the key now in force, for comparing; pwMu is held.
+func (s *Server) passwordStateLocked() ([]byte, bool) {
+	if s.pwMirrored {
+		return s.pwMirror, len(s.pwMirror) > 0
+	}
+	return s.cfg.PasswordKey, len(s.cfg.PasswordKey) > 0
+}
+
+// checkPassword reports whether auth satisfies the server password. A proof is
+// compared against the HMAC under the key; a plain Password (v0.6 clients) is
+// run through the same derivation and compared in constant time. With no
+// password configured everything passes.
+func (s *Server) checkPassword(auth proto.Auth, serverNonce, clientNonce, serverID []byte) bool {
+	key, set := s.passwordState(serverID)
+	if !set {
+		return true
+	}
+	if len(key) == 0 {
+		return false
+	}
+	if len(auth.Proof) > 0 {
+		return hmac.Equal(auth.Proof, proto.PasswordProof(key, serverNonce, clientNonce, serverID))
+	}
+	if auth.Password == "" {
+		return false
+	}
+	got, err := proto.PasswordKey(auth.Password, serverID)
+	return err == nil && subtle.ConstantTimeCompare(got, key) == 1
+}
+
 // conn is one client connection. One goroutine (readLoop) reads and owns the
 // auth state; one goroutine (writeLoop) writes everything queued on send.
 type conn struct {
 	srv *Server
 	ws  *websocket.Conn
 
-	sendMu sync.Mutex
-	send   chan []byte // closed (under sendMu) when the connection ends
-	closed bool
+	sendMu  sync.Mutex
+	send    chan []byte // closed (under sendMu) when the connection ends
+	closed  bool
+	drained chan struct{} // signaled (cap 1) when the writer took a message or send closed; wakes enqueueWait
 
-	ip           string // remote IP
-	leavePreAuth func() // releases the pre-auth slot; idempotent, readLoop only
-	counted      bool   // holds a MaxClients slot; readLoop only
+	ip           string      // remote IP
+	leavePreAuth func()      // releases the pre-auth slot; idempotent, readLoop only
+	counted      atomic.Bool // holds a MaxClients slot; promotion sets it from another goroutine
+	warmHeld     atomic.Bool // holds a slot of the warm cap
 
 	// Set once authenticated; only touched by readLoop.
 	fingerprint string
 	name        string
+	pub         []byte          // the client's public key
+	warm        bool            // authenticated with Auth.Warm
+	link        *linkState      // non-nil once a host link_hello was accepted; set by readLoop
+	reach       map[string]bool // host fingerprint -> client reported it reachable; guarded by srv.chMu
 
 	voiceCh  string // current voice channel, "" if none; guarded by srv.chMu
 	sharing  bool   // sharing a screen in voiceCh; guarded by srv.chMu
@@ -45,7 +122,7 @@ type conn struct {
 }
 
 func newConn(s *Server, ws *websocket.Conn) *conn {
-	return &conn{srv: s, ws: ws, send: make(chan []byte, sendBuffer)}
+	return &conn{srv: s, ws: ws, send: make(chan []byte, sendBuffer), drained: make(chan struct{}, 1)}
 }
 
 // enqueue queues an encoded message for the writer. It reports false if the
@@ -86,6 +163,12 @@ func (c *conn) sendError(code, message string) {
 	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message})
 }
 
+// sendErrorRef is sendError for a failed chain_append: it echoes the
+// request's ref.
+func (c *conn) sendErrorRef(code, message, ref string) {
+	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message, Ref: ref})
+}
+
 // sendErrorGen is sendError for a refused watch: it echoes the request's gen.
 func (c *conn) sendErrorGen(code, message string, gen uint32) {
 	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message, Gen: gen})
@@ -95,10 +178,13 @@ func (c *conn) sendErrorGen(code, message string, gen uint32) {
 // queued (e.g. a final error), then closes the socket.
 func (c *conn) finish() {
 	c.srv.unregister(c)
-	if c.counted {
-		c.counted = false
+	if c.counted.Swap(false) {
 		c.srv.releaseClient()
 	}
+	if c.warmHeld.Swap(false) {
+		c.srv.releaseWarmSlot()
+	}
+	c.srv.closeWarmPeer(c)
 	c.srv.leaveAll(c)
 	c.closeSend()
 }
@@ -113,12 +199,14 @@ func (c *conn) closeSend() {
 		close(c.send)
 	}
 	c.sendMu.Unlock()
+	signal(c.drained)
 }
 
 func (c *conn) writeLoop() {
 	defer c.srv.wg.Done()
 	defer c.ws.Close()
 	for raw := range c.send {
+		signal(c.drained)
 		_ = c.ws.SetWriteDeadline(time.Now().Add(writeTimeout))
 		if err := c.ws.WriteMessage(websocket.TextMessage, raw); err != nil {
 			return
@@ -164,7 +252,7 @@ func (c *conn) readLoop() {
 		}
 		env, err := proto.Decode(raw)
 		if err != nil {
-			c.sendError("bad_request", "malformed message")
+			c.sendError(proto.CodeBadRequest, "malformed message")
 			continue
 		}
 		c.route(env)
@@ -198,7 +286,13 @@ func (c *conn) joinLive(seq uint64) error {
 	s := c.srv
 	s.chainMu.Lock()
 	defer s.chainMu.Unlock()
-	s.markAuthed(c)
+	if c.warm {
+		s.chMu.Lock()
+		s.warm[c] = struct{}{}
+		s.chMu.Unlock()
+	} else {
+		s.markAuthed(c)
+	}
 	missed := s.chain.Since(seq)
 	if len(missed) == 0 {
 		return nil
@@ -296,6 +390,21 @@ func (c *conn) authenticate() error {
 	if err != nil {
 		return err
 	}
+	size := 0
+	for _, f := range frames {
+		size += len(f)
+	}
+	if !c.srv.chargeChain(c.ip, size) {
+		// Over the per-IP budget: say so (v1 envelope, readable by any
+		// client) and close, so the client retries later instead of
+		// treating this host as dead.
+		if raw, err := proto.EncodeV(proto.LegacyVersion, proto.TypeError, proto.ErrorMsg{
+			Code: proto.CodeServerBusy, Message: "server busy",
+		}); err == nil {
+			c.enqueue(raw)
+		}
+		return errAuthFailed
+	}
 	for _, f := range frames {
 		if !c.enqueue(f) {
 			return errAuthFailed
@@ -334,8 +443,11 @@ func (c *conn) authenticate() error {
 		c.sendError(proto.CodeBanned, "you are banned from this server")
 		return errAuthFailed
 	}
-	if pw := c.srv.cfg.Password; pw != "" &&
-		subtle.ConstantTimeCompare([]byte(pw), []byte(auth.Password)) != 1 {
+	// Hosts reach each other warm and without the password: the chain already
+	// vouches for their keys.
+	st := c.srv.chain.State()
+	hostWarm := auth.Warm && st.IsHost(pub)
+	if !hostWarm && !c.srv.checkPassword(auth, nonce, req.Nonce, id[:]) {
 		return fail()
 	}
 	fp := identity.Fingerprint(pub)
@@ -344,12 +456,29 @@ func (c *conn) authenticate() error {
 	}
 
 	c.srv.noteAuthSuccess(c.ip)
-	if !c.srv.reserveClient() {
-		c.sendError(proto.CodeServerFull, "server is full")
+	if !auth.Warm && c.srv.Mode() != ModeActive {
+		c.sendMsg(proto.TypeHosts, c.srv.hostsInfo())
+		c.sendError(proto.CodeNotActive, "this host is on standby")
 		return errAuthFailed
 	}
-	c.counted = true
+	// Warm sessions are capped by their own counter at the same max_clients;
+	// promotion takes a real slot.
+	if auth.Warm {
+		if !c.srv.reserveWarmSlot() {
+			c.sendError(proto.CodeServerFull, "server is full")
+			return errAuthFailed
+		}
+		c.warmHeld.Store(true)
+	} else {
+		if !c.srv.reserveClient() {
+			c.sendError(proto.CodeServerFull, "server is full")
+			return errAuthFailed
+		}
+		c.counted.Store(true)
+	}
 
+	c.warm = auth.Warm
+	c.pub = pub
 	c.fingerprint = fp
 	c.name = names.Clean(auth.Name, discover.MaxNameRunes)
 	if c.name == "" {
@@ -362,6 +491,9 @@ func (c *conn) authenticate() error {
 		ServerName:  c.srv.cfg.ServerName,
 		ServerID:    id.String(),
 	})
+	if !auth.Warm {
+		c.sendMsg(proto.TypeHosts, c.srv.hostsInfo())
+	}
 	// Registered after auth_ok is queued so voice_state never precedes it.
 	// Under chainMu, so no append can broadcast in between: entries added
 	// since the handshake sent the chain are caught up here, and every later

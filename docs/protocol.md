@@ -3,8 +3,9 @@
 This document specifies the Hermec signaling/chat protocol, version 2. It
 covers the mutual handshake, the server chain (section 9), channels, presence,
 text chat and its history (sections 4.9 and 4.9a), the server roster, voice
-signaling (section 4.12) and screen share signaling (section 4.15). Webcam is
-not specified yet.
+signaling (section 4.12), screen share signaling (section 4.15), and host
+failover: the host list, warm standby sessions and the host-to-host link
+(sections 4.16 to 4.18). Webcam is not specified yet.
 
 The reference implementation is `core/proto` (types and codec) and `server`
 (behavior). Where this document and the code disagree, that is a bug in one of
@@ -60,7 +61,7 @@ Client                                   Server
   | <--------------- chain ------------- |   (3) the signed chain, in 1+ frames
   | <------------- host_proof ---------- |       host key's proof over both nonces
   |   client verifies the host           |   (4) before anything secret is sent
-  | ---------------- auth -------------> |   (5) pubkey, name, sig, password?
+  | ---------------- auth -------------> |   (5) pubkey, name, sig, proof?
   | <-------------- auth_ok ------------ |   (6) or error + close
   |                                      |
   | ---------------- join -------------> |
@@ -107,7 +108,7 @@ after the `challenge`; if that `auth` is well formed the server answers
 
    Binding the server ID stops a host from replaying the signature to log in as
    the client on another server. `auth` also carries the public key, a display
-   name and, if the server has one, the password.
+   name and, if the server has a password, a `proof` of it (section 3.1a).
 6. **`auth_ok`** (S), or one `error` and a close. `auth_ok` carries the
    `server_id`; the client checks it against the ID it verified in step 4 and
    ends the connection with `server_id_mismatch` if it differs. If entries were
@@ -117,7 +118,8 @@ after the `challenge`; if that `auth` is well formed the server answers
 
 The server checks `auth` in this order: it is a well-formed version 2 `auth`
 with a 32-byte `pubkey`; the signature is valid; the key is not banned; the
-password (constant-time comparison) if one is configured; the key's fingerprint
+password proof if a password is configured (a warm `auth` from a key on the
+chain's host list skips this check, see section 4.17); the key's fingerprint
 is on the allow list if one is configured (the founder and every listed host
 always pass the allow list). A bad signature, wrong password or
 unlisted key gets a single `error` with code `auth_failed` and the connection
@@ -127,6 +129,40 @@ signature has proven it holds the key, gets `error` `banned` instead.
 Any message other than `host_proof_req` and `auth`, in that order, is an
 authentication failure. Timeout or disconnect before `auth` simply closes the
 connection.
+
+### 3.1a Password proof
+
+The password never goes over the wire. A server with a password holds a 32-byte
+key instead:
+
+```
+key = scrypt(password, "hermec-pw\x00" || server_id, N=32768, r=8, p=1, 32 bytes)
+```
+
+where `server_id` is the raw 32 bytes. The client derives the same key and
+sends `auth.proof`:
+
+```
+proof = HMAC-SHA256(key, "hermec-pw\x00" || server_nonce || client_nonce || server_id)
+```
+
+The server compares it in constant time. The nonces and the server ID make
+every proof single-use and specific to one server. A server with a password
+and no key (an empty stored key) refuses every login.
+
+A v0.6 client sends `auth.password` (the plain password) and no `proof`. The
+server derives the key from it and compares keys in constant time. This
+fallback exists for one release; from v0.8 a server refuses `auth.password`.
+Hosts pass the key to each other over the host link (section 4.18), never the
+password.
+
+**Pre-auth chain budget.** Sending the chain costs the host far more than the
+`host_proof_req` costs the client. A host therefore sends at most 2 MiB of
+chain frames per minute to one remote IP before it authenticates. When an IP is
+over that budget, the host sends one `error` `server_busy` (as a version 1
+envelope, so any client can read it) instead of the chain, and closes. A client
+that gets it retries later and does not count the host as dead. HTTP 503
+refusals (section 3.3) are mapped to the same code on the client side.
 
 **Failed logins.** After 5 failed logins in a row from one IP (forgotten after a quiet minute), that IP
 is refused for 1 s. Each further failure doubles the wait, up to 60 s. A
@@ -178,7 +214,9 @@ Direction: C is client to server, S is server to client.
 | `pubkey`   | base64 | yes      | 32-byte Ed25519 public key.               |
 | `name`     | string | yes      | Display name, cleaned and capped by the server (see 3.3). |
 | `sig`      | base64 | yes      | Ed25519 signature over the client-auth string of section 3.1. |
-| `password` | string | no       | Server password, if one is configured.    |
+| `password` | string | no       | The plain password. Only v0.6 clients send it; refused from v0.8 (section 3.1a). |
+| `proof`    | base64 | no       | Password proof, if the server has a password (section 3.1a). |
+| `warm`     | bool   | no       | True for a standby pre-connection (section 4.17). |
 
 ### 4.2a `host_proof_req` (C), `chain` (S) and `host_proof` (S)
 
@@ -223,6 +261,8 @@ signature over the host-proof string of section 3.1.
 |-----------|--------|-----------------------------------------------------|
 | `code`    | string | Machine-readable code, see section 5.               |
 | `message` | string | Human-readable detail; not stable, do not parse it. |
+| `ref`     | string | Optional. The `ref` of the `chain_append` this error answers (section 4.14a). |
+| `gen`     | int    | Optional. The `gen` of the `watch` this error answers (section 4.15). |
 
 ### 4.5 `join` (C)
 
@@ -263,6 +303,7 @@ that fit, and `total` still gives the real count, so a client can show
 | `fingerprint` | string   | Member's key fingerprint.         |
 | `name`        | string   | Member's display name.            |
 | `roles`       | string[] | Member's roles.                   |
+| `pub_key`     | base64   | Optional. The member's 32-byte public key. The founder needs it to approve the member as a host (`host_add` takes the key). Omitted when empty. |
 
 ### 4.8 `chat_send` (C)
 
@@ -469,8 +510,10 @@ Semantics:
 
 ### 4.14a `chain_append` (C) and live `chain` (S)
 
-`chain_append` carries one signed chain entry (`{entry}`, the entry as it
+`chain_append` carries one signed chain entry (`{entry, ref}`, the entry as it
 appears in a `chain` frame, section 9.2), built on the head the sender holds.
+`ref` is an optional string the client chooses; the server echoes it in
+`error.ref` on every refusal, so the client can tell which append failed.
 It needs the authority the chain rules give the author for that op (section
 9.3). The server requires the entry's author to be the
 connection's own key, then appends it under the chain's rules. On success it
@@ -480,8 +523,8 @@ verified copy, and a client that cannot do so ends the connection with
 `bad_chain`. Refusals are `error` messages: `chain_conflict` (the entry does not
 extend the head; fetch the new head and retry), `chain_full`, `forbidden`
 (author mismatch or a rule refusal; the message is the reason) and
-`bad_request` (malformed or otherwise rejected). Like other errors they carry no
-correlation id (section 5).
+`bad_request` (malformed or otherwise rejected). Each carries the request's
+`ref` (section 5).
 
 Effects of an accepted entry: `grant`, `revoke` and the roles/default roles of
 `config` apply to the next permission check; `allowed_keys` of a `config`
@@ -582,6 +625,179 @@ Media:
   send a new rtc_offer", and the client recovers as in section 4.13.
 - Hermec does not send audio from the shared screen.
 
+### 4.16 Host list and moving: `hosts`, `hb`, `move`, `reach`
+
+A server can have several hosts (section 9.3, `host_add`). Exactly one is
+**active** and serves clients. At most one of the others is the **standby**.
+
+`hosts` (S): `{active: HostInfo, standby?: HostInfo}`. A `HostInfo` is
+`fingerprint`, `name`, `addrs` (the `ws://` or `wss://` URLs the host can be
+reached at) and `priority` (the chain priority; lower is preferred). The active
+host sends `hosts` right after `auth_ok` (not to a warm session), whenever the
+standby changes, and after a failover. A standby or idle host that refuses a
+login answers with `hosts` and then `error` `not_active`, so the client knows
+where to go. Clients keep the addresses they learn and show the active host's
+name ("hosted by").
+
+`hb` (S): `{seq}`. The active host sends it to every authenticated client, warm
+session and link every **500 ms**. A client that sees no `hb` for **1500 ms**
+(three missed beats) treats the active host as lost. A client waits for its
+first `hb` before it starts counting, so a host that sends none is never judged
+lost.
+
+`reach` (C): `{fingerprint, ok}`. A client reports whether its warm dial to the
+host with that fingerprint worked. The active host picks the standby as the
+best-priority linked host that at least half of its authenticated clients can
+reach (a client that has not reported counts as reaching it). `reach` for a key
+that is not a host is ignored.
+
+`move` (S): `{to: HostInfo, reason}`. The active host sends it to every client
+and then closes their connections when it stops being active. `reason` is
+`"handback"` (the role goes back to a higher-priority host) or `"merge"` (a
+split-brain yield, section 4.18). A client dials the host in `to`. If the
+client's own chain entry was dropped in a merge, `error` `chain_lost` comes
+first.
+
+When a standby becomes active it sends `hosts` to its clients and adds a system
+line "host changed to `<name>`" to every text channel (`chat_message` with
+`system: true`).
+
+### 4.17 Warm sessions and takeover
+
+A **warm session** is a client's second connection, to the standby. It lets the
+client switch hosts without a full login.
+
+1. The client dials the standby and runs the normal handshake with
+   `auth.warm = true`. A key that is on the chain's host list needs no password
+   proof when it authenticates warm (the chain vouches for it); any other key
+   must prove the password as usual.
+2. The standby holds the session apart from the live ones. It counts against
+   its own warm cap, which is `max_clients`, not the live cap. Promotion takes a
+   live slot; a session that finds no slot gets `server_full` and is closed.
+3. A warm session receives only `chain` and `hb` frames. It may send
+   `takeover`, `link_probe`, `link_hello` and `warm_*`; any other message gets
+   `error` `not_active`.
+
+**Warm media.** To have ICE and DTLS done before they are needed, the client
+may open a data-channel-only WebRTC connection to the standby. `warm_offer`
+(C, `{sdp}`) is answered by `warm_answer` (S, `{sdp}`), which carries the
+host's candidates. The client's candidates go as `warm_candidate` (C,
+`{candidate}`). The data channel is labelled `hermec-warm`; the client sends
+the text `ping` every 5 s and the host answers `pong`, which keeps the NAT
+binding open. The server never sends `warm_offer`. After promotion, the
+client's next `voice_join` adopts this connection, and one `rtc_offer` and
+`rtc_answer` add the media (section 4.13). `warm_*` on a session that is not
+warm gets `bad_request`.
+
+**Takeover.** `takeover` (C, `{}`) asks the standby to become active. The host
+answers:
+
+- success: it promotes every warm session to a full session and sends `hosts`
+  (the new active host is itself). A repeated `takeover` on an already
+  promoted host just gets `hosts`.
+- `active_alive`: this host is the standby, but its link shows that the active
+  host is still alive. The client should redial the active host.
+- `not_standby`: this host is not the standby (or was never promoted and is
+  active already).
+- `host_not_authorized`: this host's key is no longer on the chain.
+
+The standby judges the active host dead with the same 1500 ms heartbeat rule on
+its link (section 4.18). A client therefore retries a refused `takeover` for a
+few seconds.
+
+### 4.18 Host link
+
+A **link** connects a host to the active host. It mirrors the chain, the
+password key and the chat history, and tells the active host that this host is
+available.
+
+**Opening.** A host dials the active host, runs the handshake with
+`auth.warm = true` and its host key, and sends `link_hello` (C):
+
+| Field             | Type     | Description                                    |
+|-------------------|----------|------------------------------------------------|
+| `chain_seq`       | integer  | Seq of the sender's chain head.                |
+| `history_last_id` | string   | ID of the sender's newest stored chat line.    |
+| `history_last_ts` | string   | Its `ts`. Both empty for a full history.       |
+| `addrs`           | string[] | URLs the sender can be dialed at.              |
+| `name`            | string   | The sender's host name.                        |
+| `yield`           | object   | Optional. Set only on a merge link (below): `{voice_members, clients, priority}`, the loser's load. |
+
+The active host refuses with `error` `forbidden` (the key is not on the host
+list, or is banned), `not_active` (it is not active, or, for a merge link, it
+would itself yield to the sender) or `bad_chain` (the sender's chain is ahead of
+its own). Otherwise the warm session becomes a link: it counts against neither
+cap. The active host then sends, in order:
+
+1. `chain` frames with every entry after `chain_seq`.
+2. `link_sync` with `password_key` (the 32-byte key of section 3.1a; empty means
+  the server has no password) and `more: true`. A standby takes the key from
+  this first `link_sync`.
+3. `link_sync` frames with `messages` (chat lines, oldest first), each under
+  60 KiB, after `history_last_ts` and `history_last_id`. `more` is true while
+  frames follow. Lines accepted meanwhile also arrive live, so a receiver merges
+  by `id`.
+4. `link_role` and `hosts`.
+
+From then on the link carries every new `chain` entry, every new chat line as a
+one-message `link_sync`, `hb`, and `link_role` and `hosts` whenever they change.
+
+`link_role` (S): `{standby: bool}`. Tells the linked host whether it is now the
+standby.
+
+`hb` (both ways): each side sends `hb` every 500 ms. A host calls the active
+host dead after 1500 ms without an `hb` from it. The active host likewise
+closes a link that has sent no `hb` for 1500 ms, even if the TCP connection is
+still open, and picks its standby again. A merge link (below) is exempt:
+it sends no `hb` while it pages its history, and ends within the loser's own
+timeouts.
+
+A host that dials or probes another host takes the head of its own chain as a
+floor: a host whose chain head, as it presents it in the handshake, is behind
+the dialer's own is refused, and a host that is not on the dialer's host list is
+never linked to. A merge link and the split-brain probes (below) take no floor,
+since the other side may be behind or diverged.
+
+Only a merge link may send `link_sync` with `messages` or `chain` frames to the
+active host; on a plain link they get `forbidden`.
+
+**Probe.** `link_probe` (C, `{}`) can be sent on any warm session by a host. The
+reply `link_probe_reply` (S) is `{active, server_id, voice_members, clients,
+priority, self: HostInfo}`. A probe by a key that is not a host gets `forbidden`.
+Hosts probe to find the active host at start-up and to look for a second active
+host (split brain). The probe's `server_id` must match the prober's own.
+
+**Handover.** `handover` (S, `{}`) on a link tells the linked host to become
+active at once (no `active_alive` check). The sender first stops accepting
+writes (it is idle), sends `handover`, and waits up to 3 s for the receiver to
+report itself active in a probe; if that does not happen it resumes the active
+role. After it succeeds, the old active host sends `move` (reason `"handback"`)
+to its clients and links to the new active host as idle or standby. Handback
+happens when voice has been empty for 2 minutes and a linked host with a
+better priority exists.
+
+**Split brain and merge.** Every 30 s an active host probes the hosts it knows.
+If it finds another active host of the same server that is also on its chain,
+and its own load loses (fewer voice members; tie: fewer clients; tie: the
+larger priority number), it yields to that host:
+
+1. It opens a link with `link_hello.yield` set, which carries its load. The
+   winner refuses (`not_active`) if the winner would lose by that load.
+   The loser re-probes just before committing and stops if it no longer loses.
+2. It becomes idle, so nothing is written after this point.
+3. If the winner's chain is a strict prefix of the loser's, the loser sends its
+   extra entries as `chain` frames on the link (the winner appends those that
+   extend its head). Otherwise it keeps the winner's chain and drops entries
+   the winner lacks.
+4. It sends its chat lines to the winner as `link_sync` with `messages`. The
+   winner merges them by `id` and `ts`, and passes them to its other links.
+5. It sends `move` (reason `"merge"`) to its clients, preceded by `chain_lost`
+   for the authors of dropped entries, closes them, then links to the winner as
+   idle or standby.
+
+Chat lines the winner receives this way show up for its clients when they next
+join the channel.
+
 ## 5. Errors
 
 | Code          | Meaning                                                              |
@@ -590,8 +806,8 @@ Media:
 | `update_required` | Sent by a server to a version 1 client (section 7); the connection is closed. |
 | `server_outdated` | Raised by a client that finds the host speaks an older protocol version. Never sent on the wire. |
 | `server_id_mismatch` | Raised by a client when the host's genesis hash is not the server ID it has pinned, or `auth_ok.server_id` differs from the verified one. Never sent on the wire. |
-| `host_not_authorized` | Raised by a client when the host's key is not on the chain's host list or its proof signature is invalid. Never sent on the wire. |
-| `bad_chain` | Raised by a client when the chain it received does not verify (handshake or a live frame). Never sent on the wire. |
+| `host_not_authorized` | Raised by a client when the host's key is not on the chain's host list or its proof signature is invalid. A host also sends it in answer to `takeover` when its own key is no longer on the chain (section 4.17). |
+| `bad_chain` | Raised by a client when the chain it received does not verify (handshake or a live frame). An active host also sends it to a `link_hello` whose `chain_seq` is ahead of its own (section 4.18). |
 | `forbidden`   | The role lacks the required permission (`join_channel`, `send_chat`). |
 | `bad_request` | Malformed message, unknown channel, unsupported message type, or chat text over 4096 bytes (`message too long`). |
 | `not_joined`  | The operation needs channel membership the client does not have (`leave`, `chat_send`, `history_before`, voice messages). |
@@ -601,20 +817,25 @@ Media:
 | `chain_conflict` | `chain_append` did not extend the chain head. |
 | `chain_full`  | `chain_append` would exceed the chain's size cap. |
 | `banned`      | The key is banned; sent on authentication and to a live member when banned, then the connection is closed. |
+| `server_busy` | The host will not send its chain to this IP now (section 3.1a), or an HTTP 503 refusal. Retry later. |
+| `not_active`  | The host is not the active host. Sent after authentication, preceded by a `hosts` frame that names the active host (section 4.16), and for any client message other than the few a standby allows; the connection is closed after the refusal at login. |
+| `active_alive` | `takeover` was refused because the active host is still alive (section 4.17). |
+| `not_standby` | `takeover` was refused because this host is not the standby (section 4.17). |
+| `chain_lost`  | A split-brain merge dropped a chain entry the receiver authored: "your change was lost during a network split; please redo it". Sent just before `move` (section 4.16). |
 | `rate_limited`| The client is sending too fast; the connection is closed after this message. |
 
-Except for `auth_failed`, `update_required`, `banned`, `server_full` and
-`rate_limited`, errors do not close the connection. `server_outdated`,
+Except for `auth_failed`, `update_required`, `banned`, `server_full`,
+`server_busy` and `rate_limited`, errors do not close the connection (a
+`not_active` at login does). `server_outdated`,
 `server_id_mismatch`, `host_not_authorized` and `bad_chain` end the attempt on
 the client side; clients do not retry them automatically.
 
-**Known limitation: no error correlation.** Messages carry no request or
-correlation ID, so an `error` cannot be tied to the request that caused it.
-Clients attribute each error to their oldest pending request (FIFO), which is
-correct only because the server processes a connection's messages in order
-and answers each failing request with at most one error. Clients should not
-pipeline requests whose failure they must distinguish. A future protocol
-version may add optional request IDs.
+**Error correlation.** `chain_append` carries a `ref` and its errors echo it.
+Other requests carry no ID, so a client attributes their errors to its oldest
+pending request (FIFO). That is correct only because the server processes a
+connection's messages in order and answers each failing request with at most
+one error. Clients should not pipeline other requests whose failure they must
+distinguish.
 
 ## 6. Roles and permissions
 

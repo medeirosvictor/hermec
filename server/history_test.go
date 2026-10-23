@@ -570,3 +570,185 @@ func TestAddAfterCloseFails(t *testing.T) {
 		}
 	}
 }
+
+func TestHistoryAfterOrdersAcrossChannels(t *testing.T) {
+	h := openH(t, filepath.Join(t.TempDir(), "h.jsonl"))
+	chans := []string{"a", "b", "c"}
+	var all []proto.ChatMessage
+	for i := 0; i < 5; i++ {
+		m := hmsg(chans[i%3], i, histBase.Add(time.Duration(i)*time.Second))
+		all = append(all, m)
+		h.Add(m)
+	}
+	ids := func(ms []proto.ChatMessage) string {
+		var s []string
+		for _, m := range ms {
+			s = append(s, m.ID)
+		}
+		return strings.Join(s, ",")
+	}
+	got, more := h.After(time.Time{}, "", 100)
+	if more || ids(got) != ids(all) {
+		t.Fatalf("all: more=%v %v", more, ids(got))
+	}
+	got, more = h.After(all[1].TS, all[1].ID, 100)
+	if more || ids(got) != ids(all[2:]) {
+		t.Fatalf("after 2: more=%v %v", more, ids(got))
+	}
+	got, more = h.After(time.Time{}, "", 2)
+	if !more || ids(got) != ids(all[:2]) {
+		t.Fatalf("limit 2: more=%v %v", more, ids(got))
+	}
+	got, more = h.After(all[4].TS, all[4].ID, 100)
+	if more || len(got) != 0 {
+		t.Fatalf("after last: more=%v %v", more, ids(got))
+	}
+}
+
+func TestHistoryLast(t *testing.T) {
+	h := openH(t, "")
+	if ts, id := h.Last(); !ts.IsZero() || id != "" {
+		t.Fatalf("empty: %v %q", ts, id)
+	}
+	h.Add(hmsg("a", 1, histBase))
+	m := hmsg("b", 2, histBase.Add(time.Second))
+	h.Add(m)
+	h.Add(hmsg("c", 3, histBase.Add(-time.Second)))
+	if ts, id := h.Last(); !ts.Equal(m.TS) || id != m.ID {
+		t.Fatalf("last: %v %q", ts, id)
+	}
+}
+
+func TestHistoryMergeDedup(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "h.jsonl")
+	h := openH(t, p)
+	m0 := hmsg("a", 0, histBase)
+	m1 := hmsg("a", 1, histBase.Add(time.Second))
+	m2 := hmsg("a", 2, histBase.Add(2*time.Second))
+	m3 := hmsg("a", 3, histBase.Add(3*time.Second))
+	h.Add(m1)
+	h.Add(m2)
+	noID := hmsg("a", 9, histBase)
+	noID.ID = ""
+	added, err := h.Merge([]proto.ChatMessage{m2, m3, m0, m3, noID})
+	if err != nil || added != 2 {
+		t.Fatalf("added %d err %v", added, err)
+	}
+	check := func(h *History) {
+		t.Helper()
+		got, _ := h.Page("a", "", time.Time{}, 10)
+		if len(got) != 4 {
+			t.Fatalf("got %d messages", len(got))
+		}
+		for i, want := range []proto.ChatMessage{m0, m1, m2, m3} {
+			if got[i].ID != want.ID {
+				t.Fatalf("pos %d: %s want %s", i, got[i].ID, want.ID)
+			}
+		}
+	}
+	check(h)
+	h.Close()
+	h2 := openH(t, p)
+	check(h2)
+	if h.Size() != h2.Size() {
+		t.Fatalf("size %d, reopened %d", h.Size(), h2.Size())
+	}
+}
+
+func TestHistoryMergeSkipsEmptyChannel(t *testing.T) {
+	h := openH(t, filepath.Join(t.TempDir(), "h.jsonl"))
+	bad := hmsg("a", 1, histBase)
+	bad.Channel = ""
+	ok := hmsg("a", 2, histBase.Add(time.Second))
+	added, err := h.Merge([]proto.ChatMessage{bad, ok})
+	if err != nil || added != 1 {
+		t.Fatalf("added %d err %v", added, err)
+	}
+	if _, id := h.Last(); id != ok.ID {
+		t.Fatalf("last = %s, want %s", id, ok.ID)
+	}
+}
+
+func TestHistoryMergeRespectsCaps(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "h.jsonl")
+	h := openH(t, p)
+	h.SetLimits(30, 1)
+	pad := strings.Repeat("x", 1000)
+	var msgs []proto.ChatMessage
+	for i := 0; i < 2100; i++ {
+		m := hmsg([]string{"a", "b", "c"}[i%3], i, histBase.Add(time.Duration(i)*time.Second))
+		m.Text = pad
+		msgs = append(msgs, m)
+	}
+	if _, err := h.Merge(msgs); err != nil {
+		t.Fatal(err)
+	}
+	if h.Size() > 1<<20 || h.Size() < 1<<19 {
+		t.Fatalf("size %d", h.Size())
+	}
+	if got, _ := h.After(msgs[len(msgs)-2].TS, msgs[len(msgs)-2].ID, 10); len(got) != 1 {
+		t.Fatal("newest not kept")
+	}
+	// A kept id stays a duplicate.
+	if added, _ := h.Merge(msgs[len(msgs)-1:]); added != 0 {
+		t.Fatalf("kept message re-added: %d", added)
+	}
+}
+
+func TestMergeAfterCloseFails(t *testing.T) {
+	for _, p := range []string{"", filepath.Join(t.TempDir(), "h.jsonl")} {
+		h := openH(t, p)
+		h.Close()
+		added, err := h.Merge([]proto.ChatMessage{hmsg("c", 1, histBase)})
+		if err != errClosed || added != 0 {
+			t.Fatalf("path %q: %d %v", p, added, err)
+		}
+	}
+}
+
+// Lines merged while a rewrite writes its temp file end up in the new file.
+func TestMergeDuringRewrite(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "h.jsonl")
+	h := openH(t, p)
+	h.SetLimits(30, 8)
+	for i := 0; i < 10; i++ {
+		h.Add(hmsg("c", i, histBase.Add(time.Duration(i)*time.Second)))
+	}
+	started, release := make(chan struct{}), make(chan struct{})
+	h.tmpWrite = func(f *os.File, b []byte) (int, error) {
+		close(started)
+		<-release
+		return f.Write(b)
+	}
+	h.SetLimits(1, 8)
+	done := make(chan error, 1)
+	go func() { done <- h.Trim(histBase.Add(36*time.Hour + 5*time.Second)) }()
+	<-started
+	late := histBase.Add(36*time.Hour + 10*time.Second)
+	merged := make(chan int, 1)
+	go func() {
+		n, _ := h.Merge([]proto.ChatMessage{hmsg("c", 60, late), hmsg("d", 61, late.Add(time.Second))})
+		merged <- n
+	}()
+	select {
+	case n := <-merged:
+		if n != 2 {
+			t.Fatalf("added %d", n)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Merge blocked while the rewrite was writing")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	h.Close()
+	h2 := openH(t, p)
+	got, _ := h2.After(time.Time{}, "", 100)
+	if len(got) != 2 || got[0].Text != "msg 60" || got[1].Text != "msg 61" {
+		t.Fatalf("after reopen: %+v", got)
+	}
+	if h.Size() != h2.Size() {
+		t.Fatalf("size %d, reopened %d", h.Size(), h2.Size())
+	}
+}

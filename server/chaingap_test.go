@@ -66,6 +66,7 @@ func TestChainAppendDuringHandshakeIsCaughtUp(t *testing.T) {
 	if env := readEnv(t, ws); env.Type != proto.TypeAuthOK {
 		t.Fatalf("auth: %q %s", env.Type, env.Data)
 	}
+	expectHosts(t, ws)
 	// The missed entry arrives before anything live. Bounded, so a server
 	// that never sends it fails the test instead of hanging it.
 	_ = ws.SetReadDeadline(time.Now().Add(3 * time.Second))

@@ -7,8 +7,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/client"
 	"github.com/medeirosvictor/hermec/core/chain"
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/discover"
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/ui/state"
@@ -139,13 +142,56 @@ var clipboardWrite = clipboard.WriteAll
 // chain, the running server (nil while stopped or failed to start) and the dial
 // URL.
 type hostedServer struct {
-	srv   *server.Server
+	srv   *server.Host
 	cfg   server.Config
 	chain *chain.Chain
 	id    string // chain.ID().String(), the pin the hosted session dials with
 	path  string
 	url   string
 	err   string // why it is not running
+
+	mu    sync.Mutex // guards known, which the host's goroutines read and grow
+	known []string   // the other hosts we know, mirrored in hosted.toml
+	logf  func(format string, args ...any)
+}
+
+// knownHosts is HostConfig.Known: the hosts hosted.toml remembers.
+func (h *hostedServer) knownHosts() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.known)
+}
+
+// saveKnown is HostConfig.SaveKnown: it adds urls to the known hosts and
+// rewrites hosted.toml.
+func (h *hostedServer) saveKnown(urls []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.known = state.MergeAddrs(h.known, urls, state.MaxHosts)
+	cfg := h.cfg
+	cfg.KnownHosts = slices.Clone(h.known)
+	if err := saveHostedLocal(h.path, cfg); err != nil { // best effort: the hosts are learned again
+		h.logf("save known hosts: %v", err)
+	}
+}
+
+// advertiseAddrs are the ws URLs this machine can be reached at on port,
+// Tailscale first.
+func (g *game) advertiseAddrs(port int) []string {
+	self := g.selfAddrs
+	if self == nil {
+		self = discover.SelfAddrs
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ts, lan := self(ctx)
+	var out []string
+	for _, ip := range []string{ts, lan} {
+		if ip != "" {
+			out = append(out, fmt.Sprintf("ws://%s:%d/", ip, port))
+		}
+	}
+	return out
 }
 
 // name is the hosted server's name: the chain's, else the config's.
@@ -171,7 +217,20 @@ func chainsDir(hostedPath string) string {
 func (g *game) openHostedChain(path string, cfg *server.Config) (c *chain.Chain, err error) {
 	dir := chainsDir(path)
 	if cfg.ServerID != "" {
-		return chain.Load(filepath.Join(dir, cfg.ServerID+".jsonl"))
+		c, err = chain.Load(filepath.Join(dir, cfg.ServerID+".jsonl"))
+		if err != nil {
+			return nil, err
+		}
+		if cfg.Password != "" { // an older hosted.toml: swap the password for its key
+			id := c.ID()
+			if err := migratePassword(cfg, id[:]); err != nil {
+				return nil, err
+			}
+			if err := saveHostedLocal(path, *cfg); err != nil {
+				return nil, err
+			}
+		}
+		return c, nil
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -191,10 +250,28 @@ func (g *game) openHostedChain(path string, cfg *server.Config) (c *chain.Chain,
 		return nil, err
 	}
 	cfg.ServerID = id
+	cid := c.ID()
+	if err := migratePassword(cfg, cid[:]); err != nil {
+		return nil, err
+	}
 	if err := saveHostedLocal(path, *cfg); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// migratePassword replaces cfg.Password with its key for serverID, so
+// hosted.toml holds password_key and the password is never kept or sent.
+func migratePassword(cfg *server.Config, serverID []byte) error {
+	if cfg.Password == "" {
+		return nil
+	}
+	key, err := proto.PasswordKey(cfg.Password, serverID)
+	if err != nil {
+		return err
+	}
+	cfg.PasswordKey, cfg.Password = key, ""
+	return nil
 }
 
 // hostedFile is where the hosted config lives for this run.
@@ -284,7 +361,13 @@ func (g *game) startHosted() error {
 		return err
 	}
 	cfg.HistoryPath = filepath.Join(dir, h.id+".jsonl")
-	srv := server.New(cfg)
+	cfg.HostName = g.defaultName()
+	h.logf = g.logf
+	h.known = slices.Clone(h.cfg.KnownHosts)
+	srv := server.NewHost(server.HostConfig{
+		Server: cfg, Known: h.knownHosts, SaveKnown: h.saveKnown,
+		Notify: func(msg string) { g.logf("%s", msg) },
+	})
 	if err := srv.Start(); err != nil {
 		h.srv = nil
 		if port := hostedPort(h.cfg); isPortInUse(err) {
@@ -295,11 +378,14 @@ func (g *game) startHosted() error {
 		g.logf("hosted server failed: %v", err)
 		return err
 	}
-	_, port, err := net.SplitHostPort(srv.Addr())
+	_, port, err := net.SplitHostPort(srv.Server().Addr())
 	if err != nil {
 		_ = srv.Shutdown(context.Background())
 		h.srv, h.err = nil, err.Error()
 		return err
+	}
+	if p := hostedPort(h.cfg); p != 0 { // port 0 has no address to advertise
+		go func() { srv.Server().SetAdvertise(g.advertiseAddrs(p)) }() // the lookup can be slow
 	}
 	h.srv, h.err = srv, ""
 	h.url = "ws://" + net.JoinHostPort("127.0.0.1", port) + "/"
@@ -343,6 +429,7 @@ func (g *game) stopHosted() {
 		return
 	}
 	g.endVoiceFor(hostedKey)
+	g.dropWarm(s)
 	if s.c != nil {
 		_ = s.c.Close()
 		s.c = nil
@@ -430,7 +517,7 @@ func (g *game) copyInvite() {
 	if self == nil {
 		self = discover.SelfAddrs
 	}
-	_, p, _ := net.SplitHostPort(h.srv.Addr())
+	_, p, _ := net.SplitHostPort(h.srv.Server().Addr())
 	port, _ := strconv.Atoi(p)
 	g.inviteBusy = true
 	ch := g.inviteCh

@@ -21,7 +21,44 @@ const (
 	authWindow       = time.Minute
 	authBaseDelay    = time.Second
 	authMaxDelay     = time.Minute
+
+	// chainSendBudget caps the chain bytes a remote IP may be sent per
+	// chainSendWindow before it authenticates: the host proves itself by
+	// sending its whole chain, which costs far more than the request does.
+	chainSendBudget = 2 << 20
+	chainSendWindow = time.Minute
 )
+
+// chainSend counts the chain bytes sent to one remote IP in the current window.
+type chainSend struct {
+	start time.Time
+	n     int
+}
+
+// chargeChain reports whether ip may be sent n more chain bytes, and counts
+// them if so.
+func (s *Server) chargeChain(ip string, n int) bool {
+	now := s.clock()
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	if len(s.sent) > 4096 {
+		for k, b := range s.sent {
+			if now.Sub(b.start) >= chainSendWindow {
+				delete(s.sent, k)
+			}
+		}
+	}
+	b := s.sent[ip]
+	if b == nil || now.Sub(b.start) >= chainSendWindow {
+		b = &chainSend{start: now}
+		s.sent[ip] = b
+	}
+	if b.n+n > chainSendBudget {
+		return false
+	}
+	b.n += n
+	return true
+}
 
 // authFail tracks failed authentications from one remote IP.
 type authFail struct {
@@ -50,6 +87,9 @@ type guards struct {
 
 	failMu sync.Mutex
 	fails  map[string]*authFail
+
+	sendMu sync.Mutex
+	sent   map[string]*chainSend // pre-auth chain bytes per IP
 }
 
 func remoteIP(r *http.Request) string {

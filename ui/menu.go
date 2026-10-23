@@ -51,6 +51,9 @@ func (g *game) openTileMenu(key string, ax, ay float64) {
 			items = append(items, menuItem{label: "Start hosting", act: g.startHostedNow})
 		}
 	}
+	if it, ok := g.friendMenuItem(key); ok {
+		items = append(items, it)
+	}
 	if id := g.serverIDFor(key); id != "" {
 		items = append(items, menuItem{label: "id " + shortID(id), act: func() { g.copyID(id) }})
 	}
