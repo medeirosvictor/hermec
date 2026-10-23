@@ -459,6 +459,33 @@ func (vs *voiceSession) shareStopped(c *conn) {
 	})
 }
 
+// mediaStarted records a declared lane on the session actor. Task-specific
+// camera routing is added alongside the stable media slots; screen delegates
+// to the existing proven watch path meanwhile.
+func (vs *voiceSession) mediaStarted(c *conn, kind proto.MediaKind) {
+	if kind == proto.MediaScreen {
+		vs.shareStarted(c)
+	}
+}
+
+func (vs *voiceSession) mediaStopped(c *conn, kind proto.MediaKind) {
+	if kind == proto.MediaScreen {
+		vs.shareStopped(c)
+	}
+}
+
+func (vs *voiceSession) setMediaSubscription(c, target *conn, kind proto.MediaKind, gen uint32) {
+	if kind == proto.MediaScreen {
+		vs.setWatch(c, target, gen)
+	}
+}
+
+func (vs *voiceSession) resendMediaSource(c *conn, kind proto.MediaKind, gen uint32) {
+	if kind == proto.MediaScreen {
+		vs.resendSource(c, gen)
+	}
+}
+
 // setWatch (called under chMu; non-blocking) points viewer c at the sharer
 // target (nil = stop watching).
 func (vs *voiceSession) setWatch(c, target *conn, gen uint32) {

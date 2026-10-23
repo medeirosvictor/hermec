@@ -116,10 +116,9 @@ type conn struct {
 	reach        map[string]bool // host fingerprint -> client reported it reachable; guarded by srv.chMu
 	capabilities map[string]bool // auth-negotiated features; immutable after authentication
 
-	voiceCh  string // current voice channel, "" if none; guarded by srv.chMu
-	sharing  bool   // sharing a screen in voiceCh; guarded by srv.chMu
-	watching string // fingerprint of the sharer being watched, "" if none; guarded by srv.chMu
-	watchGen uint32 // gen of the watch request that set watching (echoed in video_source); guarded by srv.chMu
+	voiceCh       string                                // current voice channel, "" if none; guarded by srv.chMu
+	published     map[proto.MediaKind]bool              // active local lanes; guarded by srv.chMu
+	subscriptions map[proto.MediaKind]mediaSubscription // selected sources; guarded by srv.chMu
 }
 
 func newConn(s *Server, ws *websocket.Conn) *conn {
