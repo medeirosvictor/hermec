@@ -33,8 +33,8 @@ func (g *game) addMemberHits(gm geometry) {
 
 // openMemberMenu opens the founder's host controls for the member fp at
 // (ax, ay): Allow hosting for a non-host, Stop hosting and Move up for a host
-// other than the founder (Move up only below the second slot; priority 1 is
-// the founder's). Anyone but the founder gets no menu.
+// other than the founder (Move up only when the host above is not the
+// founder, whose priority 1 never swaps). Anyone but the founder gets no menu.
 func (g *game) openMemberMenu(fp string, ax, ay float64) {
 	g.closeMenu()
 	s := g.cur()
