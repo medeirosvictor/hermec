@@ -97,10 +97,9 @@ func (s *session) queueChat(c *client.Client, channel, text string) uint64 {
 	return s.nextChatID
 }
 
-func (s *session) dropChat(id uint64) bool {
-	for i := range s.outgoing {
-		if s.outgoing[i].id == id {
-			s.outgoing = append(s.outgoing[:i], s.outgoing[i+1:]...)
+func (s *session) hasChat(id uint64) bool {
+	for _, p := range s.outgoing {
+		if p.id == id {
 			return true
 		}
 	}
@@ -134,6 +133,13 @@ func (s *session) interruptChats(c *client.Client) {
 	if interrupted {
 		s.sendNotice = interruptedSendNotice
 		s.st.Status = s.sendNotice
+	}
+}
+
+func (s *session) restoreSendNotice() {
+	if s.sendNotice != "" {
+		s.st.Status = s.sendNotice
+		s.sendNotice = ""
 	}
 }
 
@@ -363,7 +369,7 @@ func (g *game) pumpSessions() {
 		select {
 		case r := <-g.sendCh:
 			if s := g.sess[r.key]; s != nil && r.err != nil {
-				if r.chatID != 0 && !s.dropChat(r.chatID) {
+				if r.chatID != 0 && !s.hasChat(r.chatID) {
 					continue // failover already reported this interrupted send
 				}
 				if r.older != "" {
@@ -470,6 +476,7 @@ func (g *game) applyDial(r dialResult) {
 	g.noteChainSeq(s) // onConnected saves
 	g.onConnected(s)
 	g.syncFriendHosting(s)
+	s.restoreSendNotice()
 	if carried != "" {
 		s.st.SetInCall(carried) // SetConnected cleared it; the call moves with the dial
 	}

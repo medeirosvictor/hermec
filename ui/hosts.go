@@ -463,6 +463,7 @@ func (g *game) connLost(s *session) {
 	g.logf("connection to %s lost", s.url)
 	g.dropWarm(s)
 	s.st.Apply(client.Event{}, false)
+	s.interruptChats(s.c)
 	g.endVoiceFor(s.key) // only s's call; other sessions' voice is untouched
 	s.c = nil
 	s.scheduleRetry(time.Now())
@@ -483,10 +484,7 @@ func (g *game) install(s *session, nu, old *client.Client) {
 	s.retryAt = time.Time{}
 	s.st.HostedBy = "" // the new host's hosts frame names it
 	g.endOldMedia(s, old)
-	if s.sendNotice != "" {
-		s.st.Status = s.sendNotice
-		s.sendNotice = ""
-	}
+	s.restoreSendNotice()
 	if !g.carryCall(s, nu, old) {
 		_ = old.Close()
 	}
