@@ -110,9 +110,10 @@ To be a host, a friend needs three things:
    The app then runs a small server on your PC (the first free port from 7697 to
    7707) while the app is open. Switch it off the same way.
 
-You need to be connected once to the server's active host before your PC can
-take over alone, so it learns the server password. Keep the app open while the
-call is on; your PC only hosts while HERMEC runs.
+Your PC hosts with the password key your own login to the server used, so if
+it ever starts as the active host, people still need the server password to
+join it. Keep the app open while the call is on; your PC only hosts while
+HERMEC runs.
 
 Being a host means your PC can read and keep the server's chat, and holds the
 server's login key. Only host for servers whose people you trust.

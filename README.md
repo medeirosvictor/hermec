@@ -85,8 +85,10 @@ Tailscale** with the group, the same way the first host does.
 
 **Cold start.** A host that starts looks for an active host for a few seconds.
 If it finds one, it links to it. If it finds none, it becomes active. A friend
-host that has never linked to the server's active host refuses to become
-active alone, because it does not know the server password yet.
+host is seeded with the password key its own session logged in with, so even
+when it cold-starts as the active host it still requires the server password.
+A host also ignores an active host whose chain is behind its own or no longer
+lists that host, and starts as active itself instead.
 
 **Split brain.** If the network splits, two hosts can both think they are
 active. Every 30 seconds an active host checks the other hosts it knows. When

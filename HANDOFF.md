@@ -256,16 +256,15 @@ Lists checked against the code on 2026-10-21; items already fixed were dropped.
   targets at start; stopping during a start can move the port; `hostflags`
   overwrites an `advertise` value from the config file.
 - Passwords: there is no tool to compute `password_key` for `hermec-server`
-  (the server derives it from `password` at start); the app has no password
+  (the server derives it from `password` at start; Victor's call whether to
+  add one); the app has no password
   field for joined servers; every plain-password login (v0.6 clients) runs
   scrypt (32 MiB) on the server.
 - Errors and copy: a rolled-back chain shows the generic "the server sent an
-  invalid chain" (wants its own message); a `ChainAppend` against a host that
-  does not echo `ref` waits for its context; `failTakeover` ignores `ref`, so
-  an unrelated `banned` or `not_standby` can resolve a pending Takeover.
-- The Move up menu comment says "below the second slot"; its two appends can
-  leave a brief priority tie if the second fails; the GUI right-click path is
-  not exercised by tests.
+  invalid chain"; its own rollback-specific message is Victor's call; a
+  `ChainAppend` against a host that does not echo `ref` waits for its context.
+- The Move up menu's two appends can leave a brief priority tie if the second
+  fails; the GUI right-click path is not exercised by tests.
 - Test gaps and seams: heartbeat tests wait real time; `server.SetHeartbeatForTest`
   is exported non-test code; a warm slot freed on plain disconnect, the 60 KiB
   chain frame packing, and the `not_standby` answer to a non-warm conn are

@@ -746,7 +746,18 @@ one-message `link_sync`, `hb`, and `link_role` and `hosts` whenever they change.
 standby.
 
 `hb` (both ways): each side sends `hb` every 500 ms. A host calls the active
-host dead after 1500 ms without any frame from it.
+host dead after 1500 ms without an `hb` from it. The active host likewise
+closes a link that has sent no `hb` for 1500 ms, even if the TCP connection is
+still open, and picks its standby again.
+
+A host that dials or probes another host takes the head of its own chain as a
+floor: a host whose chain head, as it presents it in the handshake, is behind
+the dialer's own is refused, and a host that is not on the dialer's host list is
+never linked to. A merge link and the split-brain probes (below) take no floor,
+since the other side may be behind or diverged.
+
+Only a merge link may send `link_sync` with `messages` or `chain` frames to the
+active host; on a plain link they get `forbidden`.
 
 **Probe.** `link_probe` (C, `{}`) can be sent on any warm session by a host. The
 reply `link_probe_reply` (S) is `{active, server_id, voice_members, clients,
@@ -793,8 +804,8 @@ join the channel.
 | `update_required` | Sent by a server to a version 1 client (section 7); the connection is closed. |
 | `server_outdated` | Raised by a client that finds the host speaks an older protocol version. Never sent on the wire. |
 | `server_id_mismatch` | Raised by a client when the host's genesis hash is not the server ID it has pinned, or `auth_ok.server_id` differs from the verified one. Never sent on the wire. |
-| `host_not_authorized` | Raised by a client when the host's key is not on the chain's host list or its proof signature is invalid. Never sent on the wire. |
-| `bad_chain` | Raised by a client when the chain it received does not verify (handshake or a live frame). Never sent on the wire. |
+| `host_not_authorized` | Raised by a client when the host's key is not on the chain's host list or its proof signature is invalid. A host also sends it in answer to `takeover` when its own key is no longer on the chain (section 4.17). |
+| `bad_chain` | Raised by a client when the chain it received does not verify (handshake or a live frame). An active host also sends it to a `link_hello` whose `chain_seq` is ahead of its own (section 4.18). |
 | `forbidden`   | The role lacks the required permission (`join_channel`, `send_chat`). |
 | `bad_request` | Malformed message, unknown channel, unsupported message type, or chat text over 4096 bytes (`message too long`). |
 | `not_joined`  | The operation needs channel membership the client does not have (`leave`, `chat_send`, `history_before`, voice messages). |
