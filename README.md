@@ -20,7 +20,9 @@ room. The app opens one long-lived connection to the server, called a
 WebSocket, on port 7697. Before anything else happens, the server sends a
 random number and the app signs it with your personal key file (like an SSH
 key). That proves "this is really the same person as last time" without any
-account or password. After that, the same connection carries everything that
+account. If the server has a password, the app proves it knows the password
+without sending it (see [How safe is this?](#how-safe-is-this-tailscale)).
+After that, the same connection carries everything that
 isn't sound: chat messages, who is in which channel, who is muted, and so on.
 The server passes each chat message on to everyone in that channel and keeps
 the text channels' messages for a while (30 days and 8 MB per server by
@@ -49,6 +51,69 @@ The last option is the **classic way**: the host forwards port 7697 (TCP and
 UDP) on their router and sets `public_ip` in the server config. In
 every case the app only needs to be able to reach the host; the host does the
 rest.
+
+## Hosting, standby and failover
+
+A server does not have to depend on one computer. The founder can approve
+other members as **hosts**. The approved hosts are listed in the server's
+signed chain, each with a priority number (1 is the founder; a lower number is
+preferred).
+
+At any moment one host is **active**. Clients connect to it: it relays voice,
+passes on chat and keeps the chat history. The other hosts are in one of two
+states:
+
+- **Standby.** One host is picked as the standby. It keeps a live copy of the
+  chain, the chat history and the server's login key. It also holds a quiet,
+  pre-connected session with each client, so taking over needs almost no setup.
+- **Idle.** Any other host keeps a link to the active host and a copy of the
+  data, but clients do not use it.
+
+The active host sends a heartbeat to its clients and linked hosts every 500
+ms. A client that hears nothing for 1.5 seconds asks the standby to take over.
+The standby checks that the active host really is silent, becomes active and
+sends everyone the new host list. Clients move over by themselves, and a voice
+call carries on over a connection that was already set up. The whole switch
+takes about a second and needs no clicks. Chat gets a "host changed to
+`<name>`" line. A screen share ends on failover; the sharer must start it
+again.
+
+The standby is the best-priority host that at least half of the clients can
+reach. Clients report this, because a standby that most people cannot reach is
+useless. This is why a friend who hosts must **node-share their PC on
+Tailscale** with the group, the same way the first host does.
+
+**Cold start.** A host that starts looks for an active host for a few seconds.
+If it finds one, it links to it. If it finds none, it becomes active. A friend
+host that has never linked to the server's active host refuses to become
+active alone, because it does not know the server password yet.
+
+**Split brain.** If the network splits, two hosts can both think they are
+active. Every 30 seconds an active host checks the other hosts it knows. When
+two active hosts meet, the one with fewer people in voice yields (a tie goes to
+fewer clients, then to the larger priority number). The loser sends its chat
+lines to the winner, tells its clients to move to the winner and goes idle. A
+chain change made on the losing side (for example a grant) can be lost. Its
+author gets a `chain_lost` notice and has to do it again.
+
+**Handback.** When the founder's PC comes back, it does not grab the role in
+the middle of a call. After voice has been empty for 2 minutes, the active host
+hands the role back to the best-priority host linked to it, and clients move
+over. The voice panel shows "hosted by `<name>`" when the host's name differs
+from the server's name.
+
+### Hosting from the app
+
+- **Let my PC host this server.** If the founder approved you as a host,
+  right-click the server's tile and switch on "let my PC host this server".
+  The app starts a small server beside it (on the first free port from 7697 to
+  7707), follows the active host as standby and takes over when needed. The
+  choice is saved per server. The first time, the app reminds you that your
+  friends must be able to reach your PC (share it on Tailscale).
+- **Allow hosting (founder).** Right-click a member in the member list. A
+  member who is not a host gets **Allow hosting**. A host gets **Stop hosting**
+  and **Move up**. Move up swaps the host with the one above it, but never with
+  the founder: priority 1 stays with the founder.
 
 ## Status
 
@@ -261,6 +326,12 @@ Any OS, once HERMEC is running:
   Revoke invite.
 - **Keys, not passwords.** Every person has a key file. The server checks a
   signature from that key when they connect.
+- **The password never travels.** The server keeps only a key made from the
+  password with scrypt (a slow, memory-hungry function, so guessing is
+  expensive). To log in, the app sends an HMAC proof made with that key over
+  both sides' random numbers and the server ID, so a recorded proof cannot be
+  reused. v0.6 clients still send the plain password for one release; plain
+  passwords are refused from v0.8.
 - **The host proves itself first.** Before your app sends anything secret
   (including the server password), the host sends the server's signed chain and
   proves it holds a key that the chain approves as a host. A machine that
@@ -316,20 +387,24 @@ Any OS, once HERMEC is running:
 
    Drop `,LocalSubnet` to allow Tailscale only.
 4. **The host can read everything.** Chat and voice pass through the host's
-   server. Only join servers run by people you trust. Chat is kept: the host
-   can read and keep chat for up to `history_days`; set it to 0 to keep
-   nothing. Messages are not signed by their authors, so a host can forge or
+   server. Only join servers run by people you trust. Chat is kept: the active
+   host and its standby can read and keep chat for up to `history_days`; set it
+   to 0 to keep nothing. Every host also holds the server's login key (the
+   scrypt key above), so any approved host can check passwords. The founder
+   decides who is a host. A screen share ends when the host fails over and must
+   be restarted. Messages are not signed by their authors, so a host can forge or
    drop lines. There are no edits or deletes, and a ban keeps the banned
    member's past messages.
 5. **Names are not verified.** Anyone can pick any name. The fingerprint (hover
    a server or person) is the real identity.
 6. **The handshake does not bind the connection.** On plain `ws://`, someone
    on the network path between you and the host could relay a real host's
-   proof and so read the password you send. Use TLS (set `tls_cert` and
+   proof and so read your chat, and with a v0.6 client also the plain password
+   it still sends. Use TLS (set `tls_cert` and
    `tls_key` in the server config; both are in
    [example.server.toml](example.server.toml); the server then serves `wss://`)
    or a network that is already encrypted. Tailscale is, and it is what this
-   friend group uses. Without one of them, treat the password as visible to
+   friend group uses. Without one of them, treat chat as visible to
    anyone on the path.
 7. **Not ready for strangers on the open internet.** There are no invite links
    yet, so a public server cannot tell welcome visitors from unwelcome ones
@@ -343,7 +418,22 @@ Any OS, once HERMEC is running:
 ./hermec-server -config example.server.toml    # with a config file
 ./hermec-server -config server.toml -print-config   # show effective config and exit
 ./hermec-server -config server.toml -apply-config   # append the TOML's group settings to the chain and exit (server stopped)
+./hermec-server -config server.toml -name pi -advertise ws://100.64.0.7:7697/ -hosts ws://100.64.0.9:7697/
 ```
+
+The host flags matter when a server has more than one host:
+
+- `-advertise`: the `ws://` URLs where clients and other hosts reach this host.
+  Default: one URL per non-loopback IP address, with the listen port.
+- `-hosts`: URLs of the other hosts of this server.
+- `-name`: the name shown as "hosted by". Default: the machine's hostname.
+- `known_hosts.txt`, next to the config file: the host URLs this host has
+  learned, one per line. The host adds to it by itself. It is merged with
+  `-hosts` and the `known_hosts` key of the config.
+
+A host's key must be on the chain's host list. On first start the server's key
+becomes the founder and host number 1; the founder adds others with Allow
+hosting.
 
 The server's identity lives in a signed chain. On first start the server
 creates the chain from its config, with its own key as founder. `-key` is the
@@ -386,7 +476,9 @@ Entries that an admin's app sends to a running server with `chain_append`
 other limits from a later config apply at the next start. The founder always
 keeps every permission and always passes `allowed_keys`, as does every approved
 host. The password, port, TLS and the other machine settings stay in the TOML
-and never go into the chain.
+and never go into the chain. Use `password_key` (hex) instead of `password`
+if you can: the server turns `password` into the key at every start and logs a
+notice that the file still holds the plain password.
 
 Everyone in a group needs HERMEC v0.6 or newer: an older app is told to update
 HERMEC, and a v0.6 app that meets an older server reports that the host runs an
@@ -515,7 +607,9 @@ for joining. The app starts the server on your computer, opens it as a
 tile, and shows an invite address (your Tailscale address if you have one,
 otherwise your LAN address) that friends paste into **Join a server**. Windows
 asks once to allow HERMEC on your network; choose Allow so friends can connect.
-The server runs while the app is open. Its signed chain (the server's identity
+The server runs while the app is open. If you approve a friend as a host, it
+can keep going without you (see [Hosting, standby and
+failover](#hosting-standby-and-failover)). Its signed chain (the server's identity
 and group settings, with you as founder) is kept in a `chains` folder next to
 `hosted.toml`; a server created before v0.6 gets its chain the first time v0.6
 starts it. Its chat history is kept in a `history` folder there too, one
@@ -571,7 +665,7 @@ for ev := range c.Events() {
   [friends quickstart](docs/quickstart-friends.md)). Plain `ws://` over the
   public internet means an on-path observer can read everything, including chat.
 - **The handshake does not bind the connection.** On plain `ws://`, someone on
-  the network path could relay a real host's proof and read your password. Use
+  the network path could relay a real host's proof and read your chat. Use
   TLS (`wss://`) or an encrypted network such as Tailscale.
 - **The host is trusted by design.** The room host can read all chat and
   relayed traffic, the same way a TeamSpeak host can. Choose hosts like you
