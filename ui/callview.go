@@ -120,8 +120,6 @@ func (g *game) handleCallHit(hit state.Hit) {
 				return
 			}
 		}
-	case state.HitBarMute, state.HitVoiceCamera, state.HitVoiceShare, state.HitVoiceLeave:
-		g.clickBar(hit)
 	}
 }
 

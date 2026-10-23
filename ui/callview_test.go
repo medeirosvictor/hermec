@@ -3,8 +3,11 @@ package ui
 import (
 	"fmt"
 	"image"
+	"sync/atomic"
 	"testing"
 
+	"github.com/medeirosvictor/hermec/cameracap"
+	"github.com/medeirosvictor/hermec/client"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/video"
@@ -87,5 +90,46 @@ func TestCallViewControlsAreIndependent(t *testing.T) {
 	g.handleCallHit(state.Hit{Kind: state.HitCallBack})
 	if s.st.CallViewOpen || s.st.InCall != "voice" || !g.share.on || !g.camera.on || !g.vc.muted {
 		t.Fatalf("back changed media: open=%v call=%q share=%v camera=%v muted=%v", s.st.CallViewOpen, s.st.InCall, g.share.on, g.camera.on, g.vc.muted)
+	}
+}
+
+func TestCallViewMuteClickIsDispatchedOnlyOnce(t *testing.T) {
+	g, _ := shareGame(t)
+	g.muteCh = make(chan muteReq, 1)
+	hit := state.Hit{Kind: state.HitBarMute}
+
+	// Update routes the scene first and the global call bar second.
+	g.handleCallHit(hit)
+	g.clickBar(hit)
+
+	if !g.vc.muted {
+		t.Fatal("one call-view mute click toggled twice")
+	}
+	if req := <-g.muteCh; !req.muted {
+		t.Fatal("one call-view mute click queued an unmute")
+	}
+}
+
+func TestCallViewCameraClickIsDispatchedOnlyOnce(t *testing.T) {
+	g, _ := shareGame(t)
+	source := &fakeCameraSource{}
+	var starts atomic.Int32
+	g.cameraOps = cameraOps{
+		open: func(string) (cameracap.Source, error) { return source, nil },
+		start: func(*client.Client, client.FrameSource) error {
+			starts.Add(1)
+			return nil
+		},
+		stop: func(*client.Client) error { return nil },
+	}
+	hit := state.Hit{Kind: state.HitVoiceCamera}
+
+	// Update routes the scene first and the global call bar second.
+	g.handleCallHit(hit)
+	g.clickBar(hit)
+	settle(t, g)
+
+	if starts.Load() != 1 || !g.camera.on || source.closes.Load() != 0 {
+		t.Fatalf("one call-view camera click: starts=%d on=%v closes=%d", starts.Load(), g.camera.on, source.closes.Load())
 	}
 }
