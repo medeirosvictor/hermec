@@ -193,6 +193,37 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCameraProfileSustainedInterFrames(t *testing.T) {
+	enc, err := NewEncoder(640, 360, 15, 300)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer enc.Close()
+	dec, err := NewDecoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dec.Close()
+	f := NewFrame(640, 360)
+	var out *Frame
+	for i := 0; i < 90; i++ {
+		synthFrame(f, i)
+		packet, _, err := enc.Encode(f, false)
+		if err != nil {
+			t.Fatalf("frame %d: %v", i, err)
+		}
+		if len(packet) != 0 {
+			out, err = dec.Decode(packet)
+			if err != nil {
+				t.Fatalf("decode frame %d: %v", i, err)
+			}
+		}
+	}
+	if out == nil || out.W != 640 || out.H != 360 {
+		t.Fatalf("decoded camera frame = %#v, want 640x360", out)
+	}
+}
+
 func TestForceKey(t *testing.T) {
 	enc, err := NewEncoder(320, 240, 15, 500)
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 type Encoder struct {
 	enc      *govpx.VP8Encoder
 	w, h     int
+	padded   *Frame
 	keyEvery int
 	sinceKey int
 	// pendingKey: a keyframe was requested/due but not yet emitted.
@@ -51,11 +52,15 @@ func NewEncoder(w, h, fps, kbps int) (*Encoder, error) {
 	if err != nil {
 		return nil, fmt.Errorf("video: vp8 encoder: %w", err)
 	}
-	return &Encoder{
+	encoder := &Encoder{
 		enc: e, w: w, h: h,
 		keyEvery: 5 * fps,
 		buf:      make([]byte, 1<<20),
-	}, nil
+	}
+	if w%16 != 0 || h%16 != 0 {
+		encoder.padded = NewFrame((w+15)&^15, (h+15)&^15)
+	}
+	return encoder, nil
 }
 
 // Encode compresses f (which must match the encoder size). The returned
@@ -79,10 +84,15 @@ func (e *Encoder) Encode(f *Frame, forceKey bool) (pkt []byte, key bool, err err
 		flags = govpx.EncodeForceKeyFrame
 		e.pendingKey = true
 	}
+	src, yStride, cStride := f, e.w, cw
+	if e.padded != nil {
+		padFrame(e.padded, f)
+		src, yStride, cStride = e.padded, e.padded.W, e.padded.W/2
+	}
 	img := govpx.Image{
 		Width: e.w, Height: e.h,
-		Y: f.Y, U: f.U, V: f.V,
-		YStride: e.w, UStride: cw, VStride: cw,
+		Y: src.Y, U: src.U, V: src.V,
+		YStride: yStride, UStride: cStride, VStride: cStride,
 	}
 	res, err := e.enc.EncodeInto(e.buf, img, e.n, 1, flags)
 	e.n++
@@ -95,6 +105,31 @@ func (e *Encoder) Encode(f *Frame, forceKey bool) (pkt []byte, key bool, err err
 	}
 	e.noteResult(true, res.KeyFrame)
 	return res.Data, res.KeyFrame, nil
+}
+
+// padFrame extends the visible edge pixels to complete VP8 macroblocks. govpx
+// inspects all 16x16 pixels of edge macroblocks during inter-frame analysis,
+// even though Width and Height keep the encoded picture cropped to the
+// original dimensions.
+func padFrame(dst, src *Frame) {
+	padPlane(dst.Y, dst.W, dst.H, src.Y, src.W, src.H)
+	padPlane(dst.U, dst.W/2, dst.H/2, src.U, src.W/2, src.H/2)
+	padPlane(dst.V, dst.W/2, dst.H/2, src.V, src.W/2, src.H/2)
+}
+
+func padPlane(dst []byte, dstStride, dstHeight int, src []byte, srcStride, srcHeight int) {
+	for y := 0; y < srcHeight; y++ {
+		out := dst[y*dstStride : (y+1)*dstStride]
+		in := src[y*srcStride : (y+1)*srcStride]
+		copy(out, in)
+		for x := srcStride; x < dstStride; x++ {
+			out[x] = in[srcStride-1]
+		}
+	}
+	last := dst[(srcHeight-1)*dstStride : srcHeight*dstStride]
+	for y := srcHeight; y < dstHeight; y++ {
+		copy(dst[y*dstStride:(y+1)*dstStride], last)
+	}
 }
 
 // noteResult updates keyframe bookkeeping after an encode attempt. A dropped
