@@ -70,12 +70,11 @@ func (s *State) Rows() []Row {
 	return rows
 }
 
-// VoiceClickAction says what clicking voice channel ch should do: "none"
-// when it is the current call (leaving is the call bar's and the panel's
-// job), otherwise "join".
+// VoiceClickAction says what clicking voice channel ch should do: open the
+// current call view without leaving, or join another channel.
 func (s *State) VoiceClickAction(ch string) string {
 	if s.InCall == ch {
-		return "none"
+		return "open"
 	}
 	return "join"
 }
