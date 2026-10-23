@@ -77,6 +77,7 @@ type Client struct {
 	channels    []proto.ChannelInfo
 	serverName  string // from auth_ok; immutable after Dial
 	serverID    string // chain.ID.String() of the verified chain; immutable after Dial
+	mediaLanes  bool   // auth-negotiated media_lanes_v1 support
 	pwKey       []byte // the password key this login used; nil without a password
 	chain       *chain.Chain
 
@@ -197,6 +198,7 @@ func DialWith(ctx context.Context, url string, id *identity.Identity, name, pass
 		channels:    res.OK.Channels,
 		serverName:  res.OK.ServerName,
 		serverID:    res.OK.ServerID,
+		mediaLanes:  hasCapability(res.OK.Capabilities, proto.CapabilityMediaLanesV1),
 		pwKey:       res.Key,
 		chain:       res.Chain,
 		events:      make(chan Event, eventBuffer),
@@ -245,6 +247,19 @@ func (c *Client) Channels() []proto.ChannelInfo {
 // ServerName returns the display name the server announced in auth_ok, or ""
 // if it has none.
 func (c *Client) ServerName() string { return c.serverName }
+
+// SupportsMediaLanes reports whether the authenticated server accepted the
+// independent camera/screen protocol before voice negotiation.
+func (c *Client) SupportsMediaLanes() bool { return c.mediaLanes }
+
+func hasCapability(capabilities []string, want string) bool {
+	for _, capability := range capabilities {
+		if capability == want {
+			return true
+		}
+	}
+	return false
+}
 
 // Events returns the event stream. It is closed when the connection dies.
 // Consumers must drain it: a full buffer applies backpressure to the read

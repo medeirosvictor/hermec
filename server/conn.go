@@ -108,12 +108,13 @@ type conn struct {
 	warmHeld     atomic.Bool // holds a slot of the warm cap
 
 	// Set once authenticated; only touched by readLoop.
-	fingerprint string
-	name        string
-	pub         []byte          // the client's public key
-	warm        bool            // authenticated with Auth.Warm
-	link        *linkState      // non-nil once a host link_hello was accepted; set by readLoop
-	reach       map[string]bool // host fingerprint -> client reported it reachable; guarded by srv.chMu
+	fingerprint  string
+	name         string
+	pub          []byte          // the client's public key
+	warm         bool            // authenticated with Auth.Warm
+	link         *linkState      // non-nil once a host link_hello was accepted; set by readLoop
+	reach        map[string]bool // host fingerprint -> client reported it reachable; guarded by srv.chMu
+	capabilities map[string]bool // auth-negotiated features; immutable after authentication
 
 	voiceCh  string // current voice channel, "" if none; guarded by srv.chMu
 	sharing  bool   // sharing a screen in voiceCh; guarded by srv.chMu
@@ -484,12 +485,18 @@ func (c *conn) authenticate() error {
 	if c.name == "" {
 		c.name = "anon"
 	}
+	accepted := acceptedCapabilities(auth.Capabilities)
+	c.capabilities = make(map[string]bool, len(accepted))
+	for _, capability := range accepted {
+		c.capabilities[capability] = true
+	}
 	c.sendMsg(proto.TypeAuthOK, proto.AuthOK{
-		Fingerprint: fp,
-		Roles:       c.srv.roles().RolesFor(fp),
-		Channels:    c.srv.channelInfos(),
-		ServerName:  c.srv.cfg.ServerName,
-		ServerID:    id.String(),
+		Fingerprint:  fp,
+		Roles:        c.srv.roles().RolesFor(fp),
+		Channels:     c.srv.channelInfos(),
+		ServerName:   c.srv.cfg.ServerName,
+		ServerID:     id.String(),
+		Capabilities: accepted,
 	})
 	if !auth.Warm {
 		c.sendMsg(proto.TypeHosts, c.srv.hostsInfo())
@@ -506,6 +513,15 @@ func (c *conn) authenticate() error {
 	if c.srv.banned(fp) {
 		c.sendError(proto.CodeBanned, "you are banned from this server")
 		return errAuthFailed
+	}
+	return nil
+}
+
+func acceptedCapabilities(offered []string) []string {
+	for _, capability := range offered {
+		if capability == proto.CapabilityMediaLanesV1 {
+			return []string{proto.CapabilityMediaLanesV1}
+		}
 	}
 	return nil
 }

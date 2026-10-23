@@ -143,6 +143,52 @@ func TestServerName(t *testing.T) {
 	}
 }
 
+func TestAuthOKMediaCapability(t *testing.T) {
+	url := startServer(t, server.Config{})
+	id, _ := identity.Generate()
+	c, err := Dial(testCtx(t), url, id, "alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.SupportsMediaLanes() {
+		t.Fatal("new server did not negotiate media_lanes_v1")
+	}
+	c.Close()
+
+	authCh := make(chan proto.Auth, 1)
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.Close()
+		a, sid := stubHandshake(t, ws)
+		if a == nil {
+			return
+		}
+		authCh <- *a
+		raw, _ := proto.Encode(proto.TypeAuthOK, proto.AuthOK{Fingerprint: identity.Fingerprint(a.PubKey), ServerID: sid})
+		_ = ws.WriteMessage(websocket.TextMessage, raw)
+		_, _, _ = ws.ReadMessage()
+	}))
+	defer srv.Close()
+
+	id, _ = identity.Generate()
+	legacy, err := Dial(testCtx(t), "ws"+strings.TrimPrefix(srv.URL, "http"), id, "alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacy.Close()
+	if legacy.SupportsMediaLanes() {
+		t.Fatal("old server unexpectedly negotiated media lanes")
+	}
+	a := <-authCh
+	if len(a.Capabilities) != 1 || a.Capabilities[0] != proto.CapabilityMediaLanesV1 {
+		t.Fatalf("offered capabilities = %v", a.Capabilities)
+	}
+}
+
 func TestRosterEvent(t *testing.T) {
 	url := startServer(t, server.Config{})
 	id1, _ := identity.Generate()

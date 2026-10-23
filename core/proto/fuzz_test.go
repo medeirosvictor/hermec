@@ -10,15 +10,19 @@ func FuzzDecode(f *testing.F) {
 		f.Add(valid)
 	}
 	for typ, payload := range map[string]any{
-		TypeVoiceJoin:    VoiceJoin{Channel: "lounge"},
-		TypeVoiceLeave:   VoiceLeave{},
-		TypeVoiceState:   VoiceState{Channel: "lounge", Members: []VoiceMember{{Fingerprint: "fp", Name: "a", Muted: true}}},
-		TypeVoiceMute:    VoiceMute{Muted: true},
-		TypeRTCOffer:     RTCOffer{SDP: "v=0"},
-		TypeRTCAnswer:    RTCAnswer{SDP: "v=0"},
-		TypeRTCCandidate: RTCCandidate{Candidate: "{}"},
-		TypeAuthOK:       AuthOK{Fingerprint: "fp", Channels: []ChannelInfo{{Name: "g", Type: "text"}}},
-		TypeRoster:       Roster{Members: []Member{{Fingerprint: "fp", Name: "a", Roles: []string{"user"}}}, Total: 1},
+		TypeVoiceJoin:      VoiceJoin{Channel: "lounge"},
+		TypeVoiceLeave:     VoiceLeave{},
+		TypeVoiceState:     VoiceState{Channel: "lounge", Members: []VoiceMember{{Fingerprint: "fp", Name: "a", Muted: true}}},
+		TypeVoiceMute:      VoiceMute{Muted: true},
+		TypeRTCOffer:       RTCOffer{SDP: "v=0"},
+		TypeRTCAnswer:      RTCAnswer{SDP: "v=0"},
+		TypeRTCCandidate:   RTCCandidate{Candidate: "{}"},
+		TypeAuthOK:         AuthOK{Fingerprint: "fp", Channels: []ChannelInfo{{Name: "g", Type: "text"}}},
+		TypeMediaStart:     MediaStart{Kind: MediaCamera},
+		TypeMediaStop:      MediaStop{Kind: MediaScreen},
+		TypeMediaSubscribe: MediaSubscribe{Kind: MediaScreen, Fingerprint: "fp", Gen: 2},
+		TypeMediaSource:    MediaSource{Kind: MediaCamera, Fingerprint: "fp", Slot: 1, Seq: 4, Gen: 2},
+		TypeRoster:         Roster{Members: []Member{{Fingerprint: "fp", Name: "a", Roles: []string{"user"}}}, Total: 1},
 	} {
 		if b, err := Encode(typ, payload); err == nil {
 			f.Add(b)

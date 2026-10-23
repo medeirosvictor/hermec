@@ -69,6 +69,12 @@ const (
 	// TypeVideoSource (S) marks the boundary of a viewer's video stream.
 	TypeVideoSource = "video_source"
 
+	// Independent camera and screen lanes.
+	TypeMediaStart     = "media_start"
+	TypeMediaStop      = "media_stop"
+	TypeMediaSubscribe = "media_subscribe"
+	TypeMediaSource    = "media_source"
+
 	// Host failover: the host list, liveness, the host-to-host link and warm
 	// standby sessions (WebRTC signalling for a standby's pre-connected media).
 	TypeHosts          = "hosts"
@@ -90,6 +96,11 @@ const (
 // CodeNotSharing is the error code for a watch whose target is not sharing in
 // the sender's voice channel.
 const CodeNotSharing = "not_sharing"
+
+const (
+	CodeMediaFull     = "media_full"
+	CodeNotPublishing = "not_publishing"
+)
 
 // CodeVoiceFull is the error code for a voice_join to a channel at its
 // participant cap (server config max_voice).
@@ -179,6 +190,9 @@ type Auth struct {
 	// Warm marks a standby's pre-connection, which the host may hold open
 	// before the client is promoted to a live session.
 	Warm bool `json:"warm,omitempty"`
+	// Capabilities are optional features understood by this client. The server
+	// returns their supported intersection in AuthOK.
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // ChannelInfo describes a server channel. Type is "text" or "voice".
@@ -196,6 +210,8 @@ type AuthOK struct {
 	ServerName string `json:"server_name,omitempty"`
 	// ServerID is the server's chain identity (chain.ID.String() form).
 	ServerID string `json:"server_id"`
+	// Capabilities is the accepted intersection of client and server features.
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // VoiceJoin requests joining a voice channel.
@@ -213,10 +229,11 @@ type VoiceMute struct {
 
 // VoiceMember is one participant of a voice channel.
 type VoiceMember struct {
-	Fingerprint string `json:"fingerprint"`
-	Name        string `json:"name"`
-	Muted       bool   `json:"muted"`
-	Sharing     bool   `json:"sharing,omitempty"`
+	Fingerprint string      `json:"fingerprint"`
+	Name        string      `json:"name"`
+	Muted       bool        `json:"muted"`
+	Sharing     bool        `json:"sharing,omitempty"`
+	Media       []MediaKind `json:"media,omitempty"`
 }
 
 // ShareStart announces that the sender is sharing its screen.
