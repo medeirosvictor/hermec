@@ -472,7 +472,7 @@ func (c *Client) readLoop() {
 			var em proto.ErrorMsg
 			_ = json.Unmarshal(env.Data, &em)
 			se := &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen}
-			if c.failTakeover(se) || c.failWaiter(em.Ref, se) {
+			if (em.Ref == "" && c.failTakeover(se)) || c.failWaiter(em.Ref, se) {
 				continue
 			}
 			if !c.onError(em) {

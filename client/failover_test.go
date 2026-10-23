@@ -368,3 +368,26 @@ func TestTakeoverIgnoresStrayError(t *testing.T) {
 		t.Fatal("the stray error did not reach the event stream")
 	}
 }
+
+// An error that answers some other request (it has a ref) must not answer a
+// Takeover, even with a code Takeover can fail with.
+func TestTakeoverIgnoresRefError(t *testing.T) {
+	p := newPair(t)
+	stray, _ := proto.Encode(proto.TypeError, proto.ErrorMsg{Code: proto.CodeBanned, Message: "x", Ref: "other"})
+	url := proxy(t, p.bURL, func(raw []byte, env proto.Envelope) [][]byte {
+		if env.Type == proto.TypeError {
+			return [][]byte{stray, raw}
+		}
+		return [][]byte{raw}
+	})
+	c, err := DialWith(testCtx(t), url, mustIdent(t), "alice", "", DialOpts{Warm: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	err = c.Takeover(testCtx(t))
+	var se *ServerError
+	if !errors.As(err, &se) || se.Code != proto.CodeActiveAlive {
+		t.Fatalf("err = %v, want active_alive, not the ref'd banned", err)
+	}
+}

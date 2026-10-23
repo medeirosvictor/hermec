@@ -57,7 +57,8 @@ func (c *Client) ReportReach(fp string, ok bool) error {
 }
 
 // failTakeover fails a pending Takeover with se when se is a code Takeover can
-// be answered with; any other error is not its answer.
+// be answered with; any other error is not its answer. The caller passes only
+// errors without a ref: one with a ref answers another request.
 func (c *Client) failTakeover(se *ServerError) bool {
 	switch se.Code {
 	case proto.CodeActiveAlive, proto.CodeNotStandby, proto.CodeHostNotAuthorized, proto.CodeBanned:
