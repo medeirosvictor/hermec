@@ -27,7 +27,7 @@ func noHistory() time.Time { return time.Now().AddDate(100, 0, 0) }
 // history. It returns the link's socket, ready for sendMergeHistory, and the
 // winner's chain entries after genesis.
 func dialMerge(ctx context.Context, url string, s *Server) (*websocket.Conn, []chain.Entry, error) {
-	ws, err := dialHost(ctx, url, s)
+	ws, err := dialHost(ctx, url, s, 0)
 	if err != nil {
 		return nil, nil, err
 	}

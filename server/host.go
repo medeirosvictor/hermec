@@ -278,7 +278,7 @@ func (h *Host) learnHosts(hs proto.Hosts) {
 
 // probeEach probes urls in parallel and calls fn with each reply as it comes,
 // until fn returns true or ctx ends.
-func (h *Host) probeEach(ctx context.Context, urls []string, fn func(url string, r proto.LinkProbeReply) bool) {
+func (h *Host) probeEach(ctx context.Context, urls []string, minSeq uint64, fn func(url string, r proto.LinkProbeReply) bool) {
 	type res struct {
 		url string
 		r   proto.LinkProbeReply
@@ -287,7 +287,7 @@ func (h *Host) probeEach(ctx context.Context, urls []string, fn func(url string,
 	ch := make(chan res, len(urls))
 	for _, u := range urls {
 		go func() {
-			r, err := ProbeHost(ctx, u, h.srv)
+			r, err := probeHost(ctx, u, h.srv, minSeq)
 			ch <- res{u, r, err}
 		}()
 	}
@@ -326,9 +326,12 @@ func (h *Host) coldStart(extra []string, window time.Duration) *Link {
 		var link *Link
 		better := false // a reachable, inactive host outranks us
 		ctx, cancel := context.WithTimeout(h.ctx, window)
-		h.probeEach(ctx, h.targets(extra), func(url string, r proto.LinkProbeReply) bool {
+		h.probeEach(ctx, h.targets(extra), h.srv.chain.Head().Seq, func(url string, r proto.LinkProbeReply) bool {
 			if !h.sameServer(r) {
 				better = better || (r.ServerID == h.srv.chain.ID().String() && r.Priority > 0 && r.Priority < mine)
+				return false
+			}
+			if !h.hostOnChain(r.Self.Fingerprint) { // removed from our chain: not ours to follow
 				return false
 			}
 			dctx, dcancel := context.WithTimeout(h.ctx, dialTimeout)

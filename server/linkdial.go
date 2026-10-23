@@ -40,8 +40,8 @@ type Link struct {
 }
 
 // dialHost opens a warm, password-less session to the host at url with s's
-// host key, checking that it serves our chain.
-func dialHost(ctx context.Context, url string, s *Server) (*websocket.Conn, error) {
+// host key, checking that it serves our chain and a head of at least minSeq.
+func dialHost(ctx context.Context, url string, s *Server, minSeq uint64) (*websocket.Conn, error) {
 	ws, _, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("server: dial host: %w", err)
@@ -50,7 +50,7 @@ func dialHost(ctx context.Context, url string, s *Server) (*websocket.Conn, erro
 	if name == "" {
 		name = "host"
 	}
-	res, err := hshake.Run(ctx, ws, s.cfg.HostKey, name, "", hshake.Opts{Pin: s.chain.ID().String(), Warm: true})
+	res, err := hshake.Run(ctx, ws, s.cfg.HostKey, name, "", hshake.Opts{Pin: s.chain.ID().String(), Warm: true, MinChainSeq: minSeq})
 	if err != nil {
 		ws.Close()
 		return nil, err
@@ -74,7 +74,7 @@ func DialLink(ctx context.Context, url string, s *Server) (*Link, error) {
 // history, not just the lines after our newest (a merged host holds lines the
 // active host older than that lacks to us).
 func dialLinkOpts(ctx context.Context, url string, s *Server, full bool) (*Link, error) {
-	ws, err := dialHost(ctx, url, s)
+	ws, err := dialHost(ctx, url, s, s.chain.Head().Seq) // never follow a host behind our chain
 	if err != nil {
 		return nil, err
 	}
@@ -97,9 +97,16 @@ func dialLinkOpts(ctx context.Context, url string, s *Server, full bool) (*Link,
 
 // ProbeHost asks the host at url for its state: active or not, its load and
 // priority. It authenticates warm with our host key, so no password is needed.
+// A host whose chain is behind ours does not answer.
 func ProbeHost(ctx context.Context, url string, s *Server) (proto.LinkProbeReply, error) {
+	return probeHost(ctx, url, s, s.chain.Head().Seq)
+}
+
+// probeHost is ProbeHost accepting a host whose chain head is at least minSeq;
+// a split-brain probe passes 0, for the other side may be behind or diverged.
+func probeHost(ctx context.Context, url string, s *Server, minSeq uint64) (proto.LinkProbeReply, error) {
 	var reply proto.LinkProbeReply
-	ws, err := dialHost(ctx, url, s)
+	ws, err := dialHost(ctx, url, s, minSeq)
 	if err != nil {
 		return reply, err
 	}

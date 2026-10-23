@@ -57,7 +57,7 @@ func (h *Host) probeAndYield() (l *Link, demoted bool) {
 	defer cancel()
 	var winURL string
 	var win proto.LinkProbeReply
-	h.probeEach(ctx, urls, func(url string, r proto.LinkProbeReply) bool {
+	h.probeEach(ctx, urls, 0, func(url string, r proto.LinkProbeReply) bool {
 		// A winner we do not know as a host of our chain is not one to yield to.
 		if !h.sameServer(r) || !h.hostOnChain(r.Self.Fingerprint) || !h.iLose(r) {
 			return false
@@ -107,7 +107,7 @@ func (h *Host) yield(url string, win proto.LinkProbeReply) (*Link, bool) {
 	}
 	// Loads change: look again, right before committing.
 	pctx, pcancel := context.WithTimeout(h.ctx, dialTimeout)
-	r, err := ProbeHost(pctx, url, h.srv)
+	r, err := probeHost(pctx, url, h.srv, 0)
 	pcancel()
 	if err != nil || !h.sameServer(r) || !h.iLose(r) {
 		h.srv.logf("server: merge into %s called off: it no longer wins", url)
