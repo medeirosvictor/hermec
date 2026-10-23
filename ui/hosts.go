@@ -413,6 +413,7 @@ func (g *game) applyAdopt(r hostResult, s *session, live bool) {
 // and shows no change.
 func (g *game) failover(s *session) {
 	g.logf("host of %s lost; taking over on the standby", s.url)
+	s.interruptChats(s.c)
 	s.switching = true
 	old, w, hc := s.c, s.warm, g.hostChan()
 	retryFor := takeoverRetryFor // read once, here
@@ -482,6 +483,10 @@ func (g *game) install(s *session, nu, old *client.Client) {
 	s.retryAt = time.Time{}
 	s.st.HostedBy = "" // the new host's hosts frame names it
 	g.endOldMedia(s, old)
+	if s.sendNotice != "" {
+		s.st.Status = s.sendNotice
+		s.sendNotice = ""
+	}
 	if !g.carryCall(s, nu, old) {
 		_ = old.Close()
 	}

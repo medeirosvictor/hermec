@@ -223,11 +223,17 @@ func (g *game) sendChat() {
 	if txt == "" || s.c == nil || len(s.st.Channels) == 0 {
 		return
 	}
+	if s.switching {
+		s.sendNotice = interruptedSendNotice
+		s.st.Status = s.sendNotice
+		return
+	}
 	ch := s.st.Channels[s.st.Active]
+	id := s.queueChat(s.c, ch, txt)
 	go func(key string, c *client.Client) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		g.sendCh <- sendResult{key: key, err: c.SendChat(ctx, ch, txt)}
+		g.sendCh <- sendResult{key: key, chatID: id, err: c.SendChat(ctx, ch, txt)}
 	}(s.key, s.c)
 }
 

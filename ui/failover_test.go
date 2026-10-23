@@ -182,10 +182,25 @@ func TestChatInFailoverGapIsDeliveredOrReported(t *testing.T) {
 		}
 		return false
 	}
-	pumpUntil(t, g, func() bool {
-		return delivered() || strings.Contains(s.st.Status, "send failed")
-	})
 	pumpUntil(t, g, func() bool { return s.c == warm && !s.c.Warm() })
+	if !delivered() && !strings.Contains(s.st.Status, "send failed") {
+		t.Fatalf("chat vanished across failover: status = %q", s.st.Status)
+	}
+}
+
+func TestChatWhileFailoverIsInProgressIsReported(t *testing.T) {
+	g, _, s := pairGame(t)
+	s.switching = true
+	s.st.Input.AppendRunes([]rune("typed during takeover"))
+
+	g.sendChat()
+
+	if !strings.Contains(s.st.Status, "send failed") {
+		t.Fatalf("status = %q, want send failure", s.st.Status)
+	}
+	if len(s.outgoing) != 0 {
+		t.Fatalf("queued %d chats on the dead client", len(s.outgoing))
+	}
 }
 
 func TestSessionActiveAliveRedials(t *testing.T) {

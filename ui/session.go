@@ -38,7 +38,22 @@ type session struct {
 	warmFails   int            // warm dial or session failures in a row, for the backoff
 	warmRetryAt time.Time      // no warm dial before this
 	peerTried   bool           // the warm voice peer was opened for this warm session
+
+	// Chats stay here until this client's own broadcast comes back. A socket
+	// write alone is not delivery confirmation: the kernel can accept it just
+	// after a host dies.
+	nextChatID uint64
+	outgoing   []outgoingChat
+	sendNotice string // survives SetConnected while a failover installs its client
 }
+
+type outgoingChat struct {
+	id            uint64
+	c             *client.Client
+	channel, text string
+}
+
+const interruptedSendNotice = "send failed: host changed before confirmation"
 
 func newSession(key, url, name string) *session {
 	return &session{key: key, url: url, name: name, st: state.New(), ms: newMainScene()}
@@ -66,11 +81,60 @@ type joinResult struct {
 type sendResult struct {
 	key string
 	err error
+	// chatID identifies a chat write. The chat remains pending after a
+	// successful write until its server broadcast confirms delivery.
+	chatID uint64
 	// older is set for a history_before request: the channel whose Loading
 	// mark an error must clear.
 	older string
 	// what names the failed action in the notice; empty is "send".
 	what string
+}
+
+func (s *session) queueChat(c *client.Client, channel, text string) uint64 {
+	s.nextChatID++
+	s.outgoing = append(s.outgoing, outgoingChat{id: s.nextChatID, c: c, channel: channel, text: text})
+	return s.nextChatID
+}
+
+func (s *session) dropChat(id uint64) bool {
+	for i := range s.outgoing {
+		if s.outgoing[i].id == id {
+			s.outgoing = append(s.outgoing[:i], s.outgoing[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func (s *session) confirmChat(m *proto.ChatMessage, fingerprint string) {
+	if m == nil || m.From.Fingerprint != fingerprint {
+		return
+	}
+	for i := range s.outgoing {
+		p := s.outgoing[i]
+		if p.channel == m.Channel && p.text == m.Text {
+			s.outgoing = append(s.outgoing[:i], s.outgoing[i+1:]...)
+			return
+		}
+	}
+}
+
+func (s *session) interruptChats(c *client.Client) {
+	kept := s.outgoing[:0]
+	interrupted := false
+	for _, p := range s.outgoing {
+		if p.c == c {
+			interrupted = true
+			continue
+		}
+		kept = append(kept, p)
+	}
+	s.outgoing = kept
+	if interrupted {
+		s.sendNotice = interruptedSendNotice
+		s.st.Status = s.sendNotice
+	}
 }
 
 // cur returns the viewed session, or g.none (a PhaseConnect placeholder that
@@ -299,6 +363,9 @@ func (g *game) pumpSessions() {
 		select {
 		case r := <-g.sendCh:
 			if s := g.sess[r.key]; s != nil && r.err != nil {
+				if r.chatID != 0 && !s.dropChat(r.chatID) {
+					continue // failover already reported this interrupted send
+				}
 				if r.older != "" {
 					delete(s.st.Loading, r.older)
 					continue
@@ -427,6 +494,7 @@ func (g *game) applyJoin(r joinResult) {
 // that cannot carry screen share has already ended our share in the client, so
 // the button must go back to "share".
 func (g *game) noteEvent(s *session, ev client.Event) {
+	s.confirmChat(ev.Chat, g.fp)
 	if errors.Is(ev.Err, client.ErrShareUnsupported) && g.share.on && g.share.c == s.c {
 		g.stopShare()
 	}
