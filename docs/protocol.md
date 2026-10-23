@@ -748,7 +748,9 @@ standby.
 `hb` (both ways): each side sends `hb` every 500 ms. A host calls the active
 host dead after 1500 ms without an `hb` from it. The active host likewise
 closes a link that has sent no `hb` for 1500 ms, even if the TCP connection is
-still open, and picks its standby again.
+still open, and picks its standby again. A merge link (below) is exempt:
+it sends no `hb` while it pages its history, and ends within the loser's own
+timeouts.
 
 A host that dials or probes another host takes the head of its own chain as a
 floor: a host whose chain head, as it presents it in the handshake, is behind

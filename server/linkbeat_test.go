@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -45,4 +46,62 @@ func TestBeatingLinkIsKept(t *testing.T) {
 	if len(s.Links()) != 1 {
 		t.Fatal("a beating link was dropped")
 	}
+}
+
+// A merge link comes from the loser's dialMerge socket, which sends no hb
+// while it pages its history; the winner must not drop it as silent.
+func TestMergeLinkSurvivesSilence(t *testing.T) {
+	t.Cleanup(SetHeartbeatForTest(50*time.Millisecond, 150*time.Millisecond))
+	a, b, aURL, _, _, _, _ := linkPair(t, "pw")
+	a.load = fixedLoad(1)
+	b.load = fixedLoad(0)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ws, _, err := dialMerge(ctx, aURL, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	waitFor(t, "merge link", func() bool { return len(a.Links()) == 1 })
+	time.Sleep(4 * heartbeatGrace)
+	if len(a.Links()) != 1 {
+		t.Fatal("a silent merge link was dropped")
+	}
+}
+
+// A loser whose history takes longer than the heartbeat grace to send still
+// merges: both hosts end with one active and the winner holds every line.
+func TestSplitBrainMergeLongHistory(t *testing.T) {
+	fastHostTimers(t)
+	base, a, b, _ := threeHostChain(t)
+	ha := newTestHost(t, base, a, "alpha")
+	hb := newTestHost(t, base, b, "beta")
+	ha.Server().load = fixedLoad(2)
+	hb.Server().load = fixedLoad(1)
+	ha.start(t)
+	hb.start(t)
+	waitRole(t, ha, RoleActive, time.Second)
+	waitRole(t, hb, RoleActive, time.Second)
+	const n = 8 * historyPage // 8 pages at mergePace: well over heartbeatGrace
+	seedHistory(t, hb.Server(), n)
+
+	ha.setKnown(hb.url)
+	hb.setKnown(ha.url)
+	waitRole(t, hb, RoleStandby, 10*time.Second)
+	if ha.Role() != RoleActive {
+		t.Fatalf("A is %q, want active", ha.Role())
+	}
+	waitFor(t, "all lines on A", func() bool {
+		total := 0
+		var ts time.Time
+		id := ""
+		for {
+			msgs, more := ha.Server().hist.After(ts, id, historyPage)
+			total += len(msgs)
+			if !more || len(msgs) == 0 {
+				return total >= n
+			}
+			ts, id = msgs[len(msgs)-1].TS, msgs[len(msgs)-1].ID
+		}
+	})
 }

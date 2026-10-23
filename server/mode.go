@@ -172,8 +172,8 @@ func (s *Server) sendHeartbeat() {
 	for m := range s.links {
 		if !m.enqueue(raw) {
 			dead = append(dead, m)
-		} else if now.Sub(m.link.lastBeat) > heartbeatGrace {
-			silent = append(silent, m) // a standby that died without a TCP close
+		} else if m.link.hello.Yield == nil && now.Sub(m.link.lastBeat) > heartbeatGrace {
+			silent = append(silent, m) // a standby that died without a TCP close; a merge link sends no hb and ends by itself
 		}
 	}
 	s.chMu.Unlock()
