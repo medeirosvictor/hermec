@@ -338,6 +338,7 @@ func (g *game) endCallMedia() {
 	g.stopShare()
 	g.watch = watchState{}
 	g.resetVideo()
+	g.clearMediaViews()
 }
 
 // stepShare runs every tick: it ends a share whose capture failed, and the

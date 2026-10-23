@@ -66,3 +66,17 @@ func TestSelectingScreenDoesNotClearCameraFrames(t *testing.T) {
 		}
 	}
 }
+
+func TestEndCallMediaClearsRemoteViewsAndPendingFrames(t *testing.T) {
+	g, _ := shareGame(t)
+	key := mediaViewKey{Kind: proto.MediaCamera, Fingerprint: "annfp"}
+	g.mediaViews = map[mediaViewKey]*videoView{key: {rgba: frameRGBA(video.NewFrame(4, 4))}}
+	g.mframes.WriteMediaFrame(client.MediaFrame{Kind: proto.MediaCamera, Fingerprint: "annfp", Slot: 0, Frame: video.NewFrame(8, 8)})
+
+	g.endCallMedia()
+	g.stepMediaFrames()
+
+	if len(g.mediaViews) != 0 {
+		t.Fatalf("remote media survived call teardown: %+v", g.mediaViews)
+	}
+}

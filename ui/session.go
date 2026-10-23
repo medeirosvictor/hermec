@@ -502,6 +502,10 @@ func (g *game) applyJoin(r joinResult) {
 // the button must go back to "share".
 func (g *game) noteEvent(s *session, ev client.Event) {
 	s.confirmChat(ev.Chat, g.fp)
+	if errors.Is(ev.Err, client.ErrScreenResume) && g.watch.fp != "" && g.callSess() == s {
+		g.stopWatching()
+		s.st.Status = client.ErrScreenResume.Error()
+	}
 	if errors.Is(ev.Err, client.ErrShareUnsupported) && g.share.on && g.share.c == s.c {
 		g.stopShare()
 	}
@@ -509,6 +513,10 @@ func (g *game) noteEvent(s *session, ev client.Event) {
 	// Watch gave up waiting) ends the view; a timely refusal is handled by the
 	// media worker, which sees it as Watch's error.
 	var se *client.ServerError
+	if errors.As(ev.Err, &se) && se.Code == proto.CodeMediaFull && g.camera.c == s.c {
+		g.stopCamera()
+		s.st.Status = cameraNotice(se)
+	}
 	if errors.As(ev.Err, &se) && se.Code == proto.CodeNotSharing && se.Gen != 0 &&
 		s.c != nil && se.Gen == s.c.WatchGen() && g.watch.fp != "" && g.callSess() == s {
 		g.stopWatching()

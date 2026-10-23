@@ -47,22 +47,40 @@ func TestCameraUnsupportedWithoutMediaLanes(t *testing.T) {
 	}
 }
 
-func TestE2EMixedVersionScreenCompatibility(t *testing.T) {
+func TestCameraMediaFullStopsTheRejectedPublisher(t *testing.T) {
 	s := newStub(t, true)
+	s.mediaLanes, s.rejectCamera = true, true
 	c := dialStub(t, s)
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	if err := c.JoinVoice(testCtx(t), "lobby", nopSource{stop: stop}, nopSink{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.StartShare(&countSource{}, 16, 16, 15, 100); err != nil {
-		t.Fatalf("legacy screen share: %v", err)
+	if err := c.StartCamera(&countSource{}); err != nil {
+		t.Fatal(err)
 	}
-	if !s.waitType(proto.TypeShareStart) {
-		t.Fatal("screen share did not use the legacy share_start message")
+	waitUntil(t, "rejected camera publisher to stop", func() bool {
+		return c.getCall().curPublisher(proto.MediaCamera) == nil
+	})
+}
+
+func TestStaleCameraRejectionDoesNotStopANewerPublisher(t *testing.T) {
+	s := newStub(t, true)
+	s.mediaLanes = true
+	c := dialStub(t, s)
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	if err := c.JoinVoice(testCtx(t), "lobby", nopSource{stop: stop}, nopSink{}); err != nil {
+		t.Fatal(err)
 	}
-	if err := c.StartCamera(&countSource{}); !errors.Is(err, ErrCameraUnsupported) {
-		t.Fatalf("camera on legacy server = %v, want ErrCameraUnsupported", err)
+	if err := c.StartCamera(&countSource{}); err != nil {
+		t.Fatal(err)
+	}
+	publisher := c.getCall().curPublisher(proto.MediaCamera)
+	gen := publisher.wireGen.Load()
+	c.onError(proto.ErrorMsg{Code: proto.CodeMediaFull, Message: "old rejection", Gen: gen - 1})
+	if c.getCall().curPublisher(proto.MediaCamera) != publisher {
+		t.Fatal("stale media_full stopped the current camera")
 	}
 }
 
@@ -130,5 +148,53 @@ func TestStopDuringAdoptionWinsOverSavedCameraState(t *testing.T) {
 	}
 	if newServer.sawType(proto.TypeMediaStart) {
 		t.Fatal("stopped camera was redeclared on the new host")
+	}
+}
+
+func TestStopAfterDisconnectBeforeAdoptionDoesNotRestoreCamera(t *testing.T) {
+	oldServer, newServer := newStub(t, true), newStub(t, true)
+	oldServer.mediaLanes, newServer.mediaLanes = true, true
+	oldClient, newClient := dialStub(t, oldServer), dialStub(t, newServer)
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	if err := oldClient.JoinVoice(testCtx(t), "lobby", nopSource{stop: stop}, nopSink{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := oldClient.StartCamera(&countSource{}); err != nil {
+		t.Fatal(err)
+	}
+	oldClient.detachPublishersForAdoption(oldClient.getCall())
+	if err := oldClient.StopCamera(); err != nil {
+		t.Fatal(err)
+	}
+	if err := newClient.AdoptCall(testCtx(t), oldClient); err != nil {
+		t.Fatal(err)
+	}
+	if newClient.getCall().curPublisher(proto.MediaCamera) != nil {
+		t.Fatal("camera stopped after disconnect was restored by adoption")
+	}
+}
+
+func TestAdoptCallKeepsVoiceWhenSelectedScreenIsUnavailable(t *testing.T) {
+	oldServer, newServer := newStub(t, true), newStub(t, true)
+	oldServer.mediaLanes, newServer.mediaLanes = true, true
+	newServer.rejectSubscribe = true
+	oldClient, newClient := dialStub(t, oldServer), dialStub(t, newServer)
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	if err := oldClient.JoinVoice(testCtx(t), "lobby", nopSource{stop: stop}, nopSink{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := oldClient.SubscribeScreen("presenter"); err != nil {
+		t.Fatal(err)
+	}
+	if err := newClient.AdoptCall(testCtx(t), oldClient); err != nil {
+		t.Fatalf("screen restoration ended adopted voice: %v", err)
+	}
+	if got := newClient.VoiceChannel(); got != "lobby" {
+		t.Fatalf("voice channel after failed screen restore = %q", got)
+	}
+	if got := newClient.watchSnapshot().fp; got != "" {
+		t.Fatalf("unavailable screen selection remained %q", got)
 	}
 }

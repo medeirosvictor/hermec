@@ -46,14 +46,14 @@ func joinModernScene(t *testing.T, n int) (*Server, []*testPeer, chan struct{}) 
 func waitMediaSources(t *testing.T, p *testPeer, kind proto.MediaKind, n int) []proto.MediaSource {
 	t.Helper()
 	got := make([]proto.MediaSource, 0, n)
-	deadline := time.After(10 * time.Second)
+	mediaDeadline := time.After(10 * time.Second)
 	for len(got) < n {
 		select {
 		case m := <-p.msrc:
 			if m.Kind == kind && m.Fingerprint != "" {
 				got = append(got, m)
 			}
-		case <-deadline:
+		case <-mediaDeadline:
 			t.Fatalf("got %d/%d %s media sources", len(got), n, kind)
 		}
 	}
@@ -129,8 +129,26 @@ func TestSelectedScreenCoexistsWithCameraSlots(t *testing.T) {
 	peers[3].waitState(func(v proto.VoiceState) bool { return mediaOf(v, peers[2].fp, proto.MediaScreen) })
 	peers[3].send(proto.TypeMediaSubscribe, proto.MediaSubscribe{Kind: proto.MediaScreen, Fingerprint: peers[2].fp, Gen: 7})
 	pumpModernVideo(stop, 0xCC, peers[2].screen)
-	_ = waitMediaSources(t, peers[3], proto.MediaCamera, 2)
-	screen := waitMediaSources(t, peers[3], proto.MediaScreen, 1)[0]
+	cameras := 0
+	var screen proto.MediaSource
+	mediaDeadline := time.After(10 * time.Second)
+	for cameras < 2 || screen.Fingerprint == "" {
+		select {
+		case source := <-peers[3].msrc:
+			switch source.Kind {
+			case proto.MediaCamera:
+				if source.Fingerprint != "" {
+					cameras++
+				}
+			case proto.MediaScreen:
+				if source.Fingerprint != "" {
+					screen = source
+				}
+			}
+		case <-mediaDeadline:
+			t.Fatalf("media sources: cameras=%d/2 screen=%+v", cameras, screen)
+		}
+	}
 	if screen.Slot != 0 || screen.Gen != 7 || screen.Fingerprint != peers[2].fp {
 		t.Fatalf("screen source = %+v", screen)
 	}

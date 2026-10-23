@@ -21,11 +21,13 @@ import (
 // stubServer speaks just enough of the protocol to drive JoinVoice: auth,
 // voice_join -> voice_state, and (optionally) a real pion answerer.
 type stubServer struct {
-	t          *testing.T
-	url        string
-	answer     bool // act as an SFU answerer; false = never answer offers
-	mediaLanes bool // advertise the modern media control plane
-	offerGate  <-chan struct{}
+	t               *testing.T
+	url             string
+	answer          bool // act as an SFU answerer; false = never answer offers
+	mediaLanes      bool // advertise the modern media control plane
+	rejectSubscribe bool
+	rejectCamera    bool
+	offerGate       <-chan struct{}
 
 	mu     sync.Mutex
 	seen   []string // client message types, in order
@@ -141,7 +143,16 @@ func (s *stubServer) serve(ws *websocket.Conn) {
 		case proto.TypeMediaSubscribe:
 			var m proto.MediaSubscribe
 			if json.Unmarshal(env.Data, &m) == nil {
-				send(proto.TypeMediaSource, proto.MediaSource{Kind: m.Kind, Slot: 0, Fingerprint: m.Fingerprint, Seq: 10, Gen: m.Gen})
+				if s.rejectSubscribe && m.Fingerprint != "" {
+					send(proto.TypeError, proto.ErrorMsg{Code: proto.CodeNotPublishing, Message: "not publishing", Gen: m.Gen})
+				} else {
+					send(proto.TypeMediaSource, proto.MediaSource{Kind: m.Kind, Slot: 0, Fingerprint: m.Fingerprint, Seq: 10, Gen: m.Gen})
+				}
+			}
+		case proto.TypeMediaStart:
+			var m proto.MediaStart
+			if json.Unmarshal(env.Data, &m) == nil && s.rejectCamera && m.Kind == proto.MediaCamera {
+				send(proto.TypeError, proto.ErrorMsg{Code: proto.CodeMediaFull, Message: "camera limit reached", Gen: m.Gen})
 			}
 		case proto.TypeChatSend:
 			var m proto.ChatSend

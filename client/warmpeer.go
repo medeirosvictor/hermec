@@ -32,6 +32,10 @@ var adoptTeardownWait = 2 * time.Second
 // promoted by Takeover yet.
 var ErrStillWarm = errors.New("client: session is still warm; Takeover first")
 
+// ErrScreenResume reports that voice adoption succeeded but the previously
+// selected screen could not be restored on the promoted host.
+var ErrScreenResume = errors.New("selected screen did not resume after host failover")
+
 // warmPeer is the standby-facing PeerConnection of a warm session.
 type warmPeer struct {
 	pc       *webrtc.PeerConnection
@@ -269,7 +273,10 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 		return err
 	}
 	if watch.fp != "" {
-		return c.restoreScreen(ctx, watch.fp)
+		if err := c.restoreScreen(ctx, watch.fp); err != nil {
+			_ = c.watchScreen("", c.SupportsMediaLanes(), true)
+			c.emitNB(Event{Err: fmt.Errorf("%w: %v", ErrScreenResume, err)})
+		}
 	}
 	return nil
 }
@@ -330,7 +337,7 @@ func (c *Client) finishAdoption(cl *call, failed bool) error {
 		cl.smu.Lock()
 		cl.publishers[kind] = publisher
 		cl.smu.Unlock()
-		if err := c.sendPublisherStart(kind); err != nil {
+		if err := c.sendPublisherStart(kind, publisher); err != nil {
 			if cl.dropPublisher(kind, publisher) {
 				publisher.stop()
 			}

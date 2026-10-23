@@ -301,8 +301,7 @@ type (
 type ErrorMsg struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
-	// Gen is the Gen of the watch request this error answers (only set for
-	// refused watches whose request carried a gen).
+	// Gen is the generation of the media request this error answers.
 	Gen uint32 `json:"gen,omitempty"`
 	// Ref is the ID of the client request this error answers, when it has one.
 	Ref string `json:"ref,omitempty"`

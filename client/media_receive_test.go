@@ -61,6 +61,19 @@ func pushPackets(r *mediaReceiver, packets ...[]*rtp.Packet) {
 	}
 }
 
+func TestDrainLatestReturnsWhenQueueIsEmpty(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		drainLatest(make(chan queuedMediaFrame, 1))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("draining an empty latest-frame queue blocked")
+	}
+}
+
 func receiveMediaFrames(t *testing.T, sink *recordingMediaSink, n int) []MediaFrame {
 	t.Helper()
 	frames := make([]MediaFrame, 0, n)

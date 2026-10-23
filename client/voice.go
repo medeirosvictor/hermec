@@ -365,6 +365,9 @@ func (c *Client) onRTC(env proto.Envelope) {
 // onError offers a server error to the active call. It reports whether the
 // call consumed it (media recovery or a failed join).
 func (c *Client) onError(em proto.ErrorMsg) bool {
+	if em.Code == proto.CodeMediaFull && !c.rejectPublisher(proto.MediaCamera, em.Gen) {
+		return true
+	}
 	if em.Code == proto.CodeNotSharing || em.Code == proto.CodeNotPublishing || em.Code == proto.CodeForbidden || em.Code == proto.CodeBadRequest || em.Code == "not_joined" {
 		quiet := c.watchFailed(em.Gen, &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen})
 		if quiet && em.Code == proto.CodeNotPublishing {

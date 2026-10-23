@@ -81,7 +81,7 @@ type callTileFacts struct{ camera, avatar, muted, speaking, sharing bool }
 
 func (g *game) callTileState(participant state.CallParticipant) callTileFacts {
 	view := g.mediaViews[mediaViewKey{Kind: proto.MediaCamera, Fingerprint: participant.Fingerprint}]
-	camera := view != nil && view.rgba != nil
+	camera := participant.Camera && view != nil && view.rgba != nil
 	speaking := false
 	if env := g.speakEnv[participant.Fingerprint]; env != nil {
 		speaking = env.Value() > 0

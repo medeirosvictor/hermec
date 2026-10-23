@@ -154,11 +154,12 @@ type frameEncoder interface {
 // the older frame counts as dropped. Three frame buffers circulate (being
 // grabbed, in the slot, being encoded).
 type videoPublisher struct {
-	kind proto.MediaKind
-	src  FrameSource
-	enc  frameEncoder
-	w, h int
-	fps  int
+	kind    proto.MediaKind
+	wireGen atomic.Uint32
+	src     FrameSource
+	enc     frameEncoder
+	w, h    int
+	fps     int
 	// write sends one encoded frame. pkt is only valid during the call
 	// (the encoder reuses it); WriteSample packetizes synchronously.
 	write func(pkt []byte, d time.Duration) error
@@ -371,7 +372,7 @@ func (c *Client) StartShare(src FrameSource, w, h, fps, kbps int) error {
 	sl.start() // under smu: teardown's takeShare then always finds a started loop to stop
 	cl.smu.Unlock()
 
-	if err := c.sendPublisherStart(proto.MediaScreen); err != nil {
+	if err := c.sendPublisherStart(proto.MediaScreen, sl); err != nil {
 		if cl.dropPublisher(proto.MediaScreen, sl) {
 			sl.stop()
 		}
@@ -467,9 +468,11 @@ func (c *Client) stopPublisher(cl *call, kind proto.MediaKind, only *videoPublis
 	return c.sendPublisherStop(kind)
 }
 
-func (c *Client) sendPublisherStart(kind proto.MediaKind) error {
+func (c *Client) sendPublisherStart(kind proto.MediaKind, publisher *videoPublisher) error {
 	if c.SupportsMediaLanes() {
-		return c.send(proto.TypeMediaStart, proto.MediaStart{Kind: kind})
+		gen := c.mediaWire.Add(1)
+		publisher.wireGen.Store(gen)
+		return c.send(proto.TypeMediaStart, proto.MediaStart{Kind: kind, Gen: gen})
 	}
 	return c.send(proto.TypeShareStart, proto.ShareStart{})
 }

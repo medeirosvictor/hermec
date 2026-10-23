@@ -632,13 +632,12 @@ Media:
 A client offers `media_lanes_v1` in `auth.capabilities`; a supporting server
 echoes it in `auth_ok.capabilities`. Only then may either side use these
 messages. Without it, screen sharing uses the section 4.15 messages and camera
-is unavailable. A modern server translates legacy `share_start`, `share_stop`
-and `watch` into its canonical screen-lane state, so old screen-share clients
-remain compatible.
+is unavailable. Before v1, mixed-version call media is not a supported release
+target; clients and hosts in a call are expected to run the same build.
 
 | Type | Dir | Payload |
 |------|-----|---------|
-| `media_start` | C | `{"kind":"camera"|"screen"}` declares one publication active. |
+| `media_start` | C | `{"kind":"camera"|"screen","gen"?:uint32}` declares one publication active; a refusal echoes `gen`. |
 | `media_stop` | C | `{"kind":"camera"|"screen"}` stops only that publication. |
 | `media_subscribe` | C | `{"kind":"screen","fingerprint":string,"gen"?:uint32}` selects one screen; an empty fingerprint clears it. |
 | `media_source` | S | `{"kind":string,"fingerprint":string,"slot":int,"seq":uint16,"gen"?:uint32}` identifies a slot's source and RTP boundary; an empty fingerprint detaches it. |
@@ -651,7 +650,7 @@ to every other modern participant, up to ten active cameras per voice room;
 each participant selects at most one screen. Camera and screen may publish at
 the same time and stop independently. Unknown kinds or lane messages without
 the negotiated capability get `bad_request`; an eleventh camera gets
-`media_full`; selecting a member who is not publishing that lane gets
+`media_full` with the rejected declaration's `gen`; selecting a member who is not publishing that lane gets
 `not_publishing`.
 
 `media_source` has the same boundary rules as `video_source`, additionally

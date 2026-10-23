@@ -259,7 +259,7 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 		case proto.CodeBadRequest:
 			c.sendError(proto.CodeBadRequest, "media lanes were not negotiated or the kind is invalid")
 		case proto.CodeMediaFull:
-			c.sendError(proto.CodeMediaFull, "this voice channel already has 10 active cameras")
+			c.sendErrorGen(proto.CodeMediaFull, "this voice channel already has 10 active cameras", m.Gen)
 		case "not_joined":
 			c.sendError("not_joined", "not in a voice channel")
 		}

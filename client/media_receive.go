@@ -92,6 +92,16 @@ type queuedMediaFrame struct {
 	version uint64
 }
 
+func drainLatest(latest <-chan queuedMediaFrame) {
+	for {
+		select {
+		case <-latest:
+		default:
+			return
+		}
+	}
+}
+
 func newMediaReceiver(c *Client, key slotKey, pli func()) (*mediaReceiver, error) {
 	decoder, err := video.NewDecoder()
 	if err != nil {
@@ -127,9 +137,7 @@ func (r *mediaReceiver) deliver() {
 func (r *mediaReceiver) reset(state mediaSourceState) bool {
 	r.state = state
 	r.gate.stop()
-	for len(r.latest) != 0 {
-		<-r.latest
-	}
+	drainLatest(r.latest)
 	r.decoder.Close()
 	decoder, err := video.NewDecoder()
 	if err != nil {

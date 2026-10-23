@@ -109,3 +109,62 @@ func TestLeavingCallClosesCameraAndScreenSources(t *testing.T) {
 		t.Fatalf("controls stayed active: camera=%v screen=%v", g.camera.on, g.share.on)
 	}
 }
+
+func TestCancelPendingCameraOpenDoesNotStartAndNextToggleWorks(t *testing.T) {
+	g, _ := shareGame(t)
+	opened := make(chan struct{})
+	release := make(chan struct{})
+	first, second := &fakeCameraSource{}, &fakeCameraSource{}
+	var opens, starts atomic.Int32
+	g.cameraOps = cameraOps{
+		open: func(string) (cameracap.Source, error) {
+			if opens.Add(1) == 1 {
+				close(opened)
+				<-release
+				return first, nil
+			}
+			return second, nil
+		},
+		start: func(*client.Client, client.FrameSource) error {
+			starts.Add(1)
+			return nil
+		},
+		stop: func(*client.Client) error { return nil },
+	}
+
+	g.toggleCamera()
+	<-opened
+	g.toggleCamera()
+	close(release)
+	settle(t, g)
+	if starts.Load() != 0 || first.closes.Load() != 1 || g.camera.on || g.camera.busy {
+		t.Fatalf("canceled open: starts=%d closes=%d on=%v busy=%v", starts.Load(), first.closes.Load(), g.camera.on, g.camera.busy)
+	}
+
+	g.toggleCamera()
+	settle(t, g)
+	if starts.Load() != 1 || !g.camera.on || g.camera.src == nil || g.camera.src.src != second {
+		t.Fatalf("next start: starts=%d on=%v source=%v", starts.Load(), g.camera.on, g.camera.src)
+	}
+}
+
+func TestCameraMediaFullTurnsOffCameraWithoutEndingOtherMedia(t *testing.T) {
+	g, s := shareGame(t)
+	source := &fakeCameraSource{}
+	g.cameraOps.stop = func(*client.Client) error { return nil }
+	g.camera = cameraState{on: true, src: &cameraSource{src: source}, c: s.c}
+	g.share.on = true
+
+	g.noteEvent(s, client.Event{Err: &client.ServerError{Code: proto.CodeMediaFull, Message: "camera limit reached", Gen: 4}})
+	settle(t, g)
+
+	if g.camera.on || source.closes.Load() != 1 {
+		t.Fatalf("rejected camera stayed active: on=%v closes=%d", g.camera.on, source.closes.Load())
+	}
+	if !g.share.on || s.st.InCall != "voice" {
+		t.Fatal("camera rejection ended screen share or voice")
+	}
+	if s.st.Status != "camera limit reached for the room" {
+		t.Fatalf("status = %q", s.st.Status)
+	}
+}

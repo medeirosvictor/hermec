@@ -30,6 +30,7 @@ func (kind MediaKind) Priority() int {
 // MediaStart declares one of the sender's media lanes active.
 type MediaStart struct {
 	Kind MediaKind `json:"kind"`
+	Gen  uint32    `json:"gen,omitempty"`
 }
 
 // MediaStop declares one of the sender's media lanes inactive.

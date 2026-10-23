@@ -25,6 +25,7 @@ type cameraState struct {
 	gen      uint64
 	src      *cameraSource
 	c        *client.Client
+	cancel   chan struct{}
 }
 
 type cameraSource struct {
@@ -72,8 +73,11 @@ func (g *game) cameraSupported() bool { return g.cameraOps.open != nil || camera
 
 func (g *game) toggleCamera() {
 	if g.camera.busy {
-		g.camera.gen++ // an eventual open result closes its source instead of starting
-		g.camera.busy = false
+		if g.camera.cancel != nil {
+			close(g.camera.cancel)
+			g.camera.cancel = nil
+			g.camera.gen++
+		}
 		return
 	}
 	if g.camera.on {
@@ -94,7 +98,8 @@ func (g *game) toggleCamera() {
 	}
 	g.camera.gen++
 	gen, c, deviceID, fp := g.camera.gen, s.c, g.set.CameraDevice, g.fp
-	g.camera.busy = true
+	cancel := make(chan struct{})
+	g.camera.busy, g.camera.c, g.camera.cancel = true, c, cancel
 	open := g.cameraOps.open
 	if open == nil {
 		open = cameracap.Open
@@ -103,6 +108,10 @@ func (g *game) toggleCamera() {
 	if start == nil {
 		start = func(c *client.Client, src client.FrameSource) error { return c.StartCamera(src) }
 	}
+	stop := g.cameraOps.stop
+	if stop == nil {
+		stop = func(c *client.Client) error { return c.StopCamera() }
+	}
 	g.media.do(func() {
 		raw, err := open(deviceID)
 		var src *cameraSource
@@ -110,17 +119,48 @@ func (g *game) toggleCamera() {
 			src = &cameraSource{src: raw, tap: func(frame *video.Frame) {
 				g.mframes.WriteMediaFrame(client.MediaFrame{Kind: proto.MediaCamera, Fingerprint: fp, Slot: -1, Frame: frame})
 			}}
+			select {
+			case <-cancel:
+				_ = src.Close()
+				g.media.post(func() {
+					if g.camera.c == c && !g.camera.on {
+						g.camera.busy, g.camera.c, g.camera.cancel = false, nil, nil
+					}
+				})
+				return
+			default:
+			}
 			err = start(c, src)
+			select {
+			case <-cancel:
+				if err == nil {
+					_ = stop(c)
+				}
+				_ = src.Close()
+				g.media.post(func() {
+					if g.camera.c == c && !g.camera.on {
+						g.camera.busy, g.camera.c, g.camera.cancel = false, nil, nil
+					}
+				})
+				return
+			default:
+			}
 		}
 		g.media.post(func() {
 			current := g.callSess()
 			if g.camera.gen != gen || current == nil || current.c != c {
-				if src != nil {
-					_ = src.Close()
-				}
+				g.camera.busy, g.camera.c, g.camera.cancel = false, nil, nil
+				g.media.do(func() {
+					if err == nil {
+						_ = stop(c)
+					}
+					if src != nil {
+						_ = src.Close()
+					}
+				})
 				return
 			}
-			g.camera.busy = false
+			g.camera.busy, g.camera.cancel = false, nil
 			if err != nil {
 				if src != nil {
 					_ = src.Close()
@@ -151,7 +191,10 @@ func cameraNotice(err error) string {
 func (g *game) stopCamera() {
 	cam := g.camera
 	g.camera.gen++
-	g.camera.on, g.camera.busy, g.camera.src, g.camera.c = false, false, nil, nil
+	if cam.busy && cam.cancel != nil {
+		close(cam.cancel)
+	}
+	g.camera.on, g.camera.busy, g.camera.src, g.camera.c, g.camera.cancel = false, false, nil, nil, nil
 	g.retireMediaView(mediaViewKey{Kind: proto.MediaCamera, Fingerprint: g.fp})
 	if cam.src == nil {
 		return

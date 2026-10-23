@@ -81,6 +81,21 @@ func (m *mediaFrames) takeRetired() []mediaViewKey {
 	return out
 }
 
+func (m *mediaFrames) reset() {
+	m.mu.Lock()
+	m.pending = make(map[mediaViewKey]client.MediaFrame)
+	m.slots = make(map[mediaSlotKey]mediaSlotSource)
+	m.retired = make(map[mediaViewKey]bool)
+	m.mu.Unlock()
+}
+
+func (g *game) clearMediaViews() {
+	for key := range g.mediaViews {
+		g.retireMediaView(key)
+	}
+	g.mframes.reset()
+}
+
 func (g *game) retireMediaView(key mediaViewKey) {
 	view := g.mediaViews[key]
 	if view == nil {

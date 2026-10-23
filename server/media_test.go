@@ -124,8 +124,8 @@ func TestCameraLimitRejectsEleventhAndAllowsRetry(t *testing.T) {
 		want := i + 1
 		readMediaVoiceUntil(t, observer, func(v proto.VoiceState) bool { return mediaCount(v, proto.MediaCamera) == want })
 	}
-	sendEnv(t, peers[10], proto.TypeMediaStart, proto.MediaStart{Kind: proto.MediaCamera})
-	if em := readMediaError(t, peers[10]); em.Code != proto.CodeMediaFull {
+	sendEnv(t, peers[10], proto.TypeMediaStart, proto.MediaStart{Kind: proto.MediaCamera, Gen: 77})
+	if em := readMediaError(t, peers[10]); em.Code != proto.CodeMediaFull || em.Gen != 77 {
 		t.Fatalf("eleventh camera error = %+v", em)
 	}
 

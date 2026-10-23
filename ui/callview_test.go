@@ -67,6 +67,17 @@ func TestCallTileUsesAvatarMuteAndSpeakingStates(t *testing.T) {
 	}
 }
 
+func TestCallTileFallsBackToAvatarWhenCameraStops(t *testing.T) {
+	g, _ := shareGame(t)
+	g.mediaViews = map[mediaViewKey]*videoView{
+		{Kind: proto.MediaCamera, Fingerprint: "cam"}: {rgba: frameRGBA(video.NewFrame(4, 4))},
+	}
+	facts := g.callTileState(state.CallParticipant{Fingerprint: "cam", Name: "Camera", Camera: false})
+	if facts.camera || !facts.avatar {
+		t.Fatalf("stopped camera tile = %+v, want avatar", facts)
+	}
+}
+
 func TestCallViewControlsAreIndependent(t *testing.T) {
 	g, s := shareGame(t)
 	s.st.OpenCallView()

@@ -22,6 +22,11 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
    640x360/15 fps/300 kbps profile, and active media survives host takeover.
    macOS/Linux camera capture and adaptive priority enforcement remain future
    work. After this round Victor moves to stress testing and use-case scenarios.
+   **Version policy (Victor, 2026-10-23):** before v1, do not spend development
+   effort on mixed-version call/media bridging; the app is not released to a
+   user base that needs it. Keep protocol negotiation safe, but expect every
+   participant and host in a call to run the same build unless this decision is
+   revisited.
 4. Run the app: `go run ./cmd/hermec -local` (PowerShell live reload:
    `$env:HERMEC_DEV=1; go run ./cmd/hermec -local`). In Victor's real settings,
    CRT and curvature are off: F1 toggles CRT, F3 curvature, F2 cycles themes.
@@ -471,8 +476,10 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
   `ui/titlebar.go`, `ui/state/titlebar.go`).
 - **Media:** all WebRTC media uses one UDP port, equal to the server port
   unless `media_port` is set (`udp_port_min/max` is the legacy range). Video is
-  VP8 PT 96, forwarded only to watchers. The server marks source switches with
-  `video_source`. See `docs/protocol.md`.
+  VP8 PT 96. Modern calls carry independent audio, camera, and screen lanes:
+  cameras fill up to ten stable receive slots while each participant selects
+  one screen slot. The server marks lane source switches with `media_source`.
+  See `docs/protocol.md`.
 - **Releases:** a `v*` tag publishes only if the tagged commit is on `main` and
   vet and tests pass. Client assets build on native runners (Windows x64 and
   ARM, Linux x64 and ARM); servers are cross-built with CGO off. The tag is

@@ -78,6 +78,7 @@ type Client struct {
 	serverName  string // from auth_ok; immutable after Dial
 	serverID    string // chain.ID.String() of the verified chain; immutable after Dial
 	mediaLanes  bool   // auth-negotiated media_lanes_v1 support
+	mediaWire   atomic.Uint32
 	pwKey       []byte // the password key this login used; nil without a password
 	chain       *chain.Chain
 

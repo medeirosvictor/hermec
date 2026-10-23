@@ -26,7 +26,7 @@ func TestMediaMessagesRoundTrip(t *testing.T) {
 	}
 
 	for typ, payload := range map[string]any{
-		TypeMediaStart:     MediaStart{Kind: MediaCamera},
+		TypeMediaStart:     MediaStart{Kind: MediaCamera, Gen: 29},
 		TypeMediaStop:      MediaStop{Kind: MediaScreen},
 		TypeMediaSubscribe: MediaSubscribe{Kind: MediaScreen, Fingerprint: "ef:01", Gen: 23},
 	} {

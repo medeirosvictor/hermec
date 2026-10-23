@@ -50,7 +50,7 @@ func (c *Client) StartCamera(src FrameSource) error {
 	cl.publishers[proto.MediaCamera] = publisher
 	publisher.start()
 	cl.smu.Unlock()
-	if err := c.sendPublisherStart(proto.MediaCamera); err != nil {
+	if err := c.sendPublisherStart(proto.MediaCamera, publisher); err != nil {
 		if cl.dropPublisher(proto.MediaCamera, publisher) {
 			publisher.stop()
 		}
@@ -79,6 +79,12 @@ func (c *Client) stopOwnedPublisher(kind proto.MediaKind) error {
 		c.adoptMu.Unlock()
 		return redirect.stopOwnedPublisher(kind)
 	}
+	if publisher := c.adoptDetached[kind]; publisher != nil {
+		delete(c.adoptDetached, kind)
+		c.adoptMu.Unlock()
+		publisher.stop()
+		return nil
+	}
 	if publisher := c.adoptPending[kind]; publisher != nil {
 		delete(c.adoptPending, kind)
 		c.adoptMu.Unlock()
@@ -91,4 +97,33 @@ func (c *Client) stopOwnedPublisher(kind proto.MediaKind) error {
 		return nil
 	}
 	return c.stopPublisher(cl, kind, nil)
+}
+
+// rejectPublisher stops only the declaration named by gen. A delayed refusal
+// from an earlier camera toggle must not stop the user's newer camera.
+func (c *Client) rejectPublisher(kind proto.MediaKind, gen uint32) bool {
+	c.adoptMu.Lock()
+	if redirect := c.adoptRedirect; redirect != nil {
+		c.adoptMu.Unlock()
+		return redirect.rejectPublisher(kind, gen)
+	}
+	for _, publishers := range []map[proto.MediaKind]*videoPublisher{c.adoptDetached, c.adoptPending} {
+		if publisher := publishers[kind]; publisher != nil && publisher.wireGen.Load() == gen {
+			delete(publishers, kind)
+			c.adoptMu.Unlock()
+			go publisher.stop()
+			return true
+		}
+	}
+	cl := c.getCall()
+	c.adoptMu.Unlock()
+	if cl == nil {
+		return false
+	}
+	publisher := cl.curPublisher(kind)
+	if publisher == nil || publisher.wireGen.Load() != gen || !cl.dropPublisher(kind, publisher) {
+		return false
+	}
+	go publisher.stop()
+	return true
 }
