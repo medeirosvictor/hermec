@@ -471,13 +471,37 @@ func (c *Client) sendPublisherStop(kind proto.MediaKind) error {
 // stop it: after a share ends it must be called again. Concurrent callers are
 // serialized.
 func (c *Client) Watch(fp string) error {
+	if c.SupportsMediaLanes() {
+		err := c.SubscribeScreen(fp)
+		var serverErr *ServerError
+		if errors.As(err, &serverErr) && serverErr.Code == proto.CodeNotPublishing {
+			return &ServerError{Code: proto.CodeNotSharing, Message: serverErr.Message, Gen: serverErr.Gen}
+		}
+		return err
+	}
+	return c.watchScreen(fp, false)
+}
+
+// SubscribeScreen selects the modern screen lane. On a legacy server it
+// preserves Watch's compatibility behavior.
+func (c *Client) SubscribeScreen(fp string) error {
+	return c.watchScreen(fp, c.SupportsMediaLanes())
+}
+
+func (c *Client) watchScreen(fp string, modern bool) error {
 	if c.getCall() == nil {
 		return ErrNotInVoice
 	}
 	c.watchCallMu.Lock()
 	defer c.watchCallMu.Unlock()
 	wire, wait := c.beginWatch(fp)
-	if err := c.send(proto.TypeWatch, proto.Watch{Fingerprint: fp, Gen: wire}); err != nil {
+	var err error
+	if modern {
+		err = c.send(proto.TypeMediaSubscribe, proto.MediaSubscribe{Kind: proto.MediaScreen, Fingerprint: fp, Gen: wire})
+	} else {
+		err = c.send(proto.TypeWatch, proto.Watch{Fingerprint: fp, Gen: wire})
+	}
+	if err != nil {
 		c.watchFailed(wire, err) // never sent: nothing changed server side
 		c.endWatch(wait)
 		return err
@@ -576,20 +600,24 @@ func (c *Client) watchFailed(gen uint32, err error) {
 // onVideoSource records the server's source boundary. Messages for a sharer
 // we are not (or no longer) watching are stale and ignored; "" means the
 // server detached our video.
-func (c *Client) onVideoSource(m proto.VideoSource) {
+func (c *Client) onVideoSource(m proto.VideoSource) bool {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
+	if m.Gen != 0 && m.Gen != c.watchWire {
+		return false
+	}
 	if m.Fingerprint == "" {
 		c.srcHave = false
-		return
+		return true
 	}
-	if m.Fingerprint != c.watchFP || (m.Gen != 0 && m.Gen != c.watchWire) {
-		return // not the sharer / not the watch request we are waiting on
+	if m.Fingerprint != c.watchFP {
+		return false // not the sharer / not the watch request we are waiting on
 	}
 	c.srcHave, c.srcSeq = true, m.Seq
 	c.srcID++
 	c.prevWatch = nil
 	c.watchAnsweredLocked(nil)
+	return true
 }
 
 // watchState is a consistent snapshot of the watch target and source boundary.

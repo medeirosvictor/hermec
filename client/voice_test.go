@@ -137,6 +137,11 @@ func (s *stubServer) serve(ws *websocket.Conn) {
 					_ = pc.AddICECandidate(ci)
 				}
 			}
+		case proto.TypeMediaSubscribe:
+			var m proto.MediaSubscribe
+			if json.Unmarshal(env.Data, &m) == nil {
+				send(proto.TypeMediaSource, proto.MediaSource{Kind: m.Kind, Slot: 0, Fingerprint: m.Fingerprint, Seq: 10, Gen: m.Gen})
+			}
 		case proto.TypeChatSend:
 			var m proto.ChatSend
 			_ = json.Unmarshal(env.Data, &m)

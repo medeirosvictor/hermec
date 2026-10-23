@@ -365,7 +365,7 @@ func (c *Client) onRTC(env proto.Envelope) {
 // onError offers a server error to the active call. It reports whether the
 // call consumed it (media recovery or a failed join).
 func (c *Client) onError(em proto.ErrorMsg) bool {
-	if em.Code == proto.CodeNotSharing || em.Code == "not_joined" {
+	if em.Code == proto.CodeNotSharing || em.Code == proto.CodeNotPublishing || em.Code == proto.CodeForbidden || em.Code == proto.CodeBadRequest || em.Code == "not_joined" {
 		c.watchFailed(em.Gen, &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen}) // the error itself still reaches the UI below
 	}
 	if em.Code == proto.CodeBadRequest {
@@ -574,7 +574,15 @@ func (cl *call) newPC() error {
 		cl.wg.Add(1)
 		cl.tmu.Unlock()
 		if remote.Kind() == webrtc.RTPCodecTypeVideo {
-			go cl.readVideo(pc, remote)
+			if cl.c.mediaLanes {
+				if key, ok := parseSlotTrackID(remote.ID()); ok {
+					go cl.readMediaVideo(pc, remote, key)
+				} else {
+					go cl.discardRemoteTrack(remote)
+				}
+			} else {
+				go cl.readVideo(pc, remote)
+			}
 			return
 		}
 		go cl.readTrack(remote)
@@ -615,6 +623,15 @@ func (cl *call) newPC() error {
 	}
 	cl.startSender()
 	return nil
+}
+
+func (cl *call) discardRemoteTrack(remote *webrtc.TrackRemote) {
+	defer cl.wg.Done()
+	for {
+		if _, _, err := remote.ReadRTP(); err != nil {
+			return
+		}
+	}
 }
 
 func (cl *call) startSender() {
