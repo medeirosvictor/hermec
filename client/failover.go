@@ -26,6 +26,9 @@ func (c *Client) ChainSeq() uint64 { return c.chain.Head().Seq }
 // normally. A refusal comes back as a *ServerError: active_alive, not_standby
 // or host_not_authorized.
 func (c *Client) Takeover(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !c.Warm() {
 		return nil
 	}
