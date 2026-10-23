@@ -170,10 +170,6 @@ func (c *conn) handleLinkHello(env proto.Envelope) {
 		c.sendError(proto.CodeBadRequest, "malformed link_hello")
 		return
 	}
-	if !c.warm {
-		c.sendError(proto.CodeForbidden, "only hosts on the chain may link")
-		return
-	}
 	if code, msg := s.registerLink(c, h); code != "" {
 		c.sendError(code, msg)
 		return
