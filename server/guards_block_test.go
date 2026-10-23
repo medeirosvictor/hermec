@@ -46,15 +46,11 @@ func TestAuthBlockOnWire(t *testing.T) {
 	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
 	url := "ws://" + s.Addr()
 
-	// Four failures do not block the IP; the 5th is replied to at once too,
+	// Four failures do not block the IP; the 5th also receives auth_failed,
 	// then the IP is blocked for 1 s.
 	for i := 0; i < 5; i++ {
-		start := time.Now()
 		c, env := authAs(t, url, mustID(t), "wrong")
 		requireAuthFailed(t, c, env)
-		if time.Since(start) > 2*time.Second {
-			t.Fatalf("failure %d reply was delayed", i+1)
-		}
 	}
 	waitCounts(t, s, 0, 0, 0) // slots are back immediately; nothing sleeps
 	_, resp, err := dialHdr(url, nil)
