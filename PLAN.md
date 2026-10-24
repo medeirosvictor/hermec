@@ -20,7 +20,7 @@ no infrastructure. How the app works is in [README.md](README.md) and
   (VP8, pure Go). malgo (miniaudio) is the only cgo dependency.
 - Small codebase, one file per platform to download, idle server near zero cost.
 
-## Done (released through v0.5.1, plus current main/feature work)
+## Done (v0.6.0)
 
 - Chat server and headless client, Ed25519 auth, roles, channels, presence.
 - Desktop GUI: CRT themes, fonts, settings, title bar, server rail, several
@@ -42,9 +42,16 @@ no infrastructure. How the app works is in [README.md](README.md) and
 
 ## Next
 
-1. **Friends adjustments**: per-person volume and mic gain, live names, audio
+1. **Genuine-defect cleanup**: finish simple, user-facing failure handling;
+   make the channel sidebar scroll; fix mute-state reconciliation; surface
+   friend-host startup failures; keep technical detail in session logs.
+2. **Friends adjustments**: per-person volume and mic gain, live names, audio
    device switching mid-call, bandwidth metrics, ping fixes.
-2. **Icon editor** (B.3): in-app pixel-art editor for a server icon.
+3. **Documentation milestone**: make `README.md` the task-oriented user guide;
+   add `docs/architecture.md` for how HERMEC works under the hood and
+   `docs/code-map.md` for folders, important files and common development
+   entry points. Link rather than duplicate material in `HANDOFF.md`.
+4. **Icon editor** (B.3): in-app pixel-art editor for a server icon.
 
 ## Later
 

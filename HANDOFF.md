@@ -10,13 +10,14 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and
    the memory note `hermec-project`.
-2. Repo state: `main` == `origin/main` at PR #10 (host link, warm standby and
-   failover), released through **v0.5.1**. The current
-   `feature/call-view-media-lanes` branch adds independent media lanes, Windows
-   webcam capture and the call view. Untracked local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
+2. Repo baseline: PR #11 merged independent media lanes, Windows webcam
+   capture and the call view. The v0.6.0 defect-cleanup slice adds clear
+   chat-send failure feedback and private diagnostic logging. Untracked
+   local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.
-3. **Current round: webcam + call view.** The vertical slice is implemented:
+3. **Current round: genuine-defect cleanup.** The webcam/call-view vertical
+   slice is merged:
    camera and screen publish simultaneously, modern clients receive up to ten
    camera slots and one selected screen slot, the Windows camera uses a fixed
    640x360/15 fps/300 kbps profile, and active media survives host takeover.
@@ -56,13 +57,19 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 ## Next-session pipeline (Victor's order)
 
-1. **Friends adjustments.** Per-person volume, mic gain, live names, audio
+1. **Genuine-defect cleanup.** Current slice: chat appears only after the
+   server confirms it; an unconfirmed send shows a plain
+   "message unable to reach server" status, while the session log keeps the
+   technical reason without message text. Next small candidates: sidebar
+   scrolling, reliable mute-state reconciliation, visible friend-host startup
+   failure, and friendly camera/screen/voice errors with raw details in logs.
+2. **Friends adjustments.** Per-person volume, mic gain, live names, audio
    device switching mid-call, bandwidth metrics and ping fixes (details below).
    Later idea riding the synced store: file sharing (a capped shared folder).
    vitoserver stays parked (Victor: do not bring it back for now).
-   - **Decisions (Victor, 2026-10-22):** the password never travels (scrypt
-     key + HMAC login; v0.6 clients may still send the plain password for one
-     release, and plain passwords are refused from v0.8); friend hosts
+   - **Decisions (Victor, 2026-10-22/23):** the password never travels (scrypt
+     key + HMAC login). Before v1, expect the same build and do not add or
+     extend version-bridging paths. Friend hosts
      node-share their PC on Tailscale, and the standby must be reachable by at
      least half the clients.
    - **PR 2 leftovers (low, from the fix re-reviews):** lines evicted during a
@@ -83,7 +90,12 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
      as torn; missing tests for 0600 mode, mutation isolation, the sync/close
      rollback branches, a replayed host proof, and an `auth_ok.server_id`
      mismatch.
-2. **Signed membership + connection modes** (Victor, 2026-10-22; brainstorm
+3. **Documentation milestone.** Keep `README.md` as the task-oriented user
+   guide; add `docs/architecture.md` for the concise under-the-hood model and
+   `docs/code-map.md` for folders, important files and common change paths.
+   Replace the duplicated map later in this handoff with links to those
+   canonical docs.
+4. **Signed membership + connection modes** (Victor, 2026-10-22; brainstorm
    first). Invite tree on the chain: the inviter signs, the invitee co-signs,
    so there is an audit trail of who brought whom; ban or review a whole
    branch; invite as a role; k-of-n admin signatures for host and role
@@ -92,7 +104,7 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
    (pure Go) on a group tailnet (Tailscale account or Headscale) so Victor's
    private tailnet stays separate; public mode (port forward or VPS) requires
    `wss://` and invites. Author-signed chat (Plan C) comes after.
-3. **Friends adjustments detail** (designed in chat 2026-10-19, not yet specced):
+5. **Friends adjustments detail** (designed in chat 2026-10-19, not yet specced):
    - Volume: per-person volume (right-click a person, 0 to 200%, saved per
      fingerprint), a mic gain settings row (0 to 200%), and a soft limiter.
      Friends were too quiet in both directions. Volume for a shared stream
@@ -112,7 +124,7 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
      (`pongTimeout` in `client/rtt.go`, recorded by `check`). Victor saw 1400 ms
      spikes with fine voice. Check Tailscale DERP versus direct
      (`tailscale ping`, `tailscale status`, `tailscale netcheck`).
-4. **B.3: icon editor.** In-app pixel-art editor for a server icon.
+6. **B.3: icon editor.** In-app pixel-art editor for a server icon.
 
 ## Open checklists
 
