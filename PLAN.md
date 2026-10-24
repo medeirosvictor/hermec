@@ -20,7 +20,7 @@ no infrastructure. How the app works is in [README.md](README.md) and
   (VP8, pure Go). malgo (miniaudio) is the only cgo dependency.
 - Small codebase, one file per platform to download, idle server near zero cost.
 
-## Done (released through v0.5.1, plus current main)
+## Done (v0.6.0)
 
 - Chat server and headless client, Ed25519 auth, roles, channels, presence.
 - Desktop GUI: CRT themes, fonts, settings, title bar, server rail, several

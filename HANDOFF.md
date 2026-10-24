@@ -10,10 +10,9 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and
    the memory note `hermec-project`.
-2. Repo state: `main` == `origin/main` at merge commit `cbcb1ad` (PR #11:
-   independent media lanes, Windows webcam capture and the call view), released
-   through **v0.5.1**. The current `fix/chat-send-feedback` worktree handles
-   clear chat-send failure feedback and private diagnostic logging. Untracked
+2. Repo baseline: PR #11 merged independent media lanes, Windows webcam
+   capture and the call view. The v0.6.0 defect-cleanup slice adds clear
+   chat-send failure feedback and private diagnostic logging. Untracked
    local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.

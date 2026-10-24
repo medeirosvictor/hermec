@@ -119,7 +119,7 @@ from the server's name.
 
 ## Status
 
-Current release: v0.5.1. This repository ships a Go server with Ed25519
+Current release: v0.6.0. This repository ships a Go server with Ed25519
 key-based authentication, roles, channels, presence and text chat, a headless
 client library, a desktop GUI client, and integration tests. Voice, the
 multi-participant call view, Windows webcam publishing, and screen share work;
