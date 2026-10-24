@@ -45,17 +45,19 @@ func (s *latestFrameSource) readLoop() {
 		}
 		frame := video.NewFrame(Width, Height)
 		convertImage(frame, img)
+		s.mu.Lock()
+		closed := s.closed
+		if !closed {
+			s.latest = frame
+			s.gen++
+		}
+		s.mu.Unlock()
 		if release != nil {
 			release()
 		}
-		s.mu.Lock()
-		if s.closed {
-			s.mu.Unlock()
+		if closed {
 			return
 		}
-		s.latest = frame
-		s.gen++
-		s.mu.Unlock()
 	}
 }
 

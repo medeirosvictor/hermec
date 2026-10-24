@@ -285,7 +285,7 @@ func TestDialNotActiveFollowsHosts(t *testing.T) {
 	// the saved URL is the standby: the dial is refused not_active and must
 	// go to the active host named by the hosts frame at once.
 	s := g.openSession(p.bURL, "me")
-	pumpUntil(t, g, connected(s))
+	pumpUntil(t, g, func() bool { return connected(s)() && s.st.HostedBy == "a" })
 	if s.st.HostedBy != "a" {
 		t.Fatalf("hosted by %q, want a", s.st.HostedBy)
 	}
