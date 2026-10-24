@@ -219,17 +219,21 @@ func (g *game) afterChannelChange() {
 
 func (g *game) sendChat() {
 	s := g.cur()
-	txt := s.st.Input.Submit()
-	s.ms.scroll = 0
-	if txt == "" || s.c == nil || len(s.st.Channels) == 0 {
+	if strings.TrimSpace(s.st.Input.String()) == "" {
+		s.st.Input.Submit()
 		return
 	}
-	if s.switching {
-		s.sendNotice = interruptedSendNotice
-		s.st.Status = s.sendNotice
+	if s.c == nil || len(s.st.Channels) == 0 {
+		g.reportChatFailure(s, outgoingChat{}, "connection unavailable", false)
 		return
 	}
 	ch := s.st.Channels[s.st.Active]
+	if s.switching {
+		g.reportChatFailure(s, outgoingChat{channel: ch}, "host transition in progress", true)
+		return
+	}
+	txt := s.st.Input.Submit()
+	s.ms.scroll = 0
 	id := s.queueChat(s.c, ch, txt)
 	go func(key string, c *client.Client) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

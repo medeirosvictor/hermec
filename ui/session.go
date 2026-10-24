@@ -53,7 +53,7 @@ type outgoingChat struct {
 	channel, text string
 }
 
-const interruptedSendNotice = "send failed: host changed before confirmation"
+const chatSendFailureNotice = "message unable to reach server"
 
 func newSession(key, url, name string) *session {
 	return &session{key: key, url: url, name: name, st: state.New(), ms: newMainScene()}
@@ -97,13 +97,14 @@ func (s *session) queueChat(c *client.Client, channel, text string) uint64 {
 	return s.nextChatID
 }
 
-func (s *session) hasChat(id uint64) bool {
-	for _, p := range s.outgoing {
+func (s *session) takeChat(id uint64) (outgoingChat, bool) {
+	for i, p := range s.outgoing {
 		if p.id == id {
-			return true
+			s.outgoing = append(s.outgoing[:i], s.outgoing[i+1:]...)
+			return p, true
 		}
 	}
-	return false
+	return outgoingChat{}, false
 }
 
 func (s *session) confirmChat(m *proto.ChatMessage, fingerprint string) {
@@ -119,20 +120,31 @@ func (s *session) confirmChat(m *proto.ChatMessage, fingerprint string) {
 	}
 }
 
-func (s *session) interruptChats(c *client.Client) {
+func (s *session) interruptChats(c *client.Client) []outgoingChat {
 	kept := s.outgoing[:0]
-	interrupted := false
+	var interrupted []outgoingChat
 	for _, p := range s.outgoing {
 		if p.c == c {
-			interrupted = true
+			interrupted = append(interrupted, p)
 			continue
 		}
 		kept = append(kept, p)
 	}
 	s.outgoing = kept
-	if interrupted {
-		s.sendNotice = interruptedSendNotice
-		s.st.Status = s.sendNotice
+	return interrupted
+}
+
+func (g *game) reportChatFailure(s *session, p outgoingChat, reason string, persist bool) {
+	s.st.Status = chatSendFailureNotice
+	if persist {
+		s.sendNotice = chatSendFailureNotice
+	}
+	g.logf("chat send failed: server=%q channel=%q send_id=%d reason=%s", s.url, p.channel, p.id, reason)
+}
+
+func (g *game) interruptChats(s *session, c *client.Client, reason string) {
+	for _, p := range s.interruptChats(c) {
+		g.reportChatFailure(s, p, reason, true)
 	}
 }
 
@@ -369,8 +381,13 @@ func (g *game) pumpSessions() {
 		select {
 		case r := <-g.sendCh:
 			if s := g.sess[r.key]; s != nil && r.err != nil {
-				if r.chatID != 0 && !s.hasChat(r.chatID) {
-					continue // failover already reported this interrupted send
+				if r.chatID != 0 {
+					p, ok := s.takeChat(r.chatID)
+					if !ok {
+						continue // failover already reported this interrupted send
+					}
+					g.reportChatFailure(s, p, r.err.Error(), false)
+					continue
 				}
 				if r.older != "" {
 					delete(s.st.Loading, r.older)

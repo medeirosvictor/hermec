@@ -426,7 +426,7 @@ func (g *game) applyAdopt(r hostResult, s *session, live bool) {
 // and shows no change.
 func (g *game) failover(s *session) {
 	g.logf("host of %s lost; taking over on the standby", s.url)
-	s.interruptChats(s.c)
+	g.interruptChats(s, s.c, "host lost before confirmation")
 	s.switching = true
 	old, w, hc := s.c, s.warm, g.hostChan()
 	retryFor := takeoverRetryFor // read once, here
@@ -460,6 +460,7 @@ func (g *game) onMove(s *session, m *proto.Move) {
 		return
 	}
 	g.logf("host asks %s to move to %s", s.url, m.To.Name)
+	g.interruptChats(s, s.c, "host move before confirmation")
 	s.switching = true
 	g.dropWarm(s)
 	pass, o := g.dialCreds(s)
@@ -476,7 +477,7 @@ func (g *game) connLost(s *session) {
 	g.logf("connection to %s lost", s.url)
 	g.dropWarm(s)
 	s.st.Apply(client.Event{}, false)
-	s.interruptChats(s.c)
+	g.interruptChats(s, s.c, "connection lost before confirmation")
 	g.endVoiceFor(s.key) // only s's call; other sessions' voice is untouched
 	s.c = nil
 	s.scheduleRetry(time.Now())

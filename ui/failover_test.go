@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -183,23 +184,32 @@ func TestChatInFailoverGapIsDeliveredOrReported(t *testing.T) {
 		return false
 	}
 	pumpUntil(t, g, func() bool { return s.c == warm && !s.c.Warm() })
-	if !delivered() && !strings.Contains(s.st.Status, "send failed") {
+	if !delivered() && s.st.Status != "message unable to reach server" {
 		t.Fatalf("chat vanished across failover: status = %q", s.st.Status)
 	}
 }
 
 func TestChatWhileFailoverIsInProgressIsReported(t *testing.T) {
 	g, _, s := pairGame(t)
+	var logs bytes.Buffer
+	g.setLogWriter(&logs)
 	s.switching = true
-	s.st.Input.AppendRunes([]rune("typed during takeover"))
+	const text = "typed during takeover"
+	s.st.Input.AppendRunes([]rune(text))
 
 	g.sendChat()
 
-	if !strings.Contains(s.st.Status, "send failed") {
-		t.Fatalf("status = %q, want send failure", s.st.Status)
+	if s.st.Status != "message unable to reach server" {
+		t.Fatalf("status = %q, want generic send failure", s.st.Status)
+	}
+	if got := s.st.Input.String(); got != text {
+		t.Fatalf("input = %q, want unsent draft preserved", got)
 	}
 	if len(s.outgoing) != 0 {
 		t.Fatalf("queued %d chats on the dead client", len(s.outgoing))
+	}
+	if got := logs.String(); !strings.Contains(got, "host transition in progress") || strings.Contains(got, text) {
+		t.Fatalf("log = %q, want reason without message text", got)
 	}
 }
 
@@ -219,6 +229,7 @@ func TestSessionActiveAliveRedials(t *testing.T) {
 func TestSessionMoveFollows(t *testing.T) {
 	g, p, s := pairGame(t)
 	old := s.c
+	s.queueChat(old, "general", "unconfirmed before move")
 	if !p.b.Promote() {
 		t.Fatal("b did not promote")
 	}
@@ -233,6 +244,9 @@ func TestSessionMoveFollows(t *testing.T) {
 	defer cancel()
 	if err := old.Join(ctx, "general"); err == nil {
 		t.Fatal("old client still usable after the move")
+	}
+	if len(s.outgoing) != 0 || s.st.Status != "message unable to reach server" {
+		t.Fatalf("move left outgoing=%d status=%q", len(s.outgoing), s.st.Status)
 	}
 }
 
