@@ -86,7 +86,10 @@ func (s *Server) markAuthedLocked(c *conn) []*conn {
 func (s *Server) voiceStateLocked(ch string) []byte {
 	members := make([]proto.VoiceMember, 0, len(s.voice[ch]))
 	for m, muted := range s.voice[ch] {
-		members = append(members, proto.VoiceMember{Fingerprint: m.fingerprint, Name: m.name, Muted: muted, Sharing: m.sharing})
+		members = append(members, proto.VoiceMember{
+			Fingerprint: m.fingerprint, Name: m.name, Muted: muted,
+			Sharing: m.publishing(proto.MediaScreen), Media: m.mediaKinds(),
+		})
 	}
 	sort.Slice(members, func(i, j int) bool {
 		if members[i].Name != members[j].Name {
@@ -123,8 +126,7 @@ func (s *Server) removeVoiceLocked(c *conn) string {
 	if ch == "" {
 		return ""
 	}
-	s.clearShareLocked(ch, c)
-	c.watching = ""
+	s.clearMediaLocked(ch, c)
 	delete(s.voice[ch], c)
 	c.voiceCh = ""
 	s.sessionLeaveLocked(ch, c) // may destroy the channel's media session
@@ -135,83 +137,21 @@ func (s *Server) removeVoiceLocked(c *conn) string {
 // in ch. The session side (video tracks) is cleared by the caller's path:
 // shareSet posts it, and a leaving peer's forwarders die with its media.
 // Caller holds chMu.
-func (s *Server) clearShareLocked(ch string, c *conn) {
-	c.sharing = false
-	for m := range s.voice[ch] {
-		if m.watching == c.fingerprint {
-			m.watching = ""
-		}
-	}
-}
-
 // shareSet sets or clears c's sharing flag and re-broadcasts the channel's
 // voice_state. Outside a call it is ignored.
 func (s *Server) shareSet(c *conn, on bool) {
-	s.chMu.Lock()
-	ch := c.voiceCh
-	if ch == "" {
-		s.chMu.Unlock()
-		return
-	}
-	if on {
-		c.sharing = true
-		if vs := s.sessions[ch]; vs != nil {
-			vs.shareStarted(c)
-		}
-	} else {
-		s.clearShareLocked(ch, c)
-		if vs := s.sessions[ch]; vs != nil {
-			vs.shareStopped(c)
-		}
-	}
-	dead := s.broadcastVoiceLocked(ch)
-	s.chMu.Unlock()
-	dropSlow(dead)
+	_ = s.setMedia(c, proto.MediaScreen, on)
 }
 
 // watch records that c watches the sharer with fingerprint fp ("" stops).
 // Returns "" on success, "not_joined" outside a call, or "not_sharing" when
 // fp is not sharing in c's channel.
 func (s *Server) watch(c *conn, fp string, gen uint32) string {
-	s.chMu.Lock()
-	defer s.chMu.Unlock()
-	ch := c.voiceCh
-	if ch == "" {
-		return "not_joined"
-	}
-	vs := s.sessions[ch]
-	if fp == "" {
-		c.watching, c.watchGen = "", gen
-		if vs != nil {
-			vs.setWatch(c, nil, gen)
-		}
-		return ""
-	}
-	if c.watching == fp {
-		// Already watching: no renegotiation, no extra keyframe. But the
-		// client may have restarted its watch (new gen) and be waiting for a
-		// video_source, so adopt the gen and repeat the current boundary.
-		if gen != c.watchGen {
-			c.watchGen = gen
-			if vs != nil {
-				vs.resendSource(c, gen)
-			}
-		}
-		return ""
-	}
-	var target *conn
-	for m := range s.voice[ch] {
-		if m != c && m.sharing && m.fingerprint == fp {
-			target = m
-			break
-		}
-	}
-	if target == nil || vs == nil {
+	code := s.setMediaSubscription(c, proto.MediaScreen, fp, gen)
+	if code == proto.CodeNotPublishing || code == proto.CodeForbidden || code == proto.CodeBadRequest {
 		return proto.CodeNotSharing
 	}
-	c.watching, c.watchGen = fp, gen
-	vs.setWatch(c, target, gen)
-	return ""
+	return code
 }
 
 // voiceJoin puts c in voice channel ch (moving it if already in another).
@@ -309,6 +249,48 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 		c.srv.shareSet(c, true)
 	case proto.TypeShareStop:
 		c.srv.shareSet(c, false)
+	case proto.TypeMediaStart:
+		var m proto.MediaStart
+		if json.Unmarshal(env.Data, &m) != nil {
+			c.sendError(proto.CodeBadRequest, "malformed media_start")
+			return true
+		}
+		switch c.srv.mediaSet(c, m.Kind, true) {
+		case proto.CodeBadRequest:
+			c.sendError(proto.CodeBadRequest, "media lanes were not negotiated or the kind is invalid")
+		case proto.CodeMediaFull:
+			c.sendErrorGen(proto.CodeMediaFull, "this voice channel already has 10 active cameras", m.Gen)
+		case "not_joined":
+			c.sendError("not_joined", "not in a voice channel")
+		}
+	case proto.TypeMediaStop:
+		var m proto.MediaStop
+		if json.Unmarshal(env.Data, &m) != nil {
+			c.sendError(proto.CodeBadRequest, "malformed media_stop")
+			return true
+		}
+		switch c.srv.mediaSet(c, m.Kind, false) {
+		case proto.CodeBadRequest:
+			c.sendError(proto.CodeBadRequest, "media lanes were not negotiated or the kind is invalid")
+		case "not_joined":
+			c.sendError("not_joined", "not in a voice channel")
+		}
+	case proto.TypeMediaSubscribe:
+		var m proto.MediaSubscribe
+		if json.Unmarshal(env.Data, &m) != nil {
+			c.sendError(proto.CodeBadRequest, "malformed media_subscribe")
+			return true
+		}
+		switch c.srv.mediaSubscribe(c, m.Kind, m.Fingerprint, m.Gen) {
+		case proto.CodeBadRequest:
+			c.sendErrorGen(proto.CodeBadRequest, "media lanes were not negotiated or the kind is invalid", m.Gen)
+		case proto.CodeForbidden:
+			c.sendErrorGen(proto.CodeForbidden, "that member is outside your voice channel", m.Gen)
+		case proto.CodeNotPublishing:
+			c.sendErrorGen(proto.CodeNotPublishing, "that member is not publishing this media in your channel", m.Gen)
+		case "not_joined":
+			c.sendErrorGen("not_joined", "not in a voice channel", m.Gen)
+		}
 	case proto.TypeWatch:
 		var m proto.Watch
 		if json.Unmarshal(env.Data, &m) != nil {

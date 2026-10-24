@@ -58,9 +58,10 @@ type voiceSession struct {
 	done   chan struct{} // closed when the actor goroutine has fully exited
 
 	// Actor-owned.
-	peers    map[*conn]*peer
-	finished bool
-	wg       sync.WaitGroup // forwarders and RTCP readers
+	peers       map[*conn]*peer
+	cameraOrder []*peer
+	finished    bool
+	wg          sync.WaitGroup // forwarders and RTCP readers
 
 	relayedBytes atomic.Uint64 // audio payload bytes written to subscribers
 	videoBytes   atomic.Uint64 // video payload bytes written to subscribers
@@ -122,6 +123,12 @@ type peer struct {
 	wgen    uint32     // gen of the viewer's latest watch request, echoed in video_source
 
 	sharing atomic.Bool // this peer is sharing (set by the actor, read by forwarders)
+
+	videoReceivers map[*webrtc.RTPReceiver]proto.MediaKind
+	activeMedia    map[proto.MediaKind]bool
+	slots          map[slotKey]*videoSlot
+	screenTarget   *peer
+	screenGen      uint32
 }
 
 // outStream is the outgoing RTP numbering of one viewer's video sender.
@@ -197,6 +204,7 @@ type forwarder struct {
 	pub    *peer
 	remote *webrtc.TrackRemote
 	video  bool // VP8 screen share; fanned out only to the publisher's watchers
+	kind   proto.MediaKind
 
 	mu    sync.Mutex
 	sinks map[*peer]sink
@@ -433,6 +441,7 @@ func (vs *voiceSession) removePeer(c *conn) {
 			delete(p.watching.watchers, p)
 			p.watching = nil
 		}
+		vs.removeModernPublisher(p)
 		delete(vs.peers, c)
 		vs.releaseMedia(p)
 	})
@@ -455,6 +464,69 @@ func (vs *voiceSession) shareStopped(c *conn) {
 		if p, ok := vs.peers[c]; ok {
 			p.sharing.Store(false)
 			vs.clearWatchers(p)
+		}
+	})
+}
+
+func (vs *voiceSession) mediaStarted(c *conn, kind proto.MediaKind) {
+	if !c.hasCapability(proto.CapabilityMediaLanesV1) {
+		if kind == proto.MediaScreen {
+			vs.shareStarted(c)
+		}
+		return
+	}
+	vs.post(func() {
+		if p := vs.peers[c]; p != nil {
+			vs.startModernMedia(p, kind)
+		}
+	})
+}
+
+func (vs *voiceSession) mediaStopped(c *conn, kind proto.MediaKind) {
+	if !c.hasCapability(proto.CapabilityMediaLanesV1) {
+		if kind == proto.MediaScreen {
+			vs.shareStopped(c)
+		}
+		return
+	}
+	vs.post(func() {
+		if p := vs.peers[c]; p != nil {
+			vs.stopModernMedia(p, kind)
+		}
+	})
+}
+
+func (vs *voiceSession) setMediaSubscription(c, target *conn, kind proto.MediaKind, gen uint32) {
+	if !c.hasCapability(proto.CapabilityMediaLanesV1) {
+		if kind == proto.MediaScreen {
+			vs.setWatch(c, target, gen)
+		}
+		return
+	}
+	vs.post(func() {
+		viewer := vs.peers[c]
+		if viewer == nil {
+			return
+		}
+		vs.setModernSubscription(viewer, vs.peers[target], kind, gen)
+	})
+}
+
+func (vs *voiceSession) resendMediaSource(c *conn, kind proto.MediaKind, gen uint32) {
+	if !c.hasCapability(proto.CapabilityMediaLanesV1) {
+		if kind == proto.MediaScreen {
+			vs.resendSource(c, gen)
+		}
+		return
+	}
+	vs.post(func() {
+		viewer := vs.peers[c]
+		if viewer == nil {
+			return
+		}
+		if slot := viewer.slots[slotKey{Kind: kind, Index: 0}]; slot != nil {
+			viewer.screenGen = gen
+			vs.attachSlot(viewer, slot, slot.fwd, gen)
 		}
 	})
 }
@@ -627,16 +699,28 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 			vs.wg.Add(1)
 			go vs.drainReceiverRTCP(recv)
 			isVideo := remote.Kind() == webrtc.RTPCodecTypeVideo
+			mediaKind := proto.MediaKind("")
+			if isVideo && p.c.hasCapability(proto.CapabilityMediaLanesV1) {
+				var ok bool
+				mediaKind, ok = p.videoReceivers[recv]
+				if !ok {
+					vs.srv.logf("voice %q: %s sent an unexpected video track; ignoring it", vs.channel, p.c.fingerprint)
+					vs.wg.Add(1)
+					go vs.discardTrack(remote)
+					return
+				}
+			}
 			for _, g := range p.fwds {
-				if g.video == isVideo && !g.isDead() {
-					// One audio and one screen-share track per peer; discard extras.
+				sameLane := !isVideo || mediaKind == "" || g.kind == mediaKind
+				if g.video == isVideo && sameLane && !g.isDead() {
+					// One audio track and one track per negotiated video lane; discard extras.
 					vs.srv.logf("voice %q: %s sent a second %s track; ignoring it", vs.channel, p.c.fingerprint, remote.Kind())
 					vs.wg.Add(1)
 					go vs.discardTrack(remote)
 					return
 				}
 			}
-			f := &forwarder{pub: p, remote: remote, video: isVideo, sinks: make(map[*peer]sink)}
+			f := &forwarder{pub: p, remote: remote, video: isVideo, kind: mediaKind, sinks: make(map[*peer]sink)}
 			p.fwds = append(p.fwds, f)
 			vs.wg.Add(1)
 			go vs.runForwarder(f)
@@ -689,9 +773,20 @@ func (vs *voiceSession) handleOffer(p *peer, sdp string) {
 		}
 	}
 	pc := p.pc
+	modern := p.c.hasCapability(proto.CapabilityMediaLanesV1)
+	layout := modernOfferLayout{}
+	if modern {
+		layout = classifyModernOffer(parseOfferedMedia(sdp))
+	}
 	if err := pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}); err != nil {
 		fail("invalid rtc_offer")
 		return
+	}
+	if modern {
+		if err := vs.configureModernAnswer(p, pc, layout); err != nil {
+			fail("cannot bind media slots")
+			return
+		}
 	}
 	vs.flushPending(p)
 	answer, err := pc.CreateAnswer(nil)
@@ -904,7 +999,9 @@ func (vs *voiceSession) syncTracks(q *peer) {
 		vs.releaseMedia(q)
 		return
 	}
-	if vs.syncVideo(q) {
+	if q.c.hasCapability(proto.CapabilityMediaLanesV1) {
+		vs.syncModernViewer(q)
+	} else if vs.syncVideo(q) {
 		changed = true
 	}
 	if changed {
@@ -1016,6 +1113,16 @@ func (vs *voiceSession) releaseMedia(p *peer) {
 	// A fresh PC gets a fresh video transceiver; syncVideo re-arms kfWanted
 	// when it re-attaches a watched stream.
 	p.vsender, p.vfwd, p.vout, p.vrw, p.kfInOffer = nil, nil, nil, nil, false
+	p.videoReceivers = nil
+	for _, slot := range p.slots {
+		if slot.fwd != nil {
+			slot.fwd.removeSink(p)
+		}
+		if slot.rw != nil {
+			slot.rw.retire()
+		}
+	}
+	p.slots = nil
 	if pc != nil {
 		_ = pc.Close()
 	}
@@ -1039,7 +1146,7 @@ func (vs *voiceSession) runForwarder(f *forwarder) {
 		if err != nil {
 			return
 		}
-		if f.video && !f.pub.sharing.Load() {
+		if f.video && f.kind == "" && !f.pub.sharing.Load() {
 			continue // only a sharing peer's video is relayed
 		}
 		snap = snap[:0]
@@ -1079,6 +1186,12 @@ func (vs *voiceSession) runForwarder(f *forwarder) {
 
 func (vs *voiceSession) pruneSender(sub *peer, f *forwarder) {
 	if f.video {
+		if f.kind != "" {
+			if slot := sub.slotForSource(f.kind, f.pub.c.fingerprint); slot != nil {
+				vs.attachSlot(sub, slot, nil, slot.gen)
+			}
+			return
+		}
 		// Single reusable video sender: just detach and re-attach.
 		if sub.vfwd == f {
 			sub.vfwd = nil

@@ -37,6 +37,21 @@ func twoMonitors() *fakeCap {
 	}}
 }
 
+func TestFailedScreenResumeKeepsVoiceAndClearsOnlyTheScreen(t *testing.T) {
+	g, s := shareGame(t)
+	g.watch = watchState{fp: "presenter"}
+	g.noteEvent(s, client.Event{Err: client.ErrScreenResume})
+	if g.watch.fp != "" {
+		t.Fatalf("unavailable screen remained selected: %+v", g.watch)
+	}
+	if s.st.InCall != "voice" {
+		t.Fatalf("screen resume failure ended voice: %q", s.st.InCall)
+	}
+	if s.st.Status == "" {
+		t.Fatal("screen resume failure was not shown to the user")
+	}
+}
+
 // recorder collects what the game asked the client to do.
 type recorder struct {
 	mu        sync.Mutex

@@ -77,6 +77,8 @@ type Client struct {
 	channels    []proto.ChannelInfo
 	serverName  string // from auth_ok; immutable after Dial
 	serverID    string // chain.ID.String() of the verified chain; immutable after Dial
+	mediaLanes  bool   // auth-negotiated media_lanes_v1 support
+	mediaWire   atomic.Uint32
 	pwKey       []byte // the password key this login used; nil without a password
 	chain       *chain.Chain
 
@@ -97,22 +99,32 @@ type Client struct {
 	wpMu sync.Mutex // guards wp
 	wp   *warmPeer  // data-channel PeerConnection to the standby, if opened
 
-	started     time.Time // Dial time; baseline of the first VideoStats window
-	vstats      videoStats
-	vsinkMu     sync.RWMutex
-	vsink       VideoSink
-	watchMu     sync.Mutex
-	watchFP     string // sharer we asked to watch ("" = none)
-	watchGen    uint64 // bumped by every Watch call
-	watchAt     time.Time
-	watchWire   uint32      // gen sent with the latest effective Watch; video_source must echo it
-	prevWatch   *watchState // state before that Watch, restored if the server refuses it
-	wireCtr     uint32      // last gen handed out; watchWire may be restored below it
-	watchWait   chan error  // answer channel of the pending Watch, nil if none
-	watchCallMu sync.Mutex  // serializes Watch calls
-	srcHave     bool        // a video_source for watchFP arrived since the last Watch
-	srcSeq      uint16      // first RTP sequence number of that source
-	srcID       uint64      // bumped by every accepted video_source
+	adoptMu       sync.Mutex
+	adoptPending  map[proto.MediaKind]*videoPublisher
+	adoptDetached map[proto.MediaKind]*videoPublisher
+	adoptRedirect *Client
+
+	started        time.Time // Dial time; baseline of the first VideoStats window
+	vstats         videoStats
+	vsinkMu        sync.RWMutex
+	vsink          VideoSink
+	mediaSinkMu    sync.RWMutex
+	mediaSinkValue MediaSink
+	mediaMu        sync.RWMutex
+	mediaSources   map[slotKey]mediaSourceState
+	watchMu        sync.Mutex
+	watchFP        string // sharer we asked to watch ("" = none)
+	watchGen       uint64 // bumped by every Watch call
+	watchAt        time.Time
+	watchWire      uint32      // gen sent with the latest effective Watch; video_source must echo it
+	prevWatch      *watchState // state before that Watch, restored if the server refuses it
+	wireCtr        uint32      // last gen handed out; watchWire may be restored below it
+	watchWait      chan error  // answer channel of the pending Watch, nil if none
+	watchQuiet     uint32      // adoption retry whose transient refusal is not user-visible
+	watchCallMu    sync.Mutex  // serializes Watch calls
+	srcHave        bool        // a video_source for watchFP arrived since the last Watch
+	srcSeq         uint16      // first RTP sequence number of that source
+	srcID          uint64      // bumped by every accepted video_source
 
 	evMu     sync.RWMutex // guards closing events against emitNB
 	evClosed bool
@@ -197,6 +209,7 @@ func DialWith(ctx context.Context, url string, id *identity.Identity, name, pass
 		channels:    res.OK.Channels,
 		serverName:  res.OK.ServerName,
 		serverID:    res.OK.ServerID,
+		mediaLanes:  hasCapability(res.OK.Capabilities, proto.CapabilityMediaLanesV1),
 		pwKey:       res.Key,
 		chain:       res.Chain,
 		events:      make(chan Event, eventBuffer),
@@ -245,6 +258,19 @@ func (c *Client) Channels() []proto.ChannelInfo {
 // ServerName returns the display name the server announced in auth_ok, or ""
 // if it has none.
 func (c *Client) ServerName() string { return c.serverName }
+
+// SupportsMediaLanes reports whether the authenticated server accepted the
+// independent camera/screen protocol before voice negotiation.
+func (c *Client) SupportsMediaLanes() bool { return c.mediaLanes }
+
+func hasCapability(capabilities []string, want string) bool {
+	for _, capability := range capabilities {
+		if capability == want {
+			return true
+		}
+	}
+	return false
+}
 
 // Events returns the event stream. It is closed when the connection dies.
 // Consumers must drain it: a full buffer applies backpressure to the read
@@ -311,7 +337,18 @@ func (c *Client) Close() error {
 	})
 	<-c.loopDone
 	<-c.pingDone
+	for _, publisher := range c.takeDetachedPublishers() {
+		publisher.stop()
+	}
 	return err
+}
+
+func (c *Client) takeDetachedPublishers() map[proto.MediaKind]*videoPublisher {
+	c.adoptMu.Lock()
+	defer c.adoptMu.Unlock()
+	publishers := c.adoptDetached
+	c.adoptDetached = nil
+	return publishers
 }
 
 func (c *Client) send(typ string, payload any) error {
@@ -389,6 +426,7 @@ func (c *Client) readLoop() {
 		}
 		c.ws.Close()
 		if cl != nil {
+			c.detachPublishersForAdoption(cl)
 			cl.teardown()
 		}
 	}()
@@ -467,6 +505,11 @@ func (c *Client) readLoop() {
 			var vsrc proto.VideoSource
 			if json.Unmarshal(env.Data, &vsrc) == nil {
 				c.onVideoSource(vsrc)
+			}
+		case proto.TypeMediaSource:
+			var source proto.MediaSource
+			if json.Unmarshal(env.Data, &source) == nil {
+				c.onMediaSource(source)
 			}
 		case proto.TypeError:
 			var em proto.ErrorMsg

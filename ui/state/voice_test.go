@@ -88,7 +88,7 @@ func TestVoiceClickAction(t *testing.T) {
 		t.Fatal("want join")
 	}
 	s.SetInCall("v")
-	if s.VoiceClickAction("v") != "none" || s.VoiceClickAction("w") != "join" {
+	if s.VoiceClickAction("v") != "open" || s.VoiceClickAction("w") != "join" {
 		t.Fatal("toggle wrong")
 	}
 }

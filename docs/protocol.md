@@ -3,9 +3,9 @@
 This document specifies the Hermec signaling/chat protocol, version 2. It
 covers the mutual handshake, the server chain (section 9), channels, presence,
 text chat and its history (sections 4.9 and 4.9a), the server roster, voice
-signaling (section 4.12), screen share signaling (section 4.15), and host
+signaling (section 4.12), camera and screen media (section 4.15), and host
 failover: the host list, warm standby sessions and the host-to-host link
-(sections 4.16 to 4.18). Webcam is not specified yet.
+(sections 4.16 to 4.18).
 
 The reference implementation is `core/proto` (types and codec) and `server`
 (behavior). Where this document and the code disagree, that is a bug in one of
@@ -217,6 +217,7 @@ Direction: C is client to server, S is server to client.
 | `password` | string | no       | The plain password. Only v0.6 clients send it; refused from v0.8 (section 3.1a). |
 | `proof`    | base64 | no       | Password proof, if the server has a password (section 3.1a). |
 | `warm`     | bool   | no       | True for a standby pre-connection (section 4.17). |
+| `capabilities` | string[] | no | Optional protocol extensions the client supports. `media_lanes_v1` enables independent camera and screen lanes. |
 
 ### 4.2a `host_proof_req` (C), `chain` (S) and `host_proof` (S)
 
@@ -247,6 +248,7 @@ signature over the host-proof string of section 3.1.
 | `channels`    | ChannelInfo[] | All channels on the server.          |
 | `server_name` | string        | Optional. The host's configured `server_name`; omitted when the host set none. Untrusted: clients strip control and format characters and cap it at 64 runes before display. Omitted means "no name". |
 | `server_id`   | string        | The server ID (section 9.1) in its 52-character lowercase base32 form. Must equal the ID the client verified in the handshake. |
+| `capabilities` | string[]     | Optional capabilities accepted from `auth`. Omitted for a legacy session. |
 
 `channels` is an array of `ChannelInfo` objects:
 
@@ -417,8 +419,8 @@ WebRTC (negotiated as in section 4.13). The server acts as an SFU (selective for
 | `rtc_candidate` | C/S | `{"candidate": string}` one ICE candidate (JSON candidate init). |
 
 `VoiceMember`: `fingerprint` (string), `name` (string), `muted` (bool),
-`sharing` (bool, omitted when false; true while the member shares their
-screen, see section 4.15).
+`sharing` (bool, omitted when false; legacy alias for an active screen), and
+`media` (optional array of active `"camera"`/`"screen"` lanes; section 4.15a).
 
 Semantics:
 
@@ -625,6 +627,44 @@ Media:
   send a new rtc_offer", and the client recovers as in section 4.13.
 - Hermec does not send audio from the shared screen.
 
+### 4.15a Independent media lanes (`media_lanes_v1`)
+
+A client offers `media_lanes_v1` in `auth.capabilities`; a supporting server
+echoes it in `auth_ok.capabilities`. Only then may either side use these
+messages. Without it, screen sharing uses the section 4.15 messages and camera
+is unavailable. Before v1, mixed-version call media is not a supported release
+target; clients and hosts in a call are expected to run the same build.
+
+| Type | Dir | Payload |
+|------|-----|---------|
+| `media_start` | C | `{"kind":"camera"|"screen","gen"?:uint32}` declares one publication active; a refusal echoes `gen`. |
+| `media_stop` | C | `{"kind":"camera"|"screen"}` stops only that publication. |
+| `media_subscribe` | C | `{"kind":"screen","fingerprint":string,"gen"?:uint32}` selects one screen; an empty fingerprint clears it. |
+| `media_source` | S | `{"kind":string,"fingerprint":string,"slot":int,"seq":uint16,"gen"?:uint32}` identifies a slot's source and RTP boundary; an empty fingerprint detaches it. |
+
+Modern calls negotiate a stable layout in their first offer: outgoing tracks
+`camera-publish` and `screen-publish`, incoming camera tracks
+`camera-slot-0` through `camera-slot-9`, and incoming `screen-slot-0`. Empty
+lanes remain negotiated but carry no packets. Every active camera is assigned
+to every other modern participant, up to ten active cameras per voice room;
+each participant selects at most one screen. Camera and screen may publish at
+the same time and stop independently. Unknown kinds or lane messages without
+the negotiated capability get `bad_request`; an eleventh camera gets
+`media_full` with the rejected declaration's `gen`; selecting a member who is not publishing that lane gets
+`not_publishing`.
+
+`media_source` has the same boundary rules as `video_source`, additionally
+keyed by `(kind, slot)`. Camera slot assignments are automatic. Screen
+assignments echo the newest subscription `gen`, so stale boundaries cannot
+replace the current selection. The semantic lane priority is audio, then
+screen, then camera. This is metadata only in this version; no adaptive
+transport or bandwidth policy is claimed.
+
+The reference camera publication profile is VP8 at 640x360, 15 fps and about
+300 kbps. Screen quality remains the user's 720p/1080p choice. Both use the
+same WebRTC connection as Opus audio. On host takeover, active publications
+and the selected screen are adopted onto the promoted warm connection.
+
 ### 4.16 Host list and moving: `hosts`, `hb`, `move`, `reach`
 
 A server can have several hosts (section 9.3, `host_add`). Exactly one is
@@ -812,6 +852,8 @@ join the channel.
 | `bad_request` | Malformed message, unknown channel, unsupported message type, or chat text over 4096 bytes (`message too long`). |
 | `not_joined`  | The operation needs channel membership the client does not have (`leave`, `chat_send`, `history_before`, voice messages). |
 | `not_sharing` | `watch` named a member who is not sharing in the sender's voice channel. |
+| `not_publishing` | `media_subscribe` named a member who is not publishing that media lane in the sender's voice channel. |
+| `media_full`  | A camera start would exceed the ten-camera room limit. |
 | `voice_full`  | `voice_join` named a channel already at its participant cap (`max_voice`, default 25). |
 | `server_full` | Authentication was refused because the server is at its `max_clients` cap (default 256); the connection is closed after this message. |
 | `chain_conflict` | `chain_append` did not extend the chain head. |

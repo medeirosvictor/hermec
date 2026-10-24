@@ -18,8 +18,10 @@ import (
 // AdoptCall then moves a live call onto it with one offer/answer.
 
 const (
-	warmPingEvery  = 5 * time.Second
-	warmGatherWait = 5 * time.Second
+	warmPingEvery            = 5 * time.Second
+	warmGatherWait           = 5 * time.Second
+	adoptSubscribeRetryEvery = 25 * time.Millisecond
+	adoptSubscribeRetryFor   = 3 * time.Second
 )
 
 // adoptTeardownWait is how long AdoptCall waits for the dead call to stop
@@ -29,6 +31,10 @@ var adoptTeardownWait = 2 * time.Second
 // ErrStillWarm is returned by AdoptCall on a session that has not been
 // promoted by Takeover yet.
 var ErrStillWarm = errors.New("client: session is still warm; Takeover first")
+
+// ErrScreenResume reports that voice adoption succeeded but the previously
+// selected screen could not be restored on the promoted host.
+var ErrScreenResume = errors.New("selected screen did not resume after host failover")
 
 // warmPeer is the standby-facing PeerConnection of a warm session.
 type warmPeer struct {
@@ -221,16 +227,34 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 	if w := c.takeReadyWarmPeer(); w != nil {
 		pc = w.pc
 	}
+	watch := from.watchSnapshot()
+	c.adoptMu.Lock()
+	from.adoptMu.Lock()
 	from.mu.Lock()
 	old := from.call
-	from.call = nil
-	from.mu.Unlock()
 	if old == nil { // raced with a leave
+		from.mu.Unlock()
+		from.adoptMu.Unlock()
+		c.adoptMu.Unlock()
 		if pc != nil {
 			_ = pc.Close()
 		}
 		return ErrNotInVoice
 	}
+	publishers := old.detachPublishers()
+	for kind, publisher := range from.adoptDetached {
+		publishers[kind] = publisher
+	}
+	from.adoptDetached = nil
+	for _, publisher := range publishers {
+		publisher.bind(nil, nil, nil)
+	}
+	c.adoptPending = publishers
+	from.adoptRedirect = c
+	from.call = nil
+	from.mu.Unlock()
+	from.adoptMu.Unlock()
+	c.adoptMu.Unlock()
 	_ = from.send(proto.TypeVoiceLeave, proto.VoiceLeave{}) // fails on the dead connection
 	tctx, cancel := context.WithTimeout(ctx, adoptTeardownWait)
 	old.teardownCtx(tctx)
@@ -241,5 +265,86 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 		vid = old.vidWanted // the actor has exited, so its state is ours to read
 	default: // a stuck teardown must not cost the user the call: join anyway
 	}
-	return c.joinCall(ctx, old.channel, old.src, old.sink, old.muted.Load(), vid, pc)
+	if err := c.joinCall(ctx, old.channel, old.src, old.sink, old.muted.Load(), vid, pc); err != nil {
+		_ = c.finishAdoption(nil, true)
+		return err
+	}
+	if err := c.finishAdoption(c.getCall(), false); err != nil {
+		return err
+	}
+	if watch.fp != "" {
+		if err := c.restoreScreen(ctx, watch.fp); err != nil {
+			_ = c.watchScreen("", c.SupportsMediaLanes(), true)
+			c.emitNB(Event{Err: fmt.Errorf("%w: %v", ErrScreenResume, err)})
+		}
+	}
+	return nil
+}
+
+// detachPublishersForAdoption pauses publishers before an unexpectedly lost
+// call is torn down. Close stops any publishers that no promoted session takes.
+func (c *Client) detachPublishersForAdoption(cl *call) {
+	c.adoptMu.Lock()
+	defer c.adoptMu.Unlock()
+	for kind, publisher := range cl.detachPublishers() {
+		publisher.bind(nil, nil, nil)
+		if c.adoptDetached == nil {
+			c.adoptDetached = make(map[proto.MediaKind]*videoPublisher)
+		}
+		c.adoptDetached[kind] = publisher
+	}
+}
+
+// restoreScreen tolerates the brief ordering window in which this viewer has
+// adopted its call but the selected publisher has not redeclared its screen
+// on the promoted host yet. These internal refusals are not user-visible.
+func (c *Client) restoreScreen(ctx context.Context, fp string) error {
+	deadline := time.NewTimer(adoptSubscribeRetryFor)
+	defer deadline.Stop()
+	for {
+		err := c.watchScreen(fp, c.SupportsMediaLanes(), true)
+		var serverErr *ServerError
+		if err == nil || !errors.As(err, &serverErr) || serverErr.Code != proto.CodeNotPublishing {
+			return err
+		}
+		timer := time.NewTimer(adoptSubscribeRetryEvery)
+		select {
+		case <-timer.C:
+		case <-deadline.C:
+			timer.Stop()
+			return err
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		}
+	}
+}
+
+// finishAdoption installs the publishers that were not stopped during the
+// handoff. Holding adoptMu serializes installation with StopCamera/StopShare.
+func (c *Client) finishAdoption(cl *call, failed bool) error {
+	c.adoptMu.Lock()
+	defer c.adoptMu.Unlock()
+	publishers := c.adoptPending
+	c.adoptPending = nil
+	var firstErr error
+	for kind, publisher := range publishers {
+		if failed || cl == nil {
+			publisher.stop()
+			continue
+		}
+		c.bindPublisher(cl, publisher)
+		cl.smu.Lock()
+		cl.publishers[kind] = publisher
+		cl.smu.Unlock()
+		if err := c.sendPublisherStart(kind, publisher); err != nil {
+			if cl.dropPublisher(kind, publisher) {
+				publisher.stop()
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
 }

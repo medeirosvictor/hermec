@@ -197,6 +197,8 @@ func (g *game) clickBar(h state.Hit) {
 				g.openShareMenu(g.geom())
 			}
 		}
+	case state.HitBarCamera, state.HitVoiceCamera:
+		g.toggleCamera()
 	}
 }
 
@@ -332,9 +334,11 @@ func (g *game) stopShare() {
 // endCallMedia ends share and watch because the call is over (no messages: the
 // user or the connection ended it).
 func (g *game) endCallMedia() {
+	g.stopCamera()
 	g.stopShare()
 	g.watch = watchState{}
 	g.resetVideo()
+	g.clearMediaViews()
 }
 
 // stepShare runs every tick: it ends a share whose capture failed, and the

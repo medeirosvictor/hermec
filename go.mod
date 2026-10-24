@@ -10,6 +10,7 @@ require (
 	github.com/hajimehoshi/ebiten/v2 v2.10.4
 	github.com/pion/ice/v4 v4.4.7
 	github.com/pion/interceptor v0.1.49
+	github.com/pion/mediadevices v0.10.0
 	github.com/pion/rtcp v1.2.19
 	github.com/pion/rtp v1.10.5
 	github.com/pion/webrtc/v4 v4.2.23
@@ -21,6 +22,7 @@ require (
 )
 
 require (
+	github.com/blackjack/webcam v0.6.1 // indirect
 	github.com/ebitengine/gomobile v0.0.0-20260820040257-d11f821a26a6 // indirect
 	github.com/ebitengine/hideconsole v1.0.0 // indirect
 	github.com/ebitengine/purego v0.11.0 // indirect

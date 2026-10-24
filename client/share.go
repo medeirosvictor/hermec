@@ -29,7 +29,7 @@ type FrameSource interface {
 }
 
 // ErrNoFrame is returned by FrameSource.Next when there is no new picture.
-var ErrNoFrame = errors.New("client: no new frame")
+var ErrNoFrame = video.ErrNoFrame
 
 // VideoSink receives decoded frames of the sharer being watched. It is called
 // from an internal goroutine (one per watched stream, which survives a switch
@@ -148,16 +148,18 @@ type frameEncoder interface {
 	Close()
 }
 
-// shareLoop is the sending pipeline: a grab goroutine polls the source at fps
+// videoPublisher is the sending pipeline for one lane: a grab goroutine polls the source at fps
 // into a single "latest" slot, an encode goroutine takes the newest slot at
 // fps. Nothing is queued: if the encoder is busy the slot is overwritten and
 // the older frame counts as dropped. Three frame buffers circulate (being
 // grabbed, in the slot, being encoded).
-type shareLoop struct {
-	src  FrameSource
-	enc  frameEncoder
-	w, h int
-	fps  int
+type videoPublisher struct {
+	kind    proto.MediaKind
+	wireGen atomic.Uint32
+	src     FrameSource
+	enc     frameEncoder
+	w, h    int
+	fps     int
 	// write sends one encoded frame. pkt is only valid during the call
 	// (the encoder reuses it); WriteSample packetizes synchronously.
 	write func(pkt []byte, d time.Duration) error
@@ -176,35 +178,45 @@ type shareLoop struct {
 	dropped  atomic.Uint64
 
 	quit     chan struct{}
-	quitOnce sync.Once
+	stopOnce sync.Once
 	wg       sync.WaitGroup
 }
 
-func newShareLoop(src FrameSource, enc frameEncoder, w, h, fps int, write func([]byte, time.Duration) error) *shareLoop {
-	sl := &shareLoop{src: src, enc: enc, w: w, h: h, fps: fps, write: write, quit: make(chan struct{})}
-	sl.forceKey.Store(true)
-	return sl
+type shareLoop = videoPublisher
+
+func newShareLoop(src FrameSource, enc frameEncoder, w, h, fps int, write func([]byte, time.Duration) error) *videoPublisher {
+	return newVideoPublisher(proto.MediaScreen, src, enc, w, h, fps, write)
 }
 
-func (sl *shareLoop) start() {
+func (sl *videoPublisher) start() {
 	sl.wg.Add(2)
 	go sl.grabLoop()
 	go sl.encodeLoop()
 }
 
 // stop ends both goroutines, waits for them and releases the encoder.
-func (sl *shareLoop) stop() {
-	sl.quitOnce.Do(func() { close(sl.quit) })
-	sl.wg.Wait()
-	sl.enc.Close()
+func (sl *videoPublisher) stop() {
+	sl.stopOnce.Do(func() {
+		close(sl.quit)
+		sl.wg.Wait()
+		sl.enc.Close()
+	})
 }
 
 // requestKey makes the next encoded frame a keyframe.
-func (sl *shareLoop) requestKey() { sl.forceKey.Store(true) }
+func (sl *videoPublisher) requestKey() { sl.forceKey.Store(true) }
+
+// bind changes the call that owns this publisher. A nil write pauses output
+// while preserving capture and encoder state during host adoption.
+func (sl *videoPublisher) bind(write func([]byte, time.Duration) error, onFail, onEncodeErr func(error)) {
+	sl.mu.Lock()
+	sl.write, sl.onFail, sl.onEncodeErr = write, onFail, onEncodeErr
+	sl.mu.Unlock()
+}
 
 // onSenderRTCP handles RTCP read from the video sender: a PLI or FIR forces a
 // keyframe.
-func (sl *shareLoop) onSenderRTCP(pkts []rtcp.Packet) {
+func (sl *videoPublisher) onSenderRTCP(pkts []rtcp.Packet) {
 	for _, p := range pkts {
 		switch p.(type) {
 		case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
@@ -213,7 +225,7 @@ func (sl *shareLoop) onSenderRTCP(pkts []rtcp.Packet) {
 	}
 }
 
-func (sl *shareLoop) take() *video.Frame { // mu held
+func (sl *videoPublisher) take() *video.Frame { // mu held
 	if n := len(sl.free); n > 0 {
 		f := sl.free[n-1]
 		sl.free = sl.free[:n-1]
@@ -222,7 +234,7 @@ func (sl *shareLoop) take() *video.Frame { // mu held
 	return video.NewFrame(sl.w, sl.h)
 }
 
-func (sl *shareLoop) grabLoop() {
+func (sl *videoPublisher) grabLoop() {
 	defer sl.wg.Done()
 	t := time.NewTicker(time.Second / time.Duration(sl.fps))
 	defer t.Stop()
@@ -249,15 +261,18 @@ func (sl *shareLoop) grabLoop() {
 		}
 		sl.mu.Unlock()
 		if err != nil && !errors.Is(err, ErrNoFrame) {
-			if sl.onFail != nil {
-				sl.onFail(err)
+			sl.mu.Lock()
+			onFail := sl.onFail
+			sl.mu.Unlock()
+			if onFail != nil {
+				onFail(err)
 			}
 			return
 		}
 	}
 }
 
-func (sl *shareLoop) encodeLoop() {
+func (sl *videoPublisher) encodeLoop() {
 	defer sl.wg.Done()
 	t := time.NewTicker(time.Second / time.Duration(sl.fps))
 	defer t.Stop()
@@ -291,8 +306,11 @@ func (sl *shareLoop) encodeLoop() {
 			if key {
 				sl.forceKey.Store(true) // the request must survive a failed encode
 			}
-			if sl.onEncodeErr != nil {
-				sl.onEncodeErr(err)
+			sl.mu.Lock()
+			onEncodeErr := sl.onEncodeErr
+			sl.mu.Unlock()
+			if onEncodeErr != nil {
+				onEncodeErr(err)
 			}
 			continue
 		}
@@ -305,7 +323,12 @@ func (sl *shareLoop) encodeLoop() {
 			d = min(max(now.Sub(last), time.Millisecond), time.Second)
 		}
 		last = now
-		_ = sl.write(pkt, d)
+		sl.mu.Lock()
+		write := sl.write
+		sl.mu.Unlock()
+		if write != nil {
+			_ = write(pkt, d)
+		}
 	}
 }
 
@@ -329,37 +352,28 @@ func (c *Client) StartShare(src FrameSource, w, h, fps, kbps int) error {
 	if err != nil {
 		return err
 	}
-	sl := newShareLoop(src, enc, w, h, fps, func(pkt []byte, d time.Duration) error {
-		c.vstats.sentBytes.Add(uint64(len(pkt)))
-		c.vstats.sentFrames.Add(1)
-		return cl.vtrack.WriteSample(media.Sample{Data: pkt, Duration: d})
-	})
-	sl.onFail = func(err error) {
-		c.emitNB(Event{Err: fmt.Errorf("client: screen share ended: %w", err)})
-		go func() { _ = c.stopShare(cl, sl) }() // only this share, not a later one
-	}
-	sl.onEncodeErr = func(err error) {
-		if c.vstats.encodeErrors.Add(1) == 1 {
-			c.emitNB(Event{Err: fmt.Errorf("client: screen share encode: %w", err)})
-		}
-	}
+	sl := newVideoPublisher(proto.MediaScreen, src, enc, w, h, fps, nil)
+	c.bindPublisher(cl, sl)
 	cl.smu.Lock()
 	if cl.sclosed { // the call is being torn down: nobody would ever stop this loop
 		cl.smu.Unlock()
 		enc.Close()
 		return ErrNotInVoice
 	}
-	if cl.share != nil {
+	if cl.publishers[proto.MediaScreen] != nil {
 		cl.smu.Unlock()
 		enc.Close()
 		return ErrAlreadySharing
 	}
-	cl.share = sl
+	if cl.publishers == nil {
+		cl.publishers = make(map[proto.MediaKind]*videoPublisher)
+	}
+	cl.publishers[proto.MediaScreen] = sl
 	sl.start() // under smu: teardown's takeShare then always finds a started loop to stop
 	cl.smu.Unlock()
 
-	if err := c.send(proto.TypeShareStart, proto.ShareStart{}); err != nil {
-		if cl.dropShare(sl) {
+	if err := c.sendPublisherStart(proto.MediaScreen, sl); err != nil {
+		if cl.dropPublisher(proto.MediaScreen, sl) {
 			sl.stop()
 		}
 		return err
@@ -382,7 +396,7 @@ const msgShareStartUnsupported = "unsupported message type " + proto.TypeShareSt
 // ErrShareUnsupported. Read loop only; it never blocks on the share loops.
 func (c *Client) shareUnsupported() {
 	if cl := c.getCall(); cl != nil {
-		if sl := cl.takeShareIf(nil); sl != nil {
+		if sl := cl.takePublisherIf(proto.MediaScreen, nil); sl != nil {
 			go sl.stop()
 		}
 		cl.post(func() { cl.vidWanted = false })
@@ -395,12 +409,12 @@ func (c *Client) shareUnsupported() {
 // built audio-only, so voice survives a host that cannot carry video. Actor only.
 func (cl *call) dropVideo() {
 	cl.vidWanted = false
-	sl := cl.takeShareIf(nil)
+	sl := cl.takePublisherIf(proto.MediaScreen, nil)
 	if sl == nil {
 		return
 	}
 	go sl.stop()
-	_ = cl.c.send(proto.TypeShareStop, proto.ShareStop{})
+	_ = cl.c.sendPublisherStop(proto.MediaScreen)
 	cl.c.emitNB(Event{Err: fmt.Errorf("%w: video negotiation failed", ErrShareUnsupported)})
 }
 
@@ -416,27 +430,57 @@ func (c *Client) ShareKeyframe() {
 	}
 	cl.smu.Lock()
 	defer cl.smu.Unlock()
-	if cl.share != nil {
-		cl.share.requestKey()
+	if publisher := cl.publishers[proto.MediaScreen]; publisher != nil {
+		publisher.requestKey()
 	}
 }
 
 // StopShare stops sharing and tells the server. It is a no-op when not sharing.
 func (c *Client) StopShare() error {
-	cl := c.getCall()
-	if cl == nil {
-		return nil
-	}
-	return c.stopShare(cl, nil)
+	return c.stopOwnedPublisher(proto.MediaScreen)
 }
 
-// stopShare stops cl's share (only sl if non-nil) and tells the server.
-func (c *Client) stopShare(cl *call, only *shareLoop) error {
-	sl := cl.takeShareIf(only)
-	if sl == nil {
+func (c *Client) bindPublisher(cl *call, publisher *videoPublisher) {
+	label := "screen share"
+	if publisher.kind == proto.MediaCamera {
+		label = "camera"
+	}
+	publisher.bind(func(pkt []byte, d time.Duration) error {
+		c.vstats.sentBytes.Add(uint64(len(pkt)))
+		c.vstats.sentFrames.Add(1)
+		return cl.vtracks[publisher.kind].WriteSample(media.Sample{Data: pkt, Duration: d})
+	}, func(err error) {
+		c.emitNB(Event{Err: fmt.Errorf("client: %s ended: %w", label, err)})
+		go func() { _ = c.stopPublisher(cl, publisher.kind, publisher) }()
+	}, func(err error) {
+		if c.vstats.encodeErrors.Add(1) == 1 {
+			c.emitNB(Event{Err: fmt.Errorf("client: %s encode: %w", label, err)})
+		}
+	})
+}
+
+func (c *Client) stopPublisher(cl *call, kind proto.MediaKind, only *videoPublisher) error {
+	publisher := cl.takePublisherIf(kind, only)
+	if publisher == nil {
 		return nil
 	}
-	sl.stop()
+	publisher.stop()
+	return c.sendPublisherStop(kind)
+}
+
+func (c *Client) sendPublisherStart(kind proto.MediaKind, publisher *videoPublisher) error {
+	if c.SupportsMediaLanes() {
+		gen := c.mediaWire.Add(1)
+		publisher.wireGen.Store(gen)
+		return c.send(proto.TypeMediaStart, proto.MediaStart{Kind: kind, Gen: gen})
+	}
+	return c.send(proto.TypeShareStart, proto.ShareStart{})
+}
+
+func (c *Client) sendPublisherStop(kind proto.MediaKind) error {
+	if c.SupportsMediaLanes() {
+		return c.send(proto.TypeMediaStop, proto.MediaStop{Kind: kind})
+	}
 	return c.send(proto.TypeShareStop, proto.ShareStop{})
 }
 
@@ -451,13 +495,37 @@ func (c *Client) stopShare(cl *call, only *shareLoop) error {
 // stop it: after a share ends it must be called again. Concurrent callers are
 // serialized.
 func (c *Client) Watch(fp string) error {
+	if c.SupportsMediaLanes() {
+		err := c.SubscribeScreen(fp)
+		var serverErr *ServerError
+		if errors.As(err, &serverErr) && serverErr.Code == proto.CodeNotPublishing {
+			return &ServerError{Code: proto.CodeNotSharing, Message: serverErr.Message, Gen: serverErr.Gen}
+		}
+		return err
+	}
+	return c.watchScreen(fp, false, false)
+}
+
+// SubscribeScreen selects the modern screen lane. On a legacy server it
+// preserves Watch's compatibility behavior.
+func (c *Client) SubscribeScreen(fp string) error {
+	return c.watchScreen(fp, c.SupportsMediaLanes(), false)
+}
+
+func (c *Client) watchScreen(fp string, modern, quiet bool) error {
 	if c.getCall() == nil {
 		return ErrNotInVoice
 	}
 	c.watchCallMu.Lock()
 	defer c.watchCallMu.Unlock()
-	wire, wait := c.beginWatch(fp)
-	if err := c.send(proto.TypeWatch, proto.Watch{Fingerprint: fp, Gen: wire}); err != nil {
+	wire, wait := c.beginWatchMode(fp, quiet)
+	var err error
+	if modern {
+		err = c.send(proto.TypeMediaSubscribe, proto.MediaSubscribe{Kind: proto.MediaScreen, Fingerprint: fp, Gen: wire})
+	} else {
+		err = c.send(proto.TypeWatch, proto.Watch{Fingerprint: fp, Gen: wire})
+	}
+	if err != nil {
 		c.watchFailed(wire, err) // never sent: nothing changed server side
 		c.endWatch(wait)
 		return err
@@ -491,6 +559,10 @@ var ErrWatchTimeout = errors.New("client: no answer to watch")
 // and, when an answer is to be awaited, the channel it will arrive on. Calls
 // are serialized by Watch, so at most one watch is ever pending.
 func (c *Client) beginWatch(fp string) (wire uint32, wait chan error) {
+	return c.beginWatchMode(fp, false)
+}
+
+func (c *Client) beginWatchMode(fp string, quiet bool) (wire uint32, wait chan error) {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
 	// Re-watching the sharer we already have a boundary for changes nothing;
@@ -502,6 +574,11 @@ func (c *Client) beginWatch(fp string) (wire uint32, wait chan error) {
 		c.watchGen++
 		c.wireCtr++ // gens are never reused, even across a refused watch
 		c.watchWire = c.wireCtr
+		if quiet {
+			c.watchQuiet = c.watchWire
+		} else {
+			c.watchQuiet = 0
+		}
 		c.watchAt = time.Now()
 		c.srcHave = false
 		if fp != "" {
@@ -537,13 +614,15 @@ func (c *Client) watchAnsweredLocked(err error) {
 // earlier request (after a timeout) or an error without a gen is ignored.
 // watchWire goes back to the gen the server knows (the previous source's),
 // while wireCtr keeps counting, so gens stay unique.
-func (c *Client) watchFailed(gen uint32, err error) {
+func (c *Client) watchFailed(gen uint32, err error) bool {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
 	p := c.prevWatch
 	if p == nil || c.watchWait == nil || gen == 0 || gen != c.watchWire {
-		return
+		return false
 	}
+	quiet := c.watchQuiet == gen
+	c.watchQuiet = 0
 	c.prevWatch = nil
 	c.watchFP, c.watchWire = p.fp, p.wire
 	c.srcHave, c.srcSeq = p.have, p.seq
@@ -551,25 +630,31 @@ func (c *Client) watchFailed(gen uint32, err error) {
 	c.srcID++
 	c.watchAt = time.Now()
 	c.watchAnsweredLocked(err)
+	return quiet
 }
 
 // onVideoSource records the server's source boundary. Messages for a sharer
 // we are not (or no longer) watching are stale and ignored; "" means the
 // server detached our video.
-func (c *Client) onVideoSource(m proto.VideoSource) {
+func (c *Client) onVideoSource(m proto.VideoSource) bool {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
+	if m.Gen != 0 && m.Gen != c.watchWire {
+		return false
+	}
 	if m.Fingerprint == "" {
 		c.srcHave = false
-		return
+		return true
 	}
-	if m.Fingerprint != c.watchFP || (m.Gen != 0 && m.Gen != c.watchWire) {
-		return // not the sharer / not the watch request we are waiting on
+	if m.Fingerprint != c.watchFP {
+		return false // not the sharer / not the watch request we are waiting on
 	}
 	c.srcHave, c.srcSeq = true, m.Seq
+	c.watchQuiet = 0
 	c.srcID++
 	c.prevWatch = nil
 	c.watchAnsweredLocked(nil)
+	return true
 }
 
 // watchState is a consistent snapshot of the watch target and source boundary.
@@ -669,45 +754,61 @@ func (c *Client) VideoStats() (sendKbps, recvKbps, fps float64) {
 
 // ---- call side (actor and goroutines) ----
 
-// closeShare is the teardown path: it takes the current share and forbids
-// any later StartShare on this call.
-func (cl *call) closeShare() *shareLoop {
+// closePublishers is the teardown path: it detaches every publisher and
+// forbids any later publisher start on this call.
+func (cl *call) closePublishers() []*videoPublisher {
 	cl.smu.Lock()
 	defer cl.smu.Unlock()
 	cl.sclosed = true
-	sl := cl.share
-	cl.share = nil
-	return sl
+	all := make([]*videoPublisher, 0, len(cl.publishers))
+	for kind, publisher := range cl.publishers {
+		all = append(all, publisher)
+		delete(cl.publishers, kind)
+	}
+	return all
 }
 
-// takeShareIf detaches the current share if it is only (or any, when only is nil).
-func (cl *call) takeShareIf(only *shareLoop) *shareLoop {
+// detachPublishers transfers ownership without stopping the capture loops.
+func (cl *call) detachPublishers() map[proto.MediaKind]*videoPublisher {
 	cl.smu.Lock()
 	defer cl.smu.Unlock()
-	sl := cl.share
-	if sl == nil || (only != nil && sl != only) {
+	cl.sclosed = true
+	all := make(map[proto.MediaKind]*videoPublisher, len(cl.publishers))
+	for kind, publisher := range cl.publishers {
+		all[kind] = publisher
+		delete(cl.publishers, kind)
+	}
+	return all
+}
+
+func (cl *call) takePublisherIf(kind proto.MediaKind, only *videoPublisher) *videoPublisher {
+	cl.smu.Lock()
+	defer cl.smu.Unlock()
+	publisher := cl.publishers[kind]
+	if publisher == nil || (only != nil && publisher != only) {
 		return nil
 	}
-	cl.share = nil
-	return sl
+	delete(cl.publishers, kind)
+	return publisher
 }
 
-// dropShare detaches sl if it is still the current share.
-func (cl *call) dropShare(sl *shareLoop) bool {
-	return cl.takeShareIf(sl) != nil
+func (cl *call) dropPublisher(kind proto.MediaKind, publisher *videoPublisher) bool {
+	return cl.takePublisherIf(kind, publisher) != nil
 }
 
-func (cl *call) curShare() *shareLoop {
+func (cl *call) curPublisher(kind proto.MediaKind) *videoPublisher {
 	cl.smu.Lock()
 	defer cl.smu.Unlock()
-	return cl.share
+	return cl.publishers[kind]
 }
 
 // keyAfterNegotiation forces a keyframe once an answer has been applied: the
 // first keyframe may have been written before the sender was bound.
 func (cl *call) keyAfterNegotiation() {
-	if sl := cl.curShare(); sl != nil {
-		sl.requestKey()
+	for _, kind := range []proto.MediaKind{proto.MediaCamera, proto.MediaScreen} {
+		if publisher := cl.curPublisher(kind); publisher != nil {
+			publisher.requestKey()
+		}
 	}
 }
 
@@ -715,7 +816,7 @@ func (cl *call) keyAfterNegotiation() {
 // it had to add one, renegotiates. Actor only.
 func (cl *call) ensureVideo() {
 	cl.vidWanted = true
-	if cl.pc == nil || cl.vsnd != nil {
+	if cl.pc == nil || cl.vsenders[proto.MediaScreen] != nil {
 		return // no PC yet: newPC adds the sender to the offer it is about to make
 	}
 	if err := cl.addVideoSender(cl.pc); err != nil {
@@ -736,16 +837,24 @@ func (cl *call) offerSoon() {
 }
 
 func (cl *call) addVideoSender(pc *webrtc.PeerConnection) error {
-	tr, err := pc.AddTransceiverFromTrack(cl.vtrack, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
+	tr, err := pc.AddTransceiverFromTrack(cl.vtracks[proto.MediaScreen], webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
 	if err != nil {
 		return err
 	}
 	snd := tr.Sender()
-	cl.vsnd = snd
+	if cl.vsenders == nil {
+		cl.vsenders = make(map[proto.MediaKind]*webrtc.RTPSender)
+	}
+	cl.vsenders[proto.MediaScreen] = snd
+	cl.startVideoRTCP(snd, proto.MediaScreen)
+	return nil
+}
+
+func (cl *call) startVideoRTCP(snd *webrtc.RTPSender, kind proto.MediaKind) {
 	cl.tmu.Lock()
 	if cl.tclosed {
 		cl.tmu.Unlock()
-		return nil
+		return
 	}
 	cl.wg.Add(1)
 	cl.tmu.Unlock()
@@ -756,12 +865,11 @@ func (cl *call) addVideoSender(pc *webrtc.PeerConnection) error {
 			if err != nil {
 				return
 			}
-			if sl := cl.curShare(); sl != nil {
-				sl.onSenderRTCP(pkts)
+			if publisher := cl.curPublisher(kind); publisher != nil {
+				publisher.onSenderRTCP(pkts)
 			}
 		}
 	}()
-	return nil
 }
 
 // pliLimiter spaces a viewer's keyframe requests at least pliInterval apart

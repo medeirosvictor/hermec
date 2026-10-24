@@ -13,6 +13,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"github.com/medeirosvictor/hermec/client"
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/video"
 )
@@ -103,12 +104,17 @@ func (v *videoView) reset() {
 // videoActive reports that the watch view replaces the chat on screen.
 func (g *game) videoActive() bool {
 	return g.watch.fp != "" && g.callKey != "" && g.callKey == g.curKey &&
-		g.cur().st.Phase == state.PhaseMain && !g.settingsOpen
+		g.cur().st.Phase == state.PhaseMain && g.cur().st.CallViewOpen && !g.settingsOpen
 }
 
 // videoPane is the flat rect the picture is letterboxed into: the chat area
 // below its header row.
 func (g *game) videoPane(gm geometry) rectF {
+	if g.callViewActive() {
+		if presentation := g.callLayout(gm).presentation; presentation != nil {
+			return *presentation
+		}
+	}
 	return rectF{gm.chatR.x0 + 2, gm.paneY0, gm.chatR.x1 - 2, gm.chatR.y1 - 2}
 }
 
@@ -120,7 +126,13 @@ func (g *game) watchFn(c *client.Client, fp string) {
 			// error text reaches the status line as an Err event; here only
 			// the view has to follow a refusal.
 			var se *client.ServerError
-			if err := c.Watch(fp); errors.As(err, &se) && fp != "" {
+			var err error
+			if c.SupportsMediaLanes() {
+				err = c.SubscribeScreen(fp)
+			} else {
+				err = c.Watch(fp)
+			}
+			if errors.As(err, &se) && fp != "" {
 				g.watchRefused.Store(&fp)
 			}
 		}
@@ -160,16 +172,36 @@ func (g *game) clickLive(h state.Hit) {
 		s.st.Status = "join this voice channel to watch"
 		return
 	}
-	name, ok := s.st.SharerIn(s.st.InCall, h.Key)
+	_, ok := s.st.SharerIn(s.st.InCall, h.Key)
 	if !ok {
 		s.st.Status = "that person is not sharing in your channel"
 		return
 	}
+	g.selectScreen(h.Key)
+}
+
+// selectScreen changes only the selected presentation. Camera views remain
+// populated while the screen subscription switches or closes.
+func (g *game) selectScreen(fp string) {
+	if fp == "" {
+		g.stopWatching()
+		return
+	}
+	s := g.callSess()
+	if s == nil || s.c == nil {
+		return
+	}
+	name, _ := s.st.SharerIn(s.st.InCall, fp)
 	g.endSelfPreview()
-	g.resetVideo()
-	g.watchRefused.Store(nil) // a refusal of an earlier target is moot now
-	g.watch = watchState{fp: h.Key, name: name}
-	g.watchFn(s.c, h.Key)
+	if g.watch.fp != "" && !g.watch.self && g.watch.fp != fp && s.c.SupportsMediaLanes() {
+		g.retireMediaView(mediaViewKey{Kind: proto.MediaScreen, Fingerprint: g.watch.fp})
+	}
+	if !s.c.SupportsMediaLanes() {
+		g.resetVideo()
+	}
+	g.watchRefused.Store(nil)
+	g.watch = watchState{fp: fp, name: name}
+	g.watchFn(s.c, fp)
 }
 
 // clickSelf opens the preview of our own outgoing stream. It is client-side
@@ -202,12 +234,16 @@ func (g *game) stopWatching() {
 		return
 	}
 	self := g.watch.self
+	fp := g.watch.fp
 	g.watch = watchState{}
 	g.resetVideo()
 	if self {
 		return
 	}
 	if s := g.callSess(); s != nil && s.c != nil {
+		if s.c.SupportsMediaLanes() {
+			g.retireMediaView(mediaViewKey{Kind: proto.MediaScreen, Fingerprint: fp})
+		}
 		g.watchFn(s.c, "")
 	}
 }
@@ -449,14 +485,10 @@ func (g *game) stepVideo() {
 	if f == nil || fp != g.watch.fp || g.watch.fp == "" || f.W <= 0 || f.H <= 0 {
 		return
 	}
-	if g.vid.rgba == nil || g.vid.rgba.Bounds().Dx() != f.W || g.vid.rgba.Bounds().Dy() != f.H {
-		g.vid.rgba = image.NewRGBA(image.Rect(0, 0, f.W, f.H))
-	}
-	f.RGBA(g.vid.rgba)
+	stageMediaFrame(&g.vid, f)
 	if g.watch.self && fp == g.fp {
 		g.vsink.recycle(f) // never a remote frame: its decoder may still own it
 	}
-	g.vid.w, g.vid.h, g.vid.pending = f.W, f.H, true
 }
 
 // updateVideo handles the clicks of the watch view. A flat video is not bent by
@@ -465,6 +497,7 @@ func (g *game) updateVideo(inputOK bool) {
 	if p := g.watchRefused.Swap(nil); p != nil && g.watch.fp == *p {
 		g.stopWatching() // refused: back to the chat; the client keeps no watch
 	}
+	g.stepMediaFrames()
 	g.stepVideo()
 	if !inputOK || !g.videoActive() {
 		return
@@ -524,23 +557,24 @@ func (g *game) drawVideo(screen *ebiten.Image, off image.Point) {
 	p := g.videoPane(g.geom())
 	ox, oy := float64(off.X), float64(off.Y)
 	vector.FillRect(screen, float32(p.x0+ox), float32(p.y0+oy), float32(p.x1-p.x0), float32(p.y1-p.y0), color.RGBA{0, 0, 0, 255}, false)
-	if g.vid.rgba != nil {
-		if g.vid.pending {
-			if g.vid.img == nil || g.vid.img.Bounds().Dx() != g.vid.w || g.vid.img.Bounds().Dy() != g.vid.h {
-				if g.vid.img != nil {
-					g.vid.img.Deallocate()
+	view := g.presentationView()
+	if view != nil && view.rgba != nil {
+		if view.pending {
+			if view.img == nil || view.img.Bounds().Dx() != view.w || view.img.Bounds().Dy() != view.h {
+				if view.img != nil {
+					view.img.Deallocate()
 				}
-				g.vid.img = ebiten.NewImage(g.vid.w, g.vid.h)
+				view.img = ebiten.NewImage(view.w, view.h)
 			}
-			g.vid.img.WritePixels(g.vid.rgba.Pix)
-			g.vid.pending = false
+			view.img.WritePixels(view.rgba.Pix)
+			view.pending = false
 		}
-		if g.vid.img != nil {
-			x, y, w, h := state.Letterbox(g.vid.w, g.vid.h, p.x0, p.y0, p.x1, p.y1)
+		if view.img != nil {
+			x, y, w, h := state.Letterbox(view.w, view.h, p.x0, p.y0, p.x1, p.y1)
 			op := &ebiten.DrawImageOptions{Filter: ebiten.FilterLinear}
-			op.GeoM.Scale(w/float64(g.vid.w), h/float64(g.vid.h))
+			op.GeoM.Scale(w/float64(view.w), h/float64(view.h))
 			op.GeoM.Translate(x+ox, y+oy)
-			screen.DrawImage(g.vid.img, op)
+			screen.DrawImage(view.img, op)
 		}
 	} else {
 		g.drawTextOff(screen, "waiting for video...", p.x0+pad+ox, p.y0+pad+oy)
@@ -553,6 +587,15 @@ func (g *game) drawVideo(screen *ebiten.Image, off image.Point) {
 		g.drawMenu(screen)
 		g.menu = m
 	}
+}
+
+func (g *game) presentationView() *videoView {
+	if !g.watch.self {
+		if s := g.callSess(); s != nil && s.c != nil && s.c.SupportsMediaLanes() {
+			return g.mediaViews[mediaViewKey{Kind: proto.MediaScreen, Fingerprint: g.watch.fp}]
+		}
+	}
+	return &g.vid
 }
 
 func (g *game) drawTextOff(dst *ebiten.Image, s string, x, y float64) {

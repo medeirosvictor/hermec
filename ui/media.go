@@ -75,3 +75,12 @@ func (m *mediaWorker) idle() bool {
 	defer m.mu.Unlock()
 	return m.pending == 0
 }
+
+// drain waits for all media work queued before it. It is used only during
+// application shutdown, after the game loop has stopped.
+func (m *mediaWorker) drain() {
+	done := make(chan struct{})
+	m.do(func() { close(done) })
+	<-done
+	m.pump()
+}

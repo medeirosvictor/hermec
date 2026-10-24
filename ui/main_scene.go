@@ -163,6 +163,7 @@ func (g *game) addMainHits(gm geometry) {
 	g.hits.Add(state.Hit{X0: gm.toggleR.x0, Y0: gm.toggleR.y0, X1: gm.toggleR.x1, Y1: gm.toggleR.y1, Kind: state.HitMembersToggle})
 	g.addMemberHits(gm)
 	g.addVoicePanelHits(gm)
+	g.addCallViewHits(gm)
 	g.addVideoHit(gm)
 	g.addBarHits(gm)
 	g.addSignalHits(gm) // last: the open panel wins over anything under it
@@ -298,6 +299,18 @@ func enterPressed() bool {
 func (g *game) updateMain() {
 	gm := g.geom()
 	s := g.cur() // fixed for this tick: nothing below changes the view
+	if g.callViewActive() {
+		if !g.modal && inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+			if hit, ok := g.hitAt(); ok {
+				g.handleCallHit(hit)
+			}
+		}
+		if !g.modal && g.escPressed() {
+			g.escSpent = true
+			s.st.CloseCallView()
+		}
+		return
+	}
 	ctrl := ebiten.IsKeyPressed(ebiten.KeyControlLeft) || ebiten.IsKeyPressed(ebiten.KeyControlRight)
 	shift := ebiten.IsKeyPressed(ebiten.KeyShiftLeft) || ebiten.IsKeyPressed(ebiten.KeyShiftRight)
 
@@ -478,7 +491,9 @@ func (g *game) drawMain(screen *ebiten.Image) {
 	g.drawChannels(screen, gm)
 	g.drawVoicePanel(screen, gm)
 	g.drawCallBar(screen, gm)
-	if g.videoActive() {
+	if g.callViewActive() {
+		g.drawCallView(screen, gm)
+	} else if g.videoActive() {
 		title := g.videoHeader()
 		dst := clip(screen, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1)
 		g.drawText(dst, state.Ellipsize(title, gm.cols), gm.rightX, gm.headY, th.Bright)

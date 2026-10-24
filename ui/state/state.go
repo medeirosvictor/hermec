@@ -48,6 +48,9 @@ type State struct {
 	// InCall is the voice channel this client is in, maintained from its own
 	// actions (SetInCall), never from events.
 	InCall string
+	// CallViewOpen shows the active call in the main pane without changing
+	// voice membership.
+	CallViewOpen bool
 	// HostedBy is the name of the host serving this session, from the latest
 	// hosts frame; "" until one arrives.
 	HostedBy string
@@ -88,6 +91,7 @@ func (s *State) SetConnected(channels []proto.ChannelInfo, fingerprint string) {
 	s.VoiceChannels = nil
 	s.Voice = map[string][]proto.VoiceMember{}
 	s.InCall = ""
+	s.CallViewOpen = false
 	s.HostedBy = "" // the new connection's hosts frame names it
 	s.Roster, s.RosterTotal, s.HasRoster = nil, 0, false
 	s.Loading = map[string]bool{} // a request in flight is lost on reconnect
@@ -119,6 +123,7 @@ func (s *State) Apply(ev client.Event, open bool) {
 		s.Phase = PhaseDisconnected
 		s.Status = "disconnected"
 		s.InCall = ""
+		s.CallViewOpen = false
 		return
 	}
 	switch {
@@ -156,8 +161,12 @@ func (s *State) Apply(ev client.Event, open bool) {
 	}
 }
 
-// SetInCall records the voice channel this client is in ("" = none).
-func (s *State) SetInCall(ch string) { s.InCall = ch }
+// SetInCall records the voice channel this client is in ("" = none). A
+// successful join opens the call view; leaving closes it.
+func (s *State) SetInCall(ch string) {
+	s.InCall = ch
+	s.CallViewOpen = ch != ""
+}
 
 // SetViewed records whether this server is on screen. Becoming viewed reads
 // the active channel.

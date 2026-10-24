@@ -20,7 +20,7 @@ no infrastructure. How the app works is in [README.md](README.md) and
   (VP8, pure Go). malgo (miniaudio) is the only cgo dependency.
 - Small codebase, one file per platform to download, idle server near zero cost.
 
-## Done (released through v0.5.1)
+## Done (released through v0.5.1, plus current main/feature work)
 
 - Chat server and headless client, Ed25519 auth, roles, channels, presence.
 - Desktop GUI: CRT themes, fonts, settings, title bar, server rail, several
@@ -34,16 +34,17 @@ no infrastructure. How the app works is in [README.md](README.md) and
 - Screen share (Windows to everyone), one media UDP port, session log files.
 - Call and stream controls: fullscreen exit, self-preview, change screen,
   "voice connected" panel.
+- Signed server identity/config chain, retained chat history, host links, warm
+  standby and in-call failover.
+- Independent audio, camera and screen lanes; Windows webcam capture; a
+  multi-participant call view; up to ten simultaneous camera publications and
+  one selected screen per viewer. Camera is fixed at 640x360/15 fps/300 kbps.
 
 ## Next
 
-1. **Always-on** (now): server identity keys and a signed member and config
-   chain, chat history kept by the server, a host link plus warm standby and
-   failover so the server survives its host going offline.
-2. **Webcam**: same pipeline as screen share, camera source, call bar toggle.
-3. **Friends adjustments**: per-person volume and mic gain, live names, audio
+1. **Friends adjustments**: per-person volume and mic gain, live names, audio
    device switching mid-call, bandwidth metrics, ping fixes.
-4. **Icon editor** (B.3): in-app pixel-art editor for a server icon.
+2. **Icon editor** (B.3): in-app pixel-art editor for a server icon.
 
 ## Later
 
@@ -52,6 +53,8 @@ no infrastructure. How the app works is in [README.md](README.md) and
 - Noise suppression and echo cancellation (no cgo if possible).
 - Moderation: kick and ban by fingerprint.
 - Screen share from macOS and Linux, window capture, shared-screen audio.
+- Camera capture from macOS and Linux; adaptive enforcement of the recorded
+  audio, screen, camera priority order.
 - Direct peer-to-peer media opt-in; mobile and browser clients over the same
   WebRTC protocol.
 - Headscale as an optional coordination server; encrypted synced chat history.
