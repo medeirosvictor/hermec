@@ -139,6 +139,9 @@ func TestE2EMediaLanesSurviveTakeover(t *testing.T) {
 	if err := aliceClient.StartShare(&synthSource{}, shareW, shareH, shareFPS, shareKbps); err != nil {
 		t.Fatalf("screen before takeover: %v", err)
 	}
+	eventually(t, 10*time.Second, "camera and screen publications before takeover", func() bool {
+		return viewer.publishing(alice.fp, proto.MediaCamera, proto.MediaScreen)
+	})
 	if err := viewerClient.SubscribeScreen(alice.fp); err != nil {
 		t.Fatalf("select screen before takeover: %v", err)
 	}

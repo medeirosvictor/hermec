@@ -176,7 +176,13 @@ func TestMediaStateIsIdempotentAndScopedToVoiceRoom(t *testing.T) {
 	}
 
 	sendEnv(t, b, proto.TypeVoiceJoin, proto.VoiceJoin{Channel: "lounge"})
+	readMediaVoiceUntil(t, b, func(v proto.VoiceState) bool {
+		return len(v.Members) == 2 && mediaOf(v, fpOf(aid), proto.MediaScreen)
+	})
 	sendEnv(t, a, proto.TypeMediaStop, proto.MediaStop{Kind: proto.MediaScreen})
+	readMediaVoiceUntil(t, b, func(v proto.VoiceState) bool {
+		return len(v.Members) == 2 && !mediaOf(v, fpOf(aid), proto.MediaScreen)
+	})
 	sendEnv(t, b, proto.TypeMediaSubscribe, proto.MediaSubscribe{Kind: proto.MediaScreen, Fingerprint: fpOf(aid), Gen: 8})
 	if em := readMediaError(t, b); em.Code != proto.CodeNotPublishing || em.Gen != 8 {
 		t.Fatalf("inactive subscribe error = %+v", em)

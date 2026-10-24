@@ -70,6 +70,7 @@ jobs:
             msys-dir: ucrt64
             msys-packages: mingw-w64-ucrt-x86_64-gcc
             cc: gcc
+            cxx: g++
             objdump: objdump
           - os: windows-11-arm
             goos: windows
@@ -83,6 +84,7 @@ jobs:
               mingw-w64-clang-aarch64-lld
               mingw-w64-clang-aarch64-llvm
             cc: clang
+            cxx: clang++
             objdump: llvm-objdump
           - os: ubuntu-22.04
             goos: linux
@@ -90,12 +92,14 @@ jobs:
             asset: hermec-linux-amd64.tar.gz
             bin: hermec
             cc: gcc
+            cxx: g++
           - os: ubuntu-22.04-arm
             goos: linux
             goarch: arm64
             asset: hermec-linux-arm64.tar.gz
             bin: hermec
             cc: gcc
+            cxx: g++
     steps:
       - uses: actions/checkout@v4
 
@@ -148,6 +152,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
           BIN: ${{ matrix.bin }}
         run: |
           ldflags="-s -w -X github.com/medeirosvictor/hermec/version.Version=$TAG"
