@@ -36,3 +36,21 @@ func TestChatWriteFailureShowsGenericBannerAndLogsDetails(t *testing.T) {
 		t.Fatalf("log contains private message text: %q", got)
 	}
 }
+
+func TestChatWriteFailureNoticeSurvivesReconnect(t *testing.T) {
+	g := newTestGame(t)
+	s := newSession("server-key", "ws://127.0.0.1:17697/", "me")
+	g.sess = map[string]*session{s.key: s}
+
+	id := s.queueChat(nil, "general", "not delivered")
+	g.sendCh <- sendResult{key: s.key, chatID: id, err: errors.New("connection lost")}
+	g.pumpSessions()
+
+	// Reconnecting resets the status line. The failed-send notice must be
+	// restored so a recovered connection cannot make the message vanish silently.
+	s.st.SetConnected(nil, "me")
+	s.restoreSendNotice()
+	if s.st.Status != chatSendFailureNotice {
+		t.Fatalf("status after reconnect = %q, want %q", s.st.Status, chatSendFailureNotice)
+	}
+}

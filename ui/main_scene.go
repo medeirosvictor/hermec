@@ -224,12 +224,12 @@ func (g *game) sendChat() {
 		return
 	}
 	if s.c == nil || len(s.st.Channels) == 0 {
-		g.reportChatFailure(s, outgoingChat{}, "connection unavailable", false)
+		g.reportChatFailure(s, outgoingChat{}, "connection unavailable")
 		return
 	}
 	ch := s.st.Channels[s.st.Active]
 	if s.switching {
-		g.reportChatFailure(s, outgoingChat{channel: ch}, "host transition in progress", true)
+		g.reportChatFailure(s, outgoingChat{channel: ch}, "host transition in progress")
 		return
 	}
 	txt := s.st.Input.Submit()

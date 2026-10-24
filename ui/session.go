@@ -134,17 +134,15 @@ func (s *session) interruptChats(c *client.Client) []outgoingChat {
 	return interrupted
 }
 
-func (g *game) reportChatFailure(s *session, p outgoingChat, reason string, persist bool) {
+func (g *game) reportChatFailure(s *session, p outgoingChat, reason string) {
 	s.st.Status = chatSendFailureNotice
-	if persist {
-		s.sendNotice = chatSendFailureNotice
-	}
+	s.sendNotice = chatSendFailureNotice
 	g.logf("chat send failed: server=%q channel=%q send_id=%d reason=%s", s.url, p.channel, p.id, reason)
 }
 
 func (g *game) interruptChats(s *session, c *client.Client, reason string) {
 	for _, p := range s.interruptChats(c) {
-		g.reportChatFailure(s, p, reason, true)
+		g.reportChatFailure(s, p, reason)
 	}
 }
 
@@ -386,7 +384,7 @@ func (g *game) pumpSessions() {
 					if !ok {
 						continue // failover already reported this interrupted send
 					}
-					g.reportChatFailure(s, p, r.err.Error(), false)
+					g.reportChatFailure(s, p, r.err.Error())
 					continue
 				}
 				if r.older != "" {
