@@ -25,7 +25,7 @@ func VoiceJoinNotice(err error) string {
 	if errors.As(err, &se) && se.Code == proto.CodeVoiceFull {
 		return VoiceFullNotice
 	}
-	return fmt.Sprintf("voice join failed: %v", err)
+	return "voice join failed; check audio devices and try again"
 }
 
 // RowKind classifies one row of the channel pane.

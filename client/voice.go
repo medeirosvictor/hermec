@@ -242,14 +242,17 @@ func (c *Client) joinCall(ctx context.Context, channel string, src AudioSource, 
 		muteCh: make(chan struct{}, 1), vidWanted: vid, warmPC: warm,
 	}
 	cl.muted.Store(muted)
+	c.voiceOpMu.Lock()
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
+		c.voiceOpMu.Unlock()
 		closeWarm()
 		return ErrClosed
 	}
 	if c.call != nil {
 		c.mu.Unlock()
+		c.voiceOpMu.Unlock()
 		closeWarm()
 		return ErrInVoice
 	}
@@ -258,15 +261,18 @@ func (c *Client) joinCall(ctx context.Context, channel string, src AudioSource, 
 	go cl.run()
 
 	if err := c.send(proto.TypeVoiceJoin, proto.VoiceJoin{Channel: channel}); err != nil {
+		c.voiceOpMu.Unlock()
 		c.abortCall(cl, false)
 		return err
 	}
 	if muted { // the server's copy of the mute flag starts false
 		if err := c.send(proto.TypeVoiceMute, proto.VoiceMute{Muted: true}); err != nil {
+			c.voiceOpMu.Unlock()
 			c.abortCall(cl, false)
 			return err
 		}
 	}
+	c.voiceOpMu.Unlock()
 	select {
 	case <-cl.ready:
 		return nil
@@ -284,51 +290,77 @@ func (c *Client) joinCall(ctx context.Context, channel string, src AudioSource, 
 
 // abortCall tears a call down; if leave, it also tells the server.
 func (c *Client) abortCall(cl *call, leave bool) {
+	c.voiceOpMu.Lock()
 	if leave {
 		_ = c.send(proto.TypeVoiceLeave, proto.VoiceLeave{})
 	}
+	c.voiceOpMu.Unlock()
 	cl.teardown()
+	c.voiceOpMu.Lock()
 	c.mu.Lock()
 	if c.call == cl {
 		c.call = nil
 	}
 	c.mu.Unlock()
+	c.voiceOpMu.Unlock()
 }
 
 // LeaveVoice leaves the active call and releases all media resources. It is
 // a no-op outside a call.
 func (c *Client) LeaveVoice(ctx context.Context) error {
+	c.voiceOpMu.Lock()
 	cl := c.getCall()
 	if cl == nil {
+		c.voiceOpMu.Unlock()
 		return nil
 	}
 	err := c.send(proto.TypeVoiceLeave, proto.VoiceLeave{})
+	c.voiceOpMu.Unlock()
 	cl.teardownCtx(ctx)
+	c.voiceOpMu.Lock()
 	c.mu.Lock()
 	if c.call == cl {
 		c.call = nil
 	}
 	c.mu.Unlock()
+	c.voiceOpMu.Unlock()
 	if errors.Is(err, ErrClosed) {
 		return nil
 	}
 	return err
 }
 
+// MuteToken identifies one voice call without exposing its internals. A queued
+// UI mute request can use it to avoid changing a later call on the same client.
+type MuteToken struct{ call *call }
+
+func (c *Client) CurrentMuteToken() MuteToken { return MuteToken{c.getCall()} }
+
 // SetMuted tells the server and pauses reading from the source while muted.
-func (c *Client) SetMuted(m bool) error {
-	cl := c.getCall()
-	if cl == nil {
+func (c *Client) SetMuted(m bool) error { return c.SetMutedFor(c.CurrentMuteToken(), m) }
+
+// SetMutedFor applies only while token still identifies the active call.
+func (c *Client) SetMutedFor(token MuteToken, m bool) error {
+	c.voiceOpMu.Lock()
+	defer c.voiceOpMu.Unlock()
+	cl := token.call
+	if cl == nil || c.getCall() != cl {
 		return ErrNotInVoice
 	}
-	cl.muted.Store(m)
-	if !m {
+	if m {
+		cl.muted.Store(true) // stop capture before attempting the server write
+	}
+	if err := c.send(proto.TypeVoiceMute, proto.VoiceMute{Muted: m}); err != nil {
+		return err // a failed unmute must leave local capture paused
+	}
+	if !m && c.getCall() == cl {
+		cl.muted.Store(false)
 		select {
 		case cl.muteCh <- struct{}{}:
 		default:
 		}
 	}
-	return c.send(proto.TypeVoiceMute, proto.VoiceMute{Muted: m})
+	return nil
 }
 
 // ---- read-loop entry points (never block) ----
@@ -482,12 +514,14 @@ func (cl *call) fail(err error) {
 
 // callEnded retires a call that died after JoinVoice returned.
 func (c *Client) callEnded(cl *call, err error) {
+	c.voiceOpMu.Lock()
 	c.mu.Lock()
 	if c.call == cl {
 		c.call = nil
 	}
 	c.mu.Unlock()
 	_ = c.send(proto.TypeVoiceLeave, proto.VoiceLeave{})
+	c.voiceOpMu.Unlock()
 	c.emitNB(Event{Err: fmt.Errorf("client: voice call ended: %w", err)})
 	go cl.teardown() // the actor cannot join itself
 }

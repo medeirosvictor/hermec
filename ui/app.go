@@ -89,6 +89,7 @@ type game struct {
 
 	muteCh     chan muteReq
 	muteFailCh chan muteFail
+	muteSeq    uint64 // newest mute request, across calls and sessions
 	vc         voiceCall
 	callKey    string      // session holding the call; "" = no call (or a join in flight)
 	openAudio  audioOpener // test seam: opens call devices; nil = the real devices

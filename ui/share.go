@@ -223,7 +223,8 @@ func (g *game) openShareMenuAt(x, bottom float64) {
 		if err == nil {
 			err = errors.New("no screens found")
 		}
-		s.st.Status = fmt.Sprintf("screen share: %v", err)
+		g.logf("screen list failed on %s: %v", s.url, err)
+		s.st.Status = "screens unavailable; check screen access and retry"
 		return
 	}
 	g.closeMenu()
@@ -299,7 +300,8 @@ func (g *game) startShare(m screencap.Monitor) {
 				if g.share.src == src {
 					g.share = shareState{}
 					if cs := g.callSess(); cs != nil {
-						cs.st.Status = fmt.Sprintf("screen share failed: %v", err)
+						g.logf("screen share start failed on %s: %v", cs.url, err)
+						cs.st.Status = "screen share could not start; check screen access and retry"
 					}
 				}
 			})
@@ -350,7 +352,8 @@ func (g *game) stepShare() {
 	if g.share.on {
 		if err := g.share.src.failure(); err != nil {
 			if s != nil {
-				s.st.Status = fmt.Sprintf("screen share ended: %v", err)
+				g.logf("screen share ended on %s: %v", s.url, err)
+				s.st.Status = "screen share ended; check screen access and retry"
 			}
 			g.stopShare()
 		}

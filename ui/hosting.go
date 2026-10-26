@@ -293,8 +293,17 @@ const friendBackoffFor = time.Minute
 // friendFailed reports why a friend host did not start, once: the same server
 // is not tried again before the backoff ends or the toggle is used.
 func (g *game) friendFailed(id, format string, args ...any) {
-	g.notice = fmt.Sprintf(format, args...)
-	g.logf("friend host %s: %s", shortID(id), g.notice)
+	reason := fmt.Sprintf(format, args...)
+	g.logf("friend host %s: %s", shortID(id), reason)
+	g.notice = "friend hosting failed; check session log, then retry hosting"
+	if strings.Contains(format, "bad password_key") {
+		g.notice = "bad password_key in hosting file; correct it, then retry hosting"
+	}
+	for _, s := range g.sess {
+		if s.c != nil && s.c.ServerID() == id {
+			s.st.Status = g.notice
+		}
+	}
 	if g.friendBackoff == nil {
 		g.friendBackoff = map[string]time.Time{}
 	}

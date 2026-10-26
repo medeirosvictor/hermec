@@ -98,7 +98,7 @@ func TestVoiceJoinNotice(t *testing.T) {
 	if got := VoiceJoinNotice(old); got != NoVoiceSupport {
 		t.Fatalf("got %q", got)
 	}
-	if got := VoiceJoinNotice(errors.New("boom")); !strings.Contains(got, "boom") || got == NoVoiceSupport {
+	if got := VoiceJoinNotice(errors.New("boom")); strings.Contains(got, "boom") || got == NoVoiceSupport {
 		t.Fatalf("got %q", got)
 	}
 	if got := VoiceJoinNotice(&client.ServerError{Code: "forbidden", Message: "no"}); got == NoVoiceSupport {

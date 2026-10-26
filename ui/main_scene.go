@@ -43,7 +43,9 @@ type mainScene struct {
 	sbKey      sbKey
 	visible    int
 
-	rosterScroll int // member list rows scrolled down from the top
+	rosterScroll  int // member list rows scrolled down from the top
+	channelScroll int // channel/voice rows scrolled down from the top
+	channelCarry  float64
 }
 
 func newMainScene() mainScene {
@@ -137,12 +139,41 @@ func (g *game) geom() geometry {
 	return gm
 }
 
+// channelVisible counts complete rows inside the channel content area.
+func (g *game) channelVisible(gm geometry) int {
+	if gm.lh <= 0 {
+		return 0
+	}
+	return max(0, int((gm.chanY1-gm.paneY0)/gm.lh))
+}
+
+// visibleChannelRows is shared by drawing and hit testing.
+func (g *game) visibleChannelRows(s *session, gm geometry) []state.Row {
+	rows := s.st.Rows()
+	visible := g.channelVisible(gm)
+	s.ms.channelScroll = state.ClampScroll(len(rows), visible, s.ms.channelScroll)
+	end := min(len(rows), s.ms.channelScroll+visible)
+	return rows[s.ms.channelScroll:end]
+}
+
+// wheelChannels handles a turn only over the channel content, not the header
+// or the voice panel.
+func (g *game) wheelChannels(s *session, gm geometry, fx, fy, wy float64) bool {
+	if !state.InRect(fx, fy, gm.chanR.x0, gm.paneY0, gm.chanR.x1, gm.chanY1) {
+		return false
+	}
+	n, carry := state.WheelLines(s.ms.channelCarry, wy, wheelLinesPerNotch)
+	s.ms.channelCarry = carry
+	s.ms.channelScroll = state.ClampScroll(len(s.st.Rows()), g.channelVisible(gm), s.ms.channelScroll-n)
+	return true
+}
+
 // addMainHits registers the channel/voice rows, the chat input and the call
 // bar buttons from the same geometry drawMain uses.
 func (g *game) addMainHits(gm geometry) {
 	// Only rows drawChannels actually draws are clickable.
 	y := gm.paneY0
-	for _, r := range g.cur().st.Rows() {
+	for _, r := range g.visibleChannelRows(g.cur(), gm) {
 		if y+gm.lh > gm.chanY1 {
 			break
 		}
@@ -211,6 +242,17 @@ func (g *game) selectChannel(i int) {
 func (g *game) afterChannelChange() {
 	s := g.cur()
 	s.ms.scroll, s.ms.prevTotal, s.ms.prevNewest, s.ms.wheelCarry = 0, 0, "", 0
+	for i, row := range s.st.Rows() {
+		if row.Kind == state.RowText && row.Index == s.st.Active {
+			visible := g.channelVisible(g.geom())
+			if i < s.ms.channelScroll {
+				s.ms.channelScroll = i
+			} else if i >= s.ms.channelScroll+visible {
+				s.ms.channelScroll = i - visible + 1
+			}
+			break
+		}
+	}
 	ch := s.st.Channels[s.st.Active]
 	s.st.MarkRead(ch)
 	g.joinChannel(s, ch)
@@ -389,7 +431,7 @@ func (g *game) updateMain() {
 	}
 	mx, my := g.cursor()
 	fx, fy := float64(mx), float64(my)
-	if _, wy := ebiten.Wheel(); in && wy != 0 && !g.wheelMembers(s, gm, fx, fy, wy) && state.InRect(fx, fy, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1) {
+	if _, wy := ebiten.Wheel(); in && wy != 0 && !g.wheelChannels(s, gm, fx, fy, wy) && !g.wheelMembers(s, gm, fx, fy, wy) && state.InRect(fx, fy, gm.chatR.x0, gm.chatR.y0, gm.chatR.x1, gm.chatR.y1) {
 		var n int
 		n, s.ms.wheelCarry = state.WheelLines(s.ms.wheelCarry, wy, wheelLinesPerNotch)
 		s.ms.scroll += n
@@ -400,6 +442,7 @@ func (g *game) updateMain() {
 		rows, _ := g.memberRows()
 		s.ms.rosterScroll = state.ClampScroll(len(rows), g.rosterVisible(gm), s.ms.rosterScroll)
 	}
+	s.ms.channelScroll = state.ClampScroll(len(s.st.Rows()), g.channelVisible(gm), s.ms.channelScroll)
 	s.ms.visible = gm.visible
 }
 
@@ -565,7 +608,7 @@ func (g *game) drawChannels(screen *ebiten.Image, gm geometry) {
 	dst := clip(screen, cx0, gm.paneY0, gm.chanR.x1, gm.chanY1)
 	y := gm.paneY0
 	st := g.cur().st
-	for _, row := range st.Rows() {
+	for _, row := range g.visibleChannelRows(g.cur(), gm) {
 		if y+gm.lh > gm.chanY1 {
 			break
 		}

@@ -82,7 +82,8 @@ type Client struct {
 	pwKey       []byte // the password key this login used; nil without a password
 	chain       *chain.Chain
 
-	writeMu sync.Mutex // gorilla permits a single concurrent writer
+	writeMu   sync.Mutex // gorilla permits a single concurrent writer
+	voiceOpMu sync.Mutex // orders mute writes with voice call replacement
 
 	mu      sync.Mutex // guards waiters and closed
 	waiters []*joinWaiter

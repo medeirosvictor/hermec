@@ -278,7 +278,8 @@ func (g *game) applyVoice(r voiceResult) {
 		closeAll(r.src, r.sink)
 	case r.leave:
 		if r.err != nil {
-			s.st.Status = fmt.Sprintf("voice leave failed: %v", r.err)
+			g.logf("voice leave failed on %s: %v", s.url, r.err)
+			s.st.Status = "voice disconnect failed; try reconnecting"
 		}
 	case r.err != nil:
 		g.logf("voice join failed on %s: %v", s.url, r.err)
@@ -302,23 +303,30 @@ func (g *game) toggleMute() {
 		return
 	}
 	g.vc.muted = !g.vc.muted
+	g.muteSeq++
 	// Single slot, latest wins: drop a pending older value, then queue ours.
 	// Only this goroutine fills the slot, so the send cannot block.
 	select {
 	case <-g.muteCh:
 	default:
 	}
-	g.muteCh <- muteReq{c: s.c, muted: g.vc.muted}
+	g.muteCh <- muteReq{c: s.c, token: s.c.CurrentMuteToken(), gen: g.muteSeq, start: g.vc.start, muted: g.vc.muted}
 }
 
 // muteReq is the desired mute state for one client.
 type muteReq struct {
 	c     *client.Client
+	token client.MuteToken
+	gen   uint64
+	start time.Time
 	muted bool
 }
 
 // muteFail reports a SetMuted that did not reach the server.
 type muteFail struct {
+	c     *client.Client
+	gen   uint64
+	start time.Time
 	muted bool // the value that failed to send
 	err   error
 }
@@ -326,27 +334,26 @@ type muteFail struct {
 // muteWorker sends the latest desired mute state, in order, one at a time.
 func (g *game) muteWorker() {
 	for r := range g.muteCh {
-		if err := r.c.SetMuted(r.muted); err != nil && !errors.Is(err, client.ErrNotInVoice) {
+		if err := r.c.SetMutedFor(r.token, r.muted); err != nil && !errors.Is(err, client.ErrNotInVoice) {
 			select {
-			case g.muteFailCh <- muteFail{r.muted, err}:
+			case g.muteFailCh <- muteFail{c: r.c, gen: r.gen, start: r.start, muted: r.muted, err: err}:
 			default:
 			}
 		}
 	}
 }
 
-// applyMuteFail reverts the local flag when the server never got the value.
+// applyMuteFail reconciles the UI to the privacy-preserving local capture state.
 func (g *game) applyMuteFail() {
 	select {
 	case f := <-g.muteFailCh:
-		if g.vc.muted == f.muted {
-			g.vc.muted = !f.muted
-		}
 		s := g.callSess()
-		if s == nil {
-			s = g.cur()
+		if s == nil || s.c != f.c || g.muteSeq != f.gen || g.vc.start != f.start {
+			return
 		}
-		s.st.Status = fmt.Sprintf("mute failed: %v", f.err)
+		g.vc.muted = true
+		g.logf("mute update failed on %s: %v", s.url, f.err)
+		s.st.Status = "microphone stays muted; try again"
 	default:
 	}
 }
@@ -554,7 +561,7 @@ func resolveDevices(savedIn, savedOut string) (in, out, notice string) {
 	}
 	ins, outs, err := audio.ListDevices()
 	if err != nil {
-		return "", "", fmt.Sprintf("audio devices: %v; using defaults", err)
+		return "", "", "audio devices unavailable; using defaults"
 	}
 	in, n1 := state.ResolveDevice("input", savedIn, ins)
 	out, n2 := state.ResolveDevice("output", savedOut, outs)

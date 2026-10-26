@@ -2,7 +2,6 @@ package ui
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 
@@ -165,6 +164,7 @@ func (g *game) toggleCamera() {
 				if src != nil {
 					_ = src.Close()
 				}
+				g.logf("camera start failed on %s: %v", current.url, err)
 				current.st.Status = cameraNotice(err)
 				return
 			}
@@ -184,7 +184,7 @@ func cameraNotice(err error) string {
 	case strings.Contains(message, "permission"), strings.Contains(message, "access denied"):
 		return "camera permission denied"
 	default:
-		return fmt.Sprintf("camera device unavailable or disconnected: %v", err)
+		return "camera device unavailable or disconnected; check the device and retry"
 	}
 }
 
@@ -215,6 +215,7 @@ func (g *game) stepCamera() {
 	if g.camera.on && g.camera.src != nil {
 		if err := g.camera.src.failure(); err != nil {
 			if s := g.callSess(); s != nil {
+				g.logf("camera ended on %s: %v", s.url, err)
 				s.st.Status = cameraNotice(err)
 			}
 			g.stopCamera()
