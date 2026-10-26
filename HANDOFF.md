@@ -10,19 +10,23 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and
    the memory note `hermec-project`.
-2. Repo baseline: PR #11 merged independent media lanes, Windows webcam
-   capture and the call view. The v0.6.0 defect-cleanup slice adds clear
-   chat-send failure feedback and private diagnostic logging. Untracked
+2. Repo baseline: `main` == `origin/main` at `e008043`. PR #12 is merged and
+   **v0.6.0** is published with all release assets. It includes independent
+   media lanes, Windows webcam capture, the call view, and server-confirmed
+   chat with clear failure feedback and private diagnostic logging. The PR,
+   post-merge CI and release gate passed on Windows, macOS and Linux. Untracked
    local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.
-3. **Current round: genuine-defect cleanup.** The webcam/call-view vertical
-   slice is merged:
-   camera and screen publish simultaneously, modern clients receive up to ten
+3. **Current round: genuine-defect cleanup.** The webcam/call-view and chat
+   feedback slices are merged and released:
+   camera and screen publish simultaneously, the app receives up to ten
    camera slots and one selected screen slot, the Windows camera uses a fixed
    640x360/15 fps/300 kbps profile, and active media survives host takeover.
    macOS/Linux camera capture and adaptive priority enforcement remain future
-   work. After this round Victor moves to stress testing and use-case scenarios.
+   work. Continue with small, reproducible user-facing defects; do not invent
+   slow-network simulations or speculative compatibility work. After this round
+   Victor moves to stress testing and use-case scenarios.
    **Version policy (Victor, 2026-10-23):** before v1, do not spend development
    effort on mixed-version call/media bridging; the app is not released to a
    user base that needs it. Keep protocol negotiation safe, but expect every
@@ -40,11 +44,10 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 ## Process conventions
 
-- Subagent-driven development per plan: a worktree via EnterWorktree, an SDD
-  ledger and pre-flight scan, Sonnet implementers and Haiku small reviews, fix
-  rounds with scoped re-reviews, a final whole-branch review on the most
-  capable model, a merge menu to Victor. The controller tags releases on `main`
-  only.
+- Subagent-driven development per plan: an isolated worktree, a compact ledger
+  and pre-flight scan, cost-conscious implementers and small reviews, scoped
+  fix re-reviews, then a capable whole-branch review. The controller tags
+  releases on `main` only.
 - Commit trailer follows whatever the session's attribution instruction says.
 - Victor owns design decisions (vibe-wise learning mode). Brainstorm checkpoints
   come before architectural work; teach inner workings junior-style on request.
@@ -57,12 +60,33 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 ## Next-session pipeline (Victor's order)
 
-1. **Genuine-defect cleanup.** Current slice: chat appears only after the
-   server confirms it; an unconfirmed send shows a plain
-   "message unable to reach server" status, while the session log keeps the
-   technical reason without message text. Next small candidates: sidebar
-   scrolling, reliable mute-state reconciliation, visible friend-host startup
-   failure, and friendly camera/screen/voice errors with raw details in logs.
+**Scope update (Victor, 2026-10-26):** keep the four genuine-defect cleanup
+items below active. Add private Tailscale/Headscale groups and a self-managed
+AWS/VPS dedicated server (Minecraft-style download/configure/run/share address;
+no in-app cloud provisioning), plus research for a free experimental microphone
+noise-suppression toggle. Victor selected embedded private networking and asked
+for both Create Server flows and UI/UX to change an existing server's hosting
+method. Include setup progress, errors, reachability, connection sharing, and
+safe migration preserving identity, membership and history. Detailed architecture
+and the noise library remain open. PLAN.md records the milestones and
+[research notes](docs/research/hosting-and-noise-suppression.md) record the
+proposed integration and evaluation. The earlier Headscale deferral is reopened
+by this request. Victor's intended outcome is regular-use readiness, followed
+by polish and quality-of-life work, subject to real-device checks.
+
+Written design for review:
+[hosting readiness](docs/superpowers/specs/2026-10-26-hosting-readiness-design.md).
+It proposes owner-supplied coordination, per-group embedded profiles, private
+and public dedicated hosting, creation/join flows, and guarded method changes.
+The owner-supplied-network assumption still needs confirmation. No networking
+implementation or noise-processing dependency has been added.
+
+1. **Genuine-defect cleanup.** v0.6.0 completed server-confirmed chat: an
+   unconfirmed send shows a plain "message unable to reach server" status,
+   including across reconnect/failover, while the session log keeps the
+   technical reason without message text. Next small candidates: reliable
+   mute-state reconciliation, visible friend-host startup failure, friendly
+   camera/screen/voice errors with raw details in logs, and sidebar scrolling.
 2. **Friends adjustments.** Per-person volume, mic gain, live names, audio
    device switching mid-call, bandwidth metrics and ping fixes (details below).
    Later idea riding the synced store: file sharing (a capped shared folder).
@@ -131,7 +155,7 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 Run these on a released build or `go run ./cmd/hermec -local` plus a second
 server. Agents must not run the GUI against the real `%APPDATA%\hermec`.
 
-### Host failover real test (PR 3; Victor, before merge)
+### Host failover real-device verification (v0.6.0)
 
 Needs a friend whose PC is node-shared on Tailscale and who runs HERMEC.
 
@@ -492,10 +516,11 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
   cameras fill up to ten stable receive slots while each participant selects
   one screen slot. The server marks lane source switches with `media_source`.
   See `docs/protocol.md`.
-- **Releases:** a `v*` tag publishes only if the tagged commit is on `main` and
-  vet and tests pass. Client assets build on native runners (Windows x64 and
-  ARM, Linux x64 and ARM); servers are cross-built with CGO off. The tag is
-  stamped into `version.Version`. macOS: `scripts/build-mac.sh`.
+- **Releases:** v0.6.0 is the current release. A `v*` tag publishes only if the
+  tagged commit is on `main` and vet and tests pass. Client assets build on
+  native runners (Windows x64 and ARM, Linux x64 and ARM); servers are
+  cross-built with CGO off. The tag is stamped into `version.Version`. macOS:
+  `scripts/build-mac.sh`.
 - **Footprint:** `docs/footprint.md`.
 
 ## Gotchas
