@@ -64,9 +64,10 @@ no infrastructure. How the app works is in [README.md](README.md) and
    behavior and migration/recovery before implementation.
    Public hosting includes TLS, admission controls/invites, persistence, updates,
    firewall guidance, and backup/restore. Hosts own infrastructure and costs.
-   Proposed written design:
+   Approved written design:
    [hosting readiness](docs/superpowers/specs/2026-10-26-hosting-readiness-design.md)
-   (awaiting review).
+   and first [transport-proof plan](docs/superpowers/plans/2026-10-26-embedded-network-proof.md)
+   (plan awaiting review; UI/migration plans follow measured transport results).
 4. **Experimental microphone noise suppression**: evaluate freely redistributable
    algorithms, starting with RNNoise, against SpeexDSP and DeepFilterNet.
    Ship a default-off toggle only after a measured integration probe: local

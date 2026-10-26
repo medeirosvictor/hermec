@@ -74,11 +74,14 @@ proposed integration and evaluation. The earlier Headscale deferral is reopened
 by this request. Victor's intended outcome is regular-use readiness, followed
 by polish and quality-of-life work, subject to real-device checks.
 
-Written design for review:
+Written design approved by Victor on 2026-10-26:
 [hosting readiness](docs/superpowers/specs/2026-10-26-hosting-readiness-design.md).
 It proposes owner-supplied coordination, per-group embedded profiles, private
 and public dedicated hosting, creation/join flows, and guarded method changes.
-The owner-supplied-network assumption still needs confirmation. No networking
+The owner supplies coordination; no HERMEC-operated service. First
+[transport-proof plan](docs/superpowers/plans/2026-10-26-embedded-network-proof.md)
+is written for review. Private UI/lifecycle, dedicated hosting, method migration
+and RNNoise trial plans follow the transport evidence. No networking
 implementation or noise-processing dependency has been added.
 
 1. **Genuine-defect cleanup.** v0.6.0 completed server-confirmed chat: an

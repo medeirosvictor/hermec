@@ -1,9 +1,9 @@
 # Hosting readiness: embedded private networks and dedicated servers
 
-Status: proposed written design for Victor's review. Embedded networking,
+Status: approved by Victor on 2026-10-26. Embedded networking,
 Tailscale/Headscale options, self-managed dedicated hosting, and creation/change
-UI are agreed directions. This document proposes their detailed behavior;
-it does not claim that these features exist.
+UI follow this design. Implementation plans are reviewed separately;
+this document does not claim that these features exist.
 
 ## Goal and boundaries
 
@@ -13,8 +13,7 @@ server. Existing server identity, signed permissions, history, voice, webcams,
 screen sharing and standby failover remain the communications model.
 
 HERMEC owns no coordination or media infrastructure. The group owner supplies
-a Tailscale network or an existing Headscale service; this is the initial design
-assumption pending Victor's confirmation. Headscale installation is an operator
+a Tailscale network or an existing Headscale service. Headscale installation is an operator
 task with a guide. AWS/VPS hosting means download/configure/run/share-address;
 the app does not create cloud instances or accept cloud account credentials.
 
