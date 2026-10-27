@@ -162,6 +162,9 @@ func (c *Client) newAPI() *webrtc.API {
 	ir := &interceptor.Registry{}
 	_ = webrtc.RegisterDefaultInterceptors(me, ir)
 	se := webrtc.SettingEngine{}
+	if c.network != nil {
+		se.SetNet(c.network)
+	}
 	if c.loopbackICE.Load() {
 		loopbackOnly(&se)
 	}

@@ -41,6 +41,35 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
    64 KiB frame limit (video not counted). Fine for the friend group; revisit
    before big rooms.
 
+## Active development (2026-10-27)
+
+Local work is on `fix/readiness-cleanup` in `.worktrees/readiness-cleanup`,
+forked from `e008043`; it has not been merged, pushed or released.
+
+- The four cleanup fixes are implemented and task-reviewed: mute reconciliation
+  (including old-call and full-result-queue handling), friend-host failure
+  visibility, friendly media/voice errors with diagnostic logs, and channel
+  sidebar scrolling with matching hit targets. Code commits: `459d5a1`,
+  `786c49a`, `e428dbc`. Vet and the complete root race suite passed after
+  Task 1 transport changes on 2026-10-27.
+- Hosting design and first transport-proof plan are approved. Client provider
+  hooks (Task 1) are complete and reviewed with no findings: signaling and
+  active/warm peers retain the selected network; private connections cannot
+  inherit global TLS/proxy routing or fall back when PionNet later returns nil.
+  Tests verify authenticated identity, failure without fallback, and late
+  TCP/UDP cleanup. Client/integration tests, root vet and root race tests passed.
+  **Resume at Task 2: server sockets and host-link routing.** No tsnet adapter
+  or real-network proof exists yet. Progress/briefs/reports are under the ignored
+  `.superpowers/sdd/embedded-network-proof/` in this worktree; do not redispatch
+  completed tasks after resuming. Victor chose local tests first, real-network
+  checks later. No real network enrollment is authorized during this run.
+- Candidate tsnet `v1.104.2` requires Go `1.27.3`. Use that patch toolchain only
+  in the isolated probe module; root module remains Go `1.27.0` during proof.
+- A separate local, untracked noise trial draft at
+  `docs/superpowers/plans/2026-10-27-noise-suppression-trial.md` evaluates pure-Go
+  `rnnoise-go v0.3.0` before app integration. It is not yet approved for execution;
+  no denoiser has been added to the app.
+
 ## Process conventions
 
 - Subagent-driven development per plan: an isolated worktree, a compact ledger

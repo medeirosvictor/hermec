@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/pion/transport/v5"
 
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/hshake"
@@ -70,6 +71,7 @@ type joinWaiter struct {
 // Client is an authenticated connection to a Hermec server.
 type Client struct {
 	ws          *websocket.Conn
+	network     transport.Net // validated once at dial; borrowed for every media peer
 	id          *identity.Identity
 	chainCallMu sync.Mutex // serializes ChainAppend calls
 	fingerprint string
@@ -183,54 +185,7 @@ func Handshake(ctx context.Context, ws *websocket.Conn, id *identity.Identity, n
 // DialWith is DialPinned with options. The password never goes over the wire:
 // the client proves it knows it with an HMAC under the derived key.
 func DialWith(ctx context.Context, url string, id *identity.Identity, name, password string, o DialOpts) (*Client, error) {
-	ws, resp, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
-	if err != nil {
-		if errors.Is(err, websocket.ErrBadHandshake) && resp != nil {
-			se := refusalError(resp.StatusCode)
-			if resp.Body != nil {
-				_ = resp.Body.Close()
-			}
-			if se != nil {
-				return nil, fmt.Errorf("client: dial: %w", se)
-			}
-		}
-		return nil, fmt.Errorf("client: dial: %w", err)
-	}
-	res, err := Handshake(ctx, ws, id, name, password, o)
-	if err != nil {
-		ws.Close()
-		return nil, err
-	}
-
-	c := &Client{
-		ws:          ws,
-		id:          id,
-		fingerprint: res.OK.Fingerprint,
-		roles:       res.OK.Roles,
-		channels:    res.OK.Channels,
-		serverName:  res.OK.ServerName,
-		serverID:    res.OK.ServerID,
-		mediaLanes:  hasCapability(res.OK.Capabilities, proto.CapabilityMediaLanesV1),
-		pwKey:       res.Key,
-		chain:       res.Chain,
-		events:      make(chan Event, eventBuffer),
-		done:        make(chan struct{}),
-		loopDone:    make(chan struct{}),
-		pingDone:    make(chan struct{}),
-		rtt:         newRTTTracker(),
-		started:     time.Now(),
-	}
-	c.warm.Store(o.Warm)
-	// Only the pong handler is set: the default ping handler keeps answering
-	// the server's keepalive pings.
-	ws.SetPongHandler(func(p string) error {
-		c.rtt.pong(p, time.Now())
-		return nil
-	})
-	go c.readLoop()
-	go c.watchdog(time.Now)
-	c.startPinger(pingInterval, pongTimeout, time.Now)
-	return c, nil
+	return DialWithNetwork(ctx, url, id, name, password, o, nil)
 }
 
 // ServerID returns the server's ID (chain.ID.String()), as proven by the host

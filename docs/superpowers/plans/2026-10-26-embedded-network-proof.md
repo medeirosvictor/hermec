@@ -15,6 +15,12 @@ Pion transport/v5 v5.1.1, candidate tailscale.com v1.104.2 in the probe module.
 Verify the candidate's module/toolchain compatibility when resolving it;
 record any necessary version change before implementation.
 
+Verified 2026-10-27: tailscale.com v1.104.2 requires Go 1.27.3, while the
+installed compiler and root module use 1.27.0. Use Go 1.27.3 in the isolated
+probe module only; retain the selected tsnet version and keep the root Go floor
+unchanged during this proof. The patch toolchain is a developer/probe dependency,
+not an end-user installation requirement.
+
 **Spec:** [approved hosting readiness design](../specs/2026-10-26-hosting-readiness-design.md),
 approved by Victor on 2026-10-26. This plan implements its transport proof;
 production enrollment/settings/migration and the independent RNNoise experiment
@@ -93,22 +99,29 @@ Existing Dial/DialPinned/DialWith delegate with nil; leave the handshake option
 alias independent of networking. Client stores the validated provider for all
 future PeerConnections, including warm peers.
 
-- [ ] Write `TestDialWithNetworkUsesSelectedProvider`: real loopback HERMEC
+- [x] Write `TestDialWithNetworkUsesSelectedProvider`: real loopback HERMEC
   server and a recording provider; authenticated ServerID equals the fixture's
   pinned ID, all signaling dials use the provider. Add nil-provider regression.
-- [ ] Write `TestPrivateProviderFailureDoesNotFallback` with provider returning
+- [x] Write `TestPrivateProviderFailureDoesNotFallback` with provider returning
   a sentinel error while a system-reachable fixture exists: require that error
   and no authenticated session. Add invalid-nil-PionNet rejection before dial.
-- [ ] Run `go test ./client -run 'Test(DialWithNetwork|PrivateProvider)' -count=1`;
+- [x] Run `go test ./client -run 'Test(DialWithNetwork|PrivateProvider)' -count=1`;
   record expected failing behavior before implementation.
-- [ ] Add the interface and function above. Preserve TLS validation and HTTP
+- [x] Add the interface and function above. Preserve TLS validation and HTTP
   refusal handling from the current dial path. Apply the provider Net to Pion
   without changing codecs, media lanes or test-only loopback restrictions.
-- [ ] Add `TestNetworkPeerCreationAfterCloseReleasesResources`: a controlled
+- [x] Add `TestNetworkPeerCreationAfterCloseReleasesResources`: a controlled
   late dial/create completion closes the resulting socket instead of retaining
   it. Verify both active and warm PeerConnection setup use the provider.
-- [ ] Run focused tests plus `go test ./client ./integration`; commit
+- [x] Run focused tests plus `go test ./client ./integration`; commit
   `feat: allow per-client network providers`.
+
+Recovery note (2026-10-27): retained the interrupted implementation and tests.
+The prior session's initial RED output was not preserved. New regressions were
+observed RED then GREEN for inherited TLS/proxy route overrides and a provider
+returning nil PionNet after initial validation. Tests now verify real UDP socket
+use and delayed-creation cleanup for both active and warm peers. Scoped review
+passed with no findings; completion evidence is recorded in the task ledger.
 
 ### Task 2: Route server sockets and host links through the same provider
 
@@ -124,6 +137,10 @@ listeners/mux, not the borrowed Network lifetime.
   around real loopback nodes; verify TCP listening, UDP listening and outbound
   authenticated host link all use the configured instance. Include startup
   failure that closes already-open listeners without closing the provider.
+- [ ] Add explicit-provider configuration tests for existing `PublicIP` and
+  discovery settings: neither may route sockets/candidates through the system
+  network. Reject unsupported combinations before binding rather than silently
+  overriding the selected provider. Preserve all nil-provider behavior.
 - [ ] Write `TestNetworkMediaUsesSelectedAddresses`: a single-provider fixture
   yields SDP candidates only for its test interfaces; system address candidates
   cannot appear. Add separate IPv4 and IPv6 fixture cases and an unsupported-
@@ -144,7 +161,7 @@ listeners/mux, not the borrowed Network lifetime.
 
 **Interfaces:** Nested module `hermec-embedded-probe`, requiring the root module
 via `replace github.com/medeirosvictor/hermec => ../..` and the selected pinned
-tsnet version. Produce `Open(ctx context.Context, cfg ProfileConfig) (*Node, error)`,
+tsnet version; its go directive is `1.27.3`. Produce `Open(ctx context.Context, cfg ProfileConfig) (*Node, error)`,
 `(*Node).Close() error`, and the netpath.Network methods. `ProfileConfig` contains
 `StateDir, Hostname, ControlURL string` and
 `OnLoginURL func(string)`; no credentials go in reports. One Node per directory.
