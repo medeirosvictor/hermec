@@ -9,10 +9,34 @@ import (
 	"testing"
 	"time"
 
+	"github.com/medeirosvictor/hermec/audio"
 	"github.com/medeirosvictor/hermec/client"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
 )
+
+func TestAudioDeviceEnumerationCauseLoggedWithoutStatusLeak(t *testing.T) {
+	g, s := shareGame(t)
+	g.voiceCh = make(chan voiceResult, 1)
+	secret := `C:\private\audio-device 127.0.0.1:9999`
+	list := func() ([]string, []string, error) { return nil, nil, errors.New(secret) }
+	_, _, notice, detail := resolveDevices("saved microphone", "", list)
+	if detail == nil || notice == "" || strings.Contains(notice, secret) {
+		t.Fatalf("fallback notice=%q detail=%v", notice, detail)
+	}
+	g.listAudioDevices = list
+	g.set.InputDevice = "saved microphone"
+	g.openAudio = func(string, string) (client.AudioSource, *audio.Meter, client.AudioSink, *audio.Meters, error) {
+		return nil, nil, nil, nil, errors.New("test audio opener stopped join")
+	}
+	var logs bytes.Buffer
+	g.fileLog = log.New(&logs, "", 0)
+	g.joinCall("voice")
+	pumpVoiceUntil(t, g, func() bool { return !g.vc.busy })
+	if strings.Contains(s.st.Status, secret) || !strings.Contains(logs.String(), secret) {
+		t.Fatalf("status=%q log=%q", s.st.Status, logs.String())
+	}
+}
 
 func TestMuteFailureBelongsToCurrentRequestAndCall(t *testing.T) {
 	g := newTestGame(t)

@@ -87,12 +87,13 @@ type game struct {
 	closeStale func(*client.Client)                                            // test seam: closes stale dial results; nil = Close
 	reqOlder   func(s *session, ch, beforeID string, beforeTS time.Time) error // test seam: sends history_before; nil = s.c.HistoryBefore
 
-	muteCh     chan muteReq
-	muteFailCh chan muteFail
-	muteSeq    uint64 // newest mute request, across calls and sessions
-	vc         voiceCall
-	callKey    string      // session holding the call; "" = no call (or a join in flight)
-	openAudio  audioOpener // test seam: opens call devices; nil = the real devices
+	muteCh           chan muteReq
+	muteFailCh       chan muteFail
+	muteSeq          uint64 // newest mute request, across calls and sessions
+	vc               voiceCall
+	callKey          string                                       // session holding the call; "" = no call (or a join in flight)
+	openAudio        audioOpener                                  // test seam: opens call devices; nil = the real devices
+	listAudioDevices func() (inputs, outputs []string, err error) // test seam for device enumeration
 
 	probeCh    chan []state.DiscoveredIn
 	probing    bool // a discovery probe is in flight

@@ -139,6 +139,10 @@ func (g *game) joinCall(ch string) {
 	}
 	oldSrc, oldSink := g.vc.src, g.vc.sink
 	savedIn, savedOut := g.set.InputDevice, g.set.OutputDevice // read here: g.set belongs to the update goroutine
+	listDevices := g.listAudioDevices
+	if listDevices == nil {
+		listDevices = audio.ListDevices
+	}
 	open := g.openAudio
 	if open == nil {
 		open = openAudio
@@ -155,7 +159,10 @@ func (g *game) joinCall(ch string) {
 		}
 		leaveVoice(c) // no-op unless c holds a call
 		closeAll(oldSrc, oldSink)
-		inDev, outDev, notice := resolveDevices(savedIn, savedOut)
+		inDev, outDev, notice, detail := resolveDevices(savedIn, savedOut, listDevices)
+		if detail != nil {
+			g.logf("audio device enumeration failed on %s: %v", s.url, detail)
+		}
 		src, mic, sink, spk, err := open(inDev, outDev)
 		if err != nil {
 			res.err = err
@@ -555,13 +562,13 @@ func scaleOf(c color.RGBA) ebiten.ColorScale {
 // once per voice join. A saved device that is gone, or an enumeration
 // failure, falls back to the system default with a notice; it never blocks
 // the call.
-func resolveDevices(savedIn, savedOut string) (in, out, notice string) {
+func resolveDevices(savedIn, savedOut string, list func() (inputs, outputs []string, err error)) (in, out, notice string, detail error) {
 	if savedIn == "" && savedOut == "" {
-		return "", "", ""
+		return "", "", "", nil
 	}
-	ins, outs, err := audio.ListDevices()
+	ins, outs, err := list()
 	if err != nil {
-		return "", "", "audio devices unavailable; using defaults"
+		return "", "", "audio devices unavailable; using defaults", err
 	}
 	in, n1 := state.ResolveDevice("input", savedIn, ins)
 	out, n2 := state.ResolveDevice("output", savedOut, outs)
@@ -570,5 +577,5 @@ func resolveDevices(savedIn, savedOut string) (in, out, notice string) {
 	} else if n2 != "" {
 		n1 = n2
 	}
-	return in, out, n1
+	return in, out, n1, nil
 }

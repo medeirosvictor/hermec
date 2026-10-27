@@ -290,7 +290,7 @@ func savedDevicesNotice(s state.Settings) string {
 	if s.InputDevice == "" && s.OutputDevice == "" {
 		return ""
 	}
-	_, _, n := resolveDevices(s.InputDevice, s.OutputDevice)
+	_, _, n, _ := resolveDevices(s.InputDevice, s.OutputDevice, audio.ListDevices)
 	return n
 }
 
