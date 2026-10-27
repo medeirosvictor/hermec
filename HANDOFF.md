@@ -80,7 +80,8 @@ It proposes owner-supplied coordination, per-group embedded profiles, private
 and public dedicated hosting, creation/join flows, and guarded method changes.
 The owner supplies coordination; no HERMEC-operated service. First
 [transport-proof plan](docs/superpowers/plans/2026-10-26-embedded-network-proof.md)
-is written for review. Private UI/lifecycle, dedicated hosting, method migration
+is approved for local implementation. Victor chose local tests first, with
+real-network checks arranged later. Private UI/lifecycle, dedicated hosting, method migration
 and RNNoise trial plans follow the transport evidence. No networking
 implementation or noise-processing dependency has been added.
 

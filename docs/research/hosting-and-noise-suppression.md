@@ -1,7 +1,10 @@
 # Hosting options and microphone noise suppression
 
-Roadmap discussion, 2026-10-26. These are proposed implementation approaches,
-not implemented features or an approved architecture. Current behavior remains
+Research notes, 2026-10-26. The
+[hosting design](../superpowers/specs/2026-10-26-hosting-readiness-design.md) and
+first [transport-proof plan](../superpowers/plans/2026-10-26-embedded-network-proof.md)
+are approved. This note records candidate algorithms and the original UI
+discussion; it does not claim they are implemented. Current behavior remains
 documented in README.md and docs/protocol.md.
 
 ## Intended outcome
@@ -79,10 +82,11 @@ The following is a design outline, not approved screen behavior.
   action friends still need to take. Failure leaves an understandable state,
   a retry/recovery action and technical diagnostics in logs.
 
-Open design decisions: owner-supplied network versus automated network setup;
-one embedded node per private network versus per HERMEC server; how friends
-enroll; migration permissions; live-call handling; distribution of replacement
-connection details when clients cannot reach the old host.
+The approved design chooses owner-supplied coordination, an initial embedded
+profile per HERMEC group, guided enrollment and founder-authorized method
+changes while voice is empty. Validate profile resource costs in the proof.
+Offline friends may need refreshed connection details. See the design for
+the complete migration and recovery behavior.
 
 ## Noise-suppression candidates
 
@@ -91,6 +95,16 @@ connection details when clients cannot reach the old host.
 | RNNoise | Xiph neural noise suppression; BSD redistribution terms; upstream C and a browser-oriented WASM wrapper exist. | First candidate. Compare a portable embedded build with a statically bundled native build; neither route is selected. |
 | SpeexDSP | Official preprocessor API supports denoising, gain control and voice activity detection. | Traditional DSP baseline. Check exact revision's license, packaging, voice artifacts and CPU rather than assuming it is sufficient. |
 | DeepFilterNet | Full-band 48 kHz enhancement; repository code is MIT/Apache-2.0; Rust inference tooling. | Alternative if RNNoise falls short. Check model redistribution separately and measure runtime/build complexity. |
+
+Additional candidate found during implementation planning:
+[VoiceBlender/rnnoise-go](https://github.com/VoiceBlender/rnnoise-go) is a
+pure-Go RNNoise port with BSD-3-Clause terms. Its upstream documents 10 ms
+frames, an embedded model package and 48 kHz operation. This is a promising
+first integration route before adding a WASM runtime or another native build.
+These are upstream claims, not HERMEC measurements; verify the exact revision,
+model provenance, output quality and native platform performance in the trial.
+Do not select a runtime from the older C/WASM comparison without evaluating
+this option.
 
 Sources:
 

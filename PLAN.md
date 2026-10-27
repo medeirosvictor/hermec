@@ -67,7 +67,7 @@ no infrastructure. How the app works is in [README.md](README.md) and
    Approved written design:
    [hosting readiness](docs/superpowers/specs/2026-10-26-hosting-readiness-design.md)
    and first [transport-proof plan](docs/superpowers/plans/2026-10-26-embedded-network-proof.md)
-   (plan awaiting review; UI/migration plans follow measured transport results).
+   (plan approved; UI/migration plans follow measured transport results).
 4. **Experimental microphone noise suppression**: evaluate freely redistributable
    algorithms, starting with RNNoise, against SpeexDSP and DeepFilterNet.
    Ship a default-off toggle only after a measured integration probe: local
