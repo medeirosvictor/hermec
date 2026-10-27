@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,23 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
 )
+
+type lockedLogBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *lockedLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *lockedLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
 
 func TestAudioDeviceEnumerationCauseLoggedWithoutStatusLeak(t *testing.T) {
 	g, s := shareGame(t)
@@ -77,12 +95,39 @@ func TestMuteFailureBelongsToCurrentRequestAndCall(t *testing.T) {
 	}
 }
 
-func TestFriendFailureVisibleOnAffectedChatSession(t *testing.T) {
-	g := friendGame(t)
-	_, s, id := grantedFriend(t, g, "")
-	s.st.Status = ""
+func TestNewestMuteFailureSurvivesFullQueue(t *testing.T) {
+	g := newTestGame(t)
+	s := newSession("one", "ws://one/", "one")
+	s.c = &client.Client{}
+	t.Cleanup(func() { s.c = nil })
+	g.sess[s.key], g.curKey, g.callKey = s, s.key, s.key
+	s.st.SetInCall("voice")
+	g.vc.start = time.Now()
+	g.muteSeq = 5
+	g.muteFailCh = make(chan muteFail, 4)
+	for gen := uint64(1); gen <= 4; gen++ {
+		g.muteFailCh <- muteFail{c: s.c, gen: gen, start: g.vc.start, muted: true, err: errors.New("older failure")}
+	}
 	var logs bytes.Buffer
 	g.fileLog = log.New(&logs, "", 0)
+	g.postMuteFail(muteFail{c: s.c, gen: 5, start: g.vc.start, muted: false, err: errors.New("latest private failure")})
+	for range 5 {
+		g.applyMuteFail()
+	}
+	if !g.vc.muted || s.st.Status != "microphone stays muted; try again" {
+		t.Fatalf("latest failed unmute was lost: muted=%v status=%q", g.vc.muted, s.st.Status)
+	}
+	if !strings.Contains(logs.String(), "latest private failure") || strings.Contains(s.st.Status, "latest private failure") {
+		t.Fatalf("raw cause missing from log or leaked in status: status=%q log=%q", s.st.Status, logs.String())
+	}
+}
+
+func TestFriendFailureVisibleOnAffectedChatSession(t *testing.T) {
+	g := friendGame(t)
+	var logs lockedLogBuffer
+	g.fileLog = log.New(&logs, "", 0)
+	_, s, id := grantedFriend(t, g, "")
+	s.st.Status = ""
 	g.friendFailed(id, "cannot bind %s", "127.0.0.1:secret")
 	if s.st.Status == "" || strings.Contains(s.st.Status, "127.0.0.1:secret") {
 		t.Fatalf("affected session status = %q", s.st.Status)

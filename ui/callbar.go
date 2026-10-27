@@ -342,11 +342,26 @@ type muteFail struct {
 func (g *game) muteWorker() {
 	for r := range g.muteCh {
 		if err := r.c.SetMutedFor(r.token, r.muted); err != nil && !errors.Is(err, client.ErrNotInVoice) {
-			select {
-			case g.muteFailCh <- muteFail{c: r.c, gen: r.gen, start: r.start, muted: r.muted, err: err}:
-			default:
-			}
+			g.postMuteFail(muteFail{c: r.c, gen: r.gen, start: r.start, muted: r.muted, err: err})
 		}
+	}
+}
+
+func (g *game) postMuteFail(f muteFail) {
+	select {
+	case g.muteFailCh <- f:
+		return
+	default:
+	}
+	// An older failure may fill the queue while the latest request fails.
+	// Keep the latest result so the UI can reconcile to local capture state.
+	select {
+	case <-g.muteFailCh:
+	default: // the game goroutine drained it between the two selects
+	}
+	select {
+	case g.muteFailCh <- f:
+	default: // only possible with a zero-capacity channel
 	}
 }
 
