@@ -77,13 +77,31 @@ func dialHost(ctx context.Context, url string, s *Server, minSeq uint64) (*webso
 // active host sends. A host that is not active refuses with not_active, which
 // surfaces from Run as an error.
 func DialLink(ctx context.Context, url string, s *Server) (*Link, error) {
-	return dialLinkOpts(ctx, url, s, false)
+	// A prepared service restart must continue the durable attempt rather than
+	// silently asking the source for a fresh nonce.
+	var readiness *proto.DedicatedReadiness
+	if s.Prepared() && s.cfg.DedicatedTransitionPath != "" {
+		if r, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath); err == nil && r.State == DedicatedTransitionPrepared {
+			readiness = &proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}
+		}
+	}
+	return dialLinkOpts(ctx, url, s, false, readiness)
+}
+
+// DialDedicatedLink resumes r when non-nil, rather than allowing the source to
+// mint another transition nonce. Callers must use it only for a locally
+// validated prepared record.
+func DialDedicatedLink(ctx context.Context, url string, s *Server, r *proto.DedicatedReadiness) (*Link, error) {
+	if r != nil && r.Validate() != nil {
+		return nil, errors.New("server: invalid dedicated readiness")
+	}
+	return dialLinkOpts(ctx, url, s, false, r)
 }
 
 // dialLinkOpts is DialLink; with full set it asks for the active host's whole
 // history, not just the lines after our newest (a merged host holds lines the
 // active host older than that lacks to us).
-func dialLinkOpts(ctx context.Context, url string, s *Server, full bool) (*Link, error) {
+func dialLinkOpts(ctx context.Context, url string, s *Server, full bool, dedicated *proto.DedicatedReadiness) (*Link, error) {
 	ws, peerFingerprint, err := dialHost(ctx, url, s, s.chain.Head().Seq) // never follow a host behind our chain
 	if err != nil {
 		return nil, err
@@ -91,10 +109,11 @@ func dialLinkOpts(ctx context.Context, url string, s *Server, full bool) (*Link,
 	l := &Link{s: s, ws: ws, peerFingerprint: peerFingerprint, done: make(chan struct{}), roleCh: make(chan struct{}, 1), handover: make(chan struct{}, 1), prepareAck: make(chan error, 1)}
 	l.lastBeat.Store(time.Now().UnixNano())
 	hello := proto.LinkHello{
-		ChainSeq: s.chain.Head().Seq,
-		Addrs:    s.advertise(),
-		Name:     s.cfg.HostName,
-		Prepared: s.Prepared(),
+		ChainSeq:  s.chain.Head().Seq,
+		Addrs:     s.advertise(),
+		Name:      s.cfg.HostName,
+		Prepared:  s.Prepared(),
+		Dedicated: dedicated,
 	}
 	if s.hist != nil && !full {
 		hello.HistoryLastTS, hello.HistoryLastID = s.hist.Last()
@@ -357,6 +376,16 @@ func (l *Link) AwaitDedicatedReadiness(ctx context.Context) error {
 // PersistDedicatedPreparation writes the restart-safe Prepared record only
 // after the active source acknowledged the exact signed boundary.
 func (l *Link) PersistDedicatedPreparation(ctx context.Context, path string) error {
+	return l.persistDedicatedPreparation(ctx, path, "")
+}
+
+// PersistDedicatedPreparationAt persists preparation with the exact pinned
+// source URL needed to resume the same nonce-bound attempt after a restart.
+func (l *Link) PersistDedicatedPreparationAt(ctx context.Context, path, activeWSSURL string) error {
+	return l.persistDedicatedPreparation(ctx, path, activeWSSURL)
+}
+
+func (l *Link) persistDedicatedPreparation(ctx context.Context, path, activeWSSURL string) error {
 	if err := l.AwaitDedicatedReadiness(ctx); err != nil {
 		return err
 	}
@@ -370,7 +399,7 @@ func (l *Link) PersistDedicatedPreparation(ctx context.Context, path string) err
 		Version: 1, State: DedicatedTransitionPrepared, ServerID: r.ServerID,
 		DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: append([]byte(nil), r.ChainHeadHash...),
 		HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: append([]byte(nil), r.HistoryHash...),
-		TransitionNonce: append([]byte(nil), r.TransitionNonce...), Recovery: DedicatedRecoveryRetryPreparation,
+		TransitionNonce: append([]byte(nil), r.TransitionNonce...), Recovery: DedicatedRecoveryRetryPreparation, ActiveWSSURL: activeWSSURL,
 	})
 }
 

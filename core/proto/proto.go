@@ -358,6 +358,10 @@ type LinkHello struct {
 	// Prepared marks a passive dedicated destination. It may receive mirrored
 	// state but must never be selected or advertised as the ordinary standby.
 	Prepared bool `json:"prepared,omitempty"`
+	// Dedicated resumes an already attested preparation after a destination
+	// restart. The active host accepts it only if its current boundary is exact;
+	// it never replaces it with a caller-chosen nonce.
+	Dedicated *DedicatedReadiness `json:"dedicated,omitempty"`
 }
 
 // YieldLoad is a host's load for the split-brain yield rule.

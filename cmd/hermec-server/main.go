@@ -100,25 +100,26 @@ func main() {
 		if f.dedicatedPrepare != "" || f.dedicatedRetry {
 			log.Fatal("-dedicated-status cannot be combined with prepare or retry")
 		}
-		if err := dedicatedStatus(dir, os.Stdout); err != nil {
+		if err := dedicatedStatus(dir, f.key, f.chain, f.history, os.Stdout); err != nil {
 			log.Fatal(err)
 		}
 		return
 	}
 	if f.dedicatedPrepare != "" {
-		if err := validateDedicatedPrepareInputs(f.dedicatedPrepare, f.dedicatedServerID); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := runDedicatedPreparation(ctx, cfg, f.key, f.chain, f.history, f.dedicatedPrepare, f.dedicatedServerID, false, os.Stdout); err != nil {
 			log.Fatal(err)
 		}
-		// The actual link is started only after the founder has appended this
-		// VPS public key. This command deliberately accepts no password or
-		// foreign private key and never starts an activation by itself.
-		log.Fatal("dedicated preparation needs the founder-authorized host link; use -dedicated-host-key to authorize this VPS, then retry")
+		return
 	}
 	if f.dedicatedRetry {
-		if err := dedicatedStatus(dir, os.Stdout); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := runDedicatedPreparation(ctx, cfg, f.key, f.chain, f.history, "", "", true, os.Stdout); err != nil {
 			log.Fatal(err)
 		}
-		log.Fatal("retry never activates a prepared destination; restart preparation with the same pinned URL and server ID")
+		return
 	}
 	if f.applyConfig {
 		if err := applyConfigFile(f.config, f.key, f.chain, cfg, os.Stdout); err != nil {
@@ -157,13 +158,26 @@ func main() {
 	// malformed or stale record passive with fixed recovery guidance.
 	transitionPath := filepath.Join(dir, server.DedicatedTransitionFile)
 	if _, err := os.Lstat(transitionPath); err == nil {
+		// Any unreadable or stale journal fails closed as a passive host.
 		cfg.Prepared, cfg.Mode = true, server.ModePrepared
 		r, loadErr := server.LoadDedicatedTransition(transitionPath)
 		if loadErr == nil {
 			var h *server.History
 			h, loadErr = server.OpenHistory(f.history)
 			if loadErr == nil {
-				loadErr = server.ValidateDedicatedPrepared(r, key, c, h)
+				switch r.State {
+				case server.DedicatedTransitionPrepared:
+					loadErr = server.ValidateDedicatedPrepared(r, key, c, h)
+					cfg.Prepared, cfg.Mode = true, server.ModePrepared
+					if r.ActiveWSSURL != "" {
+						cfg.KnownHosts = append([]string{r.ActiveWSSURL}, cfg.KnownHosts...)
+					}
+				case server.DedicatedTransitionCommitted:
+					loadErr = server.ValidateDedicatedCommitted(r, key, c, h)
+				case server.DedicatedTransitionFenced:
+					loadErr = server.ValidateDedicatedFenced(r, key, c, h)
+					cfg.Prepared, cfg.Mode = false, server.ModeFenced
+				}
 				_ = h.Close()
 			}
 		}
@@ -174,7 +188,7 @@ func main() {
 			}
 			log.Printf("WARNING: dedicated transition is invalid or stale: %v; %s", loadErr, guidance)
 		} else {
-			log.Printf("dedicated prepared transition recognized; %s", r.Recovery.Guidance())
+			log.Printf("dedicated %s transition recognized; %s", r.State, r.Recovery.Guidance())
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		log.Fatalf("dedicated transition record: %v", err)

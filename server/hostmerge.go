@@ -172,7 +172,7 @@ func (h *Host) relink(to proto.HostInfo, urls []string, full bool) *Link {
 	for attempt := 0; attempt < relinkTries && !h.stopped(); attempt++ {
 		for _, u := range urls {
 			dctx, cancel := context.WithTimeout(h.ctx, dialTimeout)
-			l, err := dialLinkOpts(dctx, u, h.srv, full)
+			l, err := dialLinkOpts(dctx, u, h.srv, full, nil)
 			cancel()
 			if err == nil {
 				h.mu.Lock()

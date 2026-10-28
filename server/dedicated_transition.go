@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -67,6 +68,9 @@ type DedicatedTransitionRecord struct {
 	// exact object after restart; it never generates another nonce or boundary.
 	Certificate *proto.DedicatedCertificate `json:"certificate,omitempty"`
 	Recovery    DedicatedRecoveryCode       `json:"recovery"`
+	// ActiveWSSURL is local, non-secret retry metadata for a prepared
+	// destination. It is optional for records created before retry support.
+	ActiveWSSURL string `json:"active_wss_url,omitempty"`
 }
 
 // DedicatedTransitionFile is the restart record kept beside a dedicated
@@ -167,6 +171,12 @@ func (r DedicatedTransitionRecord) validate() error {
 	}
 	if r.Recovery.Guidance() == "" {
 		return errors.New("server: invalid dedicated transition recovery code")
+	}
+	if r.ActiveWSSURL != "" {
+		u, err := url.Parse(r.ActiveWSSURL)
+		if err != nil || u.Scheme != "wss" || u.Host == "" || u.User != nil || u.Fragment != "" {
+			return errors.New("server: invalid dedicated active URL")
+		}
 	}
 	if err := (proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}).Validate(); err != nil {
 		return err

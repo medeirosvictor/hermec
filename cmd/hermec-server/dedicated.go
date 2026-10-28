@@ -151,7 +151,14 @@ func checkDedicatedState(cfg server.Config, keyPath, chainPath, historyPath stri
 			var h *server.History
 			h, err = server.OpenHistory(historyPath)
 			if err == nil {
-				err = server.ValidateDedicatedPrepared(r, key, c, h)
+				switch r.State {
+				case server.DedicatedTransitionPrepared:
+					err = server.ValidateDedicatedPrepared(r, key, c, h)
+				case server.DedicatedTransitionCommitted:
+					err = server.ValidateDedicatedCommitted(r, key, c, h)
+				case server.DedicatedTransitionFenced:
+					err = server.ValidateDedicatedFenced(r, key, c, h)
+				}
 				_ = h.Close()
 			}
 		}

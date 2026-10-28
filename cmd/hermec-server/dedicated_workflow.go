@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -9,9 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/server"
 )
 
@@ -27,7 +30,7 @@ func dedicatedHostPublic(keyPath string, out io.Writer) error {
 	return nil
 }
 
-func dedicatedStatus(dir string, out io.Writer) error {
+func dedicatedStatus(dir, keyPath, chainPath, historyPath string, out io.Writer) error {
 	r, err := server.LoadDedicatedTransition(filepath.Join(dir, server.DedicatedTransitionFile))
 	if errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintln(out, "dedicated status: none\nrecovery: Keep the current host active; retry preparation.")
@@ -36,7 +39,121 @@ func dedicatedStatus(dir string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("dedicated transition: %w", err)
 	}
+	if err := validateDedicatedRecord(r, keyPath, chainPath, historyPath); err != nil {
+		return fmt.Errorf("dedicated transition is invalid: %w", err)
+	}
 	fmt.Fprintf(out, "dedicated status: %s\ndestination fingerprint: %s\nrecovery: %s\n", r.State, r.DestinationFingerprint, r.Recovery.Guidance())
+	return nil
+}
+
+func validateDedicatedRecord(r server.DedicatedTransitionRecord, keyPath, chainPath, historyPath string) error {
+	key, err := identity.Load(keyPath)
+	if err != nil {
+		return fmt.Errorf("host identity: %w", err)
+	}
+	c, err := chain.Load(chainPath)
+	if err != nil {
+		return fmt.Errorf("signed chain: %w", err)
+	}
+	h, err := server.OpenHistory(historyPath)
+	if err != nil {
+		return fmt.Errorf("history: %w", err)
+	}
+	defer h.Close()
+	switch r.State {
+	case server.DedicatedTransitionPrepared:
+		return server.ValidateDedicatedPrepared(r, key, c, h)
+	case server.DedicatedTransitionCommitted:
+		return server.ValidateDedicatedCommitted(r, key, c, h)
+	case server.DedicatedTransitionFenced:
+		return server.ValidateDedicatedFenced(r, key, c, h)
+	default:
+		return errors.New("unknown dedicated transition state")
+	}
+}
+
+// runDedicatedPreparation performs one bounded, passive preparation attempt.
+// It is deliberately not a service: after the durable record is written the
+// normal service can be started in prepared mode to receive a later commit.
+func runDedicatedPreparation(ctx context.Context, cfg server.Config, keyPath, chainPath, historyPath, activeURL, serverID string, retry bool, out io.Writer) error {
+	if !retry {
+		if err := validateDedicatedPrepareInputs(activeURL, serverID); err != nil {
+			return err
+		}
+	} else {
+		r, err := server.LoadDedicatedTransition(filepath.Join(filepath.Dir(chainPath), server.DedicatedTransitionFile))
+		if err != nil {
+			return fmt.Errorf("dedicated retry requires an existing transition: %w", err)
+		}
+		if r.State != server.DedicatedTransitionPrepared {
+			return fmt.Errorf("dedicated retry refuses %s transition", r.State)
+		}
+		if err := validateDedicatedRecord(r, keyPath, chainPath, historyPath); err != nil {
+			return err
+		}
+		if r.ActiveWSSURL == "" {
+			return errors.New("dedicated retry record has no pinned active URL; do not recreate it; inspect the active host")
+		}
+		activeURL, serverID = r.ActiveWSSURL, r.ServerID
+	}
+	if err := requirePrivateFile(keyPath); err != nil {
+		return fmt.Errorf("host identity: %w", err)
+	}
+	if err := requirePrivateFile(chainPath); err != nil {
+		return fmt.Errorf("signed chain: %w", err)
+	}
+	if err := requirePrivateFile(historyPath); err != nil {
+		return fmt.Errorf("history: %w", err)
+	}
+	key, err := identity.Load(keyPath)
+	if err != nil {
+		return fmt.Errorf("host identity: %w", err)
+	}
+	bootstrap, err := chain.Load(chainPath)
+	if err != nil {
+		return fmt.Errorf("signed chain: %w", err)
+	}
+	transitionPath := filepath.Join(filepath.Dir(chainPath), server.DedicatedTransitionFile)
+	if !retry {
+		if _, err := os.Lstat(transitionPath); err == nil {
+			return errors.New("dedicated preparation refuses existing transition state; inspect it with -dedicated-status or use -dedicated-retry")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("dedicated transition record: %w", err)
+		}
+		bootstrap, err = server.AuthenticateDedicatedBootstrap(ctx, activeURL, serverID, bootstrap, key, chainPath)
+		if err != nil {
+			return err
+		}
+	}
+	cfg.HostKey, cfg.Chain, cfg.HistoryPath = key, bootstrap, historyPath
+	cfg.Prepared, cfg.Mode = true, server.ModePrepared
+	cfg.DedicatedTransitionPath = transitionPath
+	dst := server.New(cfg)
+	if err := dst.Start(); err != nil {
+		return err
+	}
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = dst.Shutdown(shutdown)
+	}()
+	var readiness *proto.DedicatedReadiness
+	if retry {
+		r, _ := server.LoadDedicatedTransition(cfg.DedicatedTransitionPath)
+		readiness = &proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}
+	}
+	link, err := server.DialDedicatedLink(ctx, activeURL, dst, readiness)
+	if err != nil {
+		return err
+	}
+	defer link.Close()
+	go link.Run()
+	if err := link.PersistDedicatedPreparationAt(ctx, cfg.DedicatedTransitionPath, activeURL); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "dedicated status: prepared")
+	fmt.Fprintln(out, "next: start the dedicated service; it remains passive until the founder explicitly commits this exact transition.")
+	fmt.Fprintln(out, "next: use -dedicated-status to inspect it; use -dedicated-retry only after an interrupted preparation.")
 	return nil
 }
 
@@ -45,7 +162,7 @@ func dedicatedStatus(dir string, out io.Writer) error {
 // are neither accepted nor read by this command.
 func validateDedicatedPrepareInputs(rawURL, serverID string) error {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || u.Scheme != "wss" || u.Host == "" {
+	if err != nil || u.Scheme != "wss" || u.Host == "" || u.User != nil || u.Fragment != "" {
 		return errors.New("dedicated preparation requires a pinned wss:// active-host URL")
 	}
 	if _, err := chain.ParseID(strings.TrimSpace(serverID)); err != nil {

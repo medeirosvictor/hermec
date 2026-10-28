@@ -270,10 +270,6 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 	}
 	c.link = &linkState{peerFingerprint: c.fingerprint, hello: h, lastBeat: s.clock()}
 	if h.Prepared {
-		nonce := make([]byte, proto.DedicatedTransitionNonceSize)
-		if _, err := rand.Read(nonce); err != nil {
-			return proto.CodeBadRequest, "cannot create preparation nonce"
-		}
 		var snapshot []proto.ChatMessage
 		ts, id := time.Time{}, ""
 		if s.hist != nil {
@@ -282,7 +278,22 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 		head := s.chain.Head()
 		headHash := head.Hash()
 		historyCount, historyHash := proto.DedicatedHistoryCommitment(snapshot)
-		c.link.dedicated = &proto.DedicatedReadiness{ServerID: s.chain.ID().String(), DestinationFingerprint: c.fingerprint, ChainHead: head.Seq, ChainHeadHash: headHash[:], HistoryLastID: id, HistoryLastUnixMilli: ts.UnixMilli(), HistoryCount: historyCount, HistoryHash: historyHash, TransitionNonce: nonce}
+		readiness := proto.DedicatedReadiness{ServerID: s.chain.ID().String(), DestinationFingerprint: c.fingerprint, ChainHead: head.Seq, ChainHeadHash: headHash[:], HistoryLastID: id, HistoryLastUnixMilli: ts.UnixMilli(), HistoryCount: historyCount, HistoryHash: historyHash}
+		if h.Dedicated != nil {
+			// A restart may only resume the exact boundary it already durably
+			// attested. In particular, do not generate a replacement nonce.
+			readiness.TransitionNonce = append([]byte(nil), h.Dedicated.TransitionNonce...)
+			if h.Dedicated.Validate() != nil || !sameReadiness(*h.Dedicated, readiness) {
+				return proto.CodeBadRequest, "dedicated preparation boundary changed"
+			}
+		} else {
+			nonce := make([]byte, proto.DedicatedTransitionNonceSize)
+			if _, err := rand.Read(nonce); err != nil {
+				return proto.CodeBadRequest, "cannot create preparation nonce"
+			}
+			readiness.TransitionNonce = nonce
+		}
+		c.link.dedicated = &readiness
 		c.link.dedicatedHistory = snapshot
 	}
 	s.links[c] = struct{}{}

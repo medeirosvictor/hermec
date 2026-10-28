@@ -78,6 +78,47 @@ assuming a free allowance.
 Share `wss://name.example:7697/`, the server ID printed by `-check`, and the
 join password through separate trusted channels.
 
+## Moving an existing group to this VPS
+
+This is a two-party, founder-confirmed cutover; preparing a VPS does **not**
+activate it. Stop the new VPS service while preparing it. On the VPS, print
+only its public host identity:
+
+    sudo -u hermec /usr/local/bin/hermec-server -config /var/lib/hermec/server.toml -dedicated-host-key
+
+A current founder must add that public key as a host using the existing active
+server's normal authenticated host-management flow. Never copy a founder,
+member, or old-host private key to the VPS. Then, on the VPS, use the active
+host's trusted public TLS URL and its already-known server ID:
+
+    sudo -u hermec /usr/local/bin/hermec-server -config /var/lib/hermec/server.toml \
+      -dedicated-prepare wss://active.example:7697/ -dedicated-server-id SERVER_ID
+
+The command authenticates using only the VPS host key, pins the URL's server
+ID, mirrors and attests the exact chain/history boundary, records `prepared`,
+and exits. It prints no password or private key. Start the service afterwards:
+
+    sudo systemctl start hermec-server
+    sudo -u hermec /usr/local/bin/hermec-server -config /var/lib/hermec/server.toml -dedicated-status
+
+A prepared service remains passive and resumes its saved URL and exact nonce;
+it cannot elect itself or activate. Have the founder explicitly inspect and
+confirm the prepared destination/fingerprint and nonce in the client before
+requesting cutover. Only that founder action can fence the old host and commit
+the destination.
+
+If the prepare command was interrupted after it created `transition.json`, do
+not run prepare again and do not delete the record. Inspect it, then retry its
+saved URL and exact boundary:
+
+    sudo -u hermec /usr/local/bin/hermec-server -config /var/lib/hermec/server.toml -dedicated-status
+    sudo -u hermec /usr/local/bin/hermec-server -config /var/lib/hermec/server.toml -dedicated-retry
+
+`-dedicated-retry` refuses records other than a validated `prepared` record,
+never generates a nonce, and never activates a host. `-dedicated-status`
+validates and reports `prepared`, `fenced`, or `committed`; a malformed or
+unrelated record is an error requiring operator investigation.
+
 ## Remote reachability verifier
 
 `hermec-verify` is a pure-Go, two-endpoint proof of authenticated pinned WSS
