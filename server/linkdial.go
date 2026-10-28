@@ -42,7 +42,8 @@ type Link struct {
 // dialHost opens a warm, password-less session to the host at url with s's
 // host key, checking that it serves our chain and a head of at least minSeq.
 func dialHost(ctx context.Context, url string, s *Server, minSeq uint64) (*websocket.Conn, error) {
-	ws, _, err := websocket.DefaultDialer.DialContext(ctx, url, nil)
+	dialer := s.hostDialer()
+	ws, _, err := dialer.DialContext(ctx, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("server: dial host: %w", err)
 	}

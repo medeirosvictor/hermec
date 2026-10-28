@@ -296,6 +296,9 @@ func (s *Server) newRTCAPI() *webrtc.API {
 	ir := &interceptor.Registry{}
 	_ = webrtc.RegisterDefaultInterceptors(me, ir)
 	se := webrtc.SettingEngine{}
+	if s.pionNet != nil {
+		se.SetNet(s.pionNet)
+	}
 	if s.mux != nil {
 		se.SetICEUDPMux(s.mux)
 	} else if s.cfg.UDPPortMin != 0 && s.cfg.UDPPortMax != 0 {

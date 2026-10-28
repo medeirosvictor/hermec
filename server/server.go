@@ -10,24 +10,31 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/pion/ice/v4"
+	"github.com/pion/transport/v5"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
+	"github.com/medeirosvictor/hermec/netpath"
 )
 
 // Config configures a Server. Programmatic embedders should start from DefaultConfig().
 type Config struct {
 	// Addr is the listen address; use "127.0.0.1:0" in tests.
 	Addr string
+	// Network routes this server's listeners, host links and WebRTC sockets.
+	// Nil preserves normal system networking. Programmatic private-network
+	// providers must fail closed rather than falling back to system sockets.
+	Network netpath.Network
 	// ServerID is the machine-local ID of the chain this config belongs to (as
 	// chain.ID.String()); the app stores it in hosted.toml. Unused by Server.
 	ServerID string
@@ -189,10 +196,11 @@ type Server struct {
 
 	guards
 
-	http *http.Server
-	ln   net.Listener
-	udp  net.PacketConn // discovery responder; nil when not discoverable
-	mux  ice.UDPMux     // single-port media mux; nil in legacy UDP-range mode
+	http    *http.Server
+	ln      net.Listener
+	udp     net.PacketConn // discovery responder; nil when not discoverable
+	mux     ice.UDPMux     // single-port media mux; nil in legacy UDP-range mode
+	pionNet transport.Net  // validated provider network; nil for system networking
 }
 
 // New returns a Server for cfg. Call Start to begin serving.
@@ -242,6 +250,9 @@ func New(cfg Config) *Server {
 
 // Start listens on cfg.Addr and serves in the background.
 func (s *Server) Start() error {
+	if err := s.validateNetwork(); err != nil {
+		return err
+	}
 	if s.hist == nil {
 		h, err := OpenHistory(s.cfg.HistoryPath)
 		if err != nil {
@@ -286,7 +297,7 @@ func (s *Server) start() error {
 	if (s.cfg.TLSCert == "") != (s.cfg.TLSKey == "") {
 		return errors.New("server: TLSCert and TLSKey must be set together")
 	}
-	ln, err := net.Listen("tcp", s.cfg.Addr)
+	ln, err := s.listen(context.Background(), "tcp", s.cfg.Addr)
 	if err != nil {
 		return fmt.Errorf("server: listen: %w", err)
 	}
@@ -302,12 +313,25 @@ func (s *Server) start() error {
 		})
 	}
 	s.ln = ln
-	if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
-		if err := s.startUDP(discoveryBindHost(tcp.IP), tcp.Port); err != nil {
-			ln.Close()
-			s.ln = nil
-			return err
-		}
+	host, portText, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		ln.Close()
+		s.ln = nil
+		return fmt.Errorf("server: listener address: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		ln.Close()
+		s.ln = nil
+		return fmt.Errorf("server: listener port: %w", err)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		host = discoveryBindHost(ip)
+	}
+	if err := s.startUDP(host, port); err != nil {
+		ln.Close()
+		s.ln = nil
+		return err
 	}
 	s.http = &http.Server{
 		Handler:           http.HandlerFunc(s.handleWS),

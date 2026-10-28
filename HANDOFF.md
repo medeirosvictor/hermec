@@ -41,25 +41,22 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
    64 KiB frame limit (video not counted). Fine for the friend group; revisit
    before big rooms.
 
-## Active development (2026-10-27)
+## Active development (2026-10-28)
 
 Local work is on `fix/readiness-cleanup` in `.worktrees/readiness-cleanup`,
-forked from `e008043`; it has not been merged, pushed or released.
+rebased onto released `v0.7.0`; it has not been merged or pushed.
 
-- The four cleanup fixes are implemented and task-reviewed: mute reconciliation
-  (including old-call and full-result-queue handling), friend-host failure
-  visibility, friendly media/voice errors with diagnostic logs, and channel
-  sidebar scrolling with matching hit targets. Code commits: `459d5a1`,
-  `786c49a`, `e428dbc`. Vet and the complete root race suite passed after
-  Task 1 transport changes on 2026-10-27.
-- Hosting design and first transport-proof plan are approved. Client provider
-  hooks (Task 1) are complete and reviewed with no findings: signaling and
-  active/warm peers retain the selected network; private connections cannot
-  inherit global TLS/proxy routing or fall back when PionNet later returns nil.
-  Tests verify authenticated identity, failure without fallback, and late
-  TCP/UDP cleanup. Client/integration tests, root vet and root race tests passed.
-  **Resume at Task 2: server sockets and host-link routing.** No tsnet adapter
-  or real-network proof exists yet. Progress/briefs/reports are under the ignored
+- Embedded-network proof Tasks 1 and 2 are complete. Client signaling, active
+  and warm peers, server TCP/UDP listeners, WebRTC APIs and authenticated host
+  links all retain an explicit per-instance network provider. Provider-backed
+  routes ignore process-global proxy/TLS hooks and fail closed; unsafe private
+  combinations (`discoverable`, `public_ip`, legacy UDP ranges or nil PionNet)
+  are rejected before binding. Tests cover provider use, IPv4/IPv6 media binds,
+  late resource cleanup and startup rollback. Focused vet/tests and server plus
+  integration race tests passed.
+- **Resume at Task 3: the isolated tsnet adapter.** No tsnet dependency is in
+  the release module and no real-network proof or user-facing hosting flow
+  exists yet. Progress/briefs/reports are under the ignored
   `.superpowers/sdd/embedded-network-proof/` in this worktree; do not redispatch
   completed tasks after resuming. Victor chose local tests first, real-network
   checks later. No real network enrollment is authorized during this run.
@@ -110,8 +107,9 @@ The owner supplies coordination; no HERMEC-operated service. First
 [transport-proof plan](docs/superpowers/plans/2026-10-26-embedded-network-proof.md)
 is approved for local implementation. Victor chose local tests first, with
 real-network checks arranged later. Private UI/lifecycle, dedicated hosting, method migration
-and RNNoise trial plans follow the transport evidence. No networking
-implementation or noise-processing dependency has been added.
+and RNNoise trial plans follow the transport evidence. The internal client and
+server provider boundary is implemented on the active branch, but no tsnet
+adapter, hosting UI or noise-processing dependency has been added.
 
 1. **Embedded-network transport proof.** Execute the approved local proof in
    `docs/superpowers/plans/2026-10-26-embedded-network-proof.md`: explicit

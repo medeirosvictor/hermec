@@ -133,26 +133,32 @@ passed with no findings; completion evidence is recorded in the task ledger.
 Host links use the Config provider, never a global dialer. Server owns its
 listeners/mux, not the borrowed Network lifetime.
 
-- [ ] Write `TestHostNetworkRoutesTCPUDPAndLinks`: record provider operations
+- [x] Write `TestHostNetworkRoutesTCPUDPAndLinks`: record provider operations
   around real loopback nodes; verify TCP listening, UDP listening and outbound
   authenticated host link all use the configured instance. Include startup
   failure that closes already-open listeners without closing the provider.
-- [ ] Add explicit-provider configuration tests for existing `PublicIP` and
+- [x] Add explicit-provider configuration tests for existing `PublicIP` and
   discovery settings: neither may route sockets/candidates through the system
   network. Reject unsupported combinations before binding rather than silently
   overriding the selected provider. Preserve all nil-provider behavior.
-- [ ] Write `TestNetworkMediaUsesSelectedAddresses`: a single-provider fixture
+- [x] Write `TestNetworkMediaUsesSelectedAddresses`: a single-provider fixture
   yields SDP candidates only for its test interfaces; system address candidates
   cannot appear. Add separate IPv4 and IPv6 fixture cases and an unsupported-
   family failure that leaves no half-started host.
-- [ ] Run `go test ./server -run 'Test(HostNetwork|NetworkMedia)' -count=1` and
+- [x] Run `go test ./server -run 'Test(HostNetwork|NetworkMedia)' -count=1` and
   record RED. Add nil-provider regression coverage to existing media-port tests.
-- [ ] Implement provider dispatch at socket creation and host-link dialing,
+- [x] Implement provider dispatch at socket creation and host-link dialing,
   preserving media/discovery socket sharing and shutdown order. A private
   provider disables LAN broadcast discovery in the probe config; it does not
   change the existing discoverable default for system networking.
-- [ ] Run focused tests and `go test ./server ./integration`; commit
+- [x] Run focused tests and `go test ./server ./integration`; commit
   `feat: route host sockets and links through a network provider`.
+
+Execution note (2026-10-28): the resumed controller implemented the routing
+before adding the focused regressions, so no separate RED transcript exists.
+The tests cover provider TCP/UDP/link use, fail-closed dialing, unsafe option
+rejection, IPv4/IPv6 bind selection and listener cleanup. Focused tests,
+`go test ./server ./integration`, vet and race tests passed.
 
 ### Task 3: Build the isolated tsnet adapter with strict address handling
 

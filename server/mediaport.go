@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -70,7 +71,7 @@ func (s *Server) startUDP(host string, port int) error {
 	var pc net.PacketConn
 	if s.cfg.Discoverable {
 		var err error
-		if pc, err = listenUDP("udp", net.JoinHostPort(host, strconv.Itoa(port))); err != nil {
+		if pc, err = s.listenPacket(context.Background(), "udp", net.JoinHostPort(host, strconv.Itoa(port)), true); err != nil {
 			if shared {
 				return fmt.Errorf("server: media port %d is in use: %w: %w", port, ErrDiscoveryBind, err)
 			}
@@ -83,7 +84,7 @@ func (s *Server) startUDP(host string, port int) error {
 		s.udp = pc
 	} else if shared {
 		var err error
-		if pc, err = net.ListenPacket("udp", net.JoinHostPort(host, strconv.Itoa(port))); err != nil {
+		if pc, err = s.listenPacket(context.Background(), "udp", net.JoinHostPort(host, strconv.Itoa(port)), false); err != nil {
 			return fmt.Errorf("server: media port %d is in use: %w: %w", port, ErrMediaBind, err)
 		}
 	}
@@ -91,7 +92,7 @@ func (s *Server) startUDP(host string, port int) error {
 	mc := pc
 	if media && !shared {
 		var err error
-		mc, err = net.ListenPacket("udp", net.JoinHostPort(host, strconv.Itoa(mediaPort)))
+		mc, err = s.listenPacket(context.Background(), "udp", net.JoinHostPort(host, strconv.Itoa(mediaPort)), false)
 		if err != nil {
 			s.closeUDP()
 			return fmt.Errorf("server: media port %d is in use: %w: %w", mediaPort, ErrMediaBind, err)
