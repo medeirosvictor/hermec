@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/medeirosvictor/hermec/core/chain"
+	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
 )
@@ -95,6 +96,31 @@ func TestDedicatedTransitionRejectsSymlinkAndOversizedRecord(t *testing.T) {
 	}
 	if _, err := LoadDedicatedTransition(big); err == nil {
 		t.Fatal("oversized transition accepted")
+	}
+}
+
+func TestValidateDedicatedPreparedChecksLocalBoundary(t *testing.T) {
+	c, _, destination := twoHostChain(t)
+	h, err := OpenHistory("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := proto.ChatMessage{ID: "boundary", Channel: "general", TS: time.UnixMilli(9)}
+	if err := h.Add(m); err != nil {
+		t.Fatal(err)
+	}
+	r := DedicatedTransitionRecord{
+		Version: 1, State: DedicatedTransitionPrepared, ServerID: c.ID().String(),
+		DestinationFingerprint: identity.Fingerprint(destination.PublicKey()), ChainHead: c.Head().Seq,
+		HistoryLastID: m.ID, HistoryLastUnixMilli: m.TS.UnixMilli(),
+		TransitionNonce: bytes.Repeat([]byte{1}, proto.DedicatedTransitionNonceSize), Recovery: DedicatedRecoveryRetryPreparation,
+	}
+	if err := ValidateDedicatedPrepared(r, destination, c, h); err != nil {
+		t.Fatal(err)
+	}
+	r.HistoryLastID = "gone"
+	if err := ValidateDedicatedPrepared(r, destination, c, h); err == nil {
+		t.Fatal("accepted missing history boundary")
 	}
 }
 

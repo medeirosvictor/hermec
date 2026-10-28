@@ -9,7 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
+	"github.com/medeirosvictor/hermec/core/chain"
+	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 )
 
@@ -59,7 +62,47 @@ type DedicatedTransitionRecord struct {
 	Recovery               DedicatedRecoveryCode    `json:"recovery"`
 }
 
+// DedicatedTransitionFile is the restart record kept beside a dedicated
+// server's chain and history.
+const DedicatedTransitionFile = "transition.json"
+
 const maxDedicatedTransitionBytes = 16 << 10
+
+// ValidateDedicatedPrepared verifies that a completed preparation record
+// belongs to this local destination and that its captured boundary still
+// exists locally. It never activates the destination; callers must keep a
+// failed or stale record passive and show its fixed recovery guidance.
+func ValidateDedicatedPrepared(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *History) error {
+	if err := r.validate(); err != nil {
+		return err
+	}
+	if r.State != DedicatedTransitionPrepared {
+		return errors.New("server: dedicated transition is not prepared")
+	}
+	if local == nil || c == nil || h == nil {
+		return errors.New("server: incomplete local dedicated state")
+	}
+	if r.DestinationFingerprint != identity.Fingerprint(local.PublicKey()) {
+		return errors.New("server: dedicated transition names another destination")
+	}
+	if r.ServerID != c.ID().String() {
+		return errors.New("server: dedicated transition names another server")
+	}
+	if c.Head().Seq < r.ChainHead {
+		return errors.New("server: dedicated transition chain is behind its boundary")
+	}
+	if r.HistoryLastID == "" {
+		ts, id := h.Last()
+		if id != "" || !ts.IsZero() {
+			return errors.New("server: dedicated transition expected empty history")
+		}
+		return nil
+	}
+	if !h.Has(r.HistoryLastID, time.UnixMilli(r.HistoryLastUnixMilli)) {
+		return errors.New("server: dedicated transition history boundary is missing")
+	}
+	return nil
+}
 
 func (r DedicatedTransitionRecord) validate() error {
 	if r.Version != 1 {

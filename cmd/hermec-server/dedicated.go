@@ -144,6 +144,28 @@ func checkDedicatedState(cfg server.Config, keyPath, chainPath, historyPath stri
 			return err
 		}
 	}
+	transitionPath := filepath.Join(filepath.Dir(chainPath), server.DedicatedTransitionFile)
+	if _, err := os.Lstat(transitionPath); err == nil {
+		r, err := server.LoadDedicatedTransition(transitionPath)
+		if err == nil {
+			var h *server.History
+			h, err = server.OpenHistory(historyPath)
+			if err == nil {
+				err = server.ValidateDedicatedPrepared(r, key, c, h)
+				_ = h.Close()
+			}
+		}
+		if err != nil {
+			guidance := server.DedicatedRecoveryRetryPreparation.Guidance()
+			if r.Recovery.Guidance() != "" {
+				guidance = r.Recovery.Guidance()
+			}
+			return fmt.Errorf("dedicated transition is invalid or stale: %w; %s", err, guidance)
+		}
+		fmt.Fprintf(out, "dedicated prepared transition recognized; %s\n", r.Recovery.Guidance())
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("dedicated transition record: %w", err)
+	}
 	if cfg.TLSKey != "" {
 		if err := requirePrivateFile(cfg.TLSKey); err != nil {
 			return fmt.Errorf("TLS private key: %w", err)

@@ -119,6 +119,33 @@ func main() {
 	if err := checkHostKey(f.key, c, key); err != nil {
 		log.Fatal(err)
 	}
+	// A surviving preparation record is never permission to activate. Load it
+	// before constructing Host, validate its local boundary, and keep even a
+	// malformed or stale record passive with fixed recovery guidance.
+	transitionPath := filepath.Join(dir, server.DedicatedTransitionFile)
+	if _, err := os.Lstat(transitionPath); err == nil {
+		cfg.Prepared, cfg.Mode = true, server.ModePrepared
+		r, loadErr := server.LoadDedicatedTransition(transitionPath)
+		if loadErr == nil {
+			var h *server.History
+			h, loadErr = server.OpenHistory(f.history)
+			if loadErr == nil {
+				loadErr = server.ValidateDedicatedPrepared(r, key, c, h)
+				_ = h.Close()
+			}
+		}
+		if loadErr != nil {
+			guidance := server.DedicatedRecoveryRetryPreparation.Guidance()
+			if r.Recovery.Guidance() != "" {
+				guidance = r.Recovery.Guidance()
+			}
+			log.Printf("WARNING: dedicated transition is invalid or stale: %v; %s", loadErr, guidance)
+		} else {
+			log.Printf("dedicated prepared transition recognized; %s", r.Recovery.Guidance())
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		log.Fatalf("dedicated transition record: %v", err)
+	}
 	cfg.HostKey, cfg.Chain, cfg.HistoryPath = key, c, f.history
 	if !created && f.config != "" {
 		if set, err := server.GroupFieldsSet(f.config); err != nil {
