@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 )
 
@@ -296,6 +297,16 @@ func (c *Chain) setPathLocked(path string) error {
 	}
 	if err == nil {
 		err = os.Rename(name, path)
+	}
+	// Persist the rename itself, not just the replacement file's contents.
+	if err == nil {
+		if d, derr := os.Open(dir); derr == nil {
+			err = d.Sync()
+			_ = d.Close()
+			if err != nil && runtime.GOOS == "windows" {
+				err = nil
+			}
+		}
 	}
 	if err != nil {
 		os.Remove(name)

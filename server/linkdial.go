@@ -400,6 +400,8 @@ func (s *Server) applyLinkEntry(e chain.Entry) error {
 	if err != nil || len(frames) != 1 {
 		return fmt.Errorf("server: link: cannot encode chain entry %d", e.Seq)
 	}
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
 	s.chainMu.Lock()
 	defer s.chainMu.Unlock()
 	if head := s.chain.Head(); e.Seq <= head.Seq {

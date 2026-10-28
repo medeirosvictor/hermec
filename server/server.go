@@ -147,11 +147,14 @@ const (
 
 // Server accepts websocket connections and authenticates them.
 type Server struct {
-	cfg      Config
-	chain    *chain.Chain
-	group    groupState
-	chainMu  sync.Mutex // serializes chain_append: append, refresh, broadcast, kick
-	upgrader websocket.Upgrader
+	cfg     Config
+	chain   *chain.Chain
+	group   groupState
+	chainMu sync.Mutex // serializes chain_append: append, refresh, broadcast, kick
+	// dedicatedMu serializes a dedicated readiness capture/commit with every
+	// source mutation that can change its chain, history, or serving mode.
+	dedicatedMu sync.Mutex
+	upgrader    websocket.Upgrader
 
 	pwOnce sync.Once // derives pwKey from cfg.Password on first use
 	pwKey  []byte
@@ -388,6 +391,13 @@ func (s *Server) applyHistoryLimits() (changed bool) {
 
 // trimHistory trims the store with the current limits; errors are only logged.
 func (s *Server) trimHistory() {
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
+	s.trimHistoryLocked()
+}
+
+// trimHistoryLocked is trimHistory while dedicatedMu is held.
+func (s *Server) trimHistoryLocked() {
 	s.applyHistoryLimits()
 	if err := s.hist.Trim(s.clock()); err != nil {
 		s.logf("server: history trim: %v", err)

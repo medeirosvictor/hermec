@@ -315,6 +315,8 @@ func (s *Server) leaveAll(c *conn) {
 }
 
 func (s *Server) chat(c *conn, ch, text string) (code string) {
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
 	s.chMu.Lock()
 	if _, ok := s.chans[ch][c]; !ok {
 		s.chMu.Unlock()

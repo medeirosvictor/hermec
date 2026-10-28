@@ -373,6 +373,9 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 		return
 	}
 
+	// A dedicated readiness capture must not be crossed by an append.
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
 	// One append at a time, so connections see entries in chain order.
 	s.chainMu.Lock()
 	err = s.chain.Append(e)
@@ -427,7 +430,7 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 func (s *Server) afterChainChange() {
 	s.refreshGroup()
 	if s.applyHistoryLimits() {
-		s.trimHistory()
+		s.trimHistoryLocked()
 	}
 }
 

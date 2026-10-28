@@ -38,9 +38,10 @@ type linkState struct {
 	lastBeat time.Time
 	standby  bool // the last link_role sent
 	roleSent bool // a link_role has been sent
-	// dedicated is a source-captured boundary for a prepared destination.
-	// It is nil for ordinary failover links.
-	dedicated *proto.DedicatedReadiness
+	// dedicated and dedicatedHistory are one source-captured boundary for a
+	// prepared destination. The copied history cannot be evicted mid-sync.
+	dedicated        *proto.DedicatedReadiness
+	dedicatedHistory []proto.ChatMessage
 }
 
 // selfInfo describes this host.
@@ -193,6 +194,9 @@ func (c *conn) handleLinkHello(env proto.Envelope) {
 // so a host_remove cannot slip between them; chainMu is not held while the
 // history is paged.
 func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
+	// A readiness capture cannot be crossed by a source mutation or demotion.
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
 	// A split-brain loser sends its load; if we would lose to it now, the merge
 	// is wrong way round and we refuse.
 	if h.Yield != nil {
@@ -237,18 +241,17 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 	}
 	c.link = &linkState{hello: h, lastBeat: s.clock()}
 	if h.Prepared {
-		// The chain head is captured while chainMu excludes an append. History
-		// is checked again before acknowledgement, so a concurrent chat makes
-		// this attempt retry rather than attest an ambiguous boundary.
 		nonce := make([]byte, proto.DedicatedTransitionNonceSize)
 		if _, err := rand.Read(nonce); err != nil {
 			return proto.CodeBadRequest, "cannot create preparation nonce"
 		}
+		var snapshot []proto.ChatMessage
 		ts, id := time.Time{}, ""
 		if s.hist != nil {
-			ts, id = s.hist.Last()
+			snapshot, ts, id = s.hist.Snapshot()
 		}
 		c.link.dedicated = &proto.DedicatedReadiness{ServerID: s.chain.ID().String(), DestinationFingerprint: c.fingerprint, ChainHead: s.chain.Head().Seq, HistoryLastID: id, HistoryLastUnixMilli: ts.UnixMilli(), TransitionNonce: nonce}
+		c.link.dedicatedHistory = snapshot
 	}
 	s.links[c] = struct{}{}
 	ok := true
@@ -274,13 +277,27 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 // cannot hide a partial local history.  The proof challenge follows the final
 // history frame, preserving the source-captured transfer boundary.
 func (s *Server) streamDedicatedHistory(c *conn) {
-	s.streamHistory(c, time.Time{}, "")
 	s.chMu.Lock()
 	r := c.link.dedicated
+	snapshot := append([]proto.ChatMessage(nil), c.link.dedicatedHistory...)
 	s.chMu.Unlock()
-	if r != nil {
-		_ = c.sendMsg(proto.TypeDedicatedPrepare, proto.DedicatedPrepare{Readiness: *r})
+	if r == nil || !streamHistorySnapshot(c, snapshot) {
+		return
 	}
+	_ = c.sendMsg(proto.TypeDedicatedPrepare, proto.DedicatedPrepare{Readiness: *r})
+}
+
+// streamHistorySnapshot pages an immutable capture, rather than repeatedly
+// reading History while its retention policy may evict early pages.
+func streamHistorySnapshot(c *conn, msgs []proto.ChatMessage) bool {
+	for len(msgs) > 0 {
+		raw, n := encodeLinkSync(msgs, false)
+		if raw == nil || n == 0 || !c.enqueueWait(raw) {
+			return false
+		}
+		msgs = msgs[n:]
+	}
+	return true
 }
 
 // streamHistory sends c the chat lines after (ts, id), paged to fit a frame;

@@ -69,9 +69,16 @@ func (c *conn) handleDedicatedProof(env proto.Envelope) {
 		return
 	}
 	s := c.srv
+	// This is the commit point: no source append, chat/trim, or demotion can
+	// cross validation and ACK enqueue. The destination's proof is therefore
+	// for one atomic source generation.
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
+	s.chainMu.Lock()
+	defer s.chainMu.Unlock()
 	s.chMu.Lock()
+	defer s.chMu.Unlock()
 	want := c.link.dedicated
-	s.chMu.Unlock()
 	if want == nil || !c.link.hello.Prepared || !sameReadiness(*want, p.Readiness) {
 		c.sendError(proto.CodeForbidden, "unexpected dedicated readiness proof")
 		return
@@ -80,8 +87,10 @@ func (c *conn) handleDedicatedProof(env proto.Envelope) {
 		c.sendError(proto.CodeForbidden, "invalid dedicated readiness proof")
 		return
 	}
-	// Re-read both ends after the proof arrives. This catches a source append,
-	// a live chat, and a replay after a link reconnect.
+	if s.Mode() != ModeActive {
+		c.sendError(proto.CodeNotActive, "source is no longer active")
+		return
+	}
 	if s.chain.ID().String() != want.ServerID || s.chain.Head().Seq != want.ChainHead {
 		c.sendError(proto.CodeBadChain, "source chain moved during preparation")
 		return
@@ -99,9 +108,8 @@ func (c *conn) handleDedicatedProof(env proto.Envelope) {
 	}
 	// One acknowledgement per captured nonce. A replay on the same link cannot
 	// create a second transition, and reconnecting obtains a fresh nonce.
-	s.chMu.Lock()
 	c.link.dedicated = nil
-	s.chMu.Unlock()
+	c.link.dedicatedHistory = nil
 }
 
 func sameReadiness(a, b proto.DedicatedReadiness) bool {

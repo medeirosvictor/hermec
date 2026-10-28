@@ -135,6 +135,8 @@ func watchClose(ctx context.Context, ws *websocket.Conn) (stop func()) {
 // it as a link would: group state, history limits, links of removed hosts,
 // and the kick of everyone banned.
 func (s *Server) replaceChain(es []chain.Entry) error {
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
 	s.chainMu.Lock()
 	defer s.chainMu.Unlock()
 	if err := s.chain.Replace(es); err != nil {

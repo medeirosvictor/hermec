@@ -46,6 +46,8 @@ func (s *Server) Mode() Mode { return Mode(s.modeState.mode.Load()) }
 // SetMode switches the host's mode. Promoting warm sessions is the caller's
 // job (promoteWarmLocked).
 func (s *Server) SetMode(m Mode) {
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
 	if m == ModePrepared {
 		s.prepared.Store(true)
 	}

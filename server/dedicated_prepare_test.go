@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -71,6 +72,30 @@ func TestPreparedLinkAttestsCompleteMultipageHistoryBeforePersistence(t *testing
 	}
 	if r.State != DedicatedTransitionPrepared || r.ChainHead != c.Head().Seq {
 		t.Fatalf("transition = %+v", r)
+	}
+}
+
+func TestDedicatedHistorySnapshotSurvivesTrimAndConcurrentAppend(t *testing.T) {
+	h, err := OpenHistory("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := h.Add(proto.ChatMessage{ID: fmt.Sprintf("snapshot-%d", i), Channel: "general", TS: time.Unix(int64(i), 0)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, _, _ := h.Snapshot()
+	done := make(chan error, 1)
+	go func() { done <- h.Trim(time.Now().Add(48 * time.Hour)) }()
+	if err := h.Add(proto.ChatMessage{ID: "after-snapshot", Channel: "general", TS: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot) != 3 || snapshot[0].ID != "snapshot-0" {
+		t.Fatalf("snapshot changed during trim/append: %+v", snapshot)
 	}
 }
 

@@ -603,6 +603,30 @@ func (h *History) After(ts time.Time, id string, max int) (msgs []proto.ChatMess
 	}
 }
 
+// Snapshot returns a complete, globally ordered copy and its final watermark.
+// The copy remains valid while later Adds or Trim calls change the store.
+func (h *History) Snapshot() (msgs []proto.ChatMessage, ts time.Time, id string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, s := range h.chans {
+		msgs = append(msgs, s...)
+	}
+	sort.Slice(msgs, func(i, j int) bool { return histLess(msgs[i], msgs[j]) })
+	if len(msgs) != 0 {
+		last := msgs[len(msgs)-1]
+		return msgs, last.TS, last.ID
+	}
+	return msgs, time.Time{}, ""
+}
+
+// Has reports whether the exact history watermark is still retained.
+func (h *History) Has(id string, ts time.Time) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	m, ok := h.ids[id]
+	return ok && m.ts.Equal(ts)
+}
+
 // Last returns the (TS, ID) of the newest stored message; zero values if empty.
 func (h *History) Last() (ts time.Time, id string) {
 	h.mu.Lock()
