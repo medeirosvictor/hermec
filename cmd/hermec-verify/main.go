@@ -101,20 +101,38 @@ func parseOptions(args []string) (options, error) {
 	return o, nil
 }
 
+// readPassword cancels a blocked real stdin read by closing its descriptor,
+// then waits for the reader goroutine to exit. This avoids retaining a partial
+// secret in a blocked goroutine after the overall verification timeout.
 func readPassword(ctx context.Context, r io.Reader) (string, error) {
+	closer, closable := r.(io.Closer)
+	if !closable {
+		// Test and embedded callers that provide an in-memory reader cannot block
+		// indefinitely. Real stdin is *os.File and always takes the safe path.
+		return readPasswordLine(r)
+	}
 	type result struct {
-		password string
+		password []byte
 		err      error
 	}
 	resultC := make(chan result, 1)
 	go func() {
-		password, err := readPasswordLine(r)
+		password, err := readPasswordBytes(r)
 		resultC <- result{password, err}
 	}()
 	select {
 	case got := <-resultC:
-		return got.password, got.err
+		defer clear(got.password)
+		if got.err != nil {
+			return "", got.err
+		}
+		return string(got.password), nil
 	case <-ctx.Done():
+		// Closing is intentional: the process is about to fail and must not leave
+		// either a reader goroutine or its partially filled password buffer behind.
+		_ = closer.Close()
+		got := <-resultC
+		clear(got.password)
 		return "", errors.New("password input timed out")
 	}
 }
@@ -123,41 +141,57 @@ func readPassword(ctx context.Context, r io.Reader) (string, error) {
 // optional CR before newline. Reading one byte at a time keeps the bound true
 // even for a Reader backed by an arbitrarily large pipe or buffer.
 func readPasswordLine(r io.Reader) (string, error) {
+	line, err := readPasswordBytes(r)
+	defer clear(line)
+	if err != nil {
+		return "", err
+	}
+	return string(line), nil
+}
+
+func readPasswordBytes(r io.Reader) ([]byte, error) {
 	var line [maxPasswordBytes + 1]byte
+	defer clear(line[:])
 	n := 0
 	for {
 		var b [1]byte
 		count, err := r.Read(b[:])
 		if count > 0 {
 			if b[0] == '\n' {
-				return finishPassword(line[:n])
+				return finishPasswordBytes(line[:n])
 			}
 			if n == len(line) {
-				return "", errors.New("password from stdin is too long")
+				return nil, errors.New("password from stdin is too long")
 			}
 			line[n] = b[0]
 			n++
 		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return finishPassword(line[:n])
+				return finishPasswordBytes(line[:n])
 			}
-			return "", errors.New("cannot read password from stdin")
+			return nil, errors.New("cannot read password from stdin")
 		}
 	}
 }
 
-func finishPassword(line []byte) (string, error) {
+func finishPasswordBytes(line []byte) ([]byte, error) {
 	if len(line) > 0 && line[len(line)-1] == '\r' {
 		line = line[:len(line)-1]
 	}
 	if len(line) == 0 {
-		return "", errors.New("password from stdin is empty")
+		return nil, errors.New("password from stdin is empty")
 	}
 	if len(line) > maxPasswordBytes {
-		return "", errors.New("password from stdin is too long")
+		return nil, errors.New("password from stdin is too long")
 	}
-	return string(line), nil
+	return append([]byte(nil), line...), nil
+}
+
+func clear(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }
 
 func readFingerprint(path string) (string, error) {

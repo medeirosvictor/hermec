@@ -57,6 +57,9 @@ func (g *game) openTileMenu(key string, ax, ay float64) {
 	if id := g.serverIDFor(key); id != "" {
 		items = append(items, menuItem{label: "id " + shortID(id), act: func() { g.copyID(id) }})
 	}
+	if d, ok := g.dedicatedDetailsFor(key); ok {
+		items = append(items, menuItem{label: "Copy connection details", act: func() { g.copyDedicatedDetails(d) }})
+	}
 	items = append(items, menuItem{label: "Rename", act: func() { g.openRenameDialog(key) }})
 	if _, ok := g.sess[key]; ok {
 		items = append(items, menuItem{label: "Disconnect", act: func() { g.disconnect(key) }})

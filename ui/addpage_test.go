@@ -57,12 +57,19 @@ func TestAddChoiceHits(t *testing.T) {
 		t.Fatalf("choice 1 -> %v focus %d", g.add, g.connect.focus)
 	}
 	g.add = addChoose
+	g.chooseAdd(2)
+	if g.add != addDedicated || g.df.focus != 0 {
+		t.Fatalf("choice 2 -> %v focus %d", g.add, g.df.focus)
+	}
+	g.add = addChoose
 	g.hits.Reset()
 	g.addAddHits()
-	r := g.addChoiceRect(1)
-	h, ok := g.hits.At((r.x0+r.x1)/2, (r.y0+r.y1)/2)
-	if !ok || h.Kind != state.HitAddChoice || h.ID != 1 {
-		t.Errorf("hit = %+v %v", h, ok)
+	for _, want := range []int{1, 2} {
+		r := g.addChoiceRect(want)
+		h, ok := g.hits.At((r.x0+r.x1)/2, (r.y0+r.y1)/2)
+		if !ok || h.Kind != state.HitAddChoice || h.ID != want {
+			t.Errorf("choice %d hit = %+v %v", want, h, ok)
+		}
 	}
 }
 

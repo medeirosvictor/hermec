@@ -13,7 +13,7 @@ func shapeAt(h *state.Hits, x, y float64) ebiten.CursorShapeType {
 	switch {
 	case !ok:
 		return ebiten.CursorShapeDefault
-	case t.Kind == state.HitText, t.Kind == state.HitCreateField:
+	case t.Kind == state.HitText, t.Kind == state.HitCreateField, t.Kind == state.HitDedicatedField:
 		return ebiten.CursorShapeText
 	default:
 		return ebiten.CursorShapePointer

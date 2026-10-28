@@ -223,6 +223,11 @@ func TestPasswordInputHonorsTimeoutBeforeNewlineOrEOF(t *testing.T) {
 	if _, err := readPassword(ctx, r); err == nil || time.Since(started) > time.Second {
 		t.Fatalf("password read did not honor deadline: %v", err)
 	}
+	// Cancellation closes real stdin (an *os.File), so the reader goroutine has
+	// exited instead of retaining its partial password buffer.
+	if _, err := r.Read(make([]byte, 1)); err == nil {
+		t.Fatal("timed out password input was not closed")
+	}
 }
 
 func TestFingerprintAndMarkers(t *testing.T) {

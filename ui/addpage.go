@@ -18,9 +18,10 @@ import (
 type addMode int
 
 const (
-	addChoose addMode = iota // Create my own / Join a server
-	addCreate                // the create form
-	addJoin                  // the connect form
+	addChoose    addMode = iota // Create my own / Join a server / Dedicated server
+	addCreate                   // the create form
+	addJoin                     // the generic LAN/friend connect form
+	addDedicated                // the dedicated WSS/pinned-server form
 )
 
 // firewallLine is the Windows Firewall hint shown on the create form and in
@@ -117,7 +118,7 @@ func (g *game) createChoiceHint() string {
 	return "host a server on this computer"
 }
 
-// chooseAdd activates choice i: 0 create, 1 join. Create does nothing while
+// chooseAdd activates choice i: 0 create, 1 generic join, 2 dedicated. Create does nothing while
 // a server is already hosted, so hosted.toml is never overwritten.
 func (g *game) chooseAdd(i int) {
 	switch i {
@@ -132,6 +133,10 @@ func (g *game) chooseAdd(i int) {
 		g.add = addJoin
 		g.connect.sel = -1
 		g.connect.focus = 1
+	case 2:
+		g.add = addDedicated
+		g.df.reset()
+		g.df.focus = 0
 	}
 }
 
@@ -142,9 +147,13 @@ func (g *game) addEsc(pressed bool) {
 		return
 	}
 	switch g.add {
-	case addCreate, addJoin:
+	case addCreate, addJoin, addDedicated:
 		if g.add == addJoin && g.connect.local {
 			return // the -local connect form has no choices to return to
+		}
+		if g.add == addDedicated {
+			g.cancelDedicated()
+			g.df.reset()
 		}
 		g.add = addChoose
 		g.escSpent = true
@@ -199,12 +208,12 @@ func (g *game) addX() float64 { return connectX + g.railW() }
 
 func (g *game) addTop() float64 { return connectFieldsTop(g.lineH()) + g.bannerH() }
 
-// addChoiceRect is choice panel i, the two sit side by side.
+// addChoiceRect is choice panel i. Three choices sit side by side when room permits.
 func (g *game) addChoiceRect(i int) rectF {
 	x0 := g.addX()
 	avail := float64(g.w) - connectX - x0
 	gap := float64(pad)
-	w := (avail - gap) / 2
+	w := (avail - 2*gap) / 3
 	if w > 320 {
 		w = 320
 	}
@@ -233,10 +242,19 @@ func (g *game) addAddHits() {
 	case g.curKey != "" || g.add == addJoin:
 		g.addConnectHits()
 	case g.add == addChoose:
-		for i := 0; i < 2; i++ {
+		for i := 0; i < 3; i++ {
 			r := g.addChoiceRect(i)
 			g.hits.Add(state.Hit{X0: r.x0, Y0: r.y0, X1: r.x1, Y1: r.y1, Kind: state.HitAddChoice, ID: i})
 		}
+	case g.add == addDedicated:
+		lh := g.lineH()
+		for i := 0; i < 3; i++ {
+			y := g.createRowY(i)
+			g.hits.Add(state.Hit{X0: g.addX(), Y0: y, X1: float64(g.w), Y1: y + lh, Kind: state.HitDedicatedField, ID: i})
+		}
+		y := g.createRowY(4)
+		g.hits.Add(state.Hit{X0: g.addX(), Y0: y, X1: g.addX() + 100, Y1: y + lh, Kind: state.HitDedicatedImport})
+		g.hits.Add(state.Hit{X0: g.addX() + 110, Y0: y, X1: g.addX() + 290, Y1: y + lh, Kind: state.HitDedicatedValidate})
 	case g.add == addCreate:
 		lh := g.lineH()
 		for i := 0; i < createFields; i++ {
@@ -262,12 +280,38 @@ func (g *game) updateAdd() {
 			g.addSel = 0
 		}
 		if inpututil.IsKeyJustPressed(ebiten.KeyArrowRight) || inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) {
-			g.addSel = 1
+			g.addSel = (g.addSel + 1) % 3
 		}
 		if ok && h.Kind == state.HitAddChoice {
 			g.chooseAdd(h.ID)
 		} else if enterPressed() {
 			g.chooseAdd(g.addSel)
+		}
+	case addDedicated:
+		f := &g.df
+		if ok {
+			switch h.Kind {
+			case state.HitDedicatedField:
+				f.focus = h.ID
+			case state.HitDedicatedImport:
+				g.importDedicatedDetails()
+				return
+			case state.HitDedicatedValidate:
+				g.validateDedicatedSyntax()
+				return
+			}
+		}
+		if inpututil.IsKeyJustPressed(ebiten.KeyTab) {
+			f.focus = (f.focus + 1) % 3
+		}
+		before := [3]string{f.wss.String(), f.serverID.String(), f.password.String()}
+		f.edit(readEditKeys(), ebiten.AppendInputChars(nil))
+		if before != [3]string{f.wss.String(), f.serverID.String(), f.password.String()} {
+			g.invalidateDedicatedValidation()
+			f.validated = false
+		}
+		if enterPressed() {
+			g.validateDedicatedSyntax()
 		}
 	case addCreate:
 		f := &g.cf
@@ -298,6 +342,9 @@ func (g *game) drawAddPage(screen *ebiten.Image) {
 	if g.add == addCreate {
 		title = "Create my own"
 	}
+	if g.add == addDedicated {
+		title = "Dedicated server"
+	}
 	g.drawTextF(screen, g.faceT, title, x, y, th.Bright)
 
 	if g.add == addChoose {
@@ -305,9 +352,9 @@ func (g *game) drawAddPage(screen *ebiten.Image) {
 		if h, ok := g.hitAt(); ok && h.Kind == state.HitAddChoice {
 			hover = h.ID
 		}
-		labels := [2]string{"Create my own", "Join a server"}
-		hints := [2]string{g.createChoiceHint(), "connect to a friend's server"}
-		for i := 0; i < 2; i++ {
+		labels := [3]string{"Create my own", "Join a server", "Dedicated server"}
+		hints := [3]string{g.createChoiceHint(), "connect to a friend's server", "operator prepares the VPS outside HERMEC"}
+		for i := 0; i < 3; i++ {
 			r := g.addChoiceRect(i)
 			t := 0.12
 			if i == hover || i == g.addSel {
@@ -324,6 +371,35 @@ func (g *game) drawAddPage(screen *ebiten.Image) {
 		if g.addPrev != "" && g.sess[g.addPrev] != nil {
 			g.drawTextF(screen, g.faceS, "Esc to go back", x, g.addTop()+6*lh, th.Dim)
 		}
+		return
+	}
+	if g.add == addDedicated {
+		f := &g.df
+		rows := []struct{ label, value string }{{"WSS URL:   ", f.wss.String()}, {"server ID: ", f.serverID.String()}, {"password:  ", dedicatedMasked(&f.password)}}
+		for i, r := range rows {
+			marker := "  "
+			if i == f.focus {
+				marker = "> "
+			}
+			y := g.createRowY(i)
+			g.drawText(screen, marker+r.label+r.value, x, y, th.FG)
+			if i == f.focus {
+				fl := []*field{&f.wss, &f.serverID, &f.password}[i]
+				prefix := marker + r.label
+				if i == 2 {
+					prefix = marker + dedicatedCaretPrefix(r.label, fl)
+				} else {
+					prefix += string(fl.runes[:fl.caret()])
+				}
+				g.drawCaret(screen, x, y, prefix)
+			}
+		}
+		g.drawText(screen, "Import", x, g.createRowY(4), th.Bright)
+		g.drawText(screen, "Validate / Connect", x+110, g.createRowY(4), th.Bright)
+		if f.err != "" {
+			g.drawText(screen, f.err, x, g.createRowY(5), th.Warn)
+		}
+		g.drawTextF(screen, g.faceS, "WSS and the supplied server ID are required. Esc to cancel.", x, g.createRowY(6), th.Dim)
 		return
 	}
 

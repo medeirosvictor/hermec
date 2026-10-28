@@ -123,14 +123,22 @@ type game struct {
 	hostedTweak func(*server.Config)
 	curKey      string // key of the viewed session; empty = connect scene
 
-	add           addMode           // which step of the Add a Server page shows
-	addPrev       string            // view key Esc on the choices returns to
-	addSel        int               // keyboard-selected choice
-	cf            createForm        // the create page's fields
-	addInvCh      chan inviteResult // address lookup started on entering addCreate
-	addTS, addLAN string
-	addInviteDone bool
-	notice        string // persistent load/save error, shown on the connect scene
+	add           addMode       // which step of the Add a Server page shows
+	addPrev       string        // view key Esc on the choices returns to
+	addSel        int           // keyboard-selected choice
+	cf            createForm    // the create page's fields
+	df            dedicatedForm // dedicated endpoint draft; never persisted
+	dedicatedCh   chan dedicatedResult
+	dedicatedStop context.CancelFunc
+	dedicatedGen  uint64
+	// dedicatedDial and dedicatedProbe keep the headless validation lifecycle
+	// testable without changing its production dial or media-probe path.
+	dedicatedDial  dedicatedDial
+	dedicatedProbe dedicatedMediaProbe
+	addInvCh       chan inviteResult // address lookup started on entering addCreate
+	addTS, addLAN  string
+	addInviteDone  bool
+	notice         string // persistent load/save error, shown on the connect scene
 
 	settingsPath  string
 	set           state.Settings
@@ -364,6 +372,7 @@ func Run(opts Options) error {
 		}
 		closeAll(g.vc.src, g.vc.sink)
 	}
+	g.cancelDedicated()
 	g.closeSessions()
 	return err
 }
@@ -490,6 +499,7 @@ func (g *game) tickBackground(now time.Time) {
 	g.pollUpdate()
 	g.pumpInvite()
 	g.pumpAddInvite()
+	g.pumpDedicated()
 }
 
 func (g *game) Draw(screen *ebiten.Image) {

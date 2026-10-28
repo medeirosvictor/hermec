@@ -46,6 +46,14 @@ func TestCursorShapeMainScene(t *testing.T) {
 	}
 }
 
+func TestCursorShapeDedicatedFieldIsText(t *testing.T) {
+	var h state.Hits
+	h.Add(state.Hit{X0: 0, Y0: 0, X1: 10, Y1: 10, Kind: state.HitDedicatedField})
+	if got := shapeAt(&h, 5, 5); got != ebiten.CursorShapeText {
+		t.Fatalf("dedicated field shape %v, want text", got)
+	}
+}
+
 func TestCursorShapeMenuItemIsPointer(t *testing.T) {
 	var h state.Hits
 	h.Add(state.Hit{X0: 0, Y0: 0, X1: 10, Y1: 10, Kind: state.HitMenuItem, ID: 1})
