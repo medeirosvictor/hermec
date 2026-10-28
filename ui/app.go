@@ -135,10 +135,16 @@ type game struct {
 	// testable without changing its production dial or media-probe path.
 	dedicatedDial  dedicatedDial
 	dedicatedProbe dedicatedMediaProbe
-	addInvCh       chan inviteResult // address lookup started on entering addCreate
-	addTS, addLAN  string
-	addInviteDone  bool
-	notice         string // persistent load/save error, shown on the connect scene
+	// dm is the founder-only VPS authorization/cutover draft. It is never
+	// persisted and has its own lifecycle from the end-user Dedicated Add page.
+	dm            dedicatedManager
+	dmKey         string
+	dmStop        context.CancelFunc
+	dmCh          chan dedicatedManageResult
+	addInvCh      chan inviteResult // address lookup started on entering addCreate
+	addTS, addLAN string
+	addInviteDone bool
+	notice        string // persistent load/save error, shown on the connect scene
 
 	settingsPath  string
 	set           state.Settings
@@ -445,7 +451,7 @@ func (g *game) Update() error {
 	g.stepTooltip(hit, hitOK, time.Now())
 	if g.modal {
 		g.updateDialog() // buttons, Esc, Enter and typing; nothing under it acts
-	} else if !g.updateMenu() { // a click spent on the menu is not also a rail click
+	} else if !g.updateMenu() && !g.updateDedicatedManage() { // focused VPS management consumes scene input
 		g.updateBanner()
 		g.updateRail()
 	}
@@ -500,6 +506,13 @@ func (g *game) tickBackground(now time.Time) {
 	g.pumpInvite()
 	g.pumpAddInvite()
 	g.pumpDedicated()
+	g.pumpDedicatedManage()
+	if g.dmKey != "" {
+		s := g.sess[g.dmKey]
+		if s == nil || s.c == nil || s.st.Phase == state.PhaseDisconnected || !g.dedicatedFounder(g.dmKey) {
+			g.closeDedicatedManage()
+		}
+	}
 }
 
 func (g *game) Draw(screen *ebiten.Image) {
@@ -557,6 +570,7 @@ func (g *game) drawScene(screen *ebiten.Image) {
 	g.drawRail(screen)
 	g.drawTooltip(screen)
 	g.drawMenu(screen)
+	g.drawDedicatedManage(screen)
 	g.drawDialog(screen)
 }
 

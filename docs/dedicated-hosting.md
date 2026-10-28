@@ -107,6 +107,24 @@ confirm the prepared destination/fingerprint and nonce in the client before
 requesting cutover. Only that founder action can fence the old host and commit
 the destination.
 
+### Founder desktop sequence
+
+On the connected active-server tile, the current chain founder can choose
+**Manage dedicated host…**. This is not the end-user **Dedicated server** Join
+page. Paste only the VPS public key printed by `-dedicated-host-key`; the client
+parses it and displays its fingerprint. Confirm **Authorize** explicitly. The
+client adds it at one lower-precedence priority after every current host (the
+largest existing priority plus one), then asks the active source for Ready for
+that exact fingerprint.
+
+Ready is not activation. Compare the displayed VPS fingerprint and exact
+transition nonce with the prepared VPS, then press **Activate** explicitly.
+The source will retry rather than cut over while anyone is in voice. A timeout
+or lost response is an unknown outcome: leave the page open, use **Check
+Ready**, and retry only after the exact Ready boundary/nonce is displayed
+again. Closing the page or losing the session clears the draft; no VPS key or
+nonce is saved by the desktop client, and it never activates automatically.
+
 If the prepare command was interrupted after it created `transition.json`, do
 not run prepare again and do not delete the record. Inspect it, then retry its
 saved URL and exact boundary:

@@ -7,11 +7,12 @@ Roadmap: [PLAN.md](PLAN.md).
 ## Current work
 
 - Branch: `feature/dedicated-hosting` in `.worktrees/dedicated-hosting`.
-- Dedicated Tasks 1–4 are complete locally (`ca6ed69`, `020492f`, `5df0524`),
-  unmerged/unpushed. Current documentation changes are uncommitted.
-- **Immediate work: Task 5 — authorize and prepare the VPS host.** Task 6 is
-  remote acceptance/release. There is no disposable VPS/AWS test: do not claim
-  remote hosting is available or provision cloud resources.
+- Dedicated Tasks 1–5 are complete locally (`ca6ed69`, `020492f`, `5df0524`
+  plus the founder desktop authorization/cutover flow). Current documentation
+  changes are uncommitted.
+- **Next work: Task 6 — remote acceptance/release.** There is no disposable
+  VPS/AWS test yet: do not claim remote hosting is available or provision cloud
+  resources.
 - Private networking cannot ship before real Tailscale/Headscale direct and
   relay evidence. Migration follows dedicated/private hosting; desktop
   distribution/updater follows migration.

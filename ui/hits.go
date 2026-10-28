@@ -73,4 +73,5 @@ func (g *game) buildHits() {
 		g.addBarHits(g.geom())
 	}
 	g.addBannerHit()
+	g.addDedicatedManageHits() // focused founder overlay wins over the scene
 }

@@ -60,6 +60,9 @@ func (g *game) openTileMenu(key string, ax, ay float64) {
 	if d, ok := g.dedicatedDetailsFor(key); ok {
 		items = append(items, menuItem{label: "Copy connection details", act: func() { g.copyDedicatedDetails(d) }})
 	}
+	if g.dedicatedFounder(key) {
+		items = append(items, menuItem{label: "Manage dedicated host…", act: func() { g.openDedicatedManage(key) }})
+	}
 	items = append(items, menuItem{label: "Rename", act: func() { g.openRenameDialog(key) }})
 	if _, ok := g.sess[key]; ok {
 		items = append(items, menuItem{label: "Disconnect", act: func() { g.disconnect(key) }})
