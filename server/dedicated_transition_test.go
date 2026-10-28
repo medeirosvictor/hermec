@@ -50,6 +50,18 @@ func TestDedicatedTransitionAtomicPrivateRecord(t *testing.T) {
 	}
 }
 
+func TestPreparingTransitionRequiresPinnedSourceURL(t *testing.T) {
+	r := testDedicatedTransition()
+	r.State = DedicatedTransitionPreparing
+	if err := r.validate(); err == nil {
+		t.Fatal("accepted preparing state without source URL")
+	}
+	r.ActiveWSSURL = "wss://source.example/"
+	if err := r.validate(); err != nil {
+		t.Fatalf("valid preparing state: %v", err)
+	}
+}
+
 func TestDedicatedTransitionRejectsInsecureRecord(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "transition.json")
 	if err := SaveDedicatedTransition(path, testDedicatedTransition()); err != nil {

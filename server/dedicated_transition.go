@@ -22,6 +22,10 @@ import (
 type DedicatedTransitionState string
 
 const (
+	// Preparing is the destination's durable pre-proof intent. It closes the
+	// source-attestation/Prepared crash window: only its exact readiness may
+	// be resumed, and it becomes Prepared only after the source ACK.
+	DedicatedTransitionPreparing DedicatedTransitionState = "preparing"
 	DedicatedTransitionPrepared  DedicatedTransitionState = "prepared"
 	DedicatedTransitionCommitted DedicatedTransitionState = "committed"
 	DedicatedTransitionFenced    DedicatedTransitionState = "fenced"
@@ -83,6 +87,22 @@ const DedicatedTransitionFile = "transition.json"
 const DedicatedReadinessFile = "readiness.json"
 
 const maxDedicatedTransitionBytes = 16 << 10
+
+// ValidateDedicatedPreparing verifies a pre-proof destination record. It has
+// the same local boundary requirements as Prepared, but is not acknowledgement
+// evidence and therefore must remain passive.
+func ValidateDedicatedPreparing(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *History) error {
+	if err := r.validate(); err != nil {
+		return err
+	}
+	if r.State != DedicatedTransitionPreparing {
+		return errors.New("server: dedicated transition is not preparing")
+	}
+	if r.ActiveWSSURL == "" {
+		return errors.New("server: preparing transition has no pinned source URL")
+	}
+	return validateDedicatedDestination(r, local, c, h)
+}
 
 // ValidateDedicatedPrepared verifies that a completed preparation record
 // belongs to this local destination and that its captured boundary still
@@ -203,11 +223,14 @@ func (r DedicatedTransitionRecord) validate() error {
 	if r.Version != 1 {
 		return errors.New("server: unsupported dedicated transition version")
 	}
-	if r.State != DedicatedTransitionPrepared && r.State != DedicatedTransitionCommitted && r.State != DedicatedTransitionFenced {
+	if r.State != DedicatedTransitionPreparing && r.State != DedicatedTransitionPrepared && r.State != DedicatedTransitionCommitted && r.State != DedicatedTransitionFenced {
 		return errors.New("server: invalid dedicated transition state")
 	}
 	if r.Recovery.Guidance() == "" {
 		return errors.New("server: invalid dedicated transition recovery code")
+	}
+	if r.State == DedicatedTransitionPreparing && r.ActiveWSSURL == "" {
+		return errors.New("server: preparing transition has no pinned source URL")
 	}
 	if r.ActiveWSSURL != "" {
 		canonical, err := CanonicalDedicatedWSS(r.ActiveWSSURL)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -38,9 +39,10 @@ type Link struct {
 	roleCh   chan struct{} // signaled (cap 1) when link_role arrives
 	handover chan struct{} // signaled (cap 1) when the active host hands over
 
-	prepareMu  sync.Mutex
-	prepared   *proto.DedicatedReadiness
-	prepareAck chan error // exactly one result for a dedicated preparation
+	prepareMu    sync.Mutex
+	prepared     *proto.DedicatedReadiness
+	activeWSSURL string     // exact canonical source URL for a durable preparation
+	prepareAck   chan error // exactly one result for a dedicated preparation
 
 	done chan struct{}
 	once sync.Once
@@ -81,7 +83,7 @@ func DialLink(ctx context.Context, url string, s *Server) (*Link, error) {
 	// silently asking the source for a fresh nonce.
 	var readiness *proto.DedicatedReadiness
 	if s.Prepared() && s.cfg.DedicatedTransitionPath != "" {
-		if r, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath); err == nil && r.State == DedicatedTransitionPrepared {
+		if r, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath); err == nil && (r.State == DedicatedTransitionPreparing || r.State == DedicatedTransitionPrepared) {
 			readiness = &proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}
 		}
 	}
@@ -106,7 +108,7 @@ func dialLinkOpts(ctx context.Context, url string, s *Server, full bool, dedicat
 	if err != nil {
 		return nil, err
 	}
-	l := &Link{s: s, ws: ws, peerFingerprint: peerFingerprint, done: make(chan struct{}), roleCh: make(chan struct{}, 1), handover: make(chan struct{}, 1), prepareAck: make(chan error, 1)}
+	l := &Link{s: s, ws: ws, peerFingerprint: peerFingerprint, activeWSSURL: url, done: make(chan struct{}), roleCh: make(chan struct{}, 1), handover: make(chan struct{}, 1), prepareAck: make(chan error, 1)}
 	l.lastBeat.Store(time.Now().UnixNano())
 	hello := proto.LinkHello{
 		ChainSeq:  s.chain.Head().Seq,
@@ -308,6 +310,12 @@ func (l *Link) Run() {
 			if head.Seq != p.Readiness.ChainHead || string(headHash[:]) != string(p.Readiness.ChainHeadHash) || id != p.Readiness.HistoryLastID || ts.UnixMilli() != p.Readiness.HistoryLastUnixMilli || historyCount != p.Readiness.HistoryCount || string(historyHash) != string(p.Readiness.HistoryHash) {
 				return false, errors.New("server: link: dedicated boundary did not arrive intact")
 			}
+			// Persist the exact local intent before proving readiness. A crash after
+			// the source attests but before its ACK now resumes only this nonce,
+			// source URL, destination fingerprint and local commitments.
+			if err := l.persistPreparing(p.Readiness); err != nil {
+				return false, err
+			}
 			sig, err := proto.SignDedicatedReadiness(l.s.cfg.HostKey, p.Readiness)
 			if err != nil {
 				return false, err
@@ -332,6 +340,9 @@ func (l *Link) Run() {
 			l.prepareMu.Unlock()
 			if !ok {
 				return false, errors.New("server: link: replayed dedicated acknowledgement")
+			}
+			if err := l.promoteDedicatedPreparation(ack.Readiness); err != nil {
+				return false, err
 			}
 			select {
 			case l.prepareAck <- nil:
@@ -389,18 +400,59 @@ func (l *Link) persistDedicatedPreparation(ctx context.Context, path, activeWSSU
 	if err := l.AwaitDedicatedReadiness(ctx); err != nil {
 		return err
 	}
+	// ACK handling already promoted the durable Preparing record. Retain this
+	// method for callers and make it idempotently repair an interrupted write.
 	l.prepareMu.Lock()
 	r := l.prepared
 	l.prepareMu.Unlock()
 	if r == nil {
 		return errors.New("server: missing acknowledged dedicated readiness")
 	}
-	return SaveDedicatedTransition(path, DedicatedTransitionRecord{
-		Version: 1, State: DedicatedTransitionPrepared, ServerID: r.ServerID,
-		DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: append([]byte(nil), r.ChainHeadHash...),
-		HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: append([]byte(nil), r.HistoryHash...),
-		TransitionNonce: append([]byte(nil), r.TransitionNonce...), Recovery: DedicatedRecoveryRetryPreparation, ActiveWSSURL: activeWSSURL,
-	})
+	if path == "" {
+		path = l.s.cfg.DedicatedTransitionPath
+	}
+	return l.savePreparation(path, DedicatedTransitionPrepared, *r, activeWSSURL)
+}
+
+func (l *Link) persistPreparing(r proto.DedicatedReadiness) error {
+	if l.s.cfg.DedicatedTransitionPath == "" {
+		return nil
+	} // in-memory tests
+	old, err := LoadDedicatedTransition(l.s.cfg.DedicatedTransitionPath)
+	if err == nil {
+		if (old.State != DedicatedTransitionPreparing && old.State != DedicatedTransitionPrepared) || old.ActiveWSSURL != l.activeWSSURL || !sameReadiness(recordReadiness(old), r) {
+			return errors.New("server: dedicated preparation differs from durable destination intent")
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return l.savePreparation(l.s.cfg.DedicatedTransitionPath, DedicatedTransitionPreparing, r, l.activeWSSURL)
+}
+
+func (l *Link) promoteDedicatedPreparation(r proto.DedicatedReadiness) error {
+	if l.s.cfg.DedicatedTransitionPath == "" {
+		return nil
+	}
+	old, err := LoadDedicatedTransition(l.s.cfg.DedicatedTransitionPath)
+	if err != nil || old.ActiveWSSURL != l.activeWSSURL || !sameReadiness(recordReadiness(old), r) {
+		return errors.New("server: dedicated acknowledgement differs from durable preparation")
+	}
+	if old.State == DedicatedTransitionPrepared {
+		return nil
+	}
+	if old.State != DedicatedTransitionPreparing {
+		return errors.New("server: dedicated acknowledgement without preparing state")
+	}
+	return l.savePreparation(l.s.cfg.DedicatedTransitionPath, DedicatedTransitionPrepared, r, l.activeWSSURL)
+}
+
+func recordReadiness(r DedicatedTransitionRecord) proto.DedicatedReadiness {
+	return proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}
+}
+func (l *Link) savePreparation(path string, state DedicatedTransitionState, r proto.DedicatedReadiness, activeURL string) error {
+	return SaveDedicatedTransition(path, DedicatedTransitionRecord{Version: 1, State: state, ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: append([]byte(nil), r.ChainHeadHash...), HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: append([]byte(nil), r.HistoryHash...), TransitionNonce: append([]byte(nil), r.TransitionNonce...), Recovery: DedicatedRecoveryRetryPreparation, ActiveWSSURL: activeURL})
 }
 
 // Hosts is the newest host list the active host sent, if any.

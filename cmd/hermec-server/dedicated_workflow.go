@@ -58,6 +58,8 @@ func validateDedicatedRecord(r server.DedicatedTransitionRecord, keyPath, chainP
 	}
 	defer h.Close()
 	switch r.State {
+	case server.DedicatedTransitionPreparing:
+		return server.ValidateDedicatedPreparing(r, key, c, h)
 	case server.DedicatedTransitionPrepared:
 		return server.ValidateDedicatedPrepared(r, key, c, h)
 	case server.DedicatedTransitionCommitted:
@@ -82,7 +84,7 @@ func runDedicatedPreparation(ctx context.Context, cfg server.Config, keyPath, ch
 		if err != nil {
 			return fmt.Errorf("dedicated retry requires an existing transition: %w", err)
 		}
-		if r.State != server.DedicatedTransitionPrepared {
+		if r.State != server.DedicatedTransitionPreparing && r.State != server.DedicatedTransitionPrepared {
 			return fmt.Errorf("dedicated retry refuses %s transition", r.State)
 		}
 		if err := validateDedicatedRecord(r, keyPath, chainPath, historyPath); err != nil {

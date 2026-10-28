@@ -169,6 +169,12 @@ func main() {
 			h, loadErr = server.OpenHistory(f.history)
 			if loadErr == nil {
 				switch r.State {
+				case server.DedicatedTransitionPreparing:
+					loadErr = server.ValidateDedicatedPreparing(r, key, c, h)
+					cfg.Prepared, cfg.Mode = true, server.ModePrepared
+					if r.ActiveWSSURL != "" {
+						cfg.KnownHosts, f.hosts = []string{r.ActiveWSSURL}, nil
+					}
 				case server.DedicatedTransitionPrepared:
 					loadErr = server.ValidateDedicatedPrepared(r, key, c, h)
 					cfg.Prepared, cfg.Mode = true, server.ModePrepared

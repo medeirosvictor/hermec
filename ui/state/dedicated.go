@@ -54,11 +54,15 @@ func CanonicalDedicatedWSS(raw string) (string, error) {
 		if err != nil || n < 1 || n > 65535 {
 			return "", errors.New("invalid dedicated server URL port")
 		}
+		if strconv.Itoa(n) != p {
+			return "", errors.New("dedicated server URL is not canonical")
+		}
 	}
 	// URL.String is intentionally part of the contract. It prevents imports
 	// from silently changing an endpoint (including escaped or mixed-case host
 	// spellings) before its pin is checked.
-	if u.String() != raw || strings.ToLower(u.Hostname()) != u.Hostname() {
+	host := u.Hostname()
+	if u.String() != raw || strings.ToLower(host) != host || strings.HasSuffix(host, ".") || (strings.Contains(host, ":") && (net.ParseIP(host) == nil || net.ParseIP(host).String() != host)) {
 		return "", errors.New("dedicated server URL is not canonical")
 	}
 	// Hosts containing whitespace/control characters are not useful names and
