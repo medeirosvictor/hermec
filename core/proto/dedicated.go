@@ -19,6 +19,9 @@ const (
 	MaxDedicatedServerID         = 128
 	MaxDedicatedFingerprint      = 64
 	MaxDedicatedHistoryID        = 128
+	MaxDedicatedHostName         = 128
+	MaxDedicatedHostAddrs        = 16
+	MaxDedicatedHostAddr         = 512
 )
 
 const dedicatedReadinessDomain = "hermec-dedicated-readiness-v1\x00"
@@ -145,6 +148,23 @@ type DedicatedPrepare struct {
 	Readiness DedicatedReadiness `json:"readiness"`
 }
 
+// ValidateDedicatedHostInfo rejects unbounded HostInfo fields before they are
+// signed or persisted in a cutover certificate.
+func ValidateDedicatedHostInfo(h HostInfo) error {
+	if h.Fingerprint == "" || len(h.Fingerprint) > MaxDedicatedFingerprint {
+		return errors.New("proto: invalid dedicated host fingerprint")
+	}
+	if len(h.Name) > MaxDedicatedHostName || len(h.Addrs) > MaxDedicatedHostAddrs {
+		return errors.New("proto: invalid dedicated host info")
+	}
+	for _, a := range h.Addrs {
+		if a == "" || len(a) > MaxDedicatedHostAddr {
+			return errors.New("proto: invalid dedicated host address")
+		}
+	}
+	return nil
+}
+
 // DedicatedCertificate is the source's one-use, signed authority to activate
 // a prepared destination. It binds both host identities, the exact mirrored
 // state, nonce, and the address clients must use. It is deliberately not a
@@ -159,8 +179,11 @@ type DedicatedCertificate struct {
 // DedicatedCutover signs an unambiguous certificate body using the active
 // source's host key.
 func SignDedicatedCutover(key *identity.Identity, r DedicatedReadiness, source string, destination HostInfo) ([]byte, error) {
-	if key == nil || source == "" || destination.Fingerprint != r.DestinationFingerprint {
+	if key == nil || source == "" || len(source) > MaxDedicatedFingerprint || destination.Fingerprint != r.DestinationFingerprint {
 		return nil, errors.New("proto: invalid dedicated cutover identities")
+	}
+	if err := ValidateDedicatedHostInfo(destination); err != nil {
+		return nil, err
 	}
 	b, err := DedicatedReadinessBytes(r)
 	if err != nil {
@@ -190,7 +213,7 @@ func SignDedicatedCutover(key *identity.Identity, r DedicatedReadiness, source s
 // VerifyDedicatedCutover verifies a certificate against the already authorized
 // source host key; the caller must additionally ensure that key is authorized.
 func VerifyDedicatedCutover(pub ed25519.PublicKey, c DedicatedCertificate) bool {
-	if c.SourceFingerprint != identity.Fingerprint(pub) || c.Destination.Fingerprint != c.Readiness.DestinationFingerprint || len(c.Signature) != ed25519.SignatureSize {
+	if ValidateDedicatedHostInfo(c.Destination) != nil || c.SourceFingerprint == "" || len(c.SourceFingerprint) > MaxDedicatedFingerprint || c.SourceFingerprint != identity.Fingerprint(pub) || c.Destination.Fingerprint != c.Readiness.DestinationFingerprint || len(c.Signature) != ed25519.SignatureSize {
 		return false
 	}
 	// Recreate the unsigned bytes without possessing a private key.

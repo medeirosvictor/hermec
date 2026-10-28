@@ -132,7 +132,7 @@ func (r DedicatedTransitionRecord) validate() error {
 		return err
 	}
 	if r.State == DedicatedTransitionCommitted || r.State == DedicatedTransitionFenced {
-		if r.Certificate == nil || !sameReadiness(r.Certificate.Readiness, proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}) {
+		if r.Certificate == nil || !sameReadiness(r.Certificate.Readiness, proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}) || proto.ValidateDedicatedHostInfo(r.Certificate.Destination) != nil {
 			return errors.New("server: missing or mismatched dedicated certificate")
 		}
 	}
@@ -149,6 +149,9 @@ func SaveDedicatedTransition(path string, r DedicatedTransitionRecord) error {
 	data, err := json.Marshal(r)
 	if err != nil {
 		return fmt.Errorf("server: encode dedicated transition: %w", err)
+	}
+	if len(data) > maxDedicatedTransitionBytes {
+		return errors.New("server: dedicated transition is too large")
 	}
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, ".hermec-transition-")

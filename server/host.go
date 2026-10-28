@@ -171,6 +171,12 @@ func (h *Host) Start() error {
 		return err
 	}
 	h.srv.SetPromoteHook(func() { signal(h.promoted) })
+	// A committed journal is authoritative on restart: it has already made the
+	// destination active, so do not leave orchestration permanently prepared.
+	if !h.srv.Prepared() && h.srv.Mode() == ModeActive {
+		h.prepared = false
+		h.setRole(RoleActive, "")
+	}
 	h.started = true
 	go h.loop()
 	return nil
@@ -208,7 +214,7 @@ func (h *Host) loop() {
 	for !h.stopped() {
 		if l != nil {
 			l = h.runLinked(l)
-		} else if h.prepared || h.srv.Mode() == ModeFenced {
+		} else if h.srv.Prepared() || h.srv.Mode() == ModeFenced {
 			// Stay passive while the source is unavailable; retrying a link is
 			// safe, electing ourselves is not.
 			if !h.pause(coldProbeEvery) {
@@ -422,7 +428,7 @@ func (h *Host) rejoin(extra []string, window time.Duration) *Link {
 		h.install(l)
 		return l
 	}
-	if h.prepared {
+	if h.srv.Prepared() {
 		h.srv.SetMode(ModePrepared)
 		h.setRole(RolePrepared, "")
 		return nil
@@ -448,7 +454,7 @@ func (h *Host) install(l *Link) {
 
 // applyRole sets the server mode and role from what the active host says of us.
 func (h *Host) applyRole(l *Link) {
-	if h.prepared {
+	if h.srv.Prepared() {
 		if h.srv.setFollowerMode(ModePrepared) {
 			h.mu.Lock()
 			name := h.active.Name
@@ -515,7 +521,7 @@ func (h *Host) runLinked(l *Link) *Link {
 		case <-l.RoleChanged():
 			h.applyRole(l)
 		case <-h.promoted:
-			if h.prepared || h.srv.Mode() != ModeActive {
+			if h.srv.Prepared() || h.srv.Mode() != ModeActive {
 				continue // a stale signal
 			}
 			// A client's takeover promoted us.
@@ -523,7 +529,7 @@ func (h *Host) runLinked(l *Link) *Link {
 			h.becomeActive(false)
 			return nil
 		case <-l.Handover():
-			if h.prepared {
+			if h.srv.Prepared() {
 				// A prepared destination cannot accept a handoff yet.
 				continue
 			}
@@ -536,7 +542,7 @@ func (h *Host) runLinked(l *Link) *Link {
 				l.Close()
 			}
 		case <-l.Done():
-			if h.prepared {
+			if h.srv.Prepared() {
 				return h.rejoin(nil, coldStartWindow)
 			}
 			return h.failover(l)

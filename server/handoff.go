@@ -75,10 +75,15 @@ func (s *Server) Promote() bool {
 	t := &s.takeover
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if s.Mode() == ModeActive || s.Prepared() {
+	// Never run promotion side effects for a prepared or fenced transition.
+	// Confirm the transition succeeded before publishing a promoted state.
+	if s.Mode() == ModeActive || s.Mode() == ModeFenced || s.Prepared() {
 		return false
 	}
 	s.SetMode(ModeActive)
+	if s.Mode() != ModeActive || s.Prepared() {
+		return false
+	}
 	s.promoted.Store(true)
 	s.PromoteWarm()
 	s.announcePromotion()

@@ -45,6 +45,17 @@ func TestDedicatedReadinessIsDomainSeparatedAndNonceBound(t *testing.T) {
 	}
 }
 
+func TestDedicatedHostInfoIsBoundedBeforeSigning(t *testing.T) {
+	r := DedicatedReadiness{ServerID: "server", DestinationFingerprint: "destination", ChainHeadHash: make([]byte, 32), HistoryHash: make([]byte, 32), TransitionNonce: make([]byte, DedicatedTransitionNonceSize)}
+	key, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SignDedicatedCutover(key, r, identity.Fingerprint(key.PublicKey()), HostInfo{Fingerprint: "destination", Name: string(make([]byte, MaxDedicatedHostName+1))}); err == nil {
+		t.Fatal("signed oversized host info")
+	}
+}
+
 func TestDedicatedCutoverBindsBothHostsAndHostInfo(t *testing.T) {
 	source, err := identity.Generate()
 	if err != nil {

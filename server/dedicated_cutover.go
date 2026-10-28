@@ -42,7 +42,7 @@ func (s *Server) restoreDedicatedTransition() error {
 			break
 		}
 	}
-	if pub == nil || !proto.VerifyDedicatedCutover(pub, *r.Certificate) {
+	if pub == nil || !proto.VerifyDedicatedCutover(pub, *r.Certificate) || !reflect.DeepEqual(r.Certificate.Destination, s.selfInfo()) {
 		return errors.New("server: invalid committed dedicated certificate")
 	}
 	s.prepared.Store(false)
@@ -98,17 +98,35 @@ func (l *Link) handleDedicatedCommit(env proto.Envelope) error {
 	}
 	c := m.Certificate
 	s := l.s
-	state := s.chain.State()
-	self := s.selfInfo()
-	if s.cfg.DedicatedTransitionPath == "" || !s.Prepared() || c.Readiness.DestinationFingerprint != self.Fingerprint || c.Destination.Fingerprint != self.Fingerprint || c.Destination.Name != self.Name || c.Destination.Priority != self.Priority || !reflect.DeepEqual(c.Destination.Addrs, self.Addrs) {
+	// The transition boundary and the durable decision are one serialized
+	// operation: no mirrored chain/history write can slip in before persistence.
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
+	s.chainMu.Lock()
+	defer s.chainMu.Unlock()
+	s.chMu.Lock()
+	defer s.chMu.Unlock()
+
+	if s.cfg.DedicatedTransitionPath == "" {
 		return errors.New("server: link: unexpected dedicated commit")
 	}
-	if !state.IsHost(l.s.cfg.HostKey.PublicKey()) {
+	if old, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath); err == nil && old.State == DedicatedTransitionCommitted {
+		if old.Certificate != nil && reflect.DeepEqual(*old.Certificate, c) {
+			return l.write(proto.TypeDedicatedAck, proto.DedicatedAck{Readiness: c.Readiness})
+		}
+		return errors.New("server: link: committed certificate differs")
+	}
+	if !s.Prepared() || s.Mode() != ModePrepared {
+		return errors.New("server: link: unexpected dedicated commit")
+	}
+	self := s.selfInfo()
+	if c.Readiness.DestinationFingerprint != self.Fingerprint || !reflect.DeepEqual(c.Destination, self) {
+		return errors.New("server: link: unexpected dedicated commit")
+	}
+	state := s.chain.State()
+	if !state.IsHost(s.cfg.HostKey.PublicKey()) {
 		return errors.New("server: link: destination no longer authorized")
 	}
-	// The peer was authenticated as a host, and the certificate must name it.
-	// Link's handshake identity is not retained separately, so verify source
-	// authorization through the signed chain fingerprint before accepting it.
 	var sourcePub []byte
 	for _, h := range state.Hosts {
 		if h.Fingerprint == c.SourceFingerprint {
@@ -116,19 +134,27 @@ func (l *Link) handleDedicatedCommit(env proto.Envelope) error {
 			break
 		}
 	}
-	if sourcePub == nil || !proto.VerifyDedicatedCutover(sourcePub, c) {
+	// The remote handshake identity, retained by Link, must be the signer.
+	if sourcePub == nil || c.SourceFingerprint != l.peerFingerprint || !proto.VerifyDedicatedCutover(sourcePub, c) {
 		return errors.New("server: link: certificate source is unauthorized or invalid")
 	}
-	if !sameReadiness(c.Readiness, *l.prepared) {
+	l.prepareMu.Lock()
+	prepared := l.prepared
+	l.prepareMu.Unlock()
+	if prepared == nil || !sameReadiness(c.Readiness, *prepared) {
 		return errors.New("server: link: cutover certificate differs from preparation")
 	}
-	r := DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionCommitted, ServerID: c.Readiness.ServerID, DestinationFingerprint: c.Readiness.DestinationFingerprint, ChainHead: c.Readiness.ChainHead, ChainHeadHash: append([]byte(nil), c.Readiness.ChainHeadHash...), HistoryLastID: c.Readiness.HistoryLastID, HistoryLastUnixMilli: c.Readiness.HistoryLastUnixMilli, HistoryCount: c.Readiness.HistoryCount, HistoryHash: append([]byte(nil), c.Readiness.HistoryHash...), TransitionNonce: append([]byte(nil), c.Readiness.TransitionNonce...), Certificate: &c, Recovery: DedicatedRecoveryInspectCommit}
-	if old, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath); err == nil && old.State == DedicatedTransitionCommitted && sameReadiness(old.Certificate.Readiness, c.Readiness) {
-		// durable idempotent retry
-	} else if err := SaveDedicatedTransition(s.cfg.DedicatedTransitionPath, r); err != nil {
+	// Revalidate exact local readiness immediately before the durable commit.
+	r := DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionPrepared, ServerID: c.Readiness.ServerID, DestinationFingerprint: c.Readiness.DestinationFingerprint, ChainHead: c.Readiness.ChainHead, ChainHeadHash: append([]byte(nil), c.Readiness.ChainHeadHash...), HistoryLastID: c.Readiness.HistoryLastID, HistoryLastUnixMilli: c.Readiness.HistoryLastUnixMilli, HistoryCount: c.Readiness.HistoryCount, HistoryHash: append([]byte(nil), c.Readiness.HistoryHash...), TransitionNonce: append([]byte(nil), c.Readiness.TransitionNonce...), Recovery: DedicatedRecoveryRetryPreparation}
+	if err := ValidateDedicatedPrepared(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
+		return err
+	}
+	r.State, r.Certificate, r.Recovery = DedicatedTransitionCommitted, &c, DedicatedRecoveryInspectCommit
+	if err := SaveDedicatedTransition(s.cfg.DedicatedTransitionPath, r); err != nil {
 		return err
 	}
 	s.prepared.Store(false)
-	s.SetMode(ModeActive)
+	s.setModeLocked(ModeActive)
+	s.signalPromoteHook()
 	return l.write(proto.TypeDedicatedAck, proto.DedicatedAck{Readiness: c.Readiness})
 }

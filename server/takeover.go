@@ -84,6 +84,17 @@ func (c *conn) handleTakeover() {
 	}
 }
 
+// signalPromoteHook tells Host orchestration about a durable dedicated
+// activation as well as an ordinary takeover.
+func (s *Server) signalPromoteHook() {
+	s.takeover.mu.Lock()
+	f := s.takeover.onPromote
+	s.takeover.mu.Unlock()
+	if f != nil {
+		f()
+	}
+}
+
 func (s *Server) isWarm(c *conn) bool {
 	s.chMu.Lock()
 	defer s.chMu.Unlock()

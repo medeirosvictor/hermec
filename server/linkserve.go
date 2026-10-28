@@ -34,10 +34,13 @@ func (p LinkPeer) Info() proto.HostInfo {
 // linkState is what a link conn carries. Fields after hello are guarded by
 // Server.chMu.
 type linkState struct {
-	hello    proto.LinkHello
-	lastBeat time.Time
-	standby  bool // the last link_role sent
-	roleSent bool // a link_role has been sent
+	// peerFingerprint is copied from the authenticated handshake. Certificate
+	// authorization must bind to this immutable identity, not mutable hello.
+	peerFingerprint string
+	hello           proto.LinkHello
+	lastBeat        time.Time
+	standby         bool // the last link_role sent
+	roleSent        bool // a link_role has been sent
 	// dedicated and dedicatedHistory are one source-captured boundary for a
 	// prepared destination. The copied history cannot be evicted mid-sync.
 	dedicated        *proto.DedicatedReadiness
@@ -213,6 +216,31 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 	if !st.IsHost(c.pub) || st.Banned(c.fingerprint) {
 		return proto.CodeForbidden, "only hosts on the chain may link"
 	}
+	if s.Mode() == ModeFenced {
+		// Recovery is deliberately narrow: only the destination named by the
+		// durable certificate may reconnect, and it receives that exact object.
+		r, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath)
+		if err != nil || r.State != DedicatedTransitionFenced || r.Certificate == nil || r.Certificate.Destination.Fingerprint != c.fingerprint {
+			return proto.CodeNotActive, "this host is fenced"
+		}
+		s.chMu.Lock()
+		if _, ok := s.warm[c]; !ok {
+			s.chMu.Unlock()
+			return proto.CodeNotActive, "this host is fenced"
+		}
+		delete(s.warm, c)
+		if c.warmHeld.Swap(false) {
+			s.releaseWarmSlot()
+		}
+		c.link = &linkState{peerFingerprint: c.fingerprint, hello: h, lastBeat: s.clock()}
+		s.links[c] = struct{}{}
+		ok := c.sendMsg(proto.TypeDedicatedCommit, proto.DedicatedCommit{Certificate: *r.Certificate})
+		s.chMu.Unlock()
+		if !ok {
+			c.closeSend()
+		}
+		return "", ""
+	}
 	if s.Mode() != ModeActive {
 		return proto.CodeNotActive, "this host is not serving clients"
 	}
@@ -239,7 +267,7 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 	if c.warmHeld.Swap(false) {
 		s.releaseWarmSlot()
 	}
-	c.link = &linkState{hello: h, lastBeat: s.clock()}
+	c.link = &linkState{peerFingerprint: c.fingerprint, hello: h, lastBeat: s.clock()}
 	if h.Prepared {
 		nonce := make([]byte, proto.DedicatedTransitionNonceSize)
 		if _, err := rand.Read(nonce); err != nil {

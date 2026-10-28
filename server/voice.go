@@ -157,6 +157,13 @@ func (s *Server) watch(c *conn, fp string, gen uint32) string {
 // voiceJoin puts c in voice channel ch (moving it if already in another).
 // Returns "" on success or an error code.
 func (s *Server) voiceJoin(c *conn, ch string) string {
+	// Membership must share the cutover lease with the empty-voice check.
+	// Taking it before chMu makes the check and insertion atomic with fencing.
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
+	if s.Mode() != ModeActive {
+		return proto.CodeNotActive
+	}
 	if s.channelType(ch) != "voice" {
 		return proto.CodeBadRequest
 	}
@@ -200,6 +207,11 @@ func (s *Server) voiceLeave(c *conn) {
 
 // voiceMute sets c's mute flag. Returns "not_joined" outside a call.
 func (s *Server) voiceMute(c *conn, muted bool) string {
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
+	if s.Mode() != ModeActive {
+		return proto.CodeNotActive
+	}
 	s.chMu.Lock()
 	ch := c.voiceCh
 	if ch == "" {

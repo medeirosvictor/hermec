@@ -24,6 +24,9 @@ import (
 type Link struct {
 	s  *Server
 	ws *websocket.Conn
+	// peerFingerprint is authenticated by the warm handshake and binds a
+	// cutover certificate to the actual remote endpoint.
+	peerFingerprint string
 
 	writeMu sync.Mutex // gorilla permits a single concurrent writer
 
@@ -47,11 +50,11 @@ type Link struct {
 
 // dialHost opens a warm, password-less session to the host at url with s's
 // host key, checking that it serves our chain and a head of at least minSeq.
-func dialHost(ctx context.Context, url string, s *Server, minSeq uint64) (*websocket.Conn, error) {
+func dialHost(ctx context.Context, url string, s *Server, minSeq uint64) (*websocket.Conn, string, error) {
 	dialer := s.hostDialer()
 	ws, _, err := dialer.DialContext(ctx, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("server: dial host: %w", err)
+		return nil, "", fmt.Errorf("server: dial host: %w", err)
 	}
 	name := s.cfg.HostName
 	if name == "" {
@@ -60,13 +63,13 @@ func dialHost(ctx context.Context, url string, s *Server, minSeq uint64) (*webso
 	res, err := hshake.Run(ctx, ws, s.cfg.HostKey, name, "", hshake.Opts{Pin: s.chain.ID().String(), Warm: true, MinChainSeq: minSeq})
 	if err != nil {
 		ws.Close()
-		return nil, err
+		return nil, "", err
 	}
 	if res.ServerID != s.chain.ID().String() {
 		ws.Close()
-		return nil, fmt.Errorf("server: host serves another server")
+		return nil, "", fmt.Errorf("server: host serves another server")
 	}
-	return ws, nil
+	return ws, res.OK.Fingerprint, nil
 }
 
 // DialLink connects to the active host at url, tells it where our chain and
@@ -81,11 +84,11 @@ func DialLink(ctx context.Context, url string, s *Server) (*Link, error) {
 // history, not just the lines after our newest (a merged host holds lines the
 // active host older than that lacks to us).
 func dialLinkOpts(ctx context.Context, url string, s *Server, full bool) (*Link, error) {
-	ws, err := dialHost(ctx, url, s, s.chain.Head().Seq) // never follow a host behind our chain
+	ws, peerFingerprint, err := dialHost(ctx, url, s, s.chain.Head().Seq) // never follow a host behind our chain
 	if err != nil {
 		return nil, err
 	}
-	l := &Link{s: s, ws: ws, done: make(chan struct{}), roleCh: make(chan struct{}, 1), handover: make(chan struct{}, 1), prepareAck: make(chan error, 1)}
+	l := &Link{s: s, ws: ws, peerFingerprint: peerFingerprint, done: make(chan struct{}), roleCh: make(chan struct{}, 1), handover: make(chan struct{}, 1), prepareAck: make(chan error, 1)}
 	l.lastBeat.Store(time.Now().UnixNano())
 	hello := proto.LinkHello{
 		ChainSeq: s.chain.Head().Seq,
@@ -114,7 +117,7 @@ func ProbeHost(ctx context.Context, url string, s *Server) (proto.LinkProbeReply
 // a split-brain probe passes 0, for the other side may be behind or diverged.
 func probeHost(ctx context.Context, url string, s *Server, minSeq uint64) (proto.LinkProbeReply, error) {
 	var reply proto.LinkProbeReply
-	ws, err := dialHost(ctx, url, s, minSeq)
+	ws, _, err := dialHost(ctx, url, s, minSeq)
 	if err != nil {
 		return reply, err
 	}

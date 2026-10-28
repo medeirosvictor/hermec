@@ -401,6 +401,11 @@ func (s *Server) applyHistoryLimits() (changed bool) {
 func (s *Server) trimHistory() {
 	s.dedicatedMu.Lock()
 	defer s.dedicatedMu.Unlock()
+	// Do not mutate a captured source history after it has been fenced, nor a
+	// passive destination while it is proving its exact imported boundary.
+	if s.Mode() != ModeActive {
+		return
+	}
 	s.trimHistoryLocked()
 }
 

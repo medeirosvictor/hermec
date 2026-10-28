@@ -119,6 +119,32 @@ func TestDedicatedMutationLeaseSerializesAppendChatTrimAndDemote(t *testing.T) {
 	}
 }
 
+func TestDedicatedVoiceJoinCannotCrossFence(t *testing.T) {
+	s := New(voiceCfg())
+	c := &conn{srv: s, fingerprint: identity.Fingerprint(s.cfg.HostKey.PublicKey())}
+	// A join which began before fencing must wait for the same lease and then
+	// observe the fenced mode rather than repopulating voice after its check.
+	s.dedicatedMu.Lock()
+	done := make(chan string, 1)
+	go func() { done <- s.voiceJoin(c, "lounge") }()
+	select {
+	case <-done:
+		t.Fatal("voice join crossed dedicated fence lease")
+	case <-time.After(30 * time.Millisecond):
+	}
+	s.setModeLocked(ModeFenced)
+	s.dedicatedMu.Unlock()
+	if got := <-done; got != proto.CodeNotActive {
+		t.Fatalf("voice join after fence = %q, want %q", got, proto.CodeNotActive)
+	}
+	s.chMu.Lock()
+	empty := s.emptyVoiceLocked()
+	s.chMu.Unlock()
+	if !empty {
+		t.Fatal("fenced server acquired a voice member")
+	}
+}
+
 func TestDedicatedReadinessLeaseAlsoSerializesPromotionSystemAndMerge(t *testing.T) {
 	c, sourceKey, _ := twoHostChain(t)
 	s := New(Config{HostKey: sourceKey, Chain: c, Channels: []string{"general"}, Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}})

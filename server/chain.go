@@ -376,6 +376,11 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 	// A dedicated readiness capture must not be crossed by an append.
 	s.dedicatedMu.Lock()
 	defer s.dedicatedMu.Unlock()
+	// Auth may have happened before a fence; only an active source may append.
+	if s.Mode() != ModeActive {
+		c.sendErrorRef(proto.CodeNotActive, "this host is not serving clients", m.Ref)
+		return
+	}
 	// One append at a time, so connections see entries in chain order.
 	s.chainMu.Lock()
 	err = s.chain.Append(e)

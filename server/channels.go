@@ -317,6 +317,11 @@ func (s *Server) leaveAll(c *conn) {
 func (s *Server) chat(c *conn, ch, text string) (code string) {
 	s.dedicatedMu.Lock()
 	defer s.dedicatedMu.Unlock()
+	// The auth-time mode check can race a fence; recheck after acquiring the
+	// mutation lease before creating or persisting a chat line.
+	if s.Mode() != ModeActive {
+		return proto.CodeNotActive
+	}
 	s.chMu.Lock()
 	if _, ok := s.chans[ch][c]; !ok {
 		s.chMu.Unlock()
