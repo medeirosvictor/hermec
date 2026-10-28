@@ -19,12 +19,11 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
    local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.
-3. **Current round: dedicated AWS/VPS hosting.** The bounded cleanup and local
-   embedded-network proof are complete. Implement secure, persistent headless
-   hosting plus the desktop Dedicated Server flow; do not provision cloud
-   resources. Public mode requires TLS and admission, and availability requires
-   a disposable remote-VPS media test. Private embedded networking remains
-   blocked on real Tailscale/Headscale evidence.
+3. **Current round: dedicated AWS/VPS hosting.** Tasks 1–3 are committed;
+   remote hosting is **not available or shippable** until the remaining work and
+   a disposable remote-VPS media test pass. Do not provision cloud resources.
+   Private embedded networking remains blocked on real Tailscale/Headscale
+   evidence.
    **Version policy (Victor, 2026-10-23):** before v1, do not spend development
    effort on mixed-version call/media bridging; the app is not released to a
    user base that needs it. Keep protocol negotiation safe, but expect every
@@ -40,33 +39,28 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
    64 KiB frame limit (video not counted). Fine for the friend group; revisit
    before big rooms.
 
-## Active development (2026-10-28)
+## Active development
 
-Local work is on `fix/readiness-cleanup` in `.worktrees/readiness-cleanup`,
-rebased onto released `v0.7.0`; it has not been merged or pushed.
+Current branch: `feature/dedicated-hosting` in `.worktrees/dedicated-hosting`.
+`main` and `origin/main` are at `cb05e4d`; do not claim a merge or release.
 
-- Embedded-network proof Tasks 1 through 4 are complete. Client signaling,
-  active and warm peers, server TCP/UDP listeners, WebRTC APIs and authenticated
-  host links retain an explicit per-instance provider. The isolated nested probe
-  pins tsnet v1.104.2 and supplies profile-only dialing/listening plus a Pion
-  adapter. It rejects host/LAN binds, unknown destinations, unsafe server
-  options and missing profile addresses instead of falling back. Fake-backend
-  tests cover separate state, IPv4/IPv6 interfaces, UDP round trips, deadlines,
-  close unblocking, late cleanup and startup rollback. The headless public-API
-  scenario additionally requires bidirectional audio, decoded cameras and
-  selected screens, rejects signaling-only standby readiness, and verifies
-  mute/media continuation through takeover. Root focused tests and nested
-  vet/race plus Windows/Linux cross-builds passed.
-- The local embedded-network proof is complete. Evidence and limitations are in
-  `docs/research/embedded-network-proof.md`; real Tailscale/Headscale direct and
-  relay rows remain NOT RUN, so private networking is not approved for shipping.
-  **Next implementation milestone: dedicated AWS/VPS hosting** under
-  `docs/superpowers/plans/2026-10-28-dedicated-hosting.md`. Victor explicitly
-  asked when remote hosting becomes available and authorized proceeding; the
-  availability gate is Tasks 1-6 plus a disposable VPS check. No cloud resources
-  are provisioned by HERMEC.
-- Candidate tsnet `v1.104.2` requires Go `1.27.3`. Use that patch toolchain only
-  in the isolated probe module; root module remains Go `1.27.0` during proof.
+- Dedicated Tasks 1–2: committed as `ca6ed69` — secure bootstrap/public
+  validation; Linux amd64/arm64 bundles; systemd lifecycle; backup, update and
+  rollback; checks.
+- Dedicated Task 3: committed as `020492f` — provider-neutral/AWS guide and
+  `hermec-verify`, which independently verifies trusted WSS, pinned server ID,
+  password admission, reciprocal valid Opus media, and secret-safe diagnostics.
+  Focused race/vet/cross-builds passed. Windows listener-opening verifier tests
+  intentionally skip before binding to avoid non-durable firewall prompts;
+  Linux CI retains full E2E coverage.
+- No disposable VPS/AWS remote row has run. Remote hosting is therefore **not
+  available or shippable**.
+- **Next: Task 4, Desktop Join/Create Dedicated flow.** Add a Server's
+  Dedicated option; operator-prepared import or address + server ID; password
+  entry with proof-key persistence and no plaintext logging/storage after a
+  successful join; WSS/pin/admission/media validation before tile save; no
+  phantom drafts; and shareable versioned connection details. Tasks 5 (host
+  authorization/preparation) and 6 (remote acceptance/release) remain after it.
 - A separate noise trial draft at
   `docs/superpowers/plans/2026-10-27-noise-suppression-trial.md` evaluates pure-Go
   `rnnoise-go v0.3.0` before app integration. It is not yet approved for execution;
@@ -111,15 +105,13 @@ and public dedicated hosting, creation/join flows, and guarded method changes.
 The owner supplies coordination; no HERMEC-operated service. The local
 transport proof is complete; see
 `docs/research/embedded-network-proof.md`. Dedicated, private lifecycle and
-migration plans are now written. The internal provider boundary is implemented
-on the active branch, but there is no tsnet adapter in release builds, hosting
-UI or noise-processing dependency.
+migration plans are now written. There is no tsnet adapter in release builds or
+noise-processing dependency.
 
-1. **Dedicated AWS/VPS hosting.** Execute
-   `docs/superpowers/plans/2026-10-28-dedicated-hosting.md`: secure bootstrap,
-   persistent packaging/service lifecycle, AWS/VPS instructions, remote
-   reachability checks, desktop Dedicated Server flow and authorized host
-   preparation. It becomes available only after the disposable-VPS gate.
+1. **Dedicated AWS/VPS hosting.** Tasks 1–3 are committed. Next execute Task
+   4 (Desktop Join/Create Dedicated flow), then Tasks 5–6 (host
+   authorization/preparation and remote acceptance/release). It becomes
+   available only after the disposable-VPS gate.
 2. **Private embedded networking.** Arrange disposable Tailscale and Headscale
    direct/relay checks, then execute the private profile/Create/Join plan. Do
    not ship based on loopback evidence alone.
