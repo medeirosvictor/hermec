@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -72,6 +73,49 @@ func TestPreparedLinkAttestsCompleteMultipageHistoryBeforePersistence(t *testing
 	}
 	if r.State != DedicatedTransitionPrepared || r.ChainHead != c.Head().Seq {
 		t.Fatalf("transition = %+v", r)
+	}
+}
+
+func TestDedicatedMutationLeaseSerializesAppendChatTrimAndDemote(t *testing.T) {
+	c, sourceKey, destinationKey := twoHostChain(t)
+	s := New(Config{HostKey: sourceKey, Chain: c, Channels: []string{"general"}, Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}})
+	h, err := OpenHistory("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.hist = h
+	member := &conn{srv: s, fingerprint: identity.Fingerprint(sourceKey.PublicKey()), pub: sourceKey.PublicKey(), send: make(chan []byte, sendBuffer), drained: make(chan struct{})}
+	s.chans["general"][member] = struct{}{}
+	head := c.Head()
+	e, err := chain.NewEntry(sourceKey, &head, chain.OpGrant, chain.GrantBody{Fingerprint: identity.Fingerprint(destinationKey.PublicKey()), Roles: []string{"user"}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.dedicatedMu.Lock() // models capture through ACK commit
+	var wg sync.WaitGroup
+	started := make(chan struct{}, 4)
+	done := make(chan struct{}, 4)
+	run := func(f func()) {
+		wg.Add(1)
+		go func() { defer wg.Done(); started <- struct{}{}; f(); done <- struct{}{} }()
+	}
+	run(func() { _ = s.applyLinkEntry(e) })
+	run(func() { _ = s.chat(member, "general", "racing chat") })
+	run(func() { s.trimHistory() })
+	run(func() { s.SetMode(ModeStandby) })
+	for range 4 {
+		<-started
+	}
+	select {
+	case <-done:
+		t.Fatal("source mutation crossed dedicated readiness lease")
+	case <-time.After(30 * time.Millisecond):
+	}
+	s.dedicatedMu.Unlock()
+	wg.Wait()
+	if c.Head().Seq != e.Seq || s.Mode() != ModeStandby {
+		t.Fatal("serialized mutations did not complete")
 	}
 }
 
