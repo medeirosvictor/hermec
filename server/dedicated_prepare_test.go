@@ -2,12 +2,17 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
@@ -199,6 +204,101 @@ func TestDedicatedReadinessLeaseAlsoSerializesPromotionSystemAndMerge(t *testing
 	}
 	if !found {
 		t.Fatal("serialized merge was not stored")
+	}
+}
+
+// TestDedicatedCommitReleasesCutoverLocksBeforeTakeover races the final
+// durable activation with a warm client takeover. The takeover owns
+// takeover.mu and then needs dedicatedMu to promote its session; the commit
+// must not retain dedicatedMu while notifying the promotion hook.
+func TestDedicatedCommitReleasesCutoverLocksBeforeTakeover(t *testing.T) {
+	c, sourceKey, destinationKey := twoHostChain(t)
+	path := filepath.Join(t.TempDir(), "transition.json")
+	head := c.Head()
+	headHash := head.Hash()
+	historyCount, historyHash := proto.DedicatedHistoryCommitment(nil)
+	readiness := proto.DedicatedReadiness{
+		ServerID: c.ID().String(), DestinationFingerprint: identity.Fingerprint(destinationKey.PublicKey()),
+		ChainHead: head.Seq, ChainHeadHash: headHash[:], HistoryCount: historyCount,
+		HistoryHash: historyHash, TransitionNonce: make([]byte, proto.DedicatedTransitionNonceSize),
+	}
+	record := DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionPrepared,
+		ServerID: readiness.ServerID, DestinationFingerprint: readiness.DestinationFingerprint,
+		ChainHead: readiness.ChainHead, ChainHeadHash: readiness.ChainHeadHash,
+		HistoryCount: readiness.HistoryCount, HistoryHash: readiness.HistoryHash,
+		TransitionNonce: readiness.TransitionNonce, Recovery: DedicatedRecoveryRetryPreparation}
+	if err := SaveDedicatedTransition(path, record); err != nil {
+		t.Fatal(err)
+	}
+	destination, destinationURL := startModeServer(t, Config{
+		HostKey: destinationKey, Chain: c, Mode: ModePrepared, Prepared: true,
+		DedicatedTransitionPath: path, HostName: "destination", Password: "pw",
+		Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}, Channels: []string{"general"},
+	})
+
+	// handleDedicatedCommit writes its ACK through a Link. A tiny peer lets the
+	// test assert that the ACK is still sent after the competing takeover wins.
+	peerConns := make(chan *websocket.Conn, 1)
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err == nil {
+			peerConns <- ws
+		}
+	}))
+	defer peer.Close()
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(peer.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	peerWS := <-peerConns
+	defer peerWS.Close()
+
+	sig, err := proto.SignDedicatedCutover(sourceKey, readiness, identity.Fingerprint(sourceKey.PublicKey()), destination.selfInfo())
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := proto.DedicatedCertificate{Readiness: readiness, SourceFingerprint: identity.Fingerprint(sourceKey.PublicKey()), Destination: destination.selfInfo(), Signature: sig}
+	data, err := json.Marshal(proto.DedicatedCommit{Certificate: certificate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := &Link{s: destination, ws: ws, peerFingerprint: certificate.SourceFingerprint, prepared: &readiness}
+
+	warm, env := authWarm(t, destinationURL, mustID(t), "pw")
+	if env.Type != proto.TypeAuthOK {
+		t.Fatalf("warm auth = %q", env.Type)
+	}
+	defer warm.Close()
+
+	// Queue the real client handler on takeover.mu before the commit reaches
+	// its hook. Once released, it promotes warm sessions and therefore takes
+	// dedicatedMu, exercising the former lock inversion.
+	destination.takeover.mu.Lock()
+	sendEnv(t, warm, proto.TypeTakeover, struct{}{})
+	time.Sleep(20 * time.Millisecond) // queue the client handler on takeover.mu
+	result := make(chan error, 1)
+	go func() { result <- link.handleDedicatedCommit(proto.Envelope{Data: data}) }()
+	waitFor(t, "dedicated activation", func() bool { return destination.Mode() == ModeActive })
+	destination.takeover.mu.Unlock()
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("dedicated commit: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("dedicated commit deadlocked with warm takeover")
+	}
+	readType(t, warm, proto.TypeRoster) // the warm client was enabled
+	_ = peerWS.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, raw, err := peerWS.ReadMessage()
+	if err != nil {
+		t.Fatalf("read dedicated ACK: %v", err)
+	}
+	ack, err := proto.Decode(raw)
+	if err != nil || ack.Type != proto.TypeDedicatedAck {
+		t.Fatalf("ACK = %q, %v", ack.Type, err)
 	}
 }
 

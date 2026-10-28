@@ -136,61 +136,77 @@ func (l *Link) handleDedicatedCommit(env proto.Envelope) error {
 	s := l.s
 	// The transition boundary and the durable decision are one serialized
 	// operation: no mirrored chain/history write can slip in before persistence.
-	s.dedicatedMu.Lock()
-	defer s.dedicatedMu.Unlock()
-	s.chainMu.Lock()
-	defer s.chainMu.Unlock()
-	s.chMu.Lock()
-	defer s.chMu.Unlock()
+	// Do not call out (including to takeover orchestration or the websocket)
+	// until every one of these locks has been released. In particular, a warm
+	// client's takeover holds takeover.mu before it promotes warm sessions,
+	// which needs dedicatedMu.
+	activated := false
+	err := func() error {
+		s.dedicatedMu.Lock()
+		defer s.dedicatedMu.Unlock()
+		s.chainMu.Lock()
+		defer s.chainMu.Unlock()
+		s.chMu.Lock()
+		defer s.chMu.Unlock()
 
-	if s.cfg.DedicatedTransitionPath == "" {
-		return errors.New("server: link: unexpected dedicated commit")
-	}
-	if old, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath); err == nil && old.State == DedicatedTransitionCommitted {
-		if old.Certificate != nil && reflect.DeepEqual(*old.Certificate, c) {
-			return l.write(proto.TypeDedicatedAck, proto.DedicatedAck{Readiness: c.Readiness})
+		if s.cfg.DedicatedTransitionPath == "" {
+			return errors.New("server: link: unexpected dedicated commit")
 		}
-		return errors.New("server: link: committed certificate differs")
-	}
-	if !s.Prepared() || s.Mode() != ModePrepared {
-		return errors.New("server: link: unexpected dedicated commit")
-	}
-	self := s.selfInfo()
-	if c.Readiness.DestinationFingerprint != self.Fingerprint || !reflect.DeepEqual(c.Destination, self) {
-		return errors.New("server: link: unexpected dedicated commit")
-	}
-	state := s.chain.State()
-	if !state.IsHost(s.cfg.HostKey.PublicKey()) {
-		return errors.New("server: link: destination no longer authorized")
-	}
-	var sourcePub []byte
-	for _, h := range state.Hosts {
-		if h.Fingerprint == c.SourceFingerprint {
-			sourcePub = h.PubKey
-			break
+		if old, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath); err == nil && old.State == DedicatedTransitionCommitted {
+			if old.Certificate != nil && reflect.DeepEqual(*old.Certificate, c) {
+				return nil
+			}
+			return errors.New("server: link: committed certificate differs")
 		}
-	}
-	// The remote handshake identity, retained by Link, must be the signer.
-	if sourcePub == nil || c.SourceFingerprint != l.peerFingerprint || !proto.VerifyDedicatedCutover(sourcePub, c) {
-		return errors.New("server: link: certificate source is unauthorized or invalid")
-	}
-	l.prepareMu.Lock()
-	prepared := l.prepared
-	l.prepareMu.Unlock()
-	if prepared == nil || !sameReadiness(c.Readiness, *prepared) {
-		return errors.New("server: link: cutover certificate differs from preparation")
-	}
-	// Revalidate exact local readiness immediately before the durable commit.
-	r := DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionPrepared, ServerID: c.Readiness.ServerID, DestinationFingerprint: c.Readiness.DestinationFingerprint, ChainHead: c.Readiness.ChainHead, ChainHeadHash: append([]byte(nil), c.Readiness.ChainHeadHash...), HistoryLastID: c.Readiness.HistoryLastID, HistoryLastUnixMilli: c.Readiness.HistoryLastUnixMilli, HistoryCount: c.Readiness.HistoryCount, HistoryHash: append([]byte(nil), c.Readiness.HistoryHash...), TransitionNonce: append([]byte(nil), c.Readiness.TransitionNonce...), Recovery: DedicatedRecoveryRetryPreparation}
-	if err := ValidateDedicatedPrepared(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
+		if !s.Prepared() || s.Mode() != ModePrepared {
+			return errors.New("server: link: unexpected dedicated commit")
+		}
+		self := s.selfInfo()
+		if c.Readiness.DestinationFingerprint != self.Fingerprint || !reflect.DeepEqual(c.Destination, self) {
+			return errors.New("server: link: unexpected dedicated commit")
+		}
+		state := s.chain.State()
+		if !state.IsHost(s.cfg.HostKey.PublicKey()) {
+			return errors.New("server: link: destination no longer authorized")
+		}
+		var sourcePub []byte
+		for _, h := range state.Hosts {
+			if h.Fingerprint == c.SourceFingerprint {
+				sourcePub = h.PubKey
+				break
+			}
+		}
+		// The remote handshake identity, retained by Link, must be the signer.
+		if sourcePub == nil || c.SourceFingerprint != l.peerFingerprint || !proto.VerifyDedicatedCutover(sourcePub, c) {
+			return errors.New("server: link: certificate source is unauthorized or invalid")
+		}
+		l.prepareMu.Lock()
+		prepared := l.prepared
+		l.prepareMu.Unlock()
+		if prepared == nil || !sameReadiness(c.Readiness, *prepared) {
+			return errors.New("server: link: cutover certificate differs from preparation")
+		}
+		// Revalidate exact local readiness immediately before the durable commit.
+		r := DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionPrepared, ServerID: c.Readiness.ServerID, DestinationFingerprint: c.Readiness.DestinationFingerprint, ChainHead: c.Readiness.ChainHead, ChainHeadHash: append([]byte(nil), c.Readiness.ChainHeadHash...), HistoryLastID: c.Readiness.HistoryLastID, HistoryLastUnixMilli: c.Readiness.HistoryLastUnixMilli, HistoryCount: c.Readiness.HistoryCount, HistoryHash: append([]byte(nil), c.Readiness.HistoryHash...), TransitionNonce: append([]byte(nil), c.Readiness.TransitionNonce...), Recovery: DedicatedRecoveryRetryPreparation}
+		if err := ValidateDedicatedPrepared(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
+			return err
+		}
+		r.State, r.Certificate, r.Recovery = DedicatedTransitionCommitted, &c, DedicatedRecoveryInspectCommit
+		if err := SaveDedicatedTransition(s.cfg.DedicatedTransitionPath, r); err != nil {
+			return err
+		}
+		s.prepared.Store(false)
+		s.setModeLocked(ModeActive)
+		activated = true
+		return nil
+	}()
+	if err != nil {
 		return err
 	}
-	r.State, r.Certificate, r.Recovery = DedicatedTransitionCommitted, &c, DedicatedRecoveryInspectCommit
-	if err := SaveDedicatedTransition(s.cfg.DedicatedTransitionPath, r); err != nil {
-		return err
+	if activated {
+		s.signalPromoteHook()
 	}
-	s.prepared.Store(false)
-	s.setModeLocked(ModeActive)
-	s.signalPromoteHook()
+	// A duplicate commit still receives its ACK, but never reactivates or
+	// signals promotion a second time.
 	return l.write(proto.TypeDedicatedAck, proto.DedicatedAck{Readiness: c.Readiness})
 }
