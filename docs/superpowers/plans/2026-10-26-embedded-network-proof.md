@@ -172,26 +172,34 @@ tsnet version; its go directive is `1.27.3`. Produce `Open(ctx context.Context, 
 `StateDir, Hostname, ControlURL string` and
 `OnLoginURL func(string)`; no credentials go in reports. One Node per directory.
 
-- [ ] Write `TestProfilesDoNotShareStateByControlURL`: two profiles with the
+- [x] Write `TestProfilesDoNotShareStateByControlURL`: two profiles with the
   same control URL get separate state paths and distinct adapter instances.
   Reject the same resolved state directory being opened twice. Test a profile
   stopped while another is active does not close the other's sockets.
-- [ ] Write `TestNotReadyProviderFailsClosed` and
+- [x] Write `TestNotReadyProviderFailsClosed` and
   `TestPionNetRejectsNonProfileBind`: no node-ready address means no socket;
   a host/LAN bind or a UDP destination outside the selected test profile's
   permitted peers is rejected. Unsupported operations return an error.
-- [ ] Write UDP adapter round-trip tests with an in-memory packet backend:
+- [x] Write UDP adapter round-trip tests with an in-memory packet backend:
   `ReadFrom`, `WriteTo`, deadlines and close unblock Pion-facing operations.
   Assert returned LocalAddr is a specific `*net.UDPAddr`, never unspecified.
-- [ ] Run `go test ./...` from the nested module; record RED before adding
+- [x] Run `go test ./...` from the nested module; record RED before adding
   implementation. Dependency download may require normal tool approval.
-- [ ] Implement the adapter with tsnet Dial/Listen/ListenPacket and Pion
+- [x] Implement the adapter with tsnet Dial/Listen/ListenPacket and Pion
   transport/v5 interfaces. Enumerate only node-assigned interface addresses;
   disable mDNS/STUN/TURN and system candidate fallback in private test config.
   Keep authentication callbacks in memory, not debug logs. Document why
   websocket-private traffic and Pion media cannot escape through the OS Net.
-- [ ] Run adapter tests and root suite; commit
+- [x] Run adapter tests and root suite; commit
   `feat: add isolated embedded-network probe adapter`.
+
+Execution note (2026-10-28): the adapter is a library package; Task 4's CLI
+will live under `tools/embedded-probe/cmd/embedded-probe` so it does not mix
+`package main` with the tested adapter. No real tsnet node was enrolled.
+Disposable fake backends prove separate state directories, fail-closed binds
+and destinations, profile-only Pion interfaces, UDP round trips, deadlines and
+close unblocking. Nested vet/race tests and Windows/Linux amd64/arm64 compile
+checks passed. As in Task 2, no separate RED transcript was retained.
 
 ### Task 4: Headless end-to-end harness and repeatable acceptance procedure
 

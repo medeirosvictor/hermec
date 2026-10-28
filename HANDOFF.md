@@ -46,17 +46,17 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 Local work is on `fix/readiness-cleanup` in `.worktrees/readiness-cleanup`,
 rebased onto released `v0.7.0`; it has not been merged or pushed.
 
-- Embedded-network proof Tasks 1 and 2 are complete. Client signaling, active
-  and warm peers, server TCP/UDP listeners, WebRTC APIs and authenticated host
-  links all retain an explicit per-instance network provider. Provider-backed
-  routes ignore process-global proxy/TLS hooks and fail closed; unsafe private
-  combinations (`discoverable`, `public_ip`, legacy UDP ranges or nil PionNet)
-  are rejected before binding. Tests cover provider use, IPv4/IPv6 media binds,
-  late resource cleanup and startup rollback. Focused vet/tests and server plus
-  integration race tests passed.
-- **Resume at Task 3: the isolated tsnet adapter.** No tsnet dependency is in
-  the release module and no real-network proof or user-facing hosting flow
-  exists yet. Progress/briefs/reports are under the ignored
+- Embedded-network proof Tasks 1 through 3 are complete. Client signaling,
+  active and warm peers, server TCP/UDP listeners, WebRTC APIs and authenticated
+  host links retain an explicit per-instance provider. The isolated nested probe
+  pins tsnet v1.104.2 and supplies profile-only dialing/listening plus a Pion
+  adapter. It rejects host/LAN binds, unknown destinations, unsafe server
+  options and missing profile addresses instead of falling back. Fake-backend
+  tests cover separate state, IPv4/IPv6 interfaces, UDP round trips, deadlines,
+  close unblocking, late cleanup and startup rollback. Root focused tests and
+  nested vet/race plus Windows/Linux compile checks passed.
+- **Resume at Task 4: the headless end-to-end harness.** No real tsnet node was
+  enrolled and no user-facing hosting flow exists yet. Progress/briefs/reports are under the ignored
   `.superpowers/sdd/embedded-network-proof/` in this worktree; do not redispatch
   completed tasks after resuming. Victor chose local tests first, real-network
   checks later. No real network enrollment is authorized during this run.
@@ -109,7 +109,7 @@ is approved for local implementation. Victor chose local tests first, with
 real-network checks arranged later. Private UI/lifecycle, dedicated hosting, method migration
 and RNNoise trial plans follow the transport evidence. The internal client and
 server provider boundary is implemented on the active branch, but no tsnet
-adapter, hosting UI or noise-processing dependency has been added.
+adapter in release builds, hosting UI or noise-processing dependency has been added.
 
 1. **Embedded-network transport proof.** Execute the approved local proof in
    `docs/superpowers/plans/2026-10-26-embedded-network-proof.md`: explicit
