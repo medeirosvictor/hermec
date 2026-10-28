@@ -23,6 +23,7 @@ type DedicatedTransitionState string
 const (
 	DedicatedTransitionPrepared  DedicatedTransitionState = "prepared"
 	DedicatedTransitionCommitted DedicatedTransitionState = "committed"
+	DedicatedTransitionFenced    DedicatedTransitionState = "fenced"
 )
 
 // DedicatedRecoveryCode selects fixed operator guidance. It is persisted
@@ -62,7 +63,10 @@ type DedicatedTransitionRecord struct {
 	HistoryCount           uint64                   `json:"history_count"`
 	HistoryHash            []byte                   `json:"history_hash"`
 	TransitionNonce        []byte                   `json:"transition_nonce"`
-	Recovery               DedicatedRecoveryCode    `json:"recovery"`
+	// Certificate is retained by both sides. A fenced source retransmits this
+	// exact object after restart; it never generates another nonce or boundary.
+	Certificate *proto.DedicatedCertificate `json:"certificate,omitempty"`
+	Recovery    DedicatedRecoveryCode       `json:"recovery"`
 }
 
 // DedicatedTransitionFile is the restart record kept beside a dedicated
@@ -118,13 +122,21 @@ func (r DedicatedTransitionRecord) validate() error {
 	if r.Version != 1 {
 		return errors.New("server: unsupported dedicated transition version")
 	}
-	if r.State != DedicatedTransitionPrepared && r.State != DedicatedTransitionCommitted {
+	if r.State != DedicatedTransitionPrepared && r.State != DedicatedTransitionCommitted && r.State != DedicatedTransitionFenced {
 		return errors.New("server: invalid dedicated transition state")
 	}
 	if r.Recovery.Guidance() == "" {
 		return errors.New("server: invalid dedicated transition recovery code")
 	}
-	return (proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}).Validate()
+	if err := (proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}).Validate(); err != nil {
+		return err
+	}
+	if r.State == DedicatedTransitionCommitted || r.State == DedicatedTransitionFenced {
+		if r.Certificate == nil || !sameReadiness(r.Certificate.Readiness, proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}) {
+			return errors.New("server: missing or mismatched dedicated certificate")
+		}
+	}
+	return nil
 }
 
 // SaveDedicatedTransition atomically replaces path with a mode-0600 JSON

@@ -208,7 +208,7 @@ func (h *Host) loop() {
 	for !h.stopped() {
 		if l != nil {
 			l = h.runLinked(l)
-		} else if h.prepared {
+		} else if h.prepared || h.srv.Mode() == ModeFenced {
 			// Stay passive while the source is unavailable; retrying a link is
 			// safe, electing ourselves is not.
 			if !h.pause(coldProbeEvery) {

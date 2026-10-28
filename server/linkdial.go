@@ -296,6 +296,10 @@ func (l *Link) Run() {
 			if err := l.write(proto.TypeDedicatedProof, proto.DedicatedReadinessProof{Readiness: p.Readiness, Signature: sig}); err != nil {
 				return false, err
 			}
+		case proto.TypeDedicatedCommit:
+			if err := l.handleDedicatedCommit(env); err != nil {
+				return false, err
+			}
 		case proto.TypeDedicatedAck:
 			var ack proto.DedicatedAck
 			if json.Unmarshal(env.Data, &ack) != nil || ack.Readiness.Validate() != nil {

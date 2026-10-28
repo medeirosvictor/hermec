@@ -23,6 +23,9 @@ const (
 	// ModePrepared is a passive dedicated destination. It may mirror an active
 	// host over a link, but can never be promoted by failover or takeover.
 	ModePrepared
+	// ModeFenced is a source which durably gave a destination authority. It is
+	// restart-persistent and non-electable; it may only retransmit that commit.
+	ModeFenced
 )
 
 // Heartbeat timing. The grace is how long a receiver waits without an hb
@@ -60,6 +63,9 @@ func (s *Server) setModeLocked(m Mode) {
 	// API. Keep this guard here (rather than only in Host), because callers of
 	// Server include takeover, rejoin, and tests.
 	if m == ModeActive && s.prepared.Load() {
+		return
+	}
+	if s.Mode() == ModeFenced && m != ModeFenced {
 		return
 	}
 	prev := Mode(s.modeState.mode.Swap(int32(m)))

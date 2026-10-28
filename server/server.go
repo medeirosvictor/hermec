@@ -121,6 +121,10 @@ type Config struct {
 	// Prepared makes this a passive dedicated destination until an explicit
 	// committed-transition activation releases it.
 	Prepared bool
+	// DedicatedTransitionPath is the private, durable cutover journal. A
+	// configured prepared destination loads a committed record as active; an
+	// active source records a fence here before it sends a cutover certificate.
+	DedicatedTransitionPath string
 	// HostName and Advertise describe this host to its peers and clients: a
 	// display name and the addresses it can be dialed at.
 	HostName  string
@@ -294,6 +298,9 @@ func (s *Server) Start() error {
 		s.applyHistoryLimits()
 		if n := h.Skipped(); n > 0 {
 			s.logf("server: history: skipped %d malformed lines in %s", n, s.cfg.HistoryPath)
+		}
+		if err := s.restoreDedicatedTransition(); err != nil {
+			return err
 		}
 		s.trimHistory()
 	}
