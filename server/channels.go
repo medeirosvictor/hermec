@@ -376,7 +376,10 @@ func (c *conn) route(env proto.Envelope) {
 		c.routeLink(env)
 		return
 	}
-	if !allowedWhenRestricted(env.Type) && c.srv.restricted(c) {
+	// A fenced source normally accepts no client traffic. The founder may,
+	// however, recover the durable activation result for its exact nonce after
+	// a lost reply or restart; handleDedicatedActivate rechecks that scope.
+	if !allowedWhenRestricted(env.Type) && !(env.Type == proto.TypeDedicatedActivate && c.srv.Mode() == ModeFenced) && c.srv.restricted(c) {
 		c.sendError(proto.CodeNotActive, "this host is not serving clients")
 		return
 	}

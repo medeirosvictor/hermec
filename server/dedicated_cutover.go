@@ -32,9 +32,7 @@ func (s *Server) restoreDedicatedTransition() error {
 		s.modeState.mode.Store(int32(ModePrepared))
 		return nil
 	case DedicatedTransitionCommitted:
-		check := r
-		check.State = DedicatedTransitionPrepared
-		if err := ValidateDedicatedPrepared(check, s.cfg.HostKey, s.chain, s.hist); err != nil {
+		if err := ValidateDedicatedCommitted(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
 			return err
 		}
 		if err := s.validateDedicatedCertificate(r, false); err != nil {
@@ -44,7 +42,7 @@ func (s *Server) restoreDedicatedTransition() error {
 		s.modeState.mode.Store(int32(ModeActive))
 		return nil
 	case DedicatedTransitionFenced:
-		if err := validateDedicatedLocalBoundary(r, s.chain, s.hist); err != nil {
+		if err := ValidateDedicatedFenced(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
 			return err
 		}
 		if err := s.validateDedicatedCertificate(r, true); err != nil {

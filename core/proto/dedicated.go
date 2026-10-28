@@ -283,6 +283,27 @@ func (m DedicatedActivate) Validate() error {
 	return nil
 }
 
+// Validate rejects results that cannot be correlated to one activation request
+// or that would blur the read-only Ready state with a completed cutover.
+func (m DedicatedResult) Validate() error {
+	if len(m.Ref) == 0 || len(m.Ref) > 128 {
+		return errors.New("proto: invalid dedicated activation result")
+	}
+	switch m.Status {
+	case "pending", "retry", "error":
+		if m.Readiness != nil {
+			return errors.New("proto: unexpected dedicated readiness")
+		}
+	case "ready", "success":
+		if m.Readiness == nil || m.Readiness.Validate() != nil {
+			return errors.New("proto: invalid dedicated result readiness")
+		}
+	default:
+		return errors.New("proto: invalid dedicated activation status")
+	}
+	return nil
+}
+
 // Validate checks all bounded proof fields.
 func (p DedicatedReadinessProof) Validate() error {
 	if err := p.Readiness.Validate(); err != nil {

@@ -86,6 +86,39 @@ func ValidateDedicatedPrepared(r DedicatedTransitionRecord, local *identity.Iden
 	if r.State != DedicatedTransitionPrepared {
 		return errors.New("server: dedicated transition is not prepared")
 	}
+	return validateDedicatedDestination(r, local, c, h)
+}
+
+// ValidateDedicatedCommitted validates the terminal destination state on
+// startup. Unlike Prepared, this must never be accepted merely by changing a
+// record's State in memory: its committed certificate is part of the state.
+func ValidateDedicatedCommitted(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *History) error {
+	if err := r.validate(); err != nil {
+		return err
+	}
+	if r.State != DedicatedTransitionCommitted {
+		return errors.New("server: dedicated transition is not committed")
+	}
+	return validateDedicatedDestination(r, local, c, h)
+}
+
+// ValidateDedicatedFenced validates the terminal source state on startup.
+// The source intentionally is not the destination, so it is checked against
+// the certificate signer rather than DestinationFingerprint.
+func ValidateDedicatedFenced(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *History) error {
+	if err := r.validate(); err != nil {
+		return err
+	}
+	if r.State != DedicatedTransitionFenced {
+		return errors.New("server: dedicated transition is not fenced")
+	}
+	if local == nil || r.Certificate == nil || r.Certificate.SourceFingerprint != identity.Fingerprint(local.PublicKey()) {
+		return errors.New("server: fenced transition names another source")
+	}
+	return validateDedicatedLocalBoundary(r, c, h)
+}
+
+func validateDedicatedDestination(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *History) error {
 	if local == nil || r.DestinationFingerprint != identity.Fingerprint(local.PublicKey()) {
 		return errors.New("server: dedicated transition names another destination")
 	}

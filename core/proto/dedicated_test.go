@@ -81,6 +81,35 @@ func TestDedicatedCutoverBindsBothHostsAndHostInfo(t *testing.T) {
 	}
 }
 
+func TestDedicatedResultValidationAndCorrelationFields(t *testing.T) {
+	key, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := DedicatedReadiness{ServerID: "s", DestinationFingerprint: identity.Fingerprint(key.PublicKey()), ChainHeadHash: make([]byte, 32), HistoryHash: make([]byte, 32), TransitionNonce: make([]byte, DedicatedTransitionNonceSize)}
+	for _, result := range []DedicatedResult{
+		{Ref: "request", Status: "pending"},
+		{Ref: "request", Status: "retry"},
+		{Ref: "request", Status: "error"},
+		{Ref: "request", Status: "ready", Readiness: &ready},
+		{Ref: "request", Status: "success", Readiness: &ready},
+	} {
+		if err := result.Validate(); err != nil {
+			t.Fatalf("valid result %+v: %v", result, err)
+		}
+	}
+	for _, result := range []DedicatedResult{
+		{Status: "pending"},
+		{Ref: "request", Status: "unknown"},
+		{Ref: "request", Status: "success"},
+		{Ref: "request", Status: "retry", Readiness: &ready},
+	} {
+		if err := result.Validate(); err == nil {
+			t.Fatalf("invalid result accepted: %+v", result)
+		}
+	}
+}
+
 func TestDedicatedReadinessBounds(t *testing.T) {
 	key, err := identity.Generate()
 	if err != nil {

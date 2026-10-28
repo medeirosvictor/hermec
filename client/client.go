@@ -475,7 +475,7 @@ func (c *Client) readLoop() {
 			}
 		case proto.TypeDedicatedResult:
 			var r proto.DedicatedResult
-			if json.Unmarshal(env.Data, &r) != nil || r.Ref == "" {
+			if json.Unmarshal(env.Data, &r) != nil || r.Validate() != nil {
 				c.emit(Event{Err: fmt.Errorf("client: bad dedicated activation result")})
 				continue
 			}
