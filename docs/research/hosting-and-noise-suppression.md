@@ -2,7 +2,7 @@
 
 Research notes, 2026-10-26. The
 [hosting design](../superpowers/specs/2026-10-26-hosting-readiness-design.md) and
-first [transport-proof plan](../superpowers/plans/2026-10-26-embedded-network-proof.md)
+completed [transport-proof report](embedded-network-proof.md)
 are approved. This note records candidate algorithms and the original UI
 discussion; it does not claim they are implemented. Current behavior remains
 documented in README.md and docs/protocol.md.
@@ -17,8 +17,9 @@ infrastructure. After the cleanup and hosting work, real-use checks should
 establish a baseline for regular use, followed by polish and quality of life.
 
 Victor selected embedded private networking so friends do not need a separate
-Tailscale installation. tsnet is the candidate integration; its media path still
-needs validation. He also explicitly requires UI flows for creating a server
+Tailscale installation. The isolated tsnet candidate now passes a local
+provider-backed media/failover harness; real Tailscale and Headscale direct and
+relay paths still need validation. He also explicitly requires UI flows for creating a server
 with each method and changing the setup of an existing server.
 
 He also wants a free noise-suppression algorithm behind a toggle for testing

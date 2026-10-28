@@ -19,13 +19,12 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
    local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.
-3. **Current round: embedded-network transport proof.** The four bounded
-   cleanup defects are complete. Continue the approved local proof for private
-   Tailscale/Headscale networking, starting with per-instance client/server
-   socket routing, then an isolated tsnet adapter and headless media/failover
-   harness. Do not claim or build hosting UI until signaling, UDP media,
-   profile isolation and standby reachability are proven. Real enrollment uses
-   disposable networks only and requires Victor's explicit participation.
+3. **Current round: dedicated AWS/VPS hosting.** The bounded cleanup and local
+   embedded-network proof are complete. Implement secure, persistent headless
+   hosting plus the desktop Dedicated Server flow; do not provision cloud
+   resources. Public mode requires TLS and admission, and availability requires
+   a disposable remote-VPS media test. Private embedded networking remains
+   blocked on real Tailscale/Headscale evidence.
    **Version policy (Victor, 2026-10-23):** before v1, do not spend development
    effort on mixed-version call/media bridging; the app is not released to a
    user base that needs it. Keep protocol negotiation safe, but expect every
@@ -58,16 +57,17 @@ rebased onto released `v0.7.0`; it has not been merged or pushed.
   selected screens, rejects signaling-only standby readiness, and verifies
   mute/media continuation through takeover. Root focused tests and nested
   vet/race plus Windows/Linux cross-builds passed.
-- **Resume at Task 5: evidence, measurements and production phase plans.** No
-  real tsnet node was enrolled, so Tailscale/Headscale direct/relay rows remain
-  NOT RUN and embedded networking is not approved for user-facing shipping.
-  No hosting UI exists yet. Progress/briefs/reports are under the ignored
-  `.superpowers/sdd/embedded-network-proof/` in this worktree; do not redispatch
-  completed tasks after resuming. Victor chose local tests first, real-network
-  checks later. No real network enrollment is authorized during this run.
+- The local embedded-network proof is complete. Evidence and limitations are in
+  `docs/research/embedded-network-proof.md`; real Tailscale/Headscale direct and
+  relay rows remain NOT RUN, so private networking is not approved for shipping.
+  **Next implementation milestone: dedicated AWS/VPS hosting** under
+  `docs/superpowers/plans/2026-10-28-dedicated-hosting.md`. Victor explicitly
+  asked when remote hosting becomes available and authorized proceeding; the
+  availability gate is Tasks 1-6 plus a disposable VPS check. No cloud resources
+  are provisioned by HERMEC.
 - Candidate tsnet `v1.104.2` requires Go `1.27.3`. Use that patch toolchain only
   in the isolated probe module; root module remains Go `1.27.0` during proof.
-- A separate local, untracked noise trial draft at
+- A separate noise trial draft at
   `docs/superpowers/plans/2026-10-27-noise-suppression-trial.md` evaluates pure-Go
   `rnnoise-go v0.3.0` before app integration. It is not yet approved for execution;
   no denoiser has been added to the app.
@@ -108,20 +108,22 @@ Written design approved by Victor on 2026-10-26:
 [hosting readiness](docs/superpowers/specs/2026-10-26-hosting-readiness-design.md).
 It proposes owner-supplied coordination, per-group embedded profiles, private
 and public dedicated hosting, creation/join flows, and guarded method changes.
-The owner supplies coordination; no HERMEC-operated service. First
-[transport-proof plan](docs/superpowers/plans/2026-10-26-embedded-network-proof.md)
-is approved for local implementation. Victor chose local tests first, with
-real-network checks arranged later. Private UI/lifecycle, dedicated hosting, method migration
-and RNNoise trial plans follow the transport evidence. The internal client and
-server provider boundary is implemented on the active branch, but no tsnet
-adapter in release builds, hosting UI or noise-processing dependency has been added.
+The owner supplies coordination; no HERMEC-operated service. The local
+transport proof is complete; see
+`docs/research/embedded-network-proof.md`. Dedicated, private lifecycle and
+migration plans are now written. The internal provider boundary is implemented
+on the active branch, but there is no tsnet adapter in release builds, hosting
+UI or noise-processing dependency.
 
-1. **Embedded-network transport proof.** Execute the approved local proof in
-   `docs/superpowers/plans/2026-10-26-embedded-network-proof.md`: explicit
-   client/server network providers, an isolated tsnet adapter, and a headless
-   authenticated chat/media/standby harness. Keep real-network rows pending
-   until disposable Tailscale and Headscale endpoints are available.
-2. **Friends adjustments.** Per-person volume, mic gain, live names, audio
+1. **Dedicated AWS/VPS hosting.** Execute
+   `docs/superpowers/plans/2026-10-28-dedicated-hosting.md`: secure bootstrap,
+   persistent packaging/service lifecycle, AWS/VPS instructions, remote
+   reachability checks, desktop Dedicated Server flow and authorized host
+   preparation. It becomes available only after the disposable-VPS gate.
+2. **Private embedded networking.** Arrange disposable Tailscale and Headscale
+   direct/relay checks, then execute the private profile/Create/Join plan. Do
+   not ship based on loopback evidence alone.
+3. **Friends adjustments.** Per-person volume, mic gain, live names, audio
    device switching mid-call, bandwidth metrics and ping fixes (details below).
    Later idea riding the synced store: file sharing (a capped shared folder).
    vitoserver stays parked (Victor: do not bring it back for now).
@@ -148,12 +150,12 @@ adapter in release builds, hosting UI or noise-processing dependency has been ad
      as torn; missing tests for 0600 mode, mutation isolation, the sync/close
      rollback branches, a replayed host proof, and an `auth_ok.server_id`
      mismatch.
-3. **Documentation milestone.** Keep `README.md` as the task-oriented user
+4. **Documentation milestone.** Keep `README.md` as the task-oriented user
    guide; add `docs/architecture.md` for the concise under-the-hood model and
    `docs/code-map.md` for folders, important files and common change paths.
    Replace the duplicated map later in this handoff with links to those
    canonical docs.
-4. **Signed membership + connection modes** (Victor, 2026-10-22; brainstorm
+5. **Signed membership + connection modes** (Victor, 2026-10-22; brainstorm
    first). Invite tree on the chain: the inviter signs, the invitee co-signs,
    so there is an audit trail of who brought whom; ban or review a whole
    branch; invite as a role; k-of-n admin signatures for host and role
@@ -162,7 +164,7 @@ adapter in release builds, hosting UI or noise-processing dependency has been ad
    (pure Go) on a group tailnet (Tailscale account or Headscale) so Victor's
    private tailnet stays separate; public mode (port forward or VPS) requires
    `wss://` and invites. Author-signed chat (Plan C) comes after.
-5. **Friends adjustments detail** (designed in chat 2026-10-19, not yet specced):
+6. **Friends adjustments detail** (designed in chat 2026-10-19, not yet specced):
    - Volume: per-person volume (right-click a person, 0 to 200%, saved per
      fingerprint), a mic gain settings row (0 to 200%), and a soft limiter.
      Friends were too quiet in both directions. Volume for a shared stream
@@ -182,7 +184,7 @@ adapter in release builds, hosting UI or noise-processing dependency has been ad
      (`pongTimeout` in `client/rtt.go`, recorded by `check`). Victor saw 1400 ms
      spikes with fine voice. Check Tailscale DERP versus direct
      (`tailscale ping`, `tailscale status`, `tailscale netcheck`).
-6. **B.3: icon editor.** In-app pixel-art editor for a server icon.
+7. **B.3: icon editor.** In-app pixel-art editor for a server icon.
 
 ## Open checklists
 

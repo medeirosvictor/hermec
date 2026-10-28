@@ -206,10 +206,10 @@ func RunScenario(parent context.Context, cfg ScenarioConfig) (report ScenarioRep
 	if err = b.StartShare(&colorFrames{y: 130}, 64, 64, 10, 100); err != nil {
 		return report, err
 	}
-	if err = a.Watch(b.Fingerprint()); err != nil {
+	if err = retry(ctx, func() error { return a.Watch(b.Fingerprint()) }); err != nil {
 		return report, err
 	}
-	if err = b.Watch(a.Fingerprint()); err != nil {
+	if err = retry(ctx, func() error { return b.Watch(a.Fingerprint()) }); err != nil {
 		return report, err
 	}
 	started = time.Now()

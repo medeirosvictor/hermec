@@ -46,34 +46,24 @@ no infrastructure. How the app works is in [README.md](README.md) and
 
 ## Next
 
-1. **Embedded-network transport proof**: execute the approved local proof for
-   per-instance client/server networking, an isolated tsnet adapter, actual UDP
-   media, profile isolation and standby takeover. Real Tailscale/Headscale rows
-   use disposable networks and remain a manual shipping gate.
-2. **Friends adjustments**: per-person volume and mic gain, live names, audio
+1. **Dedicated AWS/VPS hosting**: the next user-facing milestone. Package the
+   existing headless server for persistent operator-owned hosting, require TLS
+   and admission for public mode, add bootstrap/service/backup/update tooling,
+   an AWS EC2 guide and desktop Dedicated Server join/create flow. No cloud
+   provisioning or cloud credentials. Availability requires the disposable-VPS
+   gate in [the implementation plan](docs/superpowers/plans/2026-10-28-dedicated-hosting.md).
+2. **Embedded private networking**: local provider plumbing, tsnet adapter and
+   headless media/failover scenario are proven on the development branch. Real
+   Tailscale/Headscale direct and relay rows remain NOT RUN and block shipping.
+   After that evidence, implement profile lifecycle and Create/Join UI using
+   [the private-network plan](docs/superpowers/plans/2026-10-28-private-network-lifecycle.md).
+3. **Hosting-method migration**: after both destinations exist, add guarded
+   local/private/dedicated changes preserving identity, membership and history,
+   with voice-empty commit and restart recovery. See
+   [the migration plan](docs/superpowers/plans/2026-10-28-hosting-method-migration.md).
+4. **Friends adjustments**: per-person volume and mic gain, live names, audio
    device switching mid-call, bandwidth metrics, ping fixes.
-3. **Hosting options** (Victor, 2026-10-26; architecture discussion next):
-   private groups using Tailscale or self-hosted Headscale, plus a portable
-   dedicated server on AWS or another VPS, operated like a Minecraft server
-   (download, configure, run, share an address). No in-app cloud provisioning.
-   Embedded networking is the selected direction (Victor, 2026-10-26): one
-   private-network integration with selectable coordination service, so friends
-   do not need a separate Tailscale installation. Validate tsnet integration.
-   Prove both signaling and UDP media, group isolation, and standby reachability.
-   Include Create Server flows for each hosting method and a Server Settings
-   flow to change an existing server's method. Show enrollment/setup progress,
-   reachability, invite/share details and actionable errors. For changes, preview
-   affected clients/standby hosts and any interruption; validate the destination,
-   preserve server identity, membership and history, and provide recovery on
-   failure. Reissue connection details when needed. Design permissions, live-call
-   behavior and migration/recovery before implementation.
-   Public hosting includes TLS, admission controls/invites, persistence, updates,
-   firewall guidance, and backup/restore. Hosts own infrastructure and costs.
-   Approved written design:
-   [hosting readiness](docs/superpowers/specs/2026-10-26-hosting-readiness-design.md)
-   and first [transport-proof plan](docs/superpowers/plans/2026-10-26-embedded-network-proof.md)
-   (plan approved; UI/migration plans follow measured transport results).
-4. **Experimental microphone noise suppression**: evaluate freely redistributable
+5. **Experimental microphone noise suppression**: evaluate freely redistributable
    algorithms, starting with RNNoise, against SpeexDSP and DeepFilterNet.
    Ship a default-off toggle only after a measured integration probe: local
    processing before Opus, switchable during calls, with no cloud audio service.
@@ -81,16 +71,16 @@ no infrastructure. How the app works is in [README.md](README.md) and
    release platforms. Prefer pure Go or embedded WASM if practical; do not
    introduce an unbundled runtime/library requirement. Echo cancellation remains
    a separate follow-up. See [research notes](docs/research/hosting-and-noise-suppression.md).
-5. **Usability gate**: exercise the selected hosting modes with friends, test
+6. **Usability gate**: exercise the selected hosting modes with friends, test
    voice/camera/screen and failover on real
    devices, and decide whether the experimental filter is useful. Victor's
    intended milestone is an app ready for regular use, followed by polishing
    and quality-of-life work; feature completion alone does not pass this gate.
-6. **Documentation milestone**: make `README.md` the task-oriented user guide;
+7. **Documentation milestone**: make `README.md` the task-oriented user guide;
    add `docs/architecture.md` for how HERMEC works under the hood and
    `docs/code-map.md` for folders, important files and common development
    entry points. Link rather than duplicate material in `HANDOFF.md`.
-7. **Icon editor** (B.3): in-app pixel-art editor for a server icon.
+8. **Icon editor** (B.3): in-app pixel-art editor for a server icon.
 
 ## Later
 
