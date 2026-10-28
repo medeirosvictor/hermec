@@ -250,7 +250,10 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 		if s.hist != nil {
 			snapshot, ts, id = s.hist.Snapshot()
 		}
-		c.link.dedicated = &proto.DedicatedReadiness{ServerID: s.chain.ID().String(), DestinationFingerprint: c.fingerprint, ChainHead: s.chain.Head().Seq, HistoryLastID: id, HistoryLastUnixMilli: ts.UnixMilli(), TransitionNonce: nonce}
+		head := s.chain.Head()
+		headHash := head.Hash()
+		historyCount, historyHash := proto.DedicatedHistoryCommitment(snapshot)
+		c.link.dedicated = &proto.DedicatedReadiness{ServerID: s.chain.ID().String(), DestinationFingerprint: c.fingerprint, ChainHead: head.Seq, ChainHeadHash: headHash[:], HistoryLastID: id, HistoryLastUnixMilli: ts.UnixMilli(), HistoryCount: historyCount, HistoryHash: historyHash, TransitionNonce: nonce}
 		c.link.dedicatedHistory = snapshot
 	}
 	s.links[c] = struct{}{}

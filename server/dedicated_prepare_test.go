@@ -119,6 +119,42 @@ func TestDedicatedMutationLeaseSerializesAppendChatTrimAndDemote(t *testing.T) {
 	}
 }
 
+func TestDedicatedReadinessLeaseAlsoSerializesPromotionSystemAndMerge(t *testing.T) {
+	c, sourceKey, _ := twoHostChain(t)
+	s := New(Config{HostKey: sourceKey, Chain: c, Channels: []string{"general"}, Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}})
+	h, err := OpenHistory("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.hist = h
+
+	s.dedicatedMu.Lock()
+	var wg sync.WaitGroup
+	done := make(chan struct{}, 3)
+	run := func(f func()) {
+		wg.Add(1)
+		go func() { defer wg.Done(); f(); done <- struct{}{} }()
+	}
+	run(s.PromoteWarm)
+	run(s.announcePromotion)
+	run(func() { s.mergeLinkMessages([]proto.ChatMessage{{ID: "merged", Channel: "general", TS: time.Now()}}) })
+	select {
+	case <-done:
+		t.Fatal("promotion, system chat, or merge crossed dedicated readiness lease")
+	case <-time.After(30 * time.Millisecond):
+	}
+	s.dedicatedMu.Unlock()
+	wg.Wait()
+	snapshot, _, _ := h.Snapshot()
+	found := false
+	for _, m := range snapshot {
+		found = found || m.ID == "merged"
+	}
+	if !found {
+		t.Fatal("serialized merge was not stored")
+	}
+}
+
 func TestDedicatedHistorySnapshotSurvivesTrimAndConcurrentAppend(t *testing.T) {
 	h, err := OpenHistory("")
 	if err != nil {

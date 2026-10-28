@@ -134,12 +134,14 @@ func (c *conn) handleLinkChainIn(env proto.Envelope) {
 	}
 }
 
-// goIdle sets ModeIdle. chainMu is held so that no chain append lands after it
-// returns.
+// goIdle sets ModeIdle. The dedicated lease always precedes chainMu, so a
+// readiness commit cannot deadlock with this demotion.
 func (s *Server) goIdle() {
+	s.dedicatedMu.Lock()
 	s.chainMu.Lock()
-	s.SetMode(ModeIdle)
+	s.setModeLocked(ModeIdle)
 	s.chainMu.Unlock()
+	s.dedicatedMu.Unlock()
 }
 
 // Demote leaves the active role: the host goes idle, then every authenticated

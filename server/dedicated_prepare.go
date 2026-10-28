@@ -91,15 +91,19 @@ func (c *conn) handleDedicatedProof(env proto.Envelope) {
 		c.sendError(proto.CodeNotActive, "source is no longer active")
 		return
 	}
-	if s.chain.ID().String() != want.ServerID || s.chain.Head().Seq != want.ChainHead {
+	head := s.chain.Head()
+	headHash := head.Hash()
+	if s.chain.ID().String() != want.ServerID || head.Seq != want.ChainHead || string(headHash[:]) != string(want.ChainHeadHash) {
 		c.sendError(proto.CodeBadChain, "source chain moved during preparation")
 		return
 	}
+	var snapshot []proto.ChatMessage
 	ts, id := time.Time{}, ""
 	if s.hist != nil {
-		ts, id = s.hist.Last()
+		snapshot, ts, id = s.hist.Snapshot()
 	}
-	if id != want.HistoryLastID || ts.UnixMilli() != want.HistoryLastUnixMilli {
+	historyCount, historyHash := proto.DedicatedHistoryCommitment(snapshot)
+	if id != want.HistoryLastID || ts.UnixMilli() != want.HistoryLastUnixMilli || historyCount != want.HistoryCount || string(historyHash) != string(want.HistoryHash) {
 		c.sendError(proto.CodeBadRequest, "source history moved during preparation")
 		return
 	}
@@ -113,5 +117,5 @@ func (c *conn) handleDedicatedProof(env proto.Envelope) {
 }
 
 func sameReadiness(a, b proto.DedicatedReadiness) bool {
-	return a.ServerID == b.ServerID && a.DestinationFingerprint == b.DestinationFingerprint && a.ChainHead == b.ChainHead && a.HistoryLastID == b.HistoryLastID && a.HistoryLastUnixMilli == b.HistoryLastUnixMilli && string(a.TransitionNonce) == string(b.TransitionNonce)
+	return a.ServerID == b.ServerID && a.DestinationFingerprint == b.DestinationFingerprint && a.ChainHead == b.ChainHead && string(a.ChainHeadHash) == string(b.ChainHeadHash) && a.HistoryLastID == b.HistoryLastID && a.HistoryLastUnixMilli == b.HistoryLastUnixMilli && a.HistoryCount == b.HistoryCount && string(a.HistoryHash) == string(b.HistoryHash) && string(a.TransitionNonce) == string(b.TransitionNonce)
 }

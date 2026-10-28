@@ -48,6 +48,11 @@ func (s *Server) Mode() Mode { return Mode(s.modeState.mode.Load()) }
 func (s *Server) SetMode(m Mode) {
 	s.dedicatedMu.Lock()
 	defer s.dedicatedMu.Unlock()
+	s.setModeLocked(m)
+}
+
+// setModeLocked is SetMode while dedicatedMu is held.
+func (s *Server) setModeLocked(m Mode) {
 	if m == ModePrepared {
 		s.prepared.Store(true)
 	}
@@ -126,10 +131,11 @@ func (s *Server) releaseWarmSlot() {
 	s.mu.Unlock()
 }
 
-// PromoteWarm moves every warm session into the live set. It takes chainMu
-// first, like joinLive, so a conn between auth_ok and joinLive is either
-// promoted or joins live under the new mode, never left warm.
+// PromoteWarm moves every warm session into the live set. The dedicated lease
+// covers promotion and its resulting forwarding, and always precedes chainMu.
 func (s *Server) PromoteWarm() {
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
 	s.chainMu.Lock()
 	s.chMu.Lock()
 	dead := s.promoteWarmLocked()

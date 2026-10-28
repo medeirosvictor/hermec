@@ -56,8 +56,11 @@ type DedicatedTransitionRecord struct {
 	ServerID               string                   `json:"server_id"`
 	DestinationFingerprint string                   `json:"destination_fingerprint"`
 	ChainHead              uint64                   `json:"chain_head"`
+	ChainHeadHash          []byte                   `json:"chain_head_hash"`
 	HistoryLastID          string                   `json:"history_last_id,omitempty"`
 	HistoryLastUnixMilli   int64                    `json:"history_last_unix_milli,omitempty"`
+	HistoryCount           uint64                   `json:"history_count"`
+	HistoryHash            []byte                   `json:"history_hash"`
 	TransitionNonce        []byte                   `json:"transition_nonce"`
 	Recovery               DedicatedRecoveryCode    `json:"recovery"`
 }
@@ -88,8 +91,15 @@ func ValidateDedicatedPrepared(r DedicatedTransitionRecord, local *identity.Iden
 	if r.ServerID != c.ID().String() {
 		return errors.New("server: dedicated transition names another server")
 	}
-	if c.Head().Seq < r.ChainHead {
-		return errors.New("server: dedicated transition chain is behind its boundary")
+	head := c.Head()
+	headHash := head.Hash()
+	if head.Seq != r.ChainHead || !bytes.Equal(headHash[:], r.ChainHeadHash) {
+		return errors.New("server: dedicated transition chain differs from its boundary")
+	}
+	snapshot, _, _ := h.Snapshot()
+	count, hash := proto.DedicatedHistoryCommitment(snapshot)
+	if count != r.HistoryCount || !bytes.Equal(hash, r.HistoryHash) {
+		return errors.New("server: dedicated transition history differs from its snapshot")
 	}
 	if r.HistoryLastID == "" {
 		ts, id := h.Last()
@@ -114,7 +124,7 @@ func (r DedicatedTransitionRecord) validate() error {
 	if r.Recovery.Guidance() == "" {
 		return errors.New("server: invalid dedicated transition recovery code")
 	}
-	return (proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, TransitionNonce: r.TransitionNonce}).Validate()
+	return (proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}).Validate()
 }
 
 // SaveDedicatedTransition atomically replaces path with a mode-0600 JSON
@@ -154,12 +164,17 @@ func SaveDedicatedTransition(path string, r DedicatedTransitionRecord) error {
 		return fmt.Errorf("server: replace dedicated transition: %w", err)
 	}
 	// Persist the directory entry too where the platform permits it.
-	if d, err := os.Open(dir); err == nil {
-		err = d.Sync()
-		_ = d.Close()
-		if err != nil && runtime.GOOS != "windows" {
-			return fmt.Errorf("server: sync dedicated transition directory: %w", err)
+	d, err := os.Open(dir)
+	if err != nil {
+		if runtime.GOOS != "windows" {
+			return fmt.Errorf("server: open dedicated transition directory: %w", err)
 		}
+		return nil
+	}
+	err = d.Sync()
+	_ = d.Close()
+	if err != nil && runtime.GOOS != "windows" {
+		return fmt.Errorf("server: sync dedicated transition directory: %w", err)
 	}
 	return nil
 }

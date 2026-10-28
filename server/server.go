@@ -152,7 +152,8 @@ type Server struct {
 	group   groupState
 	chainMu sync.Mutex // serializes chain_append: append, refresh, broadcast, kick
 	// dedicatedMu serializes a dedicated readiness capture/commit with every
-	// source mutation that can change its chain, history, or serving mode.
+	// source mutation that can change its chain, history, or serving mode. If
+	// both locks are needed, acquire dedicatedMu before chainMu.
 	dedicatedMu sync.Mutex
 	upgrader    websocket.Upgrader
 

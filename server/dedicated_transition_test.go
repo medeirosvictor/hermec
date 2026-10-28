@@ -16,7 +16,7 @@ import (
 )
 
 func testDedicatedTransition() DedicatedTransitionRecord {
-	return DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionPrepared, ServerID: "server", DestinationFingerprint: "destination", ChainHead: 4, HistoryLastID: "history", HistoryLastUnixMilli: 9, TransitionNonce: bytes.Repeat([]byte{1}, proto.DedicatedTransitionNonceSize), Recovery: DedicatedRecoveryRetryPreparation}
+	return DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionPrepared, ServerID: "server", DestinationFingerprint: "destination", ChainHead: 4, ChainHeadHash: bytes.Repeat([]byte{2}, 32), HistoryLastID: "history", HistoryLastUnixMilli: 9, HistoryHash: bytes.Repeat([]byte{3}, 32), TransitionNonce: bytes.Repeat([]byte{1}, proto.DedicatedTransitionNonceSize), Recovery: DedicatedRecoveryRetryPreparation}
 }
 
 func TestDedicatedTransitionAtomicPrivateRecord(t *testing.T) {
@@ -109,10 +109,13 @@ func TestValidateDedicatedPreparedChecksLocalBoundary(t *testing.T) {
 	if err := h.Add(m); err != nil {
 		t.Fatal(err)
 	}
+	head := c.Head()
+	headHash := head.Hash()
+	count, historyHash := proto.DedicatedHistoryCommitment([]proto.ChatMessage{m})
 	r := DedicatedTransitionRecord{
 		Version: 1, State: DedicatedTransitionPrepared, ServerID: c.ID().String(),
-		DestinationFingerprint: identity.Fingerprint(destination.PublicKey()), ChainHead: c.Head().Seq,
-		HistoryLastID: m.ID, HistoryLastUnixMilli: m.TS.UnixMilli(),
+		DestinationFingerprint: identity.Fingerprint(destination.PublicKey()), ChainHead: head.Seq, ChainHeadHash: headHash[:],
+		HistoryLastID: m.ID, HistoryLastUnixMilli: m.TS.UnixMilli(), HistoryCount: count, HistoryHash: historyHash,
 		TransitionNonce: bytes.Repeat([]byte{1}, proto.DedicatedTransitionNonceSize), Recovery: DedicatedRecoveryRetryPreparation,
 	}
 	if err := ValidateDedicatedPrepared(r, destination, c, h); err != nil {
@@ -121,6 +124,18 @@ func TestValidateDedicatedPreparedChecksLocalBoundary(t *testing.T) {
 	r.HistoryLastID = "gone"
 	if err := ValidateDedicatedPrepared(r, destination, c, h); err == nil {
 		t.Fatal("accepted missing history boundary")
+	}
+	r.HistoryLastID = m.ID
+	r.ChainHeadHash = append([]byte(nil), r.ChainHeadHash...)
+	r.ChainHeadHash[0] ^= 1
+	if err := ValidateDedicatedPrepared(r, destination, c, h); err == nil {
+		t.Fatal("accepted divergent chain head at same sequence")
+	}
+	r.ChainHeadHash = headHash[:]
+	r.HistoryHash = append([]byte(nil), r.HistoryHash...)
+	r.HistoryHash[0] ^= 1
+	if err := ValidateDedicatedPrepared(r, destination, c, h); err == nil {
+		t.Fatal("accepted divergent complete history snapshot")
 	}
 }
 

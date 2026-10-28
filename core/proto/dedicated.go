@@ -2,8 +2,10 @@ package proto
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -28,8 +30,11 @@ type DedicatedReadiness struct {
 	ServerID               string `json:"server_id"`
 	DestinationFingerprint string `json:"destination_fingerprint"`
 	ChainHead              uint64 `json:"chain_head"`
+	ChainHeadHash          []byte `json:"chain_head_hash"`
 	HistoryLastID          string `json:"history_last_id,omitempty"`
 	HistoryLastUnixMilli   int64  `json:"history_last_unix_milli,omitempty"`
+	HistoryCount           uint64 `json:"history_count"`
+	HistoryHash            []byte `json:"history_hash"`
 	TransitionNonce        []byte `json:"transition_nonce"`
 }
 
@@ -44,6 +49,12 @@ func (r DedicatedReadiness) Validate() error {
 	}
 	if len(r.HistoryLastID) > MaxDedicatedHistoryID {
 		return errors.New("proto: dedicated history ID too long")
+	}
+	if len(r.ChainHeadHash) != sha256.Size {
+		return errors.New("proto: invalid dedicated chain head hash")
+	}
+	if len(r.HistoryHash) != sha256.Size {
+		return errors.New("proto: invalid dedicated history hash")
 	}
 	if len(r.TransitionNonce) != DedicatedTransitionNonceSize {
 		return fmt.Errorf("proto: dedicated transition nonce must be %d bytes", DedicatedTransitionNonceSize)
@@ -70,10 +81,29 @@ func DedicatedReadinessBytes(r DedicatedReadiness) ([]byte, error) {
 	var n [8]byte
 	binary.BigEndian.PutUint64(n[:], r.ChainHead)
 	out = append(out, n[:]...)
+	out = append(out, r.ChainHeadHash...)
 	binary.BigEndian.PutUint64(n[:], uint64(r.HistoryLastUnixMilli))
 	out = append(out, n[:]...)
 	put(r.HistoryLastID)
+	binary.BigEndian.PutUint64(n[:], r.HistoryCount)
+	out = append(out, n[:]...)
+	out = append(out, r.HistoryHash...)
 	return out, nil
+}
+
+// DedicatedHistoryCommitment returns an immutable, ordered commitment to a
+// complete history snapshot. Each JSON message is length-delimited so distinct
+// snapshots cannot share an ambiguous byte representation.
+func DedicatedHistoryCommitment(msgs []ChatMessage) (uint64, []byte) {
+	h := sha256.New()
+	var n [8]byte
+	for _, m := range msgs {
+		b, _ := json.Marshal(m)
+		binary.BigEndian.PutUint64(n[:], uint64(len(b)))
+		h.Write(n[:])
+		h.Write(b)
+	}
+	return uint64(len(msgs)), h.Sum(nil)
 }
 
 // SignDedicatedReadiness signs a validated readiness statement with the

@@ -94,6 +94,10 @@ func (s *Server) isWarm(c *conn) bool {
 // announcePromotion tells the authenticated conns who the active host is and
 // adds the host-changed line to every text channel.
 func (s *Server) announcePromotion() {
+	// Keep the system-history writes and link forwarding in the same readiness
+	// lease as ordinary chat, so a captured dedicated snapshot is complete.
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
 	s.chMu.Lock()
 	var dead []*conn
 	if raw, err := proto.Encode(proto.TypeHosts, s.hostsInfo()); err == nil {

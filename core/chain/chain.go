@@ -300,7 +300,12 @@ func (c *Chain) setPathLocked(path string) error {
 	}
 	// Persist the rename itself, not just the replacement file's contents.
 	if err == nil {
-		if d, derr := os.Open(dir); derr == nil {
+		d, derr := os.Open(dir)
+		if derr != nil {
+			if runtime.GOOS != "windows" {
+				err = derr
+			}
+		} else {
 			err = d.Sync()
 			_ = d.Close()
 			if err != nil && runtime.GOOS == "windows" {

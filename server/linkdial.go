@@ -279,7 +279,11 @@ func (l *Link) Run() {
 			if l.s.hist != nil {
 				ts, id = l.s.hist.Last()
 			}
-			if l.s.chain.Head().Seq != p.Readiness.ChainHead || id != p.Readiness.HistoryLastID || ts.UnixMilli() != p.Readiness.HistoryLastUnixMilli {
+			head := l.s.chain.Head()
+			headHash := head.Hash()
+			snapshot, _, _ := l.s.hist.Snapshot()
+			historyCount, historyHash := proto.DedicatedHistoryCommitment(snapshot)
+			if head.Seq != p.Readiness.ChainHead || string(headHash[:]) != string(p.Readiness.ChainHeadHash) || id != p.Readiness.HistoryLastID || ts.UnixMilli() != p.Readiness.HistoryLastUnixMilli || historyCount != p.Readiness.HistoryCount || string(historyHash) != string(p.Readiness.HistoryHash) {
 				return false, errors.New("server: link: dedicated boundary did not arrive intact")
 			}
 			sig, err := proto.SignDedicatedReadiness(l.s.cfg.HostKey, p.Readiness)
@@ -357,8 +361,8 @@ func (l *Link) PersistDedicatedPreparation(ctx context.Context, path string) err
 	}
 	return SaveDedicatedTransition(path, DedicatedTransitionRecord{
 		Version: 1, State: DedicatedTransitionPrepared, ServerID: r.ServerID,
-		DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead,
-		HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli,
+		DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: append([]byte(nil), r.ChainHeadHash...),
+		HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: append([]byte(nil), r.HistoryHash...),
 		TransitionNonce: append([]byte(nil), r.TransitionNonce...), Recovery: DedicatedRecoveryRetryPreparation,
 	})
 }
@@ -435,6 +439,9 @@ func (s *Server) applyLinkEntry(e chain.Entry) error {
 // mergeLinkMessages stores chat lines from the active host and lifts
 // lastChatTS to the newest of them, so this host's own later lines sort after.
 func (s *Server) mergeLinkMessages(msgs []proto.ChatMessage) {
+	// A dedicated snapshot must not race a merge-link history mutation.
+	s.dedicatedMu.Lock()
+	defer s.dedicatedMu.Unlock()
 	if len(msgs) == 0 || s.hist == nil {
 		return
 	}
