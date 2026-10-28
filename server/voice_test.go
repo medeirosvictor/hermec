@@ -12,9 +12,10 @@ import (
 
 func voiceCfg() Config {
 	return Config{
-		Roles:         roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
-		Channels:      []string{"general"},
-		VoiceChannels: []string{"lounge", "war-room"},
+		Roles:            roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
+		Channels:         []string{"general"},
+		VoiceChannels:    []string{"lounge", "war-room"},
+		AllowLoopbackICE: true,
 	}
 }
 

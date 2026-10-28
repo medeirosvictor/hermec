@@ -27,6 +27,7 @@ func mediaTestTracks(t *testing.T) (*webrtc.TrackLocalStaticSample, map[proto.Me
 func mediaTestPC(t *testing.T) *webrtc.PeerConnection {
 	t.Helper()
 	c := &Client{}
+	c.SetLoopbackICE(true)
 	pc, err := c.newAPI().NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		t.Fatal(err)
