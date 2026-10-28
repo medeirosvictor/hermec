@@ -20,13 +20,16 @@ const knownHostsFile = "known_hosts.txt"
 
 // flags are the command line options.
 type flags struct {
-	config, key, chain, history string
-	initDedicated               string
-	printConfig, applyConfig    bool
-	check, showVersion          bool
-	unsafePublicWS              bool
-	advertise, hosts            []string
-	name                        string
+	config, key, chain, history                       string
+	initDedicated                                     string
+	dedicatedPrepare                                  string
+	dedicatedServerID                                 string
+	dedicatedHostKey, dedicatedStatus, dedicatedRetry bool
+	printConfig, applyConfig                          bool
+	check, showVersion                                bool
+	unsafePublicWS                                    bool
+	advertise, hosts                                  []string
+	name                                              string
 }
 
 // parseFlags parses the command line (without the program name).
@@ -36,6 +39,11 @@ func parseFlags(args []string) (flags, error) {
 	fs := flag.NewFlagSet("hermec-server", flag.ContinueOnError)
 	fs.StringVar(&f.config, "config", "", "path to a TOML config file (defaults apply without it)")
 	fs.StringVar(&f.initDedicated, "init-dedicated", "", "create a secure dedicated-server state directory and exit")
+	fs.BoolVar(&f.dedicatedHostKey, "dedicated-host-key", false, "print this VPS host public key and fingerprint, then exit")
+	fs.BoolVar(&f.dedicatedStatus, "dedicated-status", false, "print durable dedicated cutover status and recovery guidance, then exit")
+	fs.StringVar(&f.dedicatedPrepare, "dedicated-prepare", "", "pinned wss URL of the active host for dedicated preparation")
+	fs.StringVar(&f.dedicatedServerID, "dedicated-server-id", "", "pinned active server ID required by -dedicated-prepare")
+	fs.BoolVar(&f.dedicatedRetry, "dedicated-retry", false, "retry the same prepared transition; never activates a host")
 	fs.BoolVar(&f.printConfig, "print-config", false, "print the effective config (password redacted) and exit")
 	fs.BoolVar(&f.check, "check", false, "validate config, TLS and persistent state without binding sockets")
 	fs.BoolVar(&f.showVersion, "version", false, "print the version and exit")

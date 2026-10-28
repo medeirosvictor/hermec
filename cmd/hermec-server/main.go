@@ -87,6 +87,39 @@ func main() {
 	if f.history == "" {
 		f.history = filepath.Join(dir, "history.jsonl")
 	}
+	if f.dedicatedHostKey {
+		if f.dedicatedStatus || f.dedicatedPrepare != "" || f.dedicatedRetry {
+			log.Fatal("-dedicated-host-key cannot be combined with another dedicated workflow flag")
+		}
+		if err := dedicatedHostPublic(f.key, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if f.dedicatedStatus {
+		if f.dedicatedPrepare != "" || f.dedicatedRetry {
+			log.Fatal("-dedicated-status cannot be combined with prepare or retry")
+		}
+		if err := dedicatedStatus(dir, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if f.dedicatedPrepare != "" {
+		if err := validateDedicatedPrepareInputs(f.dedicatedPrepare, f.dedicatedServerID); err != nil {
+			log.Fatal(err)
+		}
+		// The actual link is started only after the founder has appended this
+		// VPS public key. This command deliberately accepts no password or
+		// foreign private key and never starts an activation by itself.
+		log.Fatal("dedicated preparation needs the founder-authorized host link; use -dedicated-host-key to authorize this VPS, then retry")
+	}
+	if f.dedicatedRetry {
+		if err := dedicatedStatus(dir, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		log.Fatal("retry never activates a prepared destination; restart preparation with the same pinned URL and server ID")
+	}
 	if f.applyConfig {
 		if err := applyConfigFile(f.config, f.key, f.chain, cfg, os.Stdout); err != nil {
 			log.Fatal(err)
