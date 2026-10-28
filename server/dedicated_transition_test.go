@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/core/roles"
 )
 
 func testDedicatedTransition() DedicatedTransitionRecord {
@@ -96,28 +98,56 @@ func TestDedicatedTransitionRejectsSymlinkAndOversizedRecord(t *testing.T) {
 	}
 }
 
-func TestPreparedHostCannotPromote(t *testing.T) {
-	h := NewHost(HostConfig{Server: Config{Mode: ModePrepared}})
-	if h.Role() != RolePrepared || h.Server().Mode() != ModePrepared {
-		t.Fatalf("prepared host = role %q mode %v", h.Role(), h.Server().Mode())
+func TestPreparedHostWithSourceLinkCannotPromoteThroughPublicAPI(t *testing.T) {
+	fastHostTimers(t)
+	c, sourceKey, destinationKey := twoHostChain(t)
+	source, sourceURL := startModeServer(t, Config{
+		HostKey: sourceKey, Chain: c, HostName: "source", Password: "pw",
+		Roles:    roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
+		Channels: []string{"general"},
+	})
+	if source.Mode() != ModeActive {
+		t.Fatalf("source mode = %v, want active", source.Mode())
 	}
-	if h.Server().Promote() {
-		t.Fatal("prepared host promoted")
+	destinationChain, err := chain.FromEntries(c.Entries())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if h.Server().Mode() != ModePrepared {
-		t.Fatalf("mode after promotion = %v", h.Server().Mode())
+	destinationAddr := freeAddr(t)
+	h := NewHost(HostConfig{
+		Prepared: true,
+		Server: Config{
+			Addr: destinationAddr, Advertise: []string{"ws://" + destinationAddr},
+			HostKey: destinationKey, Chain: destinationChain, HostName: "destination", Password: "pw",
+			Roles:    roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
+			Channels: []string{"general"},
+		},
+		Known: func() []string { return []string{sourceURL} },
+	})
+	if err := h.Start(); err != nil {
+		t.Fatal(err)
 	}
+	defer h.Shutdown(context.Background())
+
+	waitFor(t, "prepared destination source link", func() bool {
+		return len(source.Links()) == 1 && h.Role() == RolePrepared
+	})
+
+	// These are all public activation-capable Server operations. A prepared
+	// destination has no public commit seam: source presence alone cannot
+	// substitute for verified durable transition evidence and a cutover.
 	h.Server().SetMode(ModeActive)
 	if h.Server().Mode() != ModePrepared {
-		t.Fatalf("ordinary SetMode activated prepared server: %v", h.Server().Mode())
+		t.Fatalf("SetMode activated prepared destination: %v", h.Server().Mode())
 	}
 	h.Server().SetMode(ModeIdle)
 	if h.Server().Promote() || h.Server().Mode() == ModeActive {
-		t.Fatal("prepared server promoted after an ordinary mode change")
+		t.Fatal("Promote activated prepared destination")
 	}
 	h.Server().SetMode(ModePrepared)
-	if !h.Server().CommitDedicatedActivation() || h.Server().Mode() != ModeActive {
-		t.Fatal("committed activation seam did not activate prepared server")
+	h.Server().PromoteWarm()
+	if h.Server().Mode() == ModeActive || h.Role() != RolePrepared || !h.Server().Prepared() {
+		t.Fatalf("public API activated prepared destination: role %q mode %v prepared %v", h.Role(), h.Server().Mode(), h.Server().Prepared())
 	}
 }
 
