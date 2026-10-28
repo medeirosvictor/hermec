@@ -8,8 +8,8 @@ Roadmap: [PLAN.md](PLAN.md).
 
 - Branch: `feature/dedicated-hosting` in `.worktrees/dedicated-hosting`.
 - Dedicated Tasks 1–5 are complete locally (`ca6ed69`, `020492f`, `5df0524`
-  plus the founder desktop authorization/cutover flow). Current documentation
-  changes are uncommitted.
+  plus the founder desktop authorization/cutover flow). The documentation
+  changes are committed with the dedicated-hosting work.
 - **Next work: Task 6 — remote acceptance/release.** There is no disposable
   VPS/AWS test yet: do not claim remote hosting is available or provision cloud
   resources.

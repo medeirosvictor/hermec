@@ -51,11 +51,11 @@ func (g *game) addDedicatedManageHits() {
 }
 
 type dedicatedManageResult struct {
-	gen    uint64
-	kind   int
-	ready  *proto.DedicatedReadiness
-	result *proto.DedicatedResult
-	err    error
+	gen, operation uint64
+	kind           int
+	ready          *proto.DedicatedReadiness
+	result         *proto.DedicatedResult
+	err            error
 }
 
 const (
@@ -79,7 +79,11 @@ func (g *game) updateDedicatedManage() bool {
 		return true
 	}
 	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		g.dm.key.edit(readEditKeys(), ebiten.AppendInputChars(nil), maxFieldRunes, nil, false)
+		// Once parsed, the field is locked so the visible key remains the key
+		// authorized by the in-flight workflow. Key/error phases remain editable.
+		if (g.dm.phase == dedicatedManageKey || g.dm.phase == dedicatedManageError) && g.dm.key.edit(readEditKeys(), ebiten.AppendInputChars(nil), maxFieldRunes, nil, false) {
+			g.dm.keyChanged()
+		}
 		return true
 	}
 	h, ok := g.hitAt()
@@ -94,17 +98,17 @@ func (g *game) updateDedicatedManage() bool {
 			g.dm.parse()
 			return true
 		}
-		pub, priority, ok := g.dm.confirm(s.c.Chain().State().Hosts)
+		pub, priority, operation, ok := g.dm.confirm(s.c.Chain().State().Hosts)
 		if ok {
-			g.runDedicatedAuthorize(g.dm.gen, s, pub, priority)
+			g.runDedicatedAuthorize(g.dm.gen, operation, s, pub, priority)
 		}
 	case state.HitDedicatedManageReady:
-		if g.dm.phase == dedicatedManagePending || g.dm.phase == dedicatedManageRetry || g.dm.phase == dedicatedManageRecovery {
-			g.runDedicatedReady(g.dm.gen, s)
+		if operation, ok := g.dm.beginReady(); ok {
+			g.runDedicatedReady(g.dm.gen, operation, s)
 		}
 	case state.HitDedicatedManageActivate:
-		if g.dm.phase == dedicatedManageReady && g.dm.readiness != nil {
-			g.runDedicatedActivate(g.dm.gen, s)
+		if operation, ok := g.dm.beginActivation(); ok {
+			g.runDedicatedActivate(g.dm.gen, operation, s)
 		}
 	}
 	return true
@@ -123,30 +127,30 @@ func (g *game) sendDedicatedManage(r dedicatedManageResult) {
 	default:
 	}
 }
-func (g *game) runDedicatedAuthorize(gen uint64, s *session, pub []byte, priority int) {
+func (g *game) runDedicatedAuthorize(gen, operation uint64, s *session, pub []byte, priority int) {
 	c := s.c // retain the client while a concurrent disconnect tears down the session.
 	ctx, cancel := g.dedicatedManageContext()
 	go func() {
 		defer cancel()
-		g.sendDedicatedManage(dedicatedManageResult{gen: gen, kind: dmAuthorized, err: c.AuthorizeDedicatedHost(ctx, pub, priority)})
+		g.sendDedicatedManage(dedicatedManageResult{gen: gen, operation: operation, kind: dmAuthorized, err: c.AuthorizeDedicatedHost(ctx, pub, priority)})
 	}()
 }
-func (g *game) runDedicatedReady(gen uint64, s *session) {
+func (g *game) runDedicatedReady(gen, operation uint64, s *session) {
 	c, fp := s.c, g.dm.fingerprint
 	ctx, cancel := g.dedicatedManageContext()
 	go func() {
 		defer cancel()
 		r, err := c.DedicatedReady(ctx, fp)
-		g.sendDedicatedManage(dedicatedManageResult{gen: gen, kind: dmReady, ready: r, err: err})
+		g.sendDedicatedManage(dedicatedManageResult{gen: gen, operation: operation, kind: dmReady, ready: r, err: err})
 	}()
 }
-func (g *game) runDedicatedActivate(gen uint64, s *session) {
+func (g *game) runDedicatedActivate(gen, operation uint64, s *session) {
 	c, r := s.c, *g.dm.readiness
 	ctx, cancel := g.dedicatedManageContext()
 	go func() {
 		defer cancel()
 		result, err := c.ActivateDedicated(ctx, r)
-		g.sendDedicatedManage(dedicatedManageResult{gen: gen, kind: dmActivated, result: result, err: err})
+		g.sendDedicatedManage(dedicatedManageResult{gen: gen, operation: operation, kind: dmActivated, result: result, err: err})
 	}()
 }
 func (g *game) pumpDedicatedManage() {
@@ -157,15 +161,17 @@ func (g *game) pumpDedicatedManage() {
 	case r := <-g.dmCh:
 		switch r.kind {
 		case dmAuthorized:
-			if g.dm.authorized(r.gen, r.err) {
+			if g.dm.authorized(r.gen, r.operation, r.err) {
 				if s := g.sess[g.dmKey]; s != nil {
-					g.runDedicatedReady(r.gen, s)
+					if operation, ok := g.dm.beginReady(); ok {
+						g.runDedicatedReady(r.gen, operation, s)
+					}
 				}
 			}
 		case dmReady:
-			g.dm.ready(r.gen, r.ready, r.err)
+			g.dm.ready(r.gen, r.operation, r.ready, r.err)
 		case dmActivated:
-			g.dm.activation(r.gen, r.result, r.err)
+			g.dm.activation(r.gen, r.operation, r.result, r.err)
 		}
 	default:
 	}

@@ -48,9 +48,12 @@ func TestCursorShapeMainScene(t *testing.T) {
 
 func TestCursorShapeDedicatedFieldIsText(t *testing.T) {
 	var h state.Hits
-	h.Add(state.Hit{X0: 0, Y0: 0, X1: 10, Y1: 10, Kind: state.HitDedicatedField})
-	if got := shapeAt(&h, 5, 5); got != ebiten.CursorShapeText {
-		t.Fatalf("dedicated field shape %v, want text", got)
+	for _, kind := range []state.HitKind{state.HitDedicatedField, state.HitDedicatedManageKey} {
+		h.Reset()
+		h.Add(state.Hit{X0: 0, Y0: 0, X1: 10, Y1: 10, Kind: kind})
+		if got := shapeAt(&h, 5, 5); got != ebiten.CursorShapeText {
+			t.Fatalf("kind %v shape %v, want text", kind, got)
+		}
 	}
 }
 
@@ -191,6 +194,28 @@ func TestHitsRailAndBanner(t *testing.T) {
 	}
 	if h, ok := g.hits.At(10, float64(g.h)-5); !ok || h.Kind != state.HitGear {
 		t.Fatalf("gear = %+v %v", h, ok)
+	}
+}
+
+func TestDedicatedManageOverlayHitsOverSettings(t *testing.T) {
+	g := testGame(t)
+	g.settingsOpen = true
+	g.dmKey = "server"
+	g.buildHits()
+	r, lh := g.dedicatedManageRect(), g.lineH()
+	for _, want := range []state.HitKind{state.HitDedicatedManageKey, state.HitDedicatedManageConfirm, state.HitDedicatedManageClose} {
+		var x, y float64
+		switch want {
+		case state.HitDedicatedManageKey:
+			x, y = r.x0+1, r.y0+lh+1
+		case state.HitDedicatedManageConfirm:
+			x, y = r.x0+1, r.y0+3*lh+1
+		case state.HitDedicatedManageClose:
+			x, y = r.x1-1, r.y0+1
+		}
+		if h, ok := g.hits.At(x, y); !ok || h.Kind != want {
+			t.Fatalf("overlay hit %v = %+v, %v", want, h, ok)
+		}
 	}
 }
 

@@ -13,7 +13,7 @@ func shapeAt(h *state.Hits, x, y float64) ebiten.CursorShapeType {
 	switch {
 	case !ok:
 		return ebiten.CursorShapeDefault
-	case t.Kind == state.HitText, t.Kind == state.HitCreateField, t.Kind == state.HitDedicatedField:
+	case t.Kind == state.HitText, t.Kind == state.HitCreateField, t.Kind == state.HitDedicatedField, t.Kind == state.HitDedicatedManageKey:
 		return ebiten.CursorShapeText
 	default:
 		return ebiten.CursorShapePointer
@@ -60,7 +60,6 @@ func (g *game) buildHits() {
 	switch {
 	case g.settingsOpen:
 		g.addSettingsHits()
-		return
 	case g.viewingFailed():
 		g.addBarHits(g.geom()) // no form to click; the rail badge retries
 	case g.cur().st.Phase == state.PhaseConnect:
@@ -72,6 +71,8 @@ func (g *game) buildHits() {
 	default: // disconnected view
 		g.addBarHits(g.geom())
 	}
-	g.addBannerHit()
+	if !g.settingsOpen {
+		g.addBannerHit()
+	}
 	g.addDedicatedManageHits() // focused founder overlay wins over the scene
 }

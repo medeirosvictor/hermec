@@ -149,6 +149,32 @@ func TestMenuDismissClickIsSwallowed(t *testing.T) {
 	}
 }
 
+func TestDedicatedManageMenuIsFounderOnly(t *testing.T) {
+	g := menuGame(t, true)
+	g.openTileMenu("k", 10, 70)
+	for _, label := range menuLabels(g) {
+		if label == "Manage dedicated host…" {
+			t.Fatal("non-founder received dedicated host management menu")
+		}
+	}
+
+	g = menuGame(t, false)
+	_, url := startServerChain(t, "127.0.0.1:0", "founder", g.id, nil)
+	s := g.openSession(url, "tester")
+	if s == nil {
+		t.Fatal("founder session did not start")
+	}
+	pumpUntil(t, g, func() bool { return s.c != nil && g.dedicatedFounder(s.key) })
+	g.openTileMenu(s.key, 10, 70)
+	found := false
+	for _, label := range menuLabels(g) {
+		found = found || label == "Manage dedicated host…"
+	}
+	if !found {
+		t.Fatalf("founder menu labels = %v", menuLabels(g))
+	}
+}
+
 func TestMenuRetryItem(t *testing.T) {
 	g := menuGame(t, true)
 	g.openTileMenu("k", 10, 70)

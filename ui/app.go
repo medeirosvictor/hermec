@@ -457,7 +457,7 @@ func (g *game) Update() error {
 	}
 	g.connect.disc = g.discRows // updateRail may have replaced the form
 	if g.settingsOpen {
-		if !g.modal {
+		if !g.modal && g.dmKey == "" {
 			g.updateSettings()
 		}
 		return nil
