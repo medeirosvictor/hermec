@@ -258,63 +258,70 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 		return proto.CodeBadRequest, "cannot encode key"
 	}
 
-	s.chMu.Lock()
-	if _, ok := s.warm[c]; !ok {
-		s.chMu.Unlock()
-		return proto.CodeNotActive, "this host is not serving clients"
-	}
-	// A link counts against neither cap.
-	delete(s.warm, c)
-	if c.warmHeld.Swap(false) {
-		s.releaseWarmSlot()
-	}
-	c.link = &linkState{peerFingerprint: c.fingerprint, hello: h, lastBeat: s.clock()}
-	if h.Prepared {
-		var snapshot []proto.ChatMessage
-		ts, id := time.Time{}, ""
-		if s.hist != nil {
-			snapshot, ts, id = s.hist.Snapshot()
+	// Keep all prepared-readiness returns inside this scope: validation and
+	// nonce generation happen while chMu protects the captured boundary.
+	var dead []*conn
+	code, msg = func() (string, string) {
+		s.chMu.Lock()
+		defer s.chMu.Unlock()
+		if _, ok := s.warm[c]; !ok {
+			return proto.CodeNotActive, "this host is not serving clients"
 		}
-		head := s.chain.Head()
-		headHash := head.Hash()
-		historyCount, historyHash := proto.DedicatedHistoryCommitment(snapshot)
-		readiness := proto.DedicatedReadiness{ServerID: s.chain.ID().String(), DestinationFingerprint: c.fingerprint, ChainHead: head.Seq, ChainHeadHash: headHash[:], HistoryLastID: id, HistoryLastUnixMilli: ts.UnixMilli(), HistoryCount: historyCount, HistoryHash: historyHash}
-		if h.Dedicated != nil {
-			// A restart may only resume the exact boundary the source durably
-			// attested; it cannot nominate a replacement nonce.
-			readiness.TransitionNonce = append([]byte(nil), h.Dedicated.TransitionNonce...)
-			if h.Dedicated.Validate() != nil || !sameReadiness(*h.Dedicated, readiness) || s.checkDedicatedReadinessAttestation(readiness, true) != nil {
-				return proto.CodeBadRequest, "dedicated preparation boundary changed"
+		// A link counts against neither cap.
+		delete(s.warm, c)
+		if c.warmHeld.Swap(false) {
+			s.releaseWarmSlot()
+		}
+		c.link = &linkState{peerFingerprint: c.fingerprint, hello: h, lastBeat: s.clock()}
+		if h.Prepared {
+			var snapshot []proto.ChatMessage
+			ts, id := time.Time{}, ""
+			if s.hist != nil {
+				snapshot, ts, id = s.hist.Snapshot()
+			}
+			head := s.chain.Head()
+			headHash := head.Hash()
+			historyCount, historyHash := proto.DedicatedHistoryCommitment(snapshot)
+			readiness := proto.DedicatedReadiness{ServerID: s.chain.ID().String(), DestinationFingerprint: c.fingerprint, ChainHead: head.Seq, ChainHeadHash: headHash[:], HistoryLastID: id, HistoryLastUnixMilli: ts.UnixMilli(), HistoryCount: historyCount, HistoryHash: historyHash}
+			if h.Dedicated != nil {
+				// A restart may only resume the exact boundary the source durably
+				// attested; it cannot nominate a replacement nonce.
+				readiness.TransitionNonce = append([]byte(nil), h.Dedicated.TransitionNonce...)
+				if h.Dedicated.Validate() != nil || !sameReadiness(*h.Dedicated, readiness) || s.checkDedicatedReadinessAttestation(readiness, true) != nil {
+					return proto.CodeBadRequest, "dedicated preparation boundary changed"
+				}
+			} else {
+				nonce := make([]byte, proto.DedicatedTransitionNonceSize)
+				if _, err := rand.Read(nonce); err != nil {
+					return proto.CodeBadRequest, "cannot create preparation nonce"
+				}
+				readiness.TransitionNonce = nonce
+				if s.checkDedicatedReadinessAttestation(readiness, false) != nil {
+					return proto.CodeBadRequest, "dedicated preparation differs from durable source attestation"
+				}
+			}
+			c.link.dedicated = &readiness
+			c.link.dedicatedHistory = snapshot
+		}
+		s.links[c] = struct{}{}
+		ok := true
+		for _, f := range frames {
+			ok = ok && c.enqueue(f)
+		}
+		ok = ok && c.enqueue(keyFrame)
+		if ok {
+			dead = s.updateStandbyLocked()
+			if !c.sendMsg(proto.TypeHosts, proto.Hosts{Active: s.selfInfo(), Standby: s.standby.Load()}) {
+				dead = append(dead, c)
 			}
 		} else {
-			nonce := make([]byte, proto.DedicatedTransitionNonceSize)
-			if _, err := rand.Read(nonce); err != nil {
-				return proto.CodeBadRequest, "cannot create preparation nonce"
-			}
-			readiness.TransitionNonce = nonce
-			if s.checkDedicatedReadinessAttestation(readiness, false) != nil {
-				return proto.CodeBadRequest, "dedicated preparation differs from durable source attestation"
-			}
-		}
-		c.link.dedicated = &readiness
-		c.link.dedicatedHistory = snapshot
-	}
-	s.links[c] = struct{}{}
-	ok := true
-	for _, f := range frames {
-		ok = ok && c.enqueue(f)
-	}
-	ok = ok && c.enqueue(keyFrame)
-	var dead []*conn
-	if ok {
-		dead = s.updateStandbyLocked()
-		if !c.sendMsg(proto.TypeHosts, proto.Hosts{Active: s.selfInfo(), Standby: s.standby.Load()}) {
 			dead = append(dead, c)
 		}
-	} else {
-		dead = append(dead, c)
+		return "", ""
+	}()
+	if code != "" {
+		return code, msg
 	}
-	s.chMu.Unlock()
 	dropSlow(dead)
 	return "", ""
 }

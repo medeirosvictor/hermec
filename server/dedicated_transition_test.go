@@ -151,6 +151,29 @@ func TestValidateDedicatedPreparedChecksLocalBoundary(t *testing.T) {
 	}
 }
 
+func TestStartRetryRevalidatesInvalidDedicatedJournal(t *testing.T) {
+	c, source, _ := twoHostChain(t)
+	path := filepath.Join(t.TempDir(), DedicatedTransitionFile)
+	if err := os.WriteFile(path, []byte(`{"version":1,"state":"invalid"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := New(Config{
+		Addr: "127.0.0.1:0", HostKey: source, Chain: c,
+		HistoryPath: filepath.Join(t.TempDir(), "history.jsonl"), DedicatedTransitionPath: path,
+	})
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := s.Start(); err == nil {
+			t.Fatalf("Start attempt %d accepted invalid dedicated journal", attempt)
+		}
+		if s.hist != nil {
+			t.Fatalf("Start attempt %d retained history after failure", attempt)
+		}
+		if s.Addr() != "" {
+			t.Fatalf("Start attempt %d became active at %q", attempt, s.Addr())
+		}
+	}
+}
+
 func TestRestorePreparingTransitionRemainsPassiveAndExact(t *testing.T) {
 	c, _, destination := twoHostChain(t)
 	h, err := OpenHistory("")

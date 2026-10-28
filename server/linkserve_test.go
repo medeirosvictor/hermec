@@ -136,6 +136,70 @@ func histAll(s *Server) []proto.ChatMessage {
 	return msgs
 }
 
+func TestPreparedLinkRefusalReleasesChannelLock(t *testing.T) {
+	c, source, destination := twoHostChain(t)
+	s := New(Config{HostKey: source, Chain: c, Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}, Channels: []string{"general"}})
+	fingerprint := identity.Fingerprint(destination.PublicKey())
+	head := c.Head()
+	headHash := head.Hash()
+	_, emptyHistoryHash := proto.DedicatedHistoryCommitment(nil)
+
+	for _, tc := range []struct {
+		name  string
+		hello proto.LinkHello
+	}{
+		{name: "invalid resume", hello: proto.LinkHello{Prepared: true, Dedicated: &proto.DedicatedReadiness{}}},
+		{name: "stale resume", hello: proto.LinkHello{Prepared: true, Dedicated: &proto.DedicatedReadiness{
+			ServerID: c.ID().String(), DestinationFingerprint: fingerprint, ChainHead: head.Seq,
+			ChainHeadHash: headHash[:], HistoryHash: emptyHistoryHash,
+			TransitionNonce: make([]byte, proto.DedicatedTransitionNonceSize),
+		}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failed := newConn(s, nil)
+			failed.pub, failed.fingerprint = destination.PublicKey(), fingerprint
+			s.chMu.Lock()
+			s.warm[failed] = struct{}{}
+			s.chMu.Unlock()
+
+			result := make(chan string, 1)
+			go func() { code, _ := s.registerLink(failed, tc.hello); result <- code }()
+			select {
+			case code := <-result:
+				if code != proto.CodeBadRequest {
+					t.Fatalf("registerLink code = %q, want %q", code, proto.CodeBadRequest)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("prepared refusal deadlocked")
+			}
+
+			// Both direct channel access and a following ordinary link must proceed.
+			locked := make(chan struct{})
+			go func() { s.chMu.Lock(); s.chMu.Unlock(); close(locked) }()
+			select {
+			case <-locked:
+			case <-time.After(time.Second):
+				t.Fatal("prepared refusal left chMu locked")
+			}
+			next := newConn(s, nil)
+			next.pub, next.fingerprint = destination.PublicKey(), fingerprint
+			s.chMu.Lock()
+			s.warm[next] = struct{}{}
+			s.chMu.Unlock()
+			result = make(chan string, 1)
+			go func() { code, _ := s.registerLink(next, proto.LinkHello{}); result <- code }()
+			select {
+			case code := <-result:
+				if code != "" {
+					t.Fatalf("following registerLink code = %q", code)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("following link deadlocked")
+			}
+		})
+	}
+}
+
 func TestLinkHelloStreamsChainHistoryPassword(t *testing.T) {
 	c, a, b := twoHostChain(t)
 	s, url := startLinkServer(t, c, a, "pw")

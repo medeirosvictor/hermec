@@ -279,6 +279,30 @@ func New(cfg Config) *Server {
 
 // Start listens on cfg.Addr and serves in the background.
 func (s *Server) Start() (err error) {
+	// Opening history also applies limits and may restore the durable dedicated
+	// mode. If that startup work fails, leave this instance indistinguishable
+	// from one that has not started, so a retry cannot skip journal validation.
+	initialMode, initialPrepared := s.Mode(), s.Prepared()
+	initialLastChatTS := s.lastChatTS
+	initialLimitSet, initialLimitDays, initialLimitMB := s.limitSet, s.limitDays, s.limitMB
+	var openedHistory *History
+	defer func() {
+		if err == nil || openedHistory == nil {
+			return
+		}
+		_ = openedHistory.Close()
+		if s.hist == openedHistory {
+			s.hist = nil
+		}
+		s.chMu.Lock()
+		s.lastChatTS = initialLastChatTS
+		s.chMu.Unlock()
+		s.limitMu.Lock()
+		s.limitSet, s.limitDays, s.limitMB = initialLimitSet, initialLimitDays, initialLimitMB
+		s.limitMu.Unlock()
+		s.prepared.Store(initialPrepared)
+		s.modeState.mode.Store(int32(initialMode))
+	}()
 	if s.cfg.DedicatedTransitionPath != "" && s.Mode() == ModeActive && !s.Prepared() && s.readinessLock == nil {
 		s.readinessLock, err = AcquireDedicatedReadinessLock(s.cfg.DedicatedTransitionPath)
 		if err != nil {
@@ -299,6 +323,7 @@ func (s *Server) Start() (err error) {
 			return fmt.Errorf("server: open history: %w", err)
 		}
 		s.hist = h
+		openedHistory = h
 		// New chat timestamps must sort after every stored line, even across
 		// a restart within one clock tick or after the clock was set back.
 		s.chMu.Lock()
