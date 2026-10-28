@@ -119,12 +119,14 @@ from the server's name.
 
 ## Status
 
-Current release: v0.6.0. This repository ships a Go server with Ed25519
+Current release: v0.7.0. This repository ships a Go server with Ed25519
 key-based authentication, roles, channels, presence and text chat, a headless
 client library, a desktop GUI client, and integration tests. Voice, the
 multi-participant call view, Windows webcam publishing, and screen share work;
-watching works on Windows, macOS and Linux. Direct peer-to-peer media is not
-built. The wire protocol is specified in
+watching works on Windows, macOS and Linux. The channel sidebar scrolls, mute
+send failures remain safely muted, and media/hosting failures show friendly
+status text while technical details stay in session logs. Direct peer-to-peer
+media is not built. The wire protocol is specified in
 [docs/protocol.md](docs/protocol.md).
 
 ## Install

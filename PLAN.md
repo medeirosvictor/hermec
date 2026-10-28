@@ -20,7 +20,7 @@ no infrastructure. How the app works is in [README.md](README.md) and
   (VP8, pure Go). malgo (miniaudio) is the only cgo dependency.
 - Small codebase, one file per platform to download, idle server near zero cost.
 
-## Done (v0.6.0)
+## Done (v0.7.0)
 
 - Chat server and headless client, Ed25519 auth, roles, channels, presence.
 - Desktop GUI: CRT themes, fonts, settings, title bar, server rail, several
@@ -39,12 +39,17 @@ no infrastructure. How the app works is in [README.md](README.md) and
 - Independent audio, camera and screen lanes; Windows webcam capture; a
   multi-participant call view; up to ten simultaneous camera publications and
   one selected screen per viewer. Camera is fixed at 640x360/15 fps/300 kbps.
+- Readiness cleanup: mute changes reconcile safely on send failure and call
+  replacement; friend-host startup failures are visible; voice, camera and
+  screen errors are friendly while diagnostics stay in logs; the channel
+  sidebar scrolls with aligned hit targets.
 
 ## Next
 
-1. **Genuine-defect cleanup**: finish simple, user-facing failure handling;
-   make the channel sidebar scroll; fix mute-state reconciliation; surface
-   friend-host startup failures; keep technical detail in session logs.
+1. **Embedded-network transport proof**: execute the approved local proof for
+   per-instance client/server networking, an isolated tsnet adapter, actual UDP
+   media, profile isolation and standby takeover. Real Tailscale/Headscale rows
+   use disposable networks and remain a manual shipping gate.
 2. **Friends adjustments**: per-person volume and mic gain, live names, audio
    device switching mid-call, bandwidth metrics, ping fixes.
 3. **Hosting options** (Victor, 2026-10-26; architecture discussion next):
@@ -76,8 +81,8 @@ no infrastructure. How the app works is in [README.md](README.md) and
    release platforms. Prefer pure Go or embedded WASM if practical; do not
    introduce an unbundled runtime/library requirement. Echo cancellation remains
    a separate follow-up. See [research notes](docs/research/hosting-and-noise-suppression.md).
-5. **Usability gate**: finish the four cleanup fixes, exercise the selected
-   hosting modes with friends, test voice/camera/screen and failover on real
+5. **Usability gate**: exercise the selected hosting modes with friends, test
+   voice/camera/screen and failover on real
    devices, and decide whether the experimental filter is useful. Victor's
    intended milestone is an app ready for regular use, followed by polishing
    and quality-of-life work; feature completion alone does not pass this gate.

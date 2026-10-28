@@ -10,23 +10,22 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 1. Read this file, then `.vibe-wise/progress.md` (Victor's learning state) and
    the memory note `hermec-project`.
-2. Repo baseline: `main` == `origin/main` at `e008043`. PR #12 is merged and
-   **v0.6.0** is published with all release assets. It includes independent
-   media lanes, Windows webcam capture, the call view, and server-confirmed
-   chat with clear failure feedback and private diagnostic logging. The PR,
-   post-merge CI and release gate passed on Windows, macOS and Linux. Untracked
+2. Release baseline: **v0.7.0** completes the bounded readiness-cleanup round.
+   It adds reliable, privacy-preserving mute reconciliation; visible friend-host
+   startup failures; friendly voice, camera and screen-share errors with raw
+   details in the session log; and a scrollable channel sidebar with matching
+   hit targets. It also retains the v0.6.0 server-confirmed chat feedback and
+   independent media/call-view work. Untracked
    local files (`primos.server.toml`, `hermec2.key`, `.claude/`) are
    never committed. The `.claude/worktrees/agent-*` worktrees are old and left
    alone.
-3. **Current round: genuine-defect cleanup.** The webcam/call-view and chat
-   feedback slices are merged and released:
-   camera and screen publish simultaneously, the app receives up to ten
-   camera slots and one selected screen slot, the Windows camera uses a fixed
-   640x360/15 fps/300 kbps profile, and active media survives host takeover.
-   macOS/Linux camera capture and adaptive priority enforcement remain future
-   work. Continue with small, reproducible user-facing defects; do not invent
-   slow-network simulations or speculative compatibility work. After this round
-   Victor moves to stress testing and use-case scenarios.
+3. **Current round: embedded-network transport proof.** The four bounded
+   cleanup defects are complete. Continue the approved local proof for private
+   Tailscale/Headscale networking, starting with per-instance client/server
+   socket routing, then an isolated tsnet adapter and headless media/failover
+   harness. Do not claim or build hosting UI until signaling, UDP media,
+   profile isolation and standby reachability are proven. Real enrollment uses
+   disposable networks only and requires Victor's explicit participation.
    **Version policy (Victor, 2026-10-23):** before v1, do not spend development
    effort on mixed-version call/media bridging; the app is not released to a
    user base that needs it. Keep protocol negotiation safe, but expect every
@@ -60,8 +59,8 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 
 ## Next-session pipeline (Victor's order)
 
-**Scope update (Victor, 2026-10-26):** keep the four genuine-defect cleanup
-items below active. Add private Tailscale/Headscale groups and a self-managed
+**Scope update (Victor, 2026-10-26):** the four genuine-defect cleanup
+items shipped in v0.7.0. Add private Tailscale/Headscale groups and a self-managed
 AWS/VPS dedicated server (Minecraft-style download/configure/run/share address;
 no in-app cloud provisioning), plus research for a free experimental microphone
 noise-suppression toggle. Victor selected embedded private networking and asked
@@ -85,12 +84,11 @@ real-network checks arranged later. Private UI/lifecycle, dedicated hosting, met
 and RNNoise trial plans follow the transport evidence. No networking
 implementation or noise-processing dependency has been added.
 
-1. **Genuine-defect cleanup.** v0.6.0 completed server-confirmed chat: an
-   unconfirmed send shows a plain "message unable to reach server" status,
-   including across reconnect/failover, while the session log keeps the
-   technical reason without message text. Next small candidates: reliable
-   mute-state reconciliation, visible friend-host startup failure, friendly
-   camera/screen/voice errors with raw details in logs, and sidebar scrolling.
+1. **Embedded-network transport proof.** Execute the approved local proof in
+   `docs/superpowers/plans/2026-10-26-embedded-network-proof.md`: explicit
+   client/server network providers, an isolated tsnet adapter, and a headless
+   authenticated chat/media/standby harness. Keep real-network rows pending
+   until disposable Tailscale and Headscale endpoints are available.
 2. **Friends adjustments.** Per-person volume, mic gain, live names, audio
    device switching mid-call, bandwidth metrics and ping fixes (details below).
    Later idea riding the synced store: file sharing (a capped shared folder).
@@ -520,7 +518,7 @@ versus tailnet invites, `-H windowsgui` plus file logging for the Windows exe.
   cameras fill up to ten stable receive slots while each participant selects
   one screen slot. The server marks lane source switches with `media_source`.
   See `docs/protocol.md`.
-- **Releases:** v0.6.0 is the current release. A `v*` tag publishes only if the
+- **Releases:** v0.7.0 is the current release. A `v*` tag publishes only if the
   tagged commit is on `main` and vet and tests pass. Client assets build on
   native runners (Windows x64 and ARM, Linux x64 and ARM); servers are
   cross-built with CGO off. The tag is stamped into `version.Version`. macOS:
