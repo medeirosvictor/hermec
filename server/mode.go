@@ -20,6 +20,9 @@ const (
 	// ModeIdle is a host that is not part of the pair; it behaves like standby
 	// toward clients.
 	ModeIdle
+	// ModePrepared is a passive dedicated destination. It may mirror an active
+	// host over a link, but can never be promoted by failover or takeover.
+	ModePrepared
 )
 
 // Heartbeat timing. The grace is how long a receiver waits without an hb

@@ -91,6 +91,10 @@ const (
 	TypeWarmOffer      = "warm_offer"
 	TypeWarmAnswer     = "warm_answer"
 	TypeWarmCandidate  = "warm_candidate"
+
+	// TypeDedicatedReadiness carries the destination's signed, nonce-bound
+	// preparation attestation. Activation is intentionally a later protocol.
+	TypeDedicatedReadiness = "dedicated_readiness"
 )
 
 // CodeNotSharing is the error code for a watch whose target is not sharing in

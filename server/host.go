@@ -50,6 +50,8 @@ const (
 	RoleActive  = "active"
 	RoleStandby = "standby"
 	RoleIdle    = "idle"
+	// RolePrepared is a passive dedicated destination following its source.
+	RolePrepared = "prepared"
 )
 
 // HostConfig configures a Host.
@@ -66,6 +68,9 @@ type HostConfig struct {
 	// OnPasswordKey, when set, is called with the password key the active host
 	// supplied over the link whenever it differs from the one held.
 	OnPasswordKey func([]byte)
+	// Prepared makes this a passive dedicated destination. It maintains a host
+	// link and mirrors state, but never elects or takes over as active.
+	Prepared bool
 }
 
 // Host owns a Server's role: it starts idle, finds the active host or becomes
@@ -91,8 +96,9 @@ type Host struct {
 	}
 
 	// Owned by the loop goroutine.
-	seen    []string // host URLs learned from hosts frames and probe replies
-	hadLink bool     // this host has followed an active host
+	seen     []string // host URLs learned from hosts frames and probe replies
+	hadLink  bool     // this host has followed an active host
+	prepared bool     // passive dedicated destination; never becomes active
 
 	mu       sync.Mutex
 	role     string
@@ -101,10 +107,15 @@ type Host struct {
 	active   proto.HostInfo // the active host as last learned, while not active
 }
 
-// NewHost returns a Host for hc. The server starts in ModeIdle whatever
-// hc.Server.Mode says.
+// NewHost returns a Host for hc. Ordinary hosts start idle; a prepared host
+// starts in the passive ModePrepared regardless of any other requested mode.
 func NewHost(hc HostConfig) *Host {
-	hc.Server.Mode = ModeIdle
+	prepared := hc.Prepared || hc.Server.Mode == ModePrepared
+	if prepared {
+		hc.Server.Mode = ModePrepared
+	} else {
+		hc.Server.Mode = ModeIdle
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Host{
 		hc:       hc,
@@ -114,6 +125,10 @@ func NewHost(hc HostConfig) *Host {
 		done:     make(chan struct{}),
 		promoted: make(chan struct{}, 1),
 		role:     RoleIdle,
+		prepared: prepared,
+	}
+	if prepared {
+		h.role = RolePrepared
 	}
 	if hc.OnPasswordKey != nil {
 		h.srv.SetPasswordKeyHook(hc.OnPasswordKey)
@@ -124,7 +139,7 @@ func NewHost(hc HostConfig) *Host {
 // Server returns the host's server.
 func (h *Host) Server() *Server { return h.srv }
 
-// Role is "active", "standby" or "idle".
+// Role is "active", "standby", "idle" or "prepared".
 func (h *Host) Role() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -148,7 +163,8 @@ func (h *Host) Active() proto.HostInfo {
 	return info
 }
 
-// Start starts the server in ModeIdle and runs the orchestrator.
+// Start starts the server in its idle or passive prepared mode and runs the
+// orchestrator.
 func (h *Host) Start() error {
 	if err := h.srv.Start(); err != nil {
 		return err
@@ -181,7 +197,7 @@ func (h *Host) Shutdown(ctx context.Context) error {
 func (h *Host) stopped() bool { return h.ctx.Err() != nil }
 
 // loop is the state machine. It runs on one goroutine, which makes every mode
-// change; a nil link means the host is active (or stopping).
+// change; a nil link means the host is active, or passively waiting when prepared.
 func (h *Host) loop() {
 	defer close(h.done)
 	if f := h.testHooks.beforeLoop; f != nil {
@@ -191,6 +207,13 @@ func (h *Host) loop() {
 	for !h.stopped() {
 		if l != nil {
 			l = h.runLinked(l)
+		} else if h.prepared {
+			// Stay passive while the source is unavailable; retrying a link is
+			// safe, electing ourselves is not.
+			if !h.pause(coldProbeEvery) {
+				return
+			}
+			l = h.rejoin(nil, coldStartWindow)
 		} else {
 			l = h.runActive()
 		}
@@ -214,6 +237,8 @@ func (h *Host) setRole(role, name string) {
 		h.hc.Notify("hosting: active")
 	case RoleStandby:
 		h.hc.Notify("hosting: standby for " + name)
+	case RolePrepared:
+		h.hc.Notify("hosting: prepared for " + name)
 	default:
 		h.hc.Notify("hosting: idle")
 	}
@@ -396,6 +421,11 @@ func (h *Host) rejoin(extra []string, window time.Duration) *Link {
 		h.install(l)
 		return l
 	}
+	if h.prepared {
+		h.srv.SetMode(ModePrepared)
+		h.setRole(RolePrepared, "")
+		return nil
+	}
 	h.becomeActive(h.hadLink)
 	return nil
 }
@@ -417,6 +447,18 @@ func (h *Host) install(l *Link) {
 
 // applyRole sets the server mode and role from what the active host says of us.
 func (h *Host) applyRole(l *Link) {
+	if h.prepared {
+		if h.srv.setFollowerMode(ModePrepared) {
+			h.mu.Lock()
+			name := h.active.Name
+			h.mu.Unlock()
+			if hs, ok := l.Hosts(); ok {
+				name = hs.Active.Name
+			}
+			h.setRole(RolePrepared, name)
+		}
+		return
+	}
 	if hs, ok := l.Hosts(); ok {
 		h.learnHosts(hs)
 	}
@@ -465,7 +507,7 @@ func (h *Host) runLinked(l *Link) *Link {
 		case <-l.RoleChanged():
 			h.applyRole(l)
 		case <-h.promoted:
-			if h.srv.Mode() != ModeActive {
+			if h.prepared || h.srv.Mode() != ModeActive {
 				continue // a stale signal
 			}
 			// A client's takeover promoted us.
@@ -473,6 +515,10 @@ func (h *Host) runLinked(l *Link) *Link {
 			h.becomeActive(false)
 			return nil
 		case <-l.Handover():
+			if h.prepared {
+				// A prepared destination cannot accept a handoff yet.
+				continue
+			}
 			l.Close()
 			h.srv.Promote()
 			h.becomeActive(false)
@@ -482,6 +528,9 @@ func (h *Host) runLinked(l *Link) *Link {
 				l.Close()
 			}
 		case <-l.Done():
+			if h.prepared {
+				return h.rejoin(nil, coldStartWindow)
+			}
 			return h.failover(l)
 		}
 	}

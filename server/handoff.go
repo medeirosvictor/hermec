@@ -75,7 +75,7 @@ func (s *Server) Promote() bool {
 	t := &s.takeover
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if s.Mode() == ModeActive {
+	if s.Mode() == ModeActive || s.Mode() == ModePrepared {
 		return false
 	}
 	s.SetMode(ModeActive)
