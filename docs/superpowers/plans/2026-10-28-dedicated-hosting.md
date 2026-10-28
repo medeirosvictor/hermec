@@ -1,88 +1,45 @@
 # Dedicated AWS/VPS Hosting Implementation Plan
 
-**Status:** Next user-facing hosting milestone after the transport-proof branch.
+**Status:** Tasks 1–4 are complete locally; Task 5 is next. Remote hosting is
+not available until Task 6 passes and the work is merged and released.
 
-**Goal:** Make an operator-owned Linux VPS or AWS EC2 instance usable like a
-Minecraft server: download HERMEC, create a persistent config/state directory,
-run a service, open TCP/UDP, and share verified connection details. HERMEC does
-not provision cloud resources or receive cloud credentials.
+## Goal and constraints
 
-**Availability definition:** AWS/remote hosting is available when Tasks 1-6 are
-merged and a release build passes the disposable-VPS checklist. Documentation
-alone is not availability.
+Make an operator-owned Linux VPS usable without project-operated infrastructure
+or cloud credentials. Public signaling uses trusted `wss://`; media UDP must be
+reachable separately. Preserve server ID, signed chain and host authorization;
+never copy founder or member private keys to a VPS. Admission (password proof or
+allowlist), explicit persistent state/logs/backups/upgrades, and same-build
+peers are required.
 
-## Constraints
+## Completed evidence (Tasks 1–4)
 
-- Public signaling is `wss://`; media UDP must be reachable separately.
-- Keep server ID, signed chain and host authorization. Never copy a founder or
-  member private key from a desktop to the VPS; the VPS creates its own key and
-  is authorized as a host.
-- Admission is required. First release supports the existing password proof and
-  allowlist; it must not present an open public server as safe.
-- No AWS SDK, access keys, billing API or in-app VM creation.
-- Same-build peers are expected before v1.
-- State, logs, backups and upgrades must be explicit and recoverable.
-
-## Task 1: Dedicated server bootstrap and validation
-
-- Add a non-interactive bootstrap command that creates a dedicated state layout,
-  host identity, strict example config and service-ready paths without starting
-  an open server.
-- Refuse public/wildcard startup without TLS and admission unless the operator
-  passes a plainly named unsafe development override.
-- Validate DNS/TLS paths, TCP/media UDP ports, history/chain paths, file modes
-  and conflicting options before binding.
-- Add tests for first run, repeat run, partial failure, permissions, invalid TLS,
-  open admission refusal and no identity replacement.
-
-## Task 2: Packaging and operator lifecycle
-
-- Ship Linux amd64/arm64 dedicated bundles containing `hermec-server`, an example
-  config, systemd unit template, update/rollback script and backup/restore guide.
-- Add an OCI container option only if persistent identity/chain/history mounts
-  and UDP exposure remain obvious; do not make Docker mandatory.
-- Support graceful service stop, logs, health/status output and version checks.
-- Test upgrade and rollback while preserving identity, chain and history.
-
-## Task 3: AWS/VPS guide and reachability verifier
-
-- Add a provider-neutral VPS guide plus an AWS EC2 example: instance type
-  guidance, DNS, certificate, security-group TCP/UDP rules, persistent disk,
-  systemd, logs, backups and egress-cost warning.
-- Add a verifier that checks authenticated `wss://` signaling and an actual
-  media path from a second endpoint. A successful local bind is not remote
-  reachability.
-- Report friendly remediation and retain raw diagnostics without passwords,
-  password keys or private keys.
-
-## Task 4: Desktop Join/Create Dedicated flow
-
-- In Add a Server, add **Dedicated server**. Explain that the operator prepares
-  the machine outside HERMEC, then enters/imports its address and server ID.
-- Add a password field and password-proof persistence appropriate for joined
-  servers; the plaintext password must not travel or be written to logs.
-- Validate `wss://`, pinned server identity, admission and media reachability
-  before saving the tile. Failed drafts leave no phantom server.
-- Finish with copyable/shareable versioned connection details.
+- Bootstrap/validation, service-ready Linux bundles and lifecycle materials.
+- Provider-neutral and AWS operator guidance plus `hermec-verify` for pinned
+  WSS signaling and two-endpoint media proof.
+- Desktop Dedicated Add flow: WSS-only address, pinned server ID, password
+  admission, temporary JoinVoice UDP/ICE check before save, proof-key-only
+  persistence, and versioned share/import details.
+- Commits: Tasks 1–2 `ca6ed69`, Task 3 `020492f`, Task 4 `5df0524`.
 
 ## Task 5: Authorize and prepare a VPS host
 
-- Provide a founder-controlled flow to authorize the VPS-generated public key
-  as a host, transfer chain/history through the existing authenticated host-link
-  model, and keep it prepared rather than independently active.
+- Founder authorizes the VPS-generated public key as a host and transfers
+  chain/history through the authenticated host-link model while the VPS remains
+  prepared, not independently active.
 - Never transfer member private keys. Verify destination server ID, chain head,
   history boundary and password proof before readiness.
-- Voice must be empty before activation. Failure leaves the current host active
-  and offers retry/recovery instructions.
+- Require empty voice before activation. On failure retain the current active
+  host and provide retry/recovery instructions.
 
 ## Task 6: Acceptance and release
 
-- Automated: root vet/race suite, bootstrap/config/service tests, TLS/admission
-  tests, transition rollback tests, release cross-builds and `git diff --check`.
-- Disposable VPS: fresh install, DNS/TLS, client join, text, audio both ways,
-  camera, selected screen, restart persistence, backup/restore, update/rollback,
-  blocked UDP diagnosis and host failover/recovery.
-- AWS row: EC2 security group with required TCP and UDP, no project-owned
-  infrastructure, actual remote friend/client connection.
-- Update README/HANDOFF only with behavior actually shipped; publish the next
-  minor release after the gate passes.
+- Automated gate: root vet/race suite, bootstrap/config/service, TLS/admission
+  and transition rollback tests, release cross-builds, and `git diff --check`.
+- Disposable-VPS gate: fresh install; DNS/TLS; join; two-way text/audio;
+  camera/selected screen; restart persistence; backup/restore; update/rollback;
+  blocked-UDP diagnosis; and host failover/recovery.
+- AWS gate: security group permits required TCP and UDP, a real remote
+  friend/client connects, and no project infrastructure is used.
+- Only after these gates pass may docs describe availability and a minor release
+  be published.

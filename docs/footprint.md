@@ -1,6 +1,8 @@
 # Footprint
 
-How much Hermec costs to run. Each section says when it was measured.
+Historical measurements only, not current requirements or performance claims.
+Each section records when and against which older build it was measured; re-measure
+before using any number as a baseline.
 
 ## Binary sizes (measured 2026-10-21, v0.5.1 source)
 
@@ -21,9 +23,10 @@ RAM is Windows working set.
 | Idle, no calls | 56 MB | about 0% |
 | Relaying a live 2-client voice call | 65 MB | 0.7% of one core |
 
-A call costs under 1% of one core, so a Raspberry Pi is plenty for voice. Video
-costs far more: the host uploads one copy of a share per watcher (about
-1.5 Mbps each at 720p). This was not measured again after screen share landed.
+In that older two-client voice test, the call used under 1% of one core. Do not
+extrapolate it to current builds or Raspberry Pi capacity. Video costs more: the
+host uploads one copy of a share per watcher (about 1.5 Mbps each at 720p), and
+it was not measured again after screen share landed.
 
 ## GUI client (measured 2026-10-11, older build)
 

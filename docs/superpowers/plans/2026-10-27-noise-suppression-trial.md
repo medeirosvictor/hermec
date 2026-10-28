@@ -18,7 +18,7 @@ candidate `github.com/VoiceBlender/rnnoise-go v0.3.0`. Version resolved with
 `go list -m -json github.com/VoiceBlender/rnnoise-go@latest` on 2026-10-27;
 the result requires Go 1.26 and is compatible with HERMEC's Go 1.27 floor.
 
-**Spec:** [approved hosting/readiness design, audio experiment section](../specs/2026-10-26-hosting-readiness-design.md).
+**Research:** [noise-suppression candidates and evaluation gate](../../research/hosting-and-noise-suppression.md).
 
 ## Global Constraints
 

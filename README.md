@@ -156,7 +156,7 @@ Mac: there is no download. Build from source, see
 
 It is one file. No toolchain and no extra DLLs are needed.
 The exe is unsigned, so Windows SmartScreen may warn: click **More info**, then
-**Run anyway** (see [the friends quickstart](docs/quickstart-friends.md#what-friends-receive)).
+**Run anyway** (see [the friends quickstart](docs/quickstart-friends.md)).
 
 **Linux:**
 
@@ -168,10 +168,7 @@ You need a desktop with X11 or Wayland, and PulseAudio or PipeWire for sound.
 Copy and paste need one of `xclip`, `xsel` or `wl-clipboard` (for example,
 `sudo apt install xclip`).
 
-**Servers and checks:** each release also ships servers (`hermec-server-linux-amd64`,
-`hermec-server-linux-arm64`, `hermec-server-windows-amd64.exe`) and a
-`SHA256SUMS.txt` to verify downloads. Release notes are generated from the
-commits in each release.
+**Release notes** are generated from the commits in each release.
 
 **Update check:** on startup, release builds ask GitHub's public releases API
 whether a newer version exists (development builds never make this request) and, if so, show a banner linking to the Releases page.
@@ -302,20 +299,9 @@ back to the development branch, run `git checkout main`.
 
 ## Join a friend's server
 
-Any OS, once HERMEC is running:
-
-1. Get on the same network as your friend. Usually that means Tailscale:
-   install it from <https://tailscale.com/download>, sign in, and accept the
-   share invite your friend sent. Their PC shows up in your Tailscale menu.
-2. Ask your friend for their **invite address** (they copy it from their
-   server tile's right-click menu). It looks like `ws://100.x.x.x:7697/`.
-3. Optional check (macOS/Linux Terminal): `nc -vz 100.x.x.x 7697` should say
-   "succeeded".
-4. In HERMEC click **+**, then **Join**. The address field already starts with
-   `ws://`. Paste the full address (Ctrl+V, or Cmd+V on a Mac), or type the
-   rest after the `ws://`, then press Enter. Pasting a full `ws://` address
-   replaces the prefilled text, so you never get `ws://ws://`.
-5. Put on headphones (there is no echo cancellation yet) and click a voice channel.
+Use the canonical [friends quickstart](docs/quickstart-friends.md) for LAN,
+Tailscale, download, and friend-host onboarding. Put on headphones: echo
+cancellation is not implemented.
 
 ## How safe is this? (Tailscale)
 
@@ -330,12 +316,11 @@ Any OS, once HERMEC is running:
   Revoke invite.
 - **Keys, not passwords.** Every person has a key file. The server checks a
   signature from that key when they connect.
-- **The password never travels.** The server keeps only a key made from the
-  password with scrypt (a slow, memory-hungry function, so guessing is
-  expensive). To log in, the app sends an HMAC proof made with that key over
-  both sides' random numbers and the server ID, so a recorded proof cannot be
-  reused. v0.6 clients still send the plain password for one release; plain
-  passwords are refused from v0.8.
+- **Proof-capable clients do not send the password.** The server keeps only a
+  key made from the password with scrypt (a slow, memory-hungry function, so
+  guessing is expensive). They send an HMAC proof over both sides' random
+  numbers and the server ID, so a recorded proof cannot be reused. Legacy
+  plaintext-password authentication remains accepted for compatibility.
 - **The host proves itself first.** Before your app sends anything secret
   (including the server password), the host sends the server's signed chain and
   proves it holds a key that the chain approves as a host. A machine that
@@ -374,10 +359,11 @@ Any OS, once HERMEC is running:
    needs HERMEC v0.5.0 or newer on the host. If you run on another port, use
    that port number instead of 7697; `media_port` in the server config picks a
    different media port if you need one.
-2. **No password or invite list in the app.** Anyone who can reach your
-   server's port can join, including other devices on your home Wi-Fi. The
-   server config already has `password` and `allowed_keys` (see
-   [example.server.toml](example.server.toml)); the app cannot set them yet.
+2. **Admission depends on how the server was created.** Standalone
+   configuration supports `password` and `allowed_keys` (see
+   [example.server.toml](example.server.toml)). App-created local servers have
+   no password setup UI, so anyone who can reach that port can join, including
+   other devices on your home Wi-Fi.
 3. **Windows Firewall on public Wi-Fi.** If you allowed HERMEC on "Public"
    networks, your server is reachable on any café Wi-Fi your PC joins. To allow
    only Tailscale and your home network, run PowerShell as admin (use your own
@@ -403,8 +389,8 @@ Any OS, once HERMEC is running:
    a server or person) is the real identity.
 6. **The handshake does not bind the connection.** On plain `ws://`, someone
    on the network path between you and the host could relay a real host's
-   proof and so read your chat, and with a v0.6 client also the plain password
-   it still sends. Use TLS (set `tls_cert` and
+   proof and so read your chat; a legacy password client can also expose its
+   plaintext password. Use TLS (set `tls_cert` and
    `tls_key` in the server config; both are in
    [example.server.toml](example.server.toml); the server then serves `wss://`)
    or a network that is already encrypted. Tailscale is, and it is what this
@@ -494,9 +480,8 @@ server or hide it from discovery, see the `server_name` and `discoverable` keys
 below.
 
 See [example.server.toml](example.server.toml) for every option. The server logs
-its listen address on start and shuts down cleanly on Ctrl-C. Note: the desktop
-GUI does not yet have a password field; password-protected servers are
-currently reachable only from headless clients. A password field is planned.
+its listen address on start and shuts down cleanly on Ctrl-C. Ordinary `ws://`
+Join and app-created local-server flows do not provide password setup/join UI.
 
 ### Voice
 
@@ -616,16 +601,14 @@ to a message.
 
 ## Chat with friends
 
-Want to try Hermec with a few friends? One person runs the server, everyone
-else just runs the app. The easiest private setup is Tailscale, with no router
-changes and no public IP exposed. See the step-by-step
-[friends quickstart](docs/quickstart-friends.md).
+Want to try Hermec with a few friends? Use the
+[canonical friends quickstart](docs/quickstart-friends.md) for private LAN or
+Tailscale setup, downloads, and friend-host standby.
 
 You can also host from the app itself: click the **+** tile, choose
 **Create my own**, and give the server a name and a port (7697 by default).
-Servers made this way have no password, because the app has no password field
-for joining. The app starts the server on your computer, opens it as a
-tile, and shows an invite address (your Tailscale address if you have one,
+Servers made this way have no password setup UI. The app starts the server on
+your computer, opens it as a tile, and shows an invite address (your Tailscale address if you have one,
 otherwise your LAN address) that friends paste into **Join a server**. Windows
 asks once to allow HERMEC on your network; choose Allow so friends can connect.
 The server runs while the app is open. If you approve a friend as a host, it

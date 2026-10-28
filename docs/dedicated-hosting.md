@@ -1,5 +1,9 @@
 # Dedicated server hosting
 
+> **Unreleased development documentation.** Dedicated hosting is not available
+> in current releases. Do not use this guide for public onboarding until Task 6
+> passes and the work is merged and released.
+
 HERMEC can run as an operator-owned Linux systemd service. It does not create
 cloud resources, receive cloud credentials, or manage billing. The dedicated
 Linux amd64/arm64 archive contains both `hermec-server` and `hermec-verify`.
