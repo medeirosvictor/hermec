@@ -137,7 +137,8 @@ saved URL and exact boundary:
 `-dedicated-retry` accepts only a validated `preparing` or `prepared` record,
 never generates a nonce, changes neither the pinned source URL nor the exact
 boundary, and never activates a host. `-dedicated-status` validates and reports
-`preparing`, `prepared`, `fenced`, or `committed`; a malformed or unrelated
+`preparing`, `prepared`, `fenced`, or `committed`, the destination fingerprint,
+and the public transition nonce for exact client comparison; a malformed or unrelated
 record is an error requiring operator investigation.
 
 If the active source's readiness attestation becomes obsolete because its

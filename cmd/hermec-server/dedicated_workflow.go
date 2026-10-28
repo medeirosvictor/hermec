@@ -49,6 +49,11 @@ func dedicatedAttestationStatus(keyPath, chainPath string, reset bool, out io.Wr
 	s := server.New(server.Config{HostKey: key, Chain: c, DedicatedTransitionPath: dedicatedTransitionPath(chainPath)})
 	operator := identity.Fingerprint(key.PublicKey())
 	if reset {
+		lock, err := server.AcquireDedicatedReadinessLock(dedicatedTransitionPath(chainPath))
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
 		if err := s.ResetDedicatedReadinessAttestation(operator); err != nil {
 			return err
 		}
@@ -81,7 +86,7 @@ func dedicatedStatus(_ string, keyPath, chainPath, historyPath string, out io.Wr
 	if err := validateDedicatedRecord(r, keyPath, chainPath, historyPath); err != nil {
 		return fmt.Errorf("dedicated transition is invalid: %w", err)
 	}
-	fmt.Fprintf(out, "dedicated status: %s\ndestination fingerprint: %s\nrecovery: %s\n", r.State, r.DestinationFingerprint, r.Recovery.Guidance())
+	fmt.Fprintf(out, "dedicated status: %s\ndestination fingerprint: %s\ntransition nonce: %x\nrecovery: %s\n", r.State, r.DestinationFingerprint, r.TransitionNonce, r.Recovery.Guidance())
 	return nil
 }
 

@@ -1,10 +1,14 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/medeirosvictor/hermec/core/identity"
+	"github.com/medeirosvictor/hermec/core/proto"
 )
 
 func TestSourceReadinessAttestationOnlyAllowsExactReplay(t *testing.T) {
@@ -53,6 +57,51 @@ func TestResetObsoleteReadinessAttestationInvalidatesOldNonce(t *testing.T) {
 	}
 	if err := s.attestDedicatedReadiness(drifted); err != nil {
 		t.Fatalf("reset did not permit replacement attestation: %v", err)
+	}
+}
+
+func TestSourceServiceReadinessLockBlocksOfflineResetUntilShutdown(t *testing.T) {
+	c, source, _ := twoHostChain(t)
+	path := filepath.Join(t.TempDir(), DedicatedTransitionFile)
+	s := New(Config{Addr: "127.0.0.1:0", HostKey: source, Chain: c, DedicatedTransitionPath: path})
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if lock, err := AcquireDedicatedReadinessLock(path); !errors.Is(err, ErrDedicatedReadinessLocked) {
+		if lock != nil {
+			_ = lock.Close()
+		}
+		t.Fatalf("offline reset lock = %v, want running-service refusal", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := s.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := AcquireDedicatedReadinessLock(path)
+	if err != nil {
+		t.Fatalf("offline reset lock after shutdown: %v", err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResetReadinessAttestationDropsPreparedLinks(t *testing.T) {
+	c, source, _ := twoHostChain(t)
+	path := filepath.Join(t.TempDir(), DedicatedTransitionFile)
+	s := New(Config{HostKey: source, Chain: c, DedicatedTransitionPath: path})
+	r := recordReadiness(testDedicatedTransition())
+	if err := s.attestDedicatedReadiness(r); err != nil {
+		t.Fatal(err)
+	}
+	peer := &conn{link: &linkState{hello: proto.LinkHello{Prepared: true}}}
+	s.links[peer] = struct{}{}
+	if err := s.ResetDedicatedReadinessAttestation(identity.Fingerprint(source.PublicKey())); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.links[peer]; ok || peer.link.dedicated != nil || peer.link.dedicatedProof != nil {
+		t.Fatal("reset retained a live prepared link")
 	}
 }
 

@@ -70,11 +70,24 @@ func (s *Server) ResetDedicatedReadinessAttestation(operator string) error {
 			return err
 		}
 	}
+	// A reset revokes this exact readiness, not merely its durable record.
+	// Remove and close every prepared link so no live peer can retain the old
+	// proof or receive a commit after the operator has reset it.
 	for c := range s.links {
 		if c.link != nil && c.link.hello.Prepared {
+			delete(s.links, c)
 			c.link.dedicated = nil
 			c.link.dedicatedProof = nil
 			c.link.dedicatedHistory = nil
+			if c.ws != nil {
+				_ = c.ws.Close()
+			}
+		}
+	}
+	// Do not leave a removed prepared peer published as standby either.
+	for _, c := range s.updateStandbyLocked() {
+		if c.ws != nil {
+			_ = c.ws.Close()
 		}
 	}
 	return nil

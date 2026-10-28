@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -220,6 +221,10 @@ type Server struct {
 	udp     net.PacketConn // discovery responder; nil when not discoverable
 	mux     ice.UDPMux     // single-port media mux; nil in legacy UDP-range mode
 	pionNet transport.Net  // validated provider network; nil for system networking
+
+	// readinessLock is held by an active source for its whole serving lifetime.
+	// It serializes offline attestation reset with live prepared links.
+	readinessLock io.Closer
 }
 
 // New returns a Server for cfg. Call Start to begin serving.
@@ -273,7 +278,18 @@ func New(cfg Config) *Server {
 }
 
 // Start listens on cfg.Addr and serves in the background.
-func (s *Server) Start() error {
+func (s *Server) Start() (err error) {
+	if s.cfg.DedicatedTransitionPath != "" && s.Mode() == ModeActive && !s.Prepared() && s.readinessLock == nil {
+		s.readinessLock, err = AcquireDedicatedReadinessLock(s.cfg.DedicatedTransitionPath)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err != nil {
+				s.releaseReadinessLock()
+			}
+		}()
+	}
 	if err := s.validateNetwork(); err != nil {
 		return err
 	}
@@ -311,7 +327,6 @@ func (s *Server) Start() error {
 	if port == "0" {
 		attempts = 10
 	}
-	var err error
 	for i := 0; i < attempts; i++ {
 		if err = s.start(); !errors.Is(err, ErrDiscoveryBind) && !errors.Is(err, ErrMediaBind) {
 			return err
@@ -477,9 +492,23 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	go func() { s.wg.Wait(); close(done) }()
 	select {
 	case <-done:
+		s.releaseReadinessLock()
 		return err
 	case <-ctx.Done():
+		// The service may still have live links. Keep the interprocess lock until
+		// they are gone, then release it without requiring a second Shutdown.
+		go func() {
+			<-done
+			s.releaseReadinessLock()
+		}()
 		return errors.Join(err, ctx.Err())
+	}
+}
+
+func (s *Server) releaseReadinessLock() {
+	if s.readinessLock != nil {
+		_ = s.readinessLock.Close()
+		s.readinessLock = nil
 	}
 }
 
