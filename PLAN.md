@@ -71,16 +71,31 @@ no infrastructure. How the app works is in [README.md](README.md) and
    release platforms. Prefer pure Go or embedded WASM if practical; do not
    introduce an unbundled runtime/library requirement. Echo cancellation remains
    a separate follow-up. See [research notes](docs/research/hosting-and-noise-suppression.md).
-6. **Usability gate**: exercise the selected hosting modes with friends, test
-   voice/camera/screen and failover on real
-   devices, and decide whether the experimental filter is useful. Victor's
-   intended milestone is an app ready for regular use, followed by polishing
-   and quality-of-life work; feature completion alone does not pass this gate.
-7. **Documentation milestone**: make `README.md` the task-oriented user guide;
+6. **Desktop Distribution & Updater**: only after dedicated hosting, embedded
+   private networking, and hosting-method migration—including their Create/Join
+   flows—work. Friends adjustments and noise suppression are earlier backlog
+   items, not prerequisites for distribution. Windows first: a per-user installer
+   and in-app download with cryptographic artifact/manifest verification,
+   explicit Restart and update,
+   atomic replacement, previous-version rollback, and no routine admin need.
+   Follow with an appropriate Linux package/update layout; wait for signed,
+   notarized distributable builds on macOS. Add Settings > Releases, listing
+   what changed in each version with a link to its corresponding official GitHub
+   Release. Release links must use trusted, allowlisted GitHub release URLs, and
+   the page must clearly show the running version. Current releases only show an
+   update banner that opens GitHub; no automatic desktop updater or Releases
+   page exists. This is separate from dedicated-server `update.sh`, which
+   requires a manually downloaded candidate.
+7. **Regular-use/distribution gate**: exercise the selected hosting modes with
+   friends, test voice/camera/screen and failover on real devices, and decide
+   whether the experimental filter is useful. Victor's intended milestone is an
+   app ready for regular use, followed by polishing and quality-of-life work;
+   feature completion alone does not pass this gate.
+8. **Documentation milestone**: make `README.md` the task-oriented user guide;
    add `docs/architecture.md` for how HERMEC works under the hood and
    `docs/code-map.md` for folders, important files and common development
    entry points. Link rather than duplicate material in `HANDOFF.md`.
-8. **Icon editor** (B.3): in-app pixel-art editor for a server icon.
+9. **Icon editor** (B.3): in-app pixel-art editor for a server icon.
 
 ## Later
 
