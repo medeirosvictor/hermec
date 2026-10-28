@@ -63,6 +63,9 @@ func run(state, controlURL, hostname, role, peers string, port int, reportPath s
 		return emitReport(report, reportPath)
 	}
 
+	if _, err := prepareStateDir(state); err != nil {
+		return err
+	}
 	roles := []string{"host", "client", "standby"}
 	var nodes [3]*probe.Node
 	for i, name := range roles {
@@ -78,6 +81,11 @@ func run(state, controlURL, hostname, role, peers string, port int, reportPath s
 		}
 	}
 	defer closeNodes(nodes[:])
+	for _, n := range nodes {
+		if err := n.Refresh(ctx); err != nil {
+			return err
+		}
+	}
 	if err := requirePeers(nodes[0], peers); err != nil {
 		return err
 	}

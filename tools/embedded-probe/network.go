@@ -83,6 +83,7 @@ type Node struct {
 	backend   nodeBackend
 	stateDir  string
 	local     []netip.Addr
+	peerMu    sync.RWMutex
 	peers     map[netip.Addr]struct{}
 	pion      *pionNetwork
 	closeOnce sync.Once
@@ -175,11 +176,30 @@ func (n *Node) Addresses() []netip.Addr { return append([]netip.Addr(nil), n.loc
 
 // PeerAddresses returns the peer addresses admitted by the startup snapshot.
 func (n *Node) PeerAddresses() []netip.Addr {
+	n.peerMu.RLock()
+	defer n.peerMu.RUnlock()
 	out := make([]netip.Addr, 0, len(n.peers))
 	for ip := range n.peers {
 		out = append(out, ip)
 	}
 	return out
+}
+
+// Refresh updates the admitted peer snapshot after other disposable nodes have
+// enrolled. Production integration needs a continuous bounded watcher instead.
+func (n *Node) Refresh(ctx context.Context) error {
+	state, err := n.backend.Up(ctx)
+	if err != nil {
+		return fmt.Errorf("embedded probe: refresh node: %w", err)
+	}
+	peers := map[netip.Addr]struct{}{}
+	for _, ip := range validUnique(state.Peers) {
+		peers[ip] = struct{}{}
+	}
+	n.peerMu.Lock()
+	n.peers = peers
+	n.peerMu.Unlock()
+	return nil
 }
 
 func (n *Node) Close() error {
@@ -284,7 +304,10 @@ func (c *restrictedPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	}
 	ip = ip.Unmap()
 	if !c.node.isLocal(ip) {
-		if _, allowed := c.node.peers[ip]; !allowed {
+		c.node.peerMu.RLock()
+		_, allowed := c.node.peers[ip]
+		c.node.peerMu.RUnlock()
+		if !allowed {
 			return 0, fmt.Errorf("embedded probe: UDP destination %s is outside this profile", ip)
 		}
 	}
@@ -307,7 +330,10 @@ func (n *Node) checkDestination(network, address string) error {
 	if n.isLocal(ip) {
 		return nil
 	}
-	if _, ok := n.peers[ip]; !ok {
+	n.peerMu.RLock()
+	_, ok := n.peers[ip]
+	n.peerMu.RUnlock()
+	if !ok {
 		return fmt.Errorf("embedded probe: destination %s is outside this profile", ip)
 	}
 	return nil

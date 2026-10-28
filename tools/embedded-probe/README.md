@@ -14,11 +14,12 @@ binaries and does not provide a user-facing hosting mode yet.
 - TCP signaling, server listeners and UDP media use that node. Pion sees only a
   synthetic interface containing the node's assigned addresses.
 - Binds to host/LAN addresses and writes to addresses absent from the profile's
-  startup peer snapshot fail closed. There is no system-network fallback.
+  explicitly refreshed peer snapshot fail closed. There is no system-network fallback.
 - Closing one node releases only its state-directory registration and backend.
 
-The peer snapshot is intentionally proof-stage behavior. A production adapter
-must refresh peer reachability as membership changes and define how MagicDNS
+The CLI refreshes once after its three nodes enroll. This snapshot is still
+proof-stage behavior. A production adapter must continuously refresh peer
+reachability as membership changes and define how MagicDNS
 names are admitted without weakening literal UDP destination checks.
 
 ## Local tests
@@ -55,7 +56,7 @@ written to the JSON report. `-state` is mandatory; a non-empty directory without
 the probe marker is rejected. Individual `-role host|client|standby` runs can be
 used to enroll and inspect one profile before the complete `-role all` run.
 `-peers` accepts comma-separated overlay IPs that must appear in the startup
-peer snapshot.
+refreshed peer snapshot.
 
 Run and record each available row; leave unavailable rows as **NOT RUN**:
 

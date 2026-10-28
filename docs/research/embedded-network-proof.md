@@ -42,13 +42,13 @@ Nested `tools/embedded-probe` module:
 - exposes only synthetic Pion interfaces containing assigned profile addresses;
 - rejects host/LAN binds, unknown literal destinations and DNS destinations in
   the proof stage;
-- wraps packet writes so UDP cannot escape the startup peer snapshot;
+- wraps packet writes so UDP cannot escape the explicitly refreshed peer snapshot;
 - provides an interactive CLI whose auth URLs are printed but never written to
   reports;
 - rejects non-empty state directories that lack the probe marker.
 
-The fixed startup peer snapshot is deliberately not production-ready. A shipped
-adapter needs bounded live peer refresh and a designed MagicDNS policy without
+The CLI performs one explicit refresh after all three nodes enroll. That fixed
+snapshot is deliberately not production-ready. A shipped adapter needs bounded live peer refresh and a designed MagicDNS policy without
 weakening literal UDP checks.
 
 ## Automated evidence
@@ -123,7 +123,7 @@ private keys or personal network identifiers.
   prohibited.
 - The proof rejects DNS destinations; production MagicDNS support needs an
   authenticated peer-name mapping.
-- Peers are admitted from the startup snapshot. Production must refresh it and
+- Peers are admitted from an explicitly refreshed fixed snapshot. Production must continuously refresh it and
   define revocation behavior for existing sockets.
 - A profile's tsnet backend may use Tailscale's normal diagnostic facilities;
   privacy and log controls require review before release integration.
