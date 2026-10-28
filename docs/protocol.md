@@ -702,7 +702,13 @@ When a standby becomes active it sends `hosts` to its clients and adds a system
 line "host changed to `<name>`" to every text channel (`chat_message` with
 `system: true`).
 
-### 4.17 Warm sessions and takeover
+### 4.17 Dedicated cutover (host links only)
+
+Dedicated cutover is a fenced two-phase host-link exchange, not a client or public promotion API. The active source captures one exact chain head/hash and complete ordered history commitment, creates a random 32-byte nonce, and sends `dedicated_prepare {readiness}` to its prepared destination. The destination signs that readiness and returns `dedicated_proof`. The source rechecks the same commitments and the dedicated voice-empty gate while holding its mutation lease. Before its journal is durable, every failure leaves it active.
+
+After that recheck the source writes a durable `fenced` record and becomes non-electable. It signs and retransmits only the same `dedicated_commit`: `{certificate:{readiness, source_fingerprint, destination:HostInfo,signature}}`. The signature is domain-separated and covers source and destination fingerprints, server ID, nonce, all chain/history boundary fields, and every `HostInfo` field. A destination accepts it only from an authenticated chain host whose authorized public key verifies the source signature, and only when it matches its prepared record and local boundary. It first durably changes `prepared` to `committed`, then becomes active, and replies `dedicated_ack {readiness}`. Repeated commits and ACKs are idempotent. A crash before durable commit remains prepared; a crash after it restarts active. A fenced source remains fenced after restart and cannot fall back, self-elect, standby, or mint a different transition. Prepared and fenced hosts are excluded from normal standby/takeover. This does not alter ordinary failover.
+
+### 4.18 Warm sessions and takeover
 
 A **warm session** is a client's second connection, to the standby. It lets the
 client switch hosts without a full login.

@@ -92,6 +92,7 @@ const (
 	TypeDedicatedPrepare = "dedicated_prepare"
 	TypeDedicatedProof   = "dedicated_proof"
 	TypeDedicatedAck     = "dedicated_ack"
+	TypeDedicatedCommit  = "dedicated_commit"
 	TypeHandover         = "handover"
 	TypeWarmOffer        = "warm_offer"
 	TypeWarmAnswer       = "warm_answer"

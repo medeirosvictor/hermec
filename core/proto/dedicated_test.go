@@ -45,6 +45,31 @@ func TestDedicatedReadinessIsDomainSeparatedAndNonceBound(t *testing.T) {
 	}
 }
 
+func TestDedicatedCutoverBindsBothHostsAndHostInfo(t *testing.T) {
+	source, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := DedicatedReadiness{ServerID: "server", DestinationFingerprint: identity.Fingerprint(destination.PublicKey()), ChainHeadHash: make([]byte, 32), HistoryHash: make([]byte, 32), TransitionNonce: make([]byte, DedicatedTransitionNonceSize)}
+	dst := HostInfo{Fingerprint: r.DestinationFingerprint, Name: "vps", Addrs: []string{"wss://vps.example"}, Priority: 2}
+	sig, err := SignDedicatedCutover(source, r, identity.Fingerprint(source.PublicKey()), dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := DedicatedCertificate{Readiness: r, SourceFingerprint: identity.Fingerprint(source.PublicKey()), Destination: dst, Signature: sig}
+	if !VerifyDedicatedCutover(source.PublicKey(), cert) {
+		t.Fatal("valid cutover rejected")
+	}
+	cert.Destination.Addrs[0] = "wss://attacker.example"
+	if VerifyDedicatedCutover(source.PublicKey(), cert) {
+		t.Fatal("changed destination host info accepted")
+	}
+}
+
 func TestDedicatedReadinessBounds(t *testing.T) {
 	key, err := identity.Generate()
 	if err != nil {

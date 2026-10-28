@@ -22,6 +22,7 @@ const (
 )
 
 const dedicatedReadinessDomain = "hermec-dedicated-readiness-v1\x00"
+const dedicatedCutoverDomain = "hermec-dedicated-cutover-v1\x00"
 
 // DedicatedReadiness is the public, replay-resistant statement a prepared
 // destination signs. ChainHead is the signed-chain sequence; HistoryLastID
@@ -144,9 +145,87 @@ type DedicatedPrepare struct {
 	Readiness DedicatedReadiness `json:"readiness"`
 }
 
-// DedicatedAck is sent only after the active source verified a proof. Keeping
-// the acknowledgement explicit prevents a destination crash/restart from
-// mistaking a locally generated proof for a completed preparation.
+// DedicatedCertificate is the source's one-use, signed authority to activate
+// a prepared destination. It binds both host identities, the exact mirrored
+// state, nonce, and the address clients must use. It is deliberately not a
+// generic host promotion token.
+type DedicatedCertificate struct {
+	Readiness         DedicatedReadiness `json:"readiness"`
+	SourceFingerprint string             `json:"source_fingerprint"`
+	Destination       HostInfo           `json:"destination"`
+	Signature         []byte             `json:"signature"`
+}
+
+// DedicatedCutover signs an unambiguous certificate body using the active
+// source's host key.
+func SignDedicatedCutover(key *identity.Identity, r DedicatedReadiness, source string, destination HostInfo) ([]byte, error) {
+	if key == nil || source == "" || destination.Fingerprint != r.DestinationFingerprint {
+		return nil, errors.New("proto: invalid dedicated cutover identities")
+	}
+	b, err := DedicatedReadinessBytes(r)
+	if err != nil {
+		return nil, err
+	}
+	b = append([]byte(dedicatedCutoverDomain), b...)
+	for _, s := range []string{source, destination.Fingerprint, destination.Name} {
+		var n [4]byte
+		binary.BigEndian.PutUint32(n[:], uint32(len(s)))
+		b = append(b, n[:]...)
+		b = append(b, s...)
+	}
+	var n [4]byte
+	binary.BigEndian.PutUint32(n[:], uint32(len(destination.Addrs)))
+	b = append(b, n[:]...)
+	for _, a := range destination.Addrs {
+		binary.BigEndian.PutUint32(n[:], uint32(len(a)))
+		b = append(b, n[:]...)
+		b = append(b, a...)
+	}
+	var p [8]byte
+	binary.BigEndian.PutUint64(p[:], uint64(destination.Priority))
+	b = append(b, p[:]...)
+	return key.Sign(b), nil
+}
+
+// VerifyDedicatedCutover verifies a certificate against the already authorized
+// source host key; the caller must additionally ensure that key is authorized.
+func VerifyDedicatedCutover(pub ed25519.PublicKey, c DedicatedCertificate) bool {
+	if c.SourceFingerprint != identity.Fingerprint(pub) || c.Destination.Fingerprint != c.Readiness.DestinationFingerprint || len(c.Signature) != ed25519.SignatureSize {
+		return false
+	}
+	// Recreate the unsigned bytes without possessing a private key.
+	b, err := DedicatedReadinessBytes(c.Readiness)
+	if err != nil {
+		return false
+	}
+	b = append([]byte(dedicatedCutoverDomain), b...)
+	for _, s := range []string{c.SourceFingerprint, c.Destination.Fingerprint, c.Destination.Name} {
+		var n [4]byte
+		binary.BigEndian.PutUint32(n[:], uint32(len(s)))
+		b = append(b, n[:]...)
+		b = append(b, s...)
+	}
+	var n [4]byte
+	binary.BigEndian.PutUint32(n[:], uint32(len(c.Destination.Addrs)))
+	b = append(b, n[:]...)
+	for _, a := range c.Destination.Addrs {
+		binary.BigEndian.PutUint32(n[:], uint32(len(a)))
+		b = append(b, n[:]...)
+		b = append(b, a...)
+	}
+	var p [8]byte
+	binary.BigEndian.PutUint64(p[:], uint64(c.Destination.Priority))
+	b = append(b, p[:]...)
+	return identity.Verify(pub, b, c.Signature)
+}
+
+// DedicatedCommit is sent only after the source has durably fenced itself.
+type DedicatedCommit struct {
+	Certificate DedicatedCertificate `json:"certificate"`
+}
+
+// DedicatedAck is the idempotent destination receipt sent only after its
+// committed record is durable.
 type DedicatedAck struct {
 	Readiness DedicatedReadiness `json:"readiness"`
 }
