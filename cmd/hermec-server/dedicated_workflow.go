@@ -27,6 +27,48 @@ func dedicatedHostPublic(keyPath string, out io.Writer) error {
 	return nil
 }
 
+// dedicatedAttestationStatus and dedicatedAttestationReset operate on the
+// active source sidecar. The local authorized host key is the operator credential;
+// server-side checks also refuse any source that is prepared, fenced, or has a
+// durable cutover certificate.
+func dedicatedAttestationStatus(keyPath, chainPath string, reset bool, out io.Writer) error {
+	if err := requirePrivateFile(keyPath); err != nil {
+		return fmt.Errorf("host identity: %w", err)
+	}
+	if err := requirePrivateFile(chainPath); err != nil {
+		return fmt.Errorf("signed chain: %w", err)
+	}
+	key, err := identity.Load(keyPath)
+	if err != nil {
+		return fmt.Errorf("host identity: %w", err)
+	}
+	c, err := chain.Load(chainPath)
+	if err != nil {
+		return fmt.Errorf("signed chain: %w", err)
+	}
+	s := server.New(server.Config{HostKey: key, Chain: c, DedicatedTransitionPath: dedicatedTransitionPath(chainPath)})
+	operator := identity.Fingerprint(key.PublicKey())
+	if reset {
+		if err := s.ResetDedicatedReadinessAttestation(operator); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, "dedicated readiness attestation: reset")
+		fmt.Fprintf(out, "recovery: %s\n", server.DedicatedRecoveryRetryPreparation.Guidance())
+		return nil
+	}
+	ready, err := s.InspectDedicatedReadinessAttestation(operator)
+	if err != nil {
+		return err
+	}
+	if ready == nil {
+		fmt.Fprintln(out, "dedicated readiness attestation: none")
+	} else {
+		fmt.Fprintf(out, "dedicated readiness attestation: present\ndestination fingerprint: %s\ntransition nonce: %x\n", ready.DestinationFingerprint, ready.TransitionNonce)
+	}
+	fmt.Fprintf(out, "recovery: %s\n", server.DedicatedRecoveryRetryPreparation.Guidance())
+	return nil
+}
+
 func dedicatedStatus(_ string, keyPath, chainPath, historyPath string, out io.Writer) error {
 	r, err := server.LoadDedicatedTransition(dedicatedTransitionPath(chainPath))
 	if errors.Is(err, os.ErrNotExist) {

@@ -95,8 +95,10 @@ host's trusted public TLS URL and its already-known server ID:
       -dedicated-prepare wss://active.example:7697/ -dedicated-server-id SERVER_ID
 
 The command authenticates using only the VPS host key, pins the URL's server
-ID, mirrors and attests the exact chain/history boundary, records `prepared`,
-and exits. It prints no password or private key. Start the service afterwards:
+ID, mirrors and attests the exact chain/history boundary, records `preparing`
+before waiting for the source ACK, then records `prepared`, and exits. It
+prints no password or private key. A crash in either state remains passive and
+may retry only the saved URL, boundary, and nonce. Start the service afterwards:
 
     sudo systemctl start hermec-server
     sudo -u hermec /usr/local/bin/hermec-server -config /var/lib/hermec/server.toml -dedicated-status
@@ -132,10 +134,19 @@ saved URL and exact boundary:
     sudo -u hermec /usr/local/bin/hermec-server -config /var/lib/hermec/server.toml -dedicated-status
     sudo -u hermec /usr/local/bin/hermec-server -config /var/lib/hermec/server.toml -dedicated-retry
 
-`-dedicated-retry` refuses records other than a validated `prepared` record,
-never generates a nonce, and never activates a host. `-dedicated-status`
-validates and reports `prepared`, `fenced`, or `committed`; a malformed or
-unrelated record is an error requiring operator investigation.
+`-dedicated-retry` accepts only a validated `preparing` or `prepared` record,
+never generates a nonce, changes neither the pinned source URL nor the exact
+boundary, and never activates a host. `-dedicated-status` validates and reports
+`preparing`, `prepared`, `fenced`, or `committed`; a malformed or unrelated
+record is an error requiring operator investigation.
+
+If the active source's readiness attestation becomes obsolete because its
+chain, history, or destination authorization changed, leave it active and
+inspect it with `-dedicated-attestation-status`. The authenticated, authorized
+local source operator may run `-dedicated-attestation-reset` to abort the obsolete
+attempt; it refuses prepared/fenced sources and any state with a cutover
+certificate or fence. It clears the old nonce before another preparation, so
+an old destination cannot replay it. Do not remove journal files manually.
 
 ## Remote reachability verifier
 

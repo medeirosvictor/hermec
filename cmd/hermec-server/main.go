@@ -88,7 +88,7 @@ func main() {
 		f.history = filepath.Join(dir, "history.jsonl")
 	}
 	if f.dedicatedHostKey {
-		if f.dedicatedStatus || f.dedicatedPrepare != "" || f.dedicatedRetry {
+		if f.dedicatedStatus || f.dedicatedPrepare != "" || f.dedicatedRetry || f.dedicatedAttestationStatus || f.dedicatedAttestationReset {
 			log.Fatal("-dedicated-host-key cannot be combined with another dedicated workflow flag")
 		}
 		if err := dedicatedHostPublic(f.key, os.Stdout); err != nil {
@@ -98,6 +98,15 @@ func main() {
 	}
 	if f.dedicatedPrepare != "" && f.dedicatedRetry {
 		log.Fatal("-dedicated-prepare and -dedicated-retry cannot be combined")
+	}
+	if f.dedicatedAttestationStatus || f.dedicatedAttestationReset {
+		if f.dedicatedStatus || f.dedicatedPrepare != "" || f.dedicatedRetry {
+			log.Fatal("-dedicated-attestation-status/-dedicated-attestation-reset cannot be combined with another dedicated workflow flag")
+		}
+		if err := dedicatedAttestationStatus(f.key, f.chain, f.dedicatedAttestationReset, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
 	}
 	if f.dedicatedStatus {
 		if f.dedicatedPrepare != "" || f.dedicatedRetry {

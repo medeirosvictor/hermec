@@ -21,16 +21,17 @@ const knownHostsFile = "known_hosts.txt"
 
 // flags are the command line options.
 type flags struct {
-	config, key, chain, history                       string
-	initDedicated                                     string
-	dedicatedPrepare                                  string
-	dedicatedServerID                                 string
-	dedicatedHostKey, dedicatedStatus, dedicatedRetry bool
-	printConfig, applyConfig                          bool
-	check, showVersion                                bool
-	unsafePublicWS                                    bool
-	advertise, hosts                                  []string
-	name                                              string
+	config, key, chain, history                           string
+	initDedicated                                         string
+	dedicatedPrepare                                      string
+	dedicatedServerID                                     string
+	dedicatedHostKey, dedicatedStatus, dedicatedRetry     bool
+	dedicatedAttestationStatus, dedicatedAttestationReset bool
+	printConfig, applyConfig                              bool
+	check, showVersion                                    bool
+	unsafePublicWS                                        bool
+	advertise, hosts                                      []string
+	name                                                  string
 }
 
 // parseFlags parses the command line (without the program name).
@@ -44,7 +45,9 @@ func parseFlags(args []string) (flags, error) {
 	fs.BoolVar(&f.dedicatedStatus, "dedicated-status", false, "print durable dedicated cutover status and recovery guidance, then exit")
 	fs.StringVar(&f.dedicatedPrepare, "dedicated-prepare", "", "pinned wss URL of the active host for dedicated preparation")
 	fs.StringVar(&f.dedicatedServerID, "dedicated-server-id", "", "pinned active server ID required by -dedicated-prepare")
-	fs.BoolVar(&f.dedicatedRetry, "dedicated-retry", false, "retry the same prepared transition; never activates a host")
+	fs.BoolVar(&f.dedicatedRetry, "dedicated-retry", false, "retry the same preparing or prepared transition; never activates a host")
+	fs.BoolVar(&f.dedicatedAttestationStatus, "dedicated-attestation-status", false, "inspect the active source's durable readiness attestation, then exit")
+	fs.BoolVar(&f.dedicatedAttestationReset, "dedicated-attestation-reset", false, "abort an obsolete active-source readiness attestation; refuses after any cutover certificate or fence")
 	fs.BoolVar(&f.printConfig, "print-config", false, "print the effective config (password redacted) and exit")
 	fs.BoolVar(&f.check, "check", false, "validate config, TLS and persistent state without binding sockets")
 	fs.BoolVar(&f.showVersion, "version", false, "print the version and exit")
@@ -61,6 +64,9 @@ func parseFlags(args []string) (flags, error) {
 	}
 	if f.dedicatedPrepare != "" && f.dedicatedRetry {
 		return flags{}, errors.New("-dedicated-prepare and -dedicated-retry cannot be combined")
+	}
+	if f.dedicatedAttestationStatus && f.dedicatedAttestationReset {
+		return flags{}, errors.New("-dedicated-attestation-status and -dedicated-attestation-reset cannot be combined")
 	}
 	f.advertise = cleanURLs(splitTrim(advertise, ","), "-advertise")
 	f.hosts = cleanURLs(splitTrim(hosts, ","), "-hosts")

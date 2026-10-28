@@ -24,6 +24,16 @@ func (s *Server) restoreDedicatedTransition() error {
 		return err
 	}
 	switch r.State {
+	case DedicatedTransitionPreparing:
+		// A pre-proof crash is still a durable, exact destination intent. It
+		// must validate the same local boundary as a completed preparation and
+		// remain passive; link retry is restricted to its pinned URL/nonce.
+		if err := ValidateDedicatedPreparing(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
+			return err
+		}
+		s.prepared.Store(true)
+		s.modeState.mode.Store(int32(ModePrepared))
+		return nil
 	case DedicatedTransitionPrepared:
 		if err := ValidateDedicatedPrepared(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
 			return err

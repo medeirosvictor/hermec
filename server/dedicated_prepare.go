@@ -109,6 +109,14 @@ func (c *conn) handleDedicatedProof(env proto.Envelope) {
 		c.sendError(proto.CodeBadRequest, "source history moved during preparation")
 		return
 	}
+	// Recheck authorization immediately before persistence. A host removed or
+	// banned after the link was admitted must never acquire a durable Ready
+	// attestation.
+	state := s.chain.State()
+	if !state.IsHost(c.pub) || identity.Fingerprint(c.pub) != want.DestinationFingerprint {
+		c.sendError(proto.CodeForbidden, "destination is no longer an authorized host")
+		return
+	}
 	// Persist the source-side attestation before the ACK. A restart can then
 	// acknowledge only this destination, nonce and exact boundary.
 	if err := s.attestDedicatedReadiness(*want); err != nil {

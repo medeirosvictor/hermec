@@ -180,7 +180,7 @@ func checkDedicatedState(cfg server.Config, keyPath, chainPath, historyPath stri
 			}
 			return fmt.Errorf("dedicated transition is invalid or stale: %w; %s", err, guidance)
 		}
-		fmt.Fprintf(out, "dedicated prepared transition recognized; %s\n", r.Recovery.Guidance())
+		fmt.Fprintf(out, "dedicated %s transition recognized; %s\n", r.State, r.Recovery.Guidance())
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("dedicated transition record: %w", err)
 	}

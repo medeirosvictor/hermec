@@ -151,6 +151,35 @@ func TestValidateDedicatedPreparedChecksLocalBoundary(t *testing.T) {
 	}
 }
 
+func TestRestorePreparingTransitionRemainsPassiveAndExact(t *testing.T) {
+	c, _, destination := twoHostChain(t)
+	h, err := OpenHistory("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	head := c.Head()
+	headHash := head.Hash()
+	_, historyHash := proto.DedicatedHistoryCommitment(nil)
+	path := filepath.Join(t.TempDir(), DedicatedTransitionFile)
+	r := DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionPreparing, ServerID: c.ID().String(), DestinationFingerprint: identity.Fingerprint(destination.PublicKey()), ChainHead: head.Seq, ChainHeadHash: headHash[:], HistoryHash: historyHash, TransitionNonce: bytes.Repeat([]byte{1}, proto.DedicatedTransitionNonceSize), Recovery: DedicatedRecoveryRetryPreparation, ActiveWSSURL: "wss://source.example/"}
+	if err := SaveDedicatedTransition(path, r); err != nil {
+		t.Fatal(err)
+	}
+	s := New(Config{HostKey: destination, Chain: c, DedicatedTransitionPath: path})
+	s.hist = h
+	if err := s.restoreDedicatedTransition(); err != nil {
+		t.Fatal(err)
+	}
+	if s.Mode() != ModePrepared || !s.Prepared() {
+		t.Fatalf("preparing recovery activated destination: mode=%v prepared=%v", s.Mode(), s.Prepared())
+	}
+	s.SetMode(ModeActive) // the public guard must retain passive mode
+	if s.Mode() != ModePrepared {
+		t.Fatal("prepared destination accepted activation")
+	}
+}
+
 func TestTerminalTransitionVerifiesAuthorizedSourceSignature(t *testing.T) {
 	c, source, destination := twoHostChain(t)
 	h, err := OpenHistory("")
