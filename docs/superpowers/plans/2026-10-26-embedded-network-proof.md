@@ -203,8 +203,8 @@ checks passed. As in Task 2, no separate RED transcript was retained.
 
 ### Task 4: Headless end-to-end harness and repeatable acceptance procedure
 
-**Files:** Create `tools/embedded-probe/main.go`, `scenario.go`,
-`scenario_test.go`; extend its README with exact operator steps.
+**Files:** Create `tools/embedded-probe/cmd/embedded-probe/main.go`,
+`scenario.go`, `scenario_test.go`; extend its README with exact operator steps.
 
 **Interfaces:** `RunScenario(ctx context.Context, cfg ScenarioConfig) (ScenarioReport, error)`.
 `ScenarioConfig` supplies three distinct temporary profiles, generated test-only
@@ -212,27 +212,36 @@ HERMEC identities, and explicit peer addresses/coordination URL. The report
 contains per-check result/duration, candidate addresses and resource measures;
 never private keys, auth URLs or account tokens. Default port is 17697.
 
-- [ ] Write a provider-backed loopback `TestScenarioRequiresMediaBothWays`:
+- [x] Write a provider-backed loopback `TestScenarioRequiresMediaBothWays`:
   encoded synthetic Opus and VP8 fixtures flow through actual HERMEC client/SFU
   paths and receiver callbacks. A receive-only success cannot mark the scenario
   passed. Require camera and screen delivery independently, not just RTP bytes.
-- [ ] Write `TestScenarioStandbyIsNotReadyFromSignalingOnly`: a standby with
+- [x] Write `TestScenarioStandbyIsNotReadyFromSignalingOnly`: a standby with
   blocked media is reported unready. For an all-working fixture, authenticated
   takeover retains the original group ID, mute flag, active camera, screen and
   selected viewer. Include bounded cleanup after cancellation mid-join.
-- [ ] Run `go test ./...` in the probe module; observe RED. Implement scenario
+- [x] Run `go test ./...` in the probe module; observe RED. Implement scenario
   orchestration using root public APIs, without app GUI/capture devices and
   without exporting test-only internals from production packages.
-- [ ] Add CLI flags `-state`, `-control-url`, `-hostname`, `-role`, `-peers`,
+- [x] Add CLI flags `-state`, `-control-url`, `-hostname`, `-role`, `-peers`,
   `-port`, `-report`; require explicit `-state`. Role is host/client/standby.
   Reject non-empty state directories not created by this probe. Enrollment URLs
   are displayed only as an interactive action, never written to report files.
-- [ ] Write the manual test matrix: disposable Tailscale and Headscale networks,
+- [x] Write the manual test matrix: disposable Tailscale and Headscale networks,
   no installed system client; direct and relay paths; two concurrent profiles;
   restart, denied enrollment and unavailable coordination. Require operator
   consent before real enrollment; record unavailable rows as NOT RUN.
-- [ ] Run harness tests and commit
+- [x] Run harness tests and commit
   `test: prove embedded call media and standby lifecycle`.
+
+Execution note (2026-10-28): the loopback harness uses the public HERMEC
+server/client APIs with three explicit providers. It requires audio, decoded
+camera and decoded selected-screen frames in both directions, verifies warm
+media readiness separately from signaling, then shuts down the primary and
+checks takeover, mute and media continuation. Cancellation releases both TCP
+and UDP ports. Nested vet/race tests passed; CLI binaries cross-built for
+Windows/Linux amd64/arm64 at 37-41 MB. No disposable coordination network was
+available, so every real Tailscale/Headscale matrix row remains NOT RUN.
 
 ### Task 5: Record measurements and produce the next phase plans
 

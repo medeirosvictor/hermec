@@ -170,6 +170,18 @@ func validUnique(in []netip.Addr) []netip.Addr {
 	return out
 }
 
+// Addresses returns this profile's assigned overlay addresses.
+func (n *Node) Addresses() []netip.Addr { return append([]netip.Addr(nil), n.local...) }
+
+// PeerAddresses returns the peer addresses admitted by the startup snapshot.
+func (n *Node) PeerAddresses() []netip.Addr {
+	out := make([]netip.Addr, 0, len(n.peers))
+	for ip := range n.peers {
+		out = append(out, ip)
+	}
+	return out
+}
+
 func (n *Node) Close() error {
 	n.closeOnce.Do(func() {
 		n.closeErr = n.backend.Close()

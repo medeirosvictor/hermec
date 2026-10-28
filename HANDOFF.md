@@ -46,17 +46,22 @@ User-facing docs: [README.md](README.md), [docs/protocol.md](docs/protocol.md),
 Local work is on `fix/readiness-cleanup` in `.worktrees/readiness-cleanup`,
 rebased onto released `v0.7.0`; it has not been merged or pushed.
 
-- Embedded-network proof Tasks 1 through 3 are complete. Client signaling,
+- Embedded-network proof Tasks 1 through 4 are complete. Client signaling,
   active and warm peers, server TCP/UDP listeners, WebRTC APIs and authenticated
   host links retain an explicit per-instance provider. The isolated nested probe
   pins tsnet v1.104.2 and supplies profile-only dialing/listening plus a Pion
   adapter. It rejects host/LAN binds, unknown destinations, unsafe server
   options and missing profile addresses instead of falling back. Fake-backend
   tests cover separate state, IPv4/IPv6 interfaces, UDP round trips, deadlines,
-  close unblocking, late cleanup and startup rollback. Root focused tests and
-  nested vet/race plus Windows/Linux compile checks passed.
-- **Resume at Task 4: the headless end-to-end harness.** No real tsnet node was
-  enrolled and no user-facing hosting flow exists yet. Progress/briefs/reports are under the ignored
+  close unblocking, late cleanup and startup rollback. The headless public-API
+  scenario additionally requires bidirectional audio, decoded cameras and
+  selected screens, rejects signaling-only standby readiness, and verifies
+  mute/media continuation through takeover. Root focused tests and nested
+  vet/race plus Windows/Linux cross-builds passed.
+- **Resume at Task 5: evidence, measurements and production phase plans.** No
+  real tsnet node was enrolled, so Tailscale/Headscale direct/relay rows remain
+  NOT RUN and embedded networking is not approved for user-facing shipping.
+  No hosting UI exists yet. Progress/briefs/reports are under the ignored
   `.superpowers/sdd/embedded-network-proof/` in this worktree; do not redispatch
   completed tasks after resuming. Victor chose local tests first, real-network
   checks later. No real network enrollment is authorized during this run.
