@@ -262,6 +262,23 @@ func TestStandbyPickAndHostsBroadcast(t *testing.T) {
 	hostsUntil(t, cl, func(h proto.Hosts) bool { return h.Standby != nil && h.Standby.Fingerprint == fpC })
 }
 
+func TestPreparedLinkNeverDisplacesStandby(t *testing.T) {
+	b, cc := mustID(t), mustID(t)
+	c, a := hostChain(t, b, cc)
+	s, url := startLinkServer(t, c, a, "pw")
+	prepared := linkUp(t, url, b, proto.LinkHello{Name: "prepared", Prepared: true})
+	defer prepared.Close()
+	real := linkUp(t, url, cc, proto.LinkHello{Name: "real"})
+	defer real.Close()
+	fpC := identity.Fingerprint(cc.PublicKey())
+	waitFor(t, "real standby", func() bool { return standbyFP(s) == fpC })
+	for _, p := range s.Links() {
+		if p.Fingerprint == identity.Fingerprint(b.PublicKey()) && !p.Prepared {
+			t.Fatal("prepared capability was not retained on link")
+		}
+	}
+}
+
 func TestStandbySkipsUnreachable(t *testing.T) {
 	b, cc := mustID(t), mustID(t)
 	c, a := hostChain(t, b, cc)

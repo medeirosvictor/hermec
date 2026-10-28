@@ -2,6 +2,7 @@ package proto
 
 import (
 	"crypto/ed25519"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -90,6 +91,11 @@ func SignDedicatedReadiness(key *identity.Identity, r DedicatedReadiness) ([]byt
 
 // VerifyDedicatedReadiness verifies a destination readiness signature.
 func VerifyDedicatedReadiness(pub ed25519.PublicKey, r DedicatedReadiness, sig []byte) bool {
+	// The key that verifies the proof must be the destination named in the
+	// signed statement; otherwise a valid proof from any key could be relayed.
+	if subtle.ConstantTimeCompare([]byte(identity.Fingerprint(pub)), []byte(r.DestinationFingerprint)) != 1 {
+		return false
+	}
 	b, err := DedicatedReadinessBytes(r)
 	return err == nil && identity.Verify(pub, b, sig)
 }

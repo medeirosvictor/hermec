@@ -42,6 +42,11 @@ func (c *conn) handleTakeover() {
 	}
 	t := &s.takeover
 	t.mu.Lock()
+	if s.Prepared() {
+		t.mu.Unlock()
+		c.sendError(proto.CodeNotStandby, "this host is not a standby")
+		return
+	}
 	promotedNow := false
 	if s.Mode() != ModeActive {
 		if s.Mode() != ModeStandby || t.standby == nil || t.alive == nil || !t.standby() {

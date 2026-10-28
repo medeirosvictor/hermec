@@ -85,6 +85,7 @@ func dialLinkOpts(ctx context.Context, url string, s *Server, full bool) (*Link,
 		ChainSeq: s.chain.Head().Seq,
 		Addrs:    s.advertise(),
 		Name:     s.cfg.HostName,
+		Prepared: s.Prepared(),
 	}
 	if s.hist != nil && !full {
 		hello.HistoryLastTS, hello.HistoryLastID = s.hist.Last()

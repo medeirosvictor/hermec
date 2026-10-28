@@ -192,7 +192,7 @@ func (h *Host) relink(to proto.HostInfo, urls []string, full bool) *Link {
 func (h *Host) handbackCandidate() *LinkPeer {
 	mine := h.srv.selfInfo().Priority
 	for _, p := range h.srv.Links() { // best priority first
-		if p.Priority > 0 && p.Priority < mine && len(p.Addrs) > 0 {
+		if !p.Prepared && p.Priority > 0 && p.Priority < mine && len(p.Addrs) > 0 {
 			return &p
 		}
 	}

@@ -91,10 +91,6 @@ const (
 	TypeWarmOffer      = "warm_offer"
 	TypeWarmAnswer     = "warm_answer"
 	TypeWarmCandidate  = "warm_candidate"
-
-	// TypeDedicatedReadiness carries the destination's signed, nonce-bound
-	// preparation attestation. Activation is intentionally a later protocol.
-	TypeDedicatedReadiness = "dedicated_readiness"
 )
 
 // CodeNotSharing is the error code for a watch whose target is not sharing in
@@ -349,6 +345,9 @@ type LinkHello struct {
 	// Yield is set on the link a split-brain loser opens to merge into the
 	// winner: the loser's load, so the winner can check it still wins.
 	Yield *YieldLoad `json:"yield,omitempty"`
+	// Prepared marks a passive dedicated destination. It may receive mirrored
+	// state but must never be selected or advertised as the ordinary standby.
+	Prepared bool `json:"prepared,omitempty"`
 }
 
 // YieldLoad is a host's load for the split-brain yield rule.

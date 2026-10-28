@@ -46,6 +46,16 @@ func (s *Server) Mode() Mode { return Mode(s.modeState.mode.Load()) }
 // SetMode switches the host's mode. Promoting warm sessions is the caller's
 // job (promoteWarmLocked).
 func (s *Server) SetMode(m Mode) {
+	if m == ModePrepared {
+		s.prepared.Store(true)
+	}
+	// A prepared destination can only become active through
+	// CommitDedicatedActivation after a future transition commit. This guard is
+	// deliberately here (rather than only in Host), because callers of Server
+	// include takeover, rejoin, and tests.
+	if m == ModeActive && s.prepared.Load() {
+		return
+	}
 	prev := Mode(s.modeState.mode.Swap(int32(m)))
 	if m != ModeActive {
 		s.promoted.Store(false)
@@ -59,6 +69,24 @@ func (s *Server) SetMode(m Mode) {
 
 // SetHosts sets the host list a refused full auth is answered with.
 func (s *Server) SetHosts(h proto.Hosts) { s.modeState.hosts.Store(&h) }
+
+// Prepared reports whether this server is still a passive dedicated
+// destination.
+func (s *Server) Prepared() bool { return s.prepared.Load() }
+
+// CommitDedicatedActivation is the sole activation seam for a prepared
+// destination. A future committed dedicated-transition implementation must
+// call it only after durably verifying its commit record.
+func (s *Server) CommitDedicatedActivation() bool {
+	t := &s.takeover
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !s.prepared.CompareAndSwap(true, false) {
+		return false
+	}
+	s.SetMode(ModeActive)
+	return true
+}
 
 // hostsInfo is the host list for a hosts frame; with none set, this host alone.
 func (s *Server) hostsInfo() proto.Hosts {

@@ -118,6 +118,9 @@ type Config struct {
 	Chain *chain.Chain
 	// Mode is the host's starting mode. The zero value is ModeActive.
 	Mode Mode
+	// Prepared makes this a passive dedicated destination until an explicit
+	// committed-transition activation releases it.
+	Prepared bool
 	// HostName and Advertise describe this host to its peers and clients: a
 	// display name and the addresses it can be dialed at.
 	HostName  string
@@ -180,6 +183,7 @@ type Server struct {
 	takeover   takeoverState
 	load       func() (voice, clients int)      // the host load for the yield rule; tests replace it
 	promoted   atomic.Bool                      // takeover promoted this host; reset when it leaves active mode
+	prepared   atomic.Bool                      // committed transition has not explicitly activated this destination
 	warmSlots  int                              // warm sessions holding a slot of the warm cap; guarded by mu
 	warmMu     sync.Mutex                       // guards warmPeers
 	warmPeers  map[*conn]*webrtc.PeerConnection // data-channel-only PCs of warm clients; survive promotion until voice_join adopts them
@@ -246,7 +250,12 @@ func New(cfg Config) *Server {
 		s.logf("server: WARNING: %v; clients will refuse this host", err)
 	}
 	s.load = s.measureLoad
-	s.modeState.mode.Store(int32(cfg.Mode))
+	s.prepared.Store(cfg.Prepared || cfg.Mode == ModePrepared)
+	if s.prepared.Load() {
+		s.modeState.mode.Store(int32(ModePrepared))
+	} else {
+		s.modeState.mode.Store(int32(cfg.Mode))
+	}
 	s.ipConns = make(map[string]int)
 	s.fails = make(map[string]*authFail)
 	s.sent = make(map[string]*chainSend)

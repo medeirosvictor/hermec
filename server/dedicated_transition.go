@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"github.com/medeirosvictor/hermec/core/proto"
 )
@@ -23,9 +22,30 @@ const (
 	DedicatedTransitionCommitted DedicatedTransitionState = "committed"
 )
 
+// DedicatedRecoveryCode selects fixed operator guidance. It is persisted
+// instead of caller-supplied text so transition records cannot leak secrets.
+type DedicatedRecoveryCode string
+
+const (
+	DedicatedRecoveryRetryPreparation DedicatedRecoveryCode = "retry_preparation"
+	DedicatedRecoveryInspectCommit    DedicatedRecoveryCode = "inspect_commit"
+)
+
+// Guidance returns the fixed, safe operator instruction for this code.
+func (c DedicatedRecoveryCode) Guidance() string {
+	switch c {
+	case DedicatedRecoveryRetryPreparation:
+		return "Keep the current host active; retry preparation."
+	case DedicatedRecoveryInspectCommit:
+		return "Keep the current host active; inspect the committed transition before retrying."
+	default:
+		return ""
+	}
+}
+
 // DedicatedTransitionRecord is the local, restart-safe record for a VPS
 // transition. All fields are public identifiers, transfer boundaries, state,
-// or operator-facing recovery text. It intentionally has no credential or
+// or a fixed recovery code. It intentionally has no credential or
 // filesystem-path fields.
 type DedicatedTransitionRecord struct {
 	Version                int                      `json:"version"`
@@ -36,10 +56,10 @@ type DedicatedTransitionRecord struct {
 	HistoryLastID          string                   `json:"history_last_id,omitempty"`
 	HistoryLastUnixMilli   int64                    `json:"history_last_unix_milli,omitempty"`
 	TransitionNonce        []byte                   `json:"transition_nonce"`
-	Recovery               string                   `json:"recovery"`
+	Recovery               DedicatedRecoveryCode    `json:"recovery"`
 }
 
-const maxDedicatedRecoveryText = 1024
+const maxDedicatedTransitionBytes = 16 << 10
 
 func (r DedicatedTransitionRecord) validate() error {
 	if r.Version != 1 {
@@ -48,14 +68,8 @@ func (r DedicatedTransitionRecord) validate() error {
 	if r.State != DedicatedTransitionPrepared && r.State != DedicatedTransitionCommitted {
 		return errors.New("server: invalid dedicated transition state")
 	}
-	if len(r.Recovery) == 0 || len(r.Recovery) > maxDedicatedRecoveryText || strings.ContainsRune(r.Recovery, '\x00') {
-		return errors.New("server: invalid dedicated transition recovery text")
-	}
-	lower := strings.ToLower(r.Recovery)
-	for _, secret := range []string{"password", "private key", "private_key", "password_key", "ed25519 seed"} {
-		if strings.Contains(lower, secret) {
-			return errors.New("server: dedicated transition recovery text must not contain credentials")
-		}
+	if r.Recovery.Guidance() == "" {
+		return errors.New("server: invalid dedicated transition recovery code")
 	}
 	return (proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, TransitionNonce: r.TransitionNonce}).Validate()
 }
@@ -110,19 +124,37 @@ func SaveDedicatedTransition(path string, r DedicatedTransitionRecord) error {
 // LoadDedicatedTransition loads a complete private transition record. On
 // POSIX it rejects a record readable by group or other users.
 func LoadDedicatedTransition(path string) (DedicatedTransitionRecord, error) {
-	info, err := os.Stat(path)
+	// Lstat rejects the common symlink attack. Opening once and reading that
+	// descriptor avoids the stat/read replacement race; SameFile also rejects
+	// replacement between Lstat and Open where the platform can identify it.
+	before, err := os.Lstat(path)
 	if err != nil {
 		return DedicatedTransitionRecord{}, err
 	}
-	if !info.Mode().IsRegular() {
+	if !before.Mode().IsRegular() {
 		return DedicatedTransitionRecord{}, errors.New("server: dedicated transition is not a regular file")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return DedicatedTransitionRecord{}, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return DedicatedTransitionRecord{}, err
+	}
+	if !info.Mode().IsRegular() || !os.SameFile(before, info) {
+		return DedicatedTransitionRecord{}, errors.New("server: dedicated transition changed while opening")
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		return DedicatedTransitionRecord{}, errors.New("server: dedicated transition is not private")
 	}
-	data, err := os.ReadFile(path)
+	data, err := io.ReadAll(io.LimitReader(f, maxDedicatedTransitionBytes+1))
 	if err != nil {
 		return DedicatedTransitionRecord{}, err
+	}
+	if len(data) > maxDedicatedTransitionBytes {
+		return DedicatedTransitionRecord{}, errors.New("server: dedicated transition is too large")
 	}
 	var r DedicatedTransitionRecord
 	dec := json.NewDecoder(bytes.NewReader(data))

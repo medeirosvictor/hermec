@@ -17,7 +17,7 @@ func TestDedicatedReadinessIsDomainSeparatedAndNonceBound(t *testing.T) {
 	if _, err := rand.Read(nonce); err != nil {
 		t.Fatal(err)
 	}
-	r := DedicatedReadiness{ServerID: "server", DestinationFingerprint: "destination", ChainHead: 7, HistoryLastID: "line", HistoryLastUnixMilli: 12, TransitionNonce: nonce}
+	r := DedicatedReadiness{ServerID: "server", DestinationFingerprint: identity.Fingerprint(key.PublicKey()), ChainHead: 7, HistoryLastID: "line", HistoryLastUnixMilli: 12, TransitionNonce: nonce}
 	sig, err := SignDedicatedReadiness(key, r)
 	if err != nil {
 		t.Fatal(err)
@@ -31,6 +31,11 @@ func TestDedicatedReadinessIsDomainSeparatedAndNonceBound(t *testing.T) {
 	if VerifyDedicatedReadiness(key.PublicKey(), other, sig) {
 		t.Fatal("proof replayed for another nonce")
 	}
+	other = r
+	other.DestinationFingerprint = "another-destination"
+	if VerifyDedicatedReadiness(key.PublicKey(), other, sig) {
+		t.Fatal("proof accepted for a fingerprint other than its public key")
+	}
 	b, err := DedicatedReadinessBytes(r)
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +46,11 @@ func TestDedicatedReadinessIsDomainSeparatedAndNonceBound(t *testing.T) {
 }
 
 func TestDedicatedReadinessBounds(t *testing.T) {
-	r := DedicatedReadiness{ServerID: "s", DestinationFingerprint: "d", TransitionNonce: make([]byte, DedicatedTransitionNonceSize)}
+	key, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := DedicatedReadiness{ServerID: "s", DestinationFingerprint: identity.Fingerprint(key.PublicKey()), TransitionNonce: make([]byte, DedicatedTransitionNonceSize)}
 	p := DedicatedReadinessProof{Readiness: r, Signature: make([]byte, 64)}
 	if err := p.Validate(); err != nil {
 		t.Fatal(err)

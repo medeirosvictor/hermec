@@ -22,6 +22,7 @@ type LinkPeer struct {
 	Addrs       []string
 	Priority    int
 	LastBeat    time.Time
+	Prepared    bool // passive dedicated destination; not standby-capable
 }
 
 // Info describes the peer as a host entry.
@@ -69,6 +70,7 @@ func peerLocked(c *conn, prio int) LinkPeer {
 		Addrs:       c.link.hello.Addrs,
 		Priority:    prio,
 		LastBeat:    c.link.lastBeat,
+		Prepared:    c.link.hello.Prepared,
 	}
 }
 
@@ -99,7 +101,7 @@ func (s *Server) pickStandbyLocked() *LinkPeer {
 	var best *LinkPeer
 	for c := range s.links {
 		prio, ok := hostPriority(&st, c.pub)
-		if !ok || c.link.hello.Yield != nil { // a merge link is leaving
+		if !ok || c.link.hello.Yield != nil || c.link.hello.Prepared { // merge and prepared links cannot stand by
 			continue
 		}
 		bad := 0

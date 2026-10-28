@@ -110,9 +110,10 @@ type Host struct {
 // NewHost returns a Host for hc. Ordinary hosts start idle; a prepared host
 // starts in the passive ModePrepared regardless of any other requested mode.
 func NewHost(hc HostConfig) *Host {
-	prepared := hc.Prepared || hc.Server.Mode == ModePrepared
+	prepared := hc.Prepared || hc.Server.Prepared || hc.Server.Mode == ModePrepared
 	if prepared {
 		hc.Server.Mode = ModePrepared
+		hc.Server.Prepared = true
 	} else {
 		hc.Server.Mode = ModeIdle
 	}
@@ -482,6 +483,13 @@ func (h *Host) applyRole(l *Link) {
 // (failover) the warm sessions go live and everyone is told; a first start has
 // nothing to announce.
 func (h *Host) becomeActive(failover bool) {
+	if h.srv.Prepared() {
+		// Server state is authoritative: a Host constructed before a restart or
+		// reached through an unusual orchestration path still cannot activate.
+		h.srv.SetMode(ModePrepared)
+		h.setRole(RolePrepared, "")
+		return
+	}
 	h.mu.Lock()
 	h.link = nil
 	h.mu.Unlock()
