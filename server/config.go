@@ -53,6 +53,8 @@ type fileConfig struct {
 	VoiceChannels []string            `toml:"voice_channels"`
 	TLSCert       string              `toml:"tls_cert"`
 	TLSKey        string              `toml:"tls_key"`
+	PublicMode    bool                `toml:"public,omitempty"`
+	PublicDNS     string              `toml:"public_dns,omitempty"`
 	PublicIP      string              `toml:"public_ip"`
 	UDPPortMin    uint16              `toml:"udp_port_min"`
 	UDPPortMax    uint16              `toml:"udp_port_max"`
@@ -147,6 +149,8 @@ func LoadConfig(path string) (Config, error) {
 		seen[n] = struct{}{}
 	}
 	cfg.TLSCert, cfg.TLSKey = fc.TLSCert, fc.TLSKey
+	cfg.PublicMode = fc.PublicMode
+	cfg.PublicDNS = fc.PublicDNS
 	cfg.PublicIP = fc.PublicIP
 	cfg.UDPPortMin, cfg.UDPPortMax = fc.UDPPortMin, fc.UDPPortMax
 	if (cfg.UDPPortMin == 0) != (cfg.UDPPortMax == 0) || cfg.UDPPortMin > cfg.UDPPortMax {
@@ -254,6 +258,8 @@ func (c Config) MarshalTOML() ([]byte, error) {
 		VoiceChannels: c.VoiceChannels,
 		TLSCert:       c.TLSCert,
 		TLSKey:        c.TLSKey,
+		PublicMode:    c.PublicMode,
+		PublicDNS:     c.PublicDNS,
 		PublicIP:      c.PublicIP,
 		UDPPortMin:    c.UDPPortMin,
 		UDPPortMax:    c.UDPPortMax,
@@ -287,7 +293,7 @@ func (c Config) MarshalTOML() ([]byte, error) {
 }
 
 // MarshalLocalTOML renders only the machine-local keys (addr, password, TLS,
-// public_ip, udp range, media_port, discoverable, msg rate, server_id). The
+// public, public_dns, public_ip, udp range, media_port, discoverable, msg rate, server_id). The
 // group fields live in the chain once one exists.
 func (c Config) MarshalLocalTOML() ([]byte, error) {
 	fc := fileConfig{
@@ -296,6 +302,8 @@ func (c Config) MarshalLocalTOML() ([]byte, error) {
 		PasswordKey:  hexKey(c.PasswordKey),
 		TLSCert:      c.TLSCert,
 		TLSKey:       c.TLSKey,
+		PublicMode:   c.PublicMode,
+		PublicDNS:    c.PublicDNS,
 		PublicIP:     c.PublicIP,
 		UDPPortMin:   c.UDPPortMin,
 		UDPPortMax:   c.UDPPortMax,

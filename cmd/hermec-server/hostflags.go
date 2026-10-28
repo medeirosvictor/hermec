@@ -21,7 +21,10 @@ const knownHostsFile = "known_hosts.txt"
 // flags are the command line options.
 type flags struct {
 	config, key, chain, history string
+	initDedicated               string
 	printConfig, applyConfig    bool
+	check, showVersion          bool
+	unsafePublicWS              bool
 	advertise, hosts            []string
 	name                        string
 }
@@ -32,11 +35,15 @@ func parseFlags(args []string) (flags, error) {
 	var advertise, hosts string
 	fs := flag.NewFlagSet("hermec-server", flag.ContinueOnError)
 	fs.StringVar(&f.config, "config", "", "path to a TOML config file (defaults apply without it)")
+	fs.StringVar(&f.initDedicated, "init-dedicated", "", "create a secure dedicated-server state directory and exit")
 	fs.BoolVar(&f.printConfig, "print-config", false, "print the effective config (password redacted) and exit")
+	fs.BoolVar(&f.check, "check", false, "validate config, TLS and persistent state without binding sockets")
+	fs.BoolVar(&f.showVersion, "version", false, "print the version and exit")
 	fs.StringVar(&f.key, "key", "", "host key file (default hermec-server.key next to -config; generated when missing)")
 	fs.StringVar(&f.chain, "chain", "", "server chain file (default chain.jsonl next to -config)")
 	fs.StringVar(&f.history, "history", "", "chat history file (default history.jsonl next to -config)")
 	fs.BoolVar(&f.applyConfig, "apply-config", false, "append the config file's group fields to the chain, print the count, and exit; stop the server first, the changes apply when it starts")
+	fs.BoolVar(&f.unsafePublicWS, "unsafe-public-ws", false, "development only: allow public or wildcard listeners without TLS/admission")
 	fs.StringVar(&advertise, "advertise", "", "comma list of ws URLs clients and hosts reach this host at (default: ws://<non-loopback IPs>:<port>/)")
 	fs.StringVar(&hosts, "hosts", "", "comma list of ws URLs of other hosts of this server (merged with known_hosts.txt next to -config)")
 	fs.StringVar(&f.name, "name", "", "host display name (default: the machine's hostname)")

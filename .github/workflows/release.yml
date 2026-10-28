@@ -274,19 +274,35 @@ jobs:
             echo "Invalid tag '$TAG': must match ^v[0-9A-Za-z.+-]+$" >&2
             exit 1
           fi
-      # Pure Go, no DLLs; same ldflags stamp as the client.
-      - name: Build servers
+      # Pure Go, no DLLs; same ldflags stamp as the client. Linux dedicated
+      # artifacts include the persistent-service lifecycle files.
+      - name: Build and package servers
         env:
           CGO_ENABLED: '0'
         run: |
           mkdir dist
-          for target in linux/amd64 linux/arm64 windows/amd64; do
-            goos="${target%/*}"; goarch="${target#*/}"
-            ext=""; [ "$goos" = windows ] && ext=".exe"
-            GOOS=$goos GOARCH=$goarch go build -trimpath \
-              -ldflags "-s -w -X github.com/medeirosvictor/hermec/version.Version=$TAG" \
-              -o "dist/hermec-server-$goos-$goarch$ext" ./cmd/hermec-server
+          ldflags="-s -w -X github.com/medeirosvictor/hermec/version.Version=$TAG"
+          for goarch in amd64 arm64; do
+            stage="stage-server-$goarch"
+            mkdir "$stage"
+            GOOS=linux GOARCH=$goarch go build -trimpath -ldflags "$ldflags" \
+              -o "$stage/hermec-server" ./cmd/hermec-server
+            cp example.server.toml "$stage/"
+            cp packaging/dedicated/hermec-server.service "$stage/"
+            cp packaging/dedicated/install.sh packaging/dedicated/update.sh \
+              packaging/dedicated/backup.sh "$stage/"
+            cp docs/dedicated-hosting.md "$stage/README.md"
+            chmod 0755 "$stage/hermec-server" "$stage"/*.sh
+            # The hosted runner is amd64; executing the arm64 artifact would
+            # fail with Exec format error. Cross-build both, smoke-test native.
+            if [ "$goarch" = "$(go env GOARCH)" ]; then
+              "$stage/hermec-server" -version
+            fi
+            tar -czf "dist/hermec-server-linux-$goarch.tar.gz" -C "$stage" .
           done
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "$ldflags" \
+            -o dist/hermec-server-windows-amd64.exe ./cmd/hermec-server
+          for archive in dist/*.tar.gz; do tar -tzvf "$archive"; done
           ls -l dist
       - uses: actions/upload-artifact@v4
         with:

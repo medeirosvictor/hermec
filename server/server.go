@@ -57,6 +57,13 @@ type Config struct {
 	// TLSCert and TLSKey are PEM file paths. Set both to serve wss://;
 	// leave both empty for plain ws://.
 	TLSCert, TLSKey string
+	// PublicMode marks an internet-facing dedicated server. The command refuses
+	// to start it without TLS and admission unless an explicit unsafe
+	// development override is supplied. It is machine-local, not chain state.
+	PublicMode bool
+	// PublicDNS is the public DNS name covered by the trusted TLS certificate.
+	// It is required for public dedicated listeners and is machine-local.
+	PublicDNS string
 	// PublicIP, if set, is advertised as the server's ICE host address
 	// (NAT 1:1) for voice on internet-facing hosts. Empty = local addresses.
 	PublicIP string

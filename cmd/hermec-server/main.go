@@ -29,6 +29,25 @@ func main() {
 	} else if err != nil {
 		os.Exit(2)
 	}
+	if f.showVersion {
+		fmt.Printf("hermec-server %s\n", version.Version)
+		return
+	}
+	if f.initDedicated != "" {
+		if f.config != "" || f.applyConfig || f.printConfig || f.check || f.key != "" || f.chain != "" || f.history != "" {
+			log.Fatal("-init-dedicated cannot be combined with config/state operations")
+		}
+		result, err := initDedicated(f.initDedicated)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("dedicated server initialized in %s\n", result.Dir)
+		fmt.Printf("config: %s\n", result.Config)
+		fmt.Printf("server id: %s\n", result.ServerID)
+		fmt.Printf("generated join password (shown once): %s\n", result.Password)
+		fmt.Println("install a trusted TLS certificate at the configured paths before starting")
+		return
+	}
 	if f.applyConfig && f.config == "" {
 		log.Fatal("-apply-config requires -config")
 	}
@@ -73,6 +92,21 @@ func main() {
 			log.Fatal(err)
 		}
 		return
+	}
+	if err := validatePublicConfig(cfg, f.unsafePublicWS); err != nil {
+		log.Fatal(err)
+	}
+	public := cfg.PublicMode || publicListener(cfg.Addr)
+	if public && f.unsafePublicWS {
+		log.Print("WARNING: unsafe public mode enabled; TLS/admission checks are bypassed")
+	}
+	if f.check || (public && !f.unsafePublicWS) {
+		if err := checkDedicatedState(cfg, f.key, f.chain, f.history, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		if f.check {
+			return
+		}
 	}
 	key, err := loadOrCreateKey(f.key)
 	if err != nil {

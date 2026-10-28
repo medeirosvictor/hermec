@@ -13,8 +13,11 @@
 # which appends only the group keys this file sets, then exits. The password,
 # addr, TLS and the other machine settings always come from this file.
 
-# Listen address (host:port). ":7697" listens on all interfaces.
-addr = ":7697"
+# Listen address (host:port). This loopback default is safe for development.
+# Bind a specific private LAN address for LAN development. A wildcard or public
+# address is fail-closed unless it has TLS, admission, public_dns, and
+# discoverable = false (or the explicitly unsafe development override).
+addr = "127.0.0.1:7697"
 
 # If set, every client must prove it knows this password (the password itself
 # never goes over the network). Leave empty for none.
@@ -40,7 +43,11 @@ channels = ["general"]
 # Static voice channel names.
 voice_channels = ["voice"]
 
-# TLS: set both to serve wss://, or neither for plain ws://.
+# TLS: set both to serve wss://, or neither for loopback/LAN development.
+# Public listeners require a trusted certificate, a DNS name it covers, and
+# admission. `public = true` is also required for a dedicated configuration.
+# public = true
+# public_dns = "chat.example.com"
 # tls_cert = "/etc/hermec/cert.pem"
 # tls_key  = "/etc/hermec/key.pem"
 
@@ -76,7 +83,7 @@ voice_channels = ["voice"]
 # max_per_ip = 16
 
 # LAN discovery: answer UDP probes on the same port number as addr (default true).
-# Set false to bind no UDP discovery socket at all.
+# Set false to bind no UDP discovery socket at all. Public listeners require false.
 # discoverable = true
 
 # Name shown in discovery replies, at most 64 characters (default: the listen host:port).
