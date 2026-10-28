@@ -40,6 +40,15 @@ func (c *conn) handleLinkSyncIn(env proto.Envelope) {
 	if len(ls.Messages) == 0 {
 		return
 	}
+	if !c.link.hello.Prepared {
+		s.dedicatedMu.Lock()
+		active := s.Mode() == ModeActive
+		s.dedicatedMu.Unlock()
+		if !active {
+			c.sendError(proto.CodeForbidden, "merge history requires active host")
+			return
+		}
+	}
 	s.mergeLinkMessages(ls.Messages)
 	raw, err := proto.Encode(proto.TypeLinkSync, proto.LinkSync{Messages: ls.Messages})
 	if err != nil {
@@ -96,11 +105,11 @@ func (s *Server) setFollowerMode(m Mode) bool {
 	t := &s.takeover
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if s.Mode() == ModeActive {
+	if s.Mode() == ModeActive || s.Mode() == ModeFenced {
 		return false
 	}
 	s.SetMode(m)
-	return true
+	return s.Mode() == m
 }
 
 // resumeActive undoes goIdle when a handover or merge is called off, restoring
@@ -129,6 +138,13 @@ func (c *conn) handleLinkChainIn(env proto.Envelope) {
 	es, err := hshake.DecodeEntries(cf.Entries)
 	if err != nil {
 		c.sendError(proto.CodeBadRequest, "malformed chain frame")
+		return
+	}
+	c.srv.dedicatedMu.Lock()
+	active := c.srv.Mode() == ModeActive
+	c.srv.dedicatedMu.Unlock()
+	if !active {
+		c.sendError(proto.CodeForbidden, "merge chain requires active host")
 		return
 	}
 	for _, e := range es {

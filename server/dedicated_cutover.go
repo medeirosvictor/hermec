@@ -23,30 +23,66 @@ func (s *Server) restoreDedicatedTransition() error {
 	if err != nil {
 		return err
 	}
-	if r.State == DedicatedTransitionFenced {
+	switch r.State {
+	case DedicatedTransitionPrepared:
+		if err := ValidateDedicatedPrepared(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
+			return err
+		}
+		s.prepared.Store(true)
+		s.modeState.mode.Store(int32(ModePrepared))
+		return nil
+	case DedicatedTransitionCommitted:
+		check := r
+		check.State = DedicatedTransitionPrepared
+		if err := ValidateDedicatedPrepared(check, s.cfg.HostKey, s.chain, s.hist); err != nil {
+			return err
+		}
+		if err := s.validateDedicatedCertificate(r, false); err != nil {
+			return err
+		}
+		s.prepared.Store(false)
+		s.modeState.mode.Store(int32(ModeActive))
+		return nil
+	case DedicatedTransitionFenced:
+		if err := validateDedicatedLocalBoundary(r, s.chain, s.hist); err != nil {
+			return err
+		}
+		if err := s.validateDedicatedCertificate(r, true); err != nil {
+			return err
+		}
+		s.prepared.Store(false)
 		s.modeState.mode.Store(int32(ModeFenced))
 		return nil
+	default:
+		return errors.New("server: invalid dedicated transition state")
 	}
-	if r.State != DedicatedTransitionCommitted {
-		return nil
+}
+
+// validateDedicatedCertificate validates the signed decision against this
+// server's current chain. fenced means this local server must be the signer;
+// otherwise it must be the exact destination.
+func (s *Server) validateDedicatedCertificate(r DedicatedTransitionRecord, fenced bool) error {
+	if r.Certificate == nil || r.Certificate.Destination.Fingerprint != r.DestinationFingerprint {
+		return errors.New("server: invalid dedicated certificate")
 	}
-	check := r
-	check.State = DedicatedTransitionPrepared
-	if err := ValidateDedicatedPrepared(check, s.cfg.HostKey, s.chain, s.hist); err != nil {
-		return err
-	}
+	c := r.Certificate
 	var pub []byte
 	for _, h := range s.chain.State().Hosts {
-		if h.Fingerprint == r.Certificate.SourceFingerprint {
+		if h.Fingerprint == c.SourceFingerprint {
 			pub = h.PubKey
 			break
 		}
 	}
-	if pub == nil || !proto.VerifyDedicatedCutover(pub, *r.Certificate) || !reflect.DeepEqual(r.Certificate.Destination, s.selfInfo()) {
-		return errors.New("server: invalid committed dedicated certificate")
+	if pub == nil || !proto.VerifyDedicatedCutover(pub, *c) {
+		return errors.New("server: invalid dedicated certificate")
 	}
-	s.prepared.Store(false)
-	s.modeState.mode.Store(int32(ModeActive))
+	if fenced {
+		if c.SourceFingerprint != s.selfInfo().Fingerprint {
+			return errors.New("server: fenced transition names another source")
+		}
+	} else if !reflect.DeepEqual(c.Destination, s.selfInfo()) {
+		return errors.New("server: committed transition names another destination")
+	}
 	return nil
 }
 

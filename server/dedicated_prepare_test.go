@@ -119,6 +119,27 @@ func TestDedicatedMutationLeaseSerializesAppendChatTrimAndDemote(t *testing.T) {
 	}
 }
 
+func TestFencedServerRejectsMergeMutationsAndFollowerRoleChanges(t *testing.T) {
+	c, sourceKey, _ := twoHostChain(t)
+	s := New(Config{HostKey: sourceKey, Chain: c, Channels: []string{"general"}, Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}})
+	h, err := OpenHistory("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.hist = h
+	s.SetMode(ModeFenced)
+	if s.setFollowerMode(ModeStandby) || s.Mode() != ModeFenced {
+		t.Fatalf("fenced server drifted to follower mode %v", s.Mode())
+	}
+	if err := s.replaceChain(c.Entries()); err == nil {
+		t.Fatal("fenced server accepted merge chain replacement")
+	}
+	s.mergeLinkMessages([]proto.ChatMessage{{ID: "after-fence", Channel: "general", TS: time.Now()}})
+	if got, _, _ := h.Snapshot(); len(got) != 0 {
+		t.Fatalf("fenced server accepted merge history: %+v", got)
+	}
+}
+
 func TestDedicatedVoiceJoinCannotCrossFence(t *testing.T) {
 	s := New(voiceCfg())
 	c := &conn{srv: s, fingerprint: identity.Fingerprint(s.cfg.HostKey.PublicKey())}

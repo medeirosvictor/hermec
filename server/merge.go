@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -85,6 +86,9 @@ func (s *Server) sendMergeHistory(ws *websocket.Conn) error {
 		var ts time.Time
 		id := ""
 		for {
+			if s.Mode() == ModeFenced {
+				return errors.New("server: merge stopped by dedicated fence")
+			}
 			msgs, more := s.hist.After(ts, id, historyPage)
 			raw, n := encodeLinkSync(msgs, more)
 			if raw == nil || (n == 0 && len(msgs) > 0) || len(raw) > proto.MaxMessageSize {
@@ -137,6 +141,9 @@ func watchClose(ctx context.Context, ws *websocket.Conn) (stop func()) {
 func (s *Server) replaceChain(es []chain.Entry) error {
 	s.dedicatedMu.Lock()
 	defer s.dedicatedMu.Unlock()
+	if s.Mode() == ModeFenced {
+		return errors.New("server: merge chain replacement stopped by dedicated fence")
+	}
 	s.chainMu.Lock()
 	defer s.chainMu.Unlock()
 	if err := s.chain.Replace(es); err != nil {

@@ -86,11 +86,18 @@ func ValidateDedicatedPrepared(r DedicatedTransitionRecord, local *identity.Iden
 	if r.State != DedicatedTransitionPrepared {
 		return errors.New("server: dedicated transition is not prepared")
 	}
-	if local == nil || c == nil || h == nil {
-		return errors.New("server: incomplete local dedicated state")
-	}
-	if r.DestinationFingerprint != identity.Fingerprint(local.PublicKey()) {
+	if local == nil || r.DestinationFingerprint != identity.Fingerprint(local.PublicKey()) {
 		return errors.New("server: dedicated transition names another destination")
+	}
+	return validateDedicatedLocalBoundary(r, c, h)
+}
+
+// validateDedicatedLocalBoundary verifies the exact chain and history snapshot
+// named by a transition. Fenced sources use it too: after fencing neither side
+// may silently continue from a different boundary.
+func validateDedicatedLocalBoundary(r DedicatedTransitionRecord, c *chain.Chain, h *History) error {
+	if c == nil || h == nil {
+		return errors.New("server: incomplete local dedicated state")
 	}
 	if r.ServerID != c.ID().String() {
 		return errors.New("server: dedicated transition names another server")

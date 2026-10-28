@@ -212,6 +212,13 @@ func (h *Host) loop() {
 	}
 	l := h.rejoin(nil, coldStartWindow)
 	for !h.stopped() {
+		if h.srv.Mode() == ModeFenced {
+			if l != nil {
+				l.Close()
+			}
+			h.setRole(RoleIdle, "")
+			return
+		}
 		if l != nil {
 			l = h.runLinked(l)
 		} else if h.srv.Prepared() || h.srv.Mode() == ModeFenced {
@@ -409,11 +416,18 @@ func (h *Host) pause(d time.Duration) bool {
 // makes this host active. It returns the link, or nil when the host is active
 // (or stopping).
 func (h *Host) rejoin(extra []string, window time.Duration) *Link {
+	if h.srv.Mode() == ModeFenced {
+		h.setRole(RoleIdle, "")
+		return nil
+	}
 	l := h.coldStart(extra, window)
 	if h.stopped() {
 		if l != nil {
 			l.Close()
 		}
+		return nil
+	}
+	if h.srv.Mode() == ModeFenced {
 		return nil
 	}
 	if h.srv.Mode() == ModeActive {
@@ -489,6 +503,10 @@ func (h *Host) applyRole(l *Link) {
 // (failover) the warm sessions go live and everyone is told; a first start has
 // nothing to announce.
 func (h *Host) becomeActive(failover bool) {
+	if h.srv.Mode() == ModeFenced {
+		h.setRole(RoleIdle, "")
+		return
+	}
 	if h.srv.Prepared() {
 		// Server state is authoritative: a Host constructed before a restart or
 		// reached through an unusual orchestration path still cannot activate.
@@ -593,6 +611,10 @@ func (h *Host) failover(l *Link) *Link {
 // runActive serves as the active host until it is demoted, then returns the
 // link to the new active host, or nil if stopping or active again.
 func (h *Host) runActive() *Link {
+	if h.srv.Mode() == ModeFenced {
+		h.setRole(RoleIdle, "")
+		return nil
+	}
 	select { // a signal from a takeover that already happened is stale
 	case <-h.promoted:
 	default:

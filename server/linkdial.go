@@ -449,7 +449,7 @@ func (s *Server) mergeLinkMessages(msgs []proto.ChatMessage) {
 	// A dedicated snapshot must not race a merge-link history mutation.
 	s.dedicatedMu.Lock()
 	defer s.dedicatedMu.Unlock()
-	if len(msgs) == 0 || s.hist == nil {
+	if s.Mode() == ModeFenced || len(msgs) == 0 || s.hist == nil {
 		return
 	}
 	if _, err := s.hist.Merge(msgs); err != nil {
