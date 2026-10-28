@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
-
 	"github.com/gorilla/websocket"
 
 	"github.com/medeirosvictor/hermec/core/chain"
@@ -18,14 +16,14 @@ import (
 // and server ID. It never sends a password. The returned chain may replace
 // only a fresh local bootstrap through InstallDedicatedBootstrap.
 func AuthenticateDedicatedBootstrap(ctx context.Context, activeWSSURL, pinnedServerID string, bootstrap *chain.Chain, local *identity.Identity, chainPath string) (*chain.Chain, error) {
-	u, err := url.Parse(activeWSSURL)
-	if err != nil || u.Scheme != "wss" || u.Host == "" || u.User != nil || u.Fragment != "" {
-		return nil, errors.New("server: dedicated active URL must be an absolute wss URL")
+	canonicalURL, err := CanonicalDedicatedWSS(activeWSSURL)
+	if err != nil {
+		return nil, errors.New("server: dedicated active URL must be a canonical root wss URL")
 	}
 	if _, err := chain.ParseID(pinnedServerID); err != nil {
 		return nil, fmt.Errorf("server: invalid pinned dedicated server ID: %w", err)
 	}
-	ws, _, err := websocket.DefaultDialer.DialContext(ctx, activeWSSURL, nil)
+	ws, _, err := websocket.DefaultDialer.DialContext(ctx, canonicalURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("server: dial pinned dedicated host: %w", err)
 	}

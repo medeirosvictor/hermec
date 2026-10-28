@@ -139,6 +139,31 @@ func TestValidateDedicatedPreparedChecksLocalBoundary(t *testing.T) {
 	}
 }
 
+func TestTerminalTransitionVerifiesAuthorizedSourceSignature(t *testing.T) {
+	c, source, destination := twoHostChain(t)
+	h, err := OpenHistory("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := c.Head()
+	headHash := head.Hash()
+	_, historyHash := proto.DedicatedHistoryCommitment(nil)
+	readiness := proto.DedicatedReadiness{ServerID: c.ID().String(), DestinationFingerprint: identity.Fingerprint(destination.PublicKey()), ChainHead: head.Seq, ChainHeadHash: headHash[:], HistoryHash: historyHash, TransitionNonce: bytes.Repeat([]byte{7}, proto.DedicatedTransitionNonceSize)}
+	dst := proto.HostInfo{Fingerprint: readiness.DestinationFingerprint}
+	sig, err := proto.SignDedicatedCutover(source, readiness, identity.Fingerprint(source.PublicKey()), dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionCommitted, ServerID: readiness.ServerID, DestinationFingerprint: readiness.DestinationFingerprint, ChainHead: readiness.ChainHead, ChainHeadHash: readiness.ChainHeadHash, HistoryCount: readiness.HistoryCount, HistoryHash: readiness.HistoryHash, TransitionNonce: readiness.TransitionNonce, Certificate: &proto.DedicatedCertificate{Readiness: readiness, SourceFingerprint: identity.Fingerprint(source.PublicKey()), Destination: dst, Signature: sig}, Recovery: DedicatedRecoveryInspectCommit}
+	if err := ValidateDedicatedCommitted(r, destination, c, h); err != nil {
+		t.Fatal(err)
+	}
+	r.Certificate.Signature[0] ^= 1
+	if err := ValidateDedicatedCommitted(r, destination, c, h); err == nil {
+		t.Fatal("accepted tampered terminal certificate")
+	}
+}
+
 func TestPreparedHostWithSourceLinkCannotPromoteThroughPublicAPI(t *testing.T) {
 	fastHostTimers(t)
 	c, sourceKey, destinationKey := twoHostChain(t)

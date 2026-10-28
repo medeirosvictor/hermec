@@ -32,7 +32,18 @@ func TestDedicatedPrepareInputsRequirePinnedWSSAndID(t *testing.T) {
 	if err := validateDedicatedPrepareInputs("ws://host/", "bad"); err == nil {
 		t.Fatal("accepted unpinned inputs")
 	}
+	for _, raw := range []string{"wss://user:secret@host/", "wss://host/?token=secret", "wss://host/#secret", " wss://host/", "wss://HOST/"} {
+		if err := validateDedicatedPrepareInputs(raw, (chain.ID{}).String()); err == nil {
+			t.Fatalf("accepted unsafe URL %q", raw)
+		}
+	}
 	if err := validateDedicatedPrepareInputs("wss://host/", (chain.ID{}).String()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDedicatedPrepareAndRetryConflict(t *testing.T) {
+	if _, err := parseFlags([]string{"-dedicated-prepare", "wss://host/", "-dedicated-retry"}); err == nil {
+		t.Fatal("accepted prepare and retry together")
 	}
 }

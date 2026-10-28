@@ -96,6 +96,9 @@ func main() {
 		}
 		return
 	}
+	if f.dedicatedPrepare != "" && f.dedicatedRetry {
+		log.Fatal("-dedicated-prepare and -dedicated-retry cannot be combined")
+	}
 	if f.dedicatedStatus {
 		if f.dedicatedPrepare != "" || f.dedicatedRetry {
 			log.Fatal("-dedicated-status cannot be combined with prepare or retry")
@@ -156,7 +159,7 @@ func main() {
 	// A surviving preparation record is never permission to activate. Load it
 	// before constructing Host, validate its local boundary, and keep even a
 	// malformed or stale record passive with fixed recovery guidance.
-	transitionPath := filepath.Join(dir, server.DedicatedTransitionFile)
+	transitionPath := dedicatedTransitionPath(f.chain)
 	if _, err := os.Lstat(transitionPath); err == nil {
 		// Any unreadable or stale journal fails closed as a passive host.
 		cfg.Prepared, cfg.Mode = true, server.ModePrepared
@@ -170,7 +173,10 @@ func main() {
 					loadErr = server.ValidateDedicatedPrepared(r, key, c, h)
 					cfg.Prepared, cfg.Mode = true, server.ModePrepared
 					if r.ActiveWSSURL != "" {
-						cfg.KnownHosts = append([]string{r.ActiveWSSURL}, cfg.KnownHosts...)
+						// A prepared destination may resume only its durable pinned
+						// source, never a caller/config/learned-host alternative.
+						cfg.KnownHosts = []string{r.ActiveWSSURL}
+						f.hosts = nil
 					}
 				case server.DedicatedTransitionCommitted:
 					loadErr = server.ValidateDedicatedCommitted(r, key, c, h)
@@ -193,6 +199,9 @@ func main() {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		log.Fatalf("dedicated transition record: %v", err)
 	}
+	// Both the destination journal and the active source's readiness
+	// attestation live beside the chain, regardless of -config.
+	cfg.DedicatedTransitionPath = transitionPath
 	cfg.HostKey, cfg.Chain, cfg.HistoryPath = key, c, f.history
 	if !created && f.config != "" {
 		if set, err := server.GroupFieldsSet(f.config); err != nil {

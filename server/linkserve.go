@@ -280,10 +280,10 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 		historyCount, historyHash := proto.DedicatedHistoryCommitment(snapshot)
 		readiness := proto.DedicatedReadiness{ServerID: s.chain.ID().String(), DestinationFingerprint: c.fingerprint, ChainHead: head.Seq, ChainHeadHash: headHash[:], HistoryLastID: id, HistoryLastUnixMilli: ts.UnixMilli(), HistoryCount: historyCount, HistoryHash: historyHash}
 		if h.Dedicated != nil {
-			// A restart may only resume the exact boundary it already durably
-			// attested. In particular, do not generate a replacement nonce.
+			// A restart may only resume the exact boundary the source durably
+			// attested; it cannot nominate a replacement nonce.
 			readiness.TransitionNonce = append([]byte(nil), h.Dedicated.TransitionNonce...)
-			if h.Dedicated.Validate() != nil || !sameReadiness(*h.Dedicated, readiness) {
+			if h.Dedicated.Validate() != nil || !sameReadiness(*h.Dedicated, readiness) || s.checkDedicatedReadinessAttestation(readiness, true) != nil {
 				return proto.CodeBadRequest, "dedicated preparation boundary changed"
 			}
 		} else {
@@ -292,6 +292,9 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 				return proto.CodeBadRequest, "cannot create preparation nonce"
 			}
 			readiness.TransitionNonce = nonce
+			if s.checkDedicatedReadinessAttestation(readiness, false) != nil {
+				return proto.CodeBadRequest, "dedicated preparation differs from durable source attestation"
+			}
 		}
 		c.link.dedicated = &readiness
 		c.link.dedicatedHistory = snapshot

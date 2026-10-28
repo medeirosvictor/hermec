@@ -6,10 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/medeirosvictor/hermec/core/chain"
@@ -30,8 +27,8 @@ func dedicatedHostPublic(keyPath string, out io.Writer) error {
 	return nil
 }
 
-func dedicatedStatus(dir, keyPath, chainPath, historyPath string, out io.Writer) error {
-	r, err := server.LoadDedicatedTransition(filepath.Join(dir, server.DedicatedTransitionFile))
+func dedicatedStatus(_ string, keyPath, chainPath, historyPath string, out io.Writer) error {
+	r, err := server.LoadDedicatedTransition(dedicatedTransitionPath(chainPath))
 	if errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintln(out, "dedicated status: none\nrecovery: Keep the current host active; retry preparation.")
 		return nil
@@ -81,7 +78,7 @@ func runDedicatedPreparation(ctx context.Context, cfg server.Config, keyPath, ch
 			return err
 		}
 	} else {
-		r, err := server.LoadDedicatedTransition(filepath.Join(filepath.Dir(chainPath), server.DedicatedTransitionFile))
+		r, err := server.LoadDedicatedTransition(dedicatedTransitionPath(chainPath))
 		if err != nil {
 			return fmt.Errorf("dedicated retry requires an existing transition: %w", err)
 		}
@@ -113,7 +110,7 @@ func runDedicatedPreparation(ctx context.Context, cfg server.Config, keyPath, ch
 	if err != nil {
 		return fmt.Errorf("signed chain: %w", err)
 	}
-	transitionPath := filepath.Join(filepath.Dir(chainPath), server.DedicatedTransitionFile)
+	transitionPath := dedicatedTransitionPath(chainPath)
 	if !retry {
 		if _, err := os.Lstat(transitionPath); err == nil {
 			return errors.New("dedicated preparation refuses existing transition state; inspect it with -dedicated-status or use -dedicated-retry")
@@ -161,12 +158,12 @@ func runDedicatedPreparation(ctx context.Context, cfg server.Config, keyPath, ch
 // authenticates as this VPS host identity; passwords and founder/member keys
 // are neither accepted nor read by this command.
 func validateDedicatedPrepareInputs(rawURL, serverID string) error {
-	u, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || u.Scheme != "wss" || u.Host == "" || u.User != nil || u.Fragment != "" {
-		return errors.New("dedicated preparation requires a pinned wss:// active-host URL")
+	if _, err := server.CanonicalDedicatedWSS(rawURL); err != nil {
+		return fmt.Errorf("dedicated preparation requires a pinned canonical wss:// active-host URL: %w", err)
 	}
-	if _, err := chain.ParseID(strings.TrimSpace(serverID)); err != nil {
-		return fmt.Errorf("dedicated preparation requires a valid pinned server ID: %w", err)
+	id, err := chain.ParseID(serverID)
+	if err != nil || id.String() != serverID {
+		return fmt.Errorf("dedicated preparation requires a valid canonical pinned server ID")
 	}
 	return nil
 }

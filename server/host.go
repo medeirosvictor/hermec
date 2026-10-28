@@ -71,6 +71,9 @@ type HostConfig struct {
 	// Prepared makes this a passive dedicated destination. It maintains a host
 	// link and mirrors state, but never elects or takes over as active.
 	Prepared bool
+	// PinnedHost, when non-empty, is the sole reconnect target for a durable
+	// prepared transition.
+	PinnedHost string
 }
 
 // Host owns a Server's role: it starts idle, finds the active host or becomes
@@ -261,6 +264,9 @@ func (h *Host) setRole(role, name string) {
 // targets are the hosts to look at: known, learned, and extra, without our own
 // addresses.
 func (h *Host) targets(extra []string) []string {
+	if h.prepared && h.hc.PinnedHost != "" {
+		return []string{h.hc.PinnedHost}
+	}
 	own := make(map[string]bool)
 	for _, a := range h.srv.advertise() {
 		own[a] = true

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"log"
 	"net"
@@ -58,6 +59,9 @@ func parseFlags(args []string) (flags, error) {
 	if err := fs.Parse(args); err != nil {
 		return flags{}, err
 	}
+	if f.dedicatedPrepare != "" && f.dedicatedRetry {
+		return flags{}, errors.New("-dedicated-prepare and -dedicated-retry cannot be combined")
+	}
 	f.advertise = cleanURLs(splitTrim(advertise, ","), "-advertise")
 	f.hosts = cleanURLs(splitTrim(hosts, ","), "-hosts")
 	return f, nil
@@ -90,7 +94,11 @@ func buildHostConfig(f flags, cfg server.Config, dir string, notify func(string)
 	if cfg.HostName == "" {
 		cfg.HostName, _ = os.Hostname()
 	}
-	return server.HostConfig{Server: cfg, Known: kh.list, SaveKnown: kh.save, Notify: notify}
+	hc := server.HostConfig{Server: cfg, Known: kh.list, SaveKnown: kh.save, Notify: notify}
+	if cfg.Prepared && len(cfg.KnownHosts) == 1 {
+		hc.PinnedHost = cfg.KnownHosts[0]
+	}
+	return hc
 }
 
 // localIPs lists the addresses of the machine's interfaces.

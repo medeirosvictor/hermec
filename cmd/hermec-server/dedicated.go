@@ -24,6 +24,15 @@ import (
 
 const dedicatedConfigName = "server.toml"
 
+// dedicatedTransitionPath is the sole journal location. It follows the chain,
+// not -config, so every workflow addresses identical persistent state.
+func dedicatedTransitionPath(chainPath string) string {
+	if abs, err := filepath.Abs(chainPath); err == nil {
+		chainPath = abs
+	}
+	return filepath.Join(filepath.Dir(filepath.Clean(chainPath)), server.DedicatedTransitionFile)
+}
+
 type dedicatedInitResult struct {
 	Dir      string
 	Config   string
@@ -144,7 +153,7 @@ func checkDedicatedState(cfg server.Config, keyPath, chainPath, historyPath stri
 			return err
 		}
 	}
-	transitionPath := filepath.Join(filepath.Dir(chainPath), server.DedicatedTransitionFile)
+	transitionPath := dedicatedTransitionPath(chainPath)
 	if _, err := os.Lstat(transitionPath); err == nil {
 		r, err := server.LoadDedicatedTransition(transitionPath)
 		if err == nil {

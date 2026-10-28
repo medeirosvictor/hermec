@@ -2,11 +2,11 @@ package server
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -77,6 +77,11 @@ type DedicatedTransitionRecord struct {
 // server's chain and history.
 const DedicatedTransitionFile = "transition.json"
 
+// DedicatedReadinessFile is the active source's durable attestation. It is
+// separate from the destination/fence journal so an active source remains
+// active while a destination retries the one acknowledged attempt.
+const DedicatedReadinessFile = "readiness.json"
+
 const maxDedicatedTransitionBytes = 16 << 10
 
 // ValidateDedicatedPrepared verifies that a completed preparation record
@@ -103,7 +108,10 @@ func ValidateDedicatedCommitted(r DedicatedTransitionRecord, local *identity.Ide
 	if r.State != DedicatedTransitionCommitted {
 		return errors.New("server: dedicated transition is not committed")
 	}
-	return validateDedicatedDestination(r, local, c, h)
+	if err := validateDedicatedDestination(r, local, c, h); err != nil {
+		return err
+	}
+	return validateDedicatedTerminalCertificate(r, c, local, false)
 }
 
 // ValidateDedicatedFenced validates the terminal source state on startup.
@@ -119,7 +127,36 @@ func ValidateDedicatedFenced(r DedicatedTransitionRecord, local *identity.Identi
 	if local == nil || r.Certificate == nil || r.Certificate.SourceFingerprint != identity.Fingerprint(local.PublicKey()) {
 		return errors.New("server: fenced transition names another source")
 	}
-	return validateDedicatedLocalBoundary(r, c, h)
+	if err := validateDedicatedLocalBoundary(r, c, h); err != nil {
+		return err
+	}
+	return validateDedicatedTerminalCertificate(r, c, local, true)
+}
+
+// validateDedicatedTerminalCertificate verifies terminal authority against the
+// source key currently authorized by the exact local chain.
+func validateDedicatedTerminalCertificate(r DedicatedTransitionRecord, c *chain.Chain, local *identity.Identity, fenced bool) error {
+	if r.Certificate == nil || c == nil || local == nil {
+		return errors.New("server: missing dedicated certificate")
+	}
+	cert := r.Certificate
+	var pub []byte
+	for _, host := range c.State().Hosts {
+		if host.Fingerprint == cert.SourceFingerprint {
+			pub = host.PubKey
+			break
+		}
+	}
+	if pub == nil || !proto.VerifyDedicatedCutover(ed25519.PublicKey(pub), *cert) {
+		return errors.New("server: invalid dedicated certificate signature")
+	}
+	if fenced && cert.SourceFingerprint != identity.Fingerprint(local.PublicKey()) {
+		return errors.New("server: fenced transition names another source")
+	}
+	if !fenced && cert.Destination.Fingerprint != identity.Fingerprint(local.PublicKey()) {
+		return errors.New("server: committed transition names another destination")
+	}
+	return nil
 }
 
 func validateDedicatedDestination(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *History) error {
@@ -173,8 +210,8 @@ func (r DedicatedTransitionRecord) validate() error {
 		return errors.New("server: invalid dedicated transition recovery code")
 	}
 	if r.ActiveWSSURL != "" {
-		u, err := url.Parse(r.ActiveWSSURL)
-		if err != nil || u.Scheme != "wss" || u.Host == "" || u.User != nil || u.Fragment != "" {
+		canonical, err := CanonicalDedicatedWSS(r.ActiveWSSURL)
+		if err != nil || canonical != r.ActiveWSSURL {
 			return errors.New("server: invalid dedicated active URL")
 		}
 	}
