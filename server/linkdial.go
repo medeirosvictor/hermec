@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/hshake"
+	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 )
 
@@ -32,6 +34,10 @@ type Link struct {
 	hosts    *proto.Hosts  // the newest hosts frame from the active host
 	roleCh   chan struct{} // signaled (cap 1) when link_role arrives
 	handover chan struct{} // signaled (cap 1) when the active host hands over
+
+	prepareMu  sync.Mutex
+	prepared   *proto.DedicatedReadiness
+	prepareAck chan error // exactly one result for a dedicated preparation
 
 	done chan struct{}
 	once sync.Once
@@ -79,7 +85,7 @@ func dialLinkOpts(ctx context.Context, url string, s *Server, full bool) (*Link,
 	if err != nil {
 		return nil, err
 	}
-	l := &Link{s: s, ws: ws, done: make(chan struct{}), roleCh: make(chan struct{}, 1), handover: make(chan struct{}, 1)}
+	l := &Link{s: s, ws: ws, done: make(chan struct{}), roleCh: make(chan struct{}, 1), handover: make(chan struct{}, 1), prepareAck: make(chan error, 1)}
 	l.lastBeat.Store(time.Now().UnixNano())
 	hello := proto.LinkHello{
 		ChainSeq: s.chain.Head().Seq,
@@ -253,6 +259,54 @@ func (l *Link) Run() {
 			l.s.SetHosts(h)
 		case proto.TypeHandover:
 			signal(l.handover)
+		case proto.TypeError:
+			var e proto.ErrorMsg
+			if json.Unmarshal(env.Data, &e) != nil {
+				return false, errors.New("server: link: malformed error")
+			}
+			return false, fmt.Errorf("server: link refused: %s: %s", e.Code, e.Message)
+		case proto.TypeDedicatedPrepare:
+			var p proto.DedicatedPrepare
+			if json.Unmarshal(env.Data, &p) != nil || p.Readiness.Validate() != nil {
+				return false, errors.New("server: link: malformed dedicated preparation")
+			}
+			if p.Readiness.ServerID != l.s.chain.ID().String() || p.Readiness.DestinationFingerprint != identity.Fingerprint(l.s.cfg.HostKey.PublicKey()) {
+				return false, errors.New("server: link: dedicated preparation names another destination")
+			}
+			// A source that changed while this link was catching up must retry;
+			// never sign an apparently complete but mixed boundary.
+			ts, id := time.Time{}, ""
+			if l.s.hist != nil {
+				ts, id = l.s.hist.Last()
+			}
+			if l.s.chain.Head().Seq != p.Readiness.ChainHead || id != p.Readiness.HistoryLastID || ts.UnixMilli() != p.Readiness.HistoryLastUnixMilli {
+				return false, errors.New("server: link: dedicated boundary did not arrive intact")
+			}
+			sig, err := proto.SignDedicatedReadiness(l.s.cfg.HostKey, p.Readiness)
+			if err != nil {
+				return false, err
+			}
+			l.prepareMu.Lock()
+			l.prepared = &p.Readiness
+			l.prepareMu.Unlock()
+			if err := l.write(proto.TypeDedicatedProof, proto.DedicatedReadinessProof{Readiness: p.Readiness, Signature: sig}); err != nil {
+				return false, err
+			}
+		case proto.TypeDedicatedAck:
+			var ack proto.DedicatedAck
+			if json.Unmarshal(env.Data, &ack) != nil || ack.Readiness.Validate() != nil {
+				return false, errors.New("server: link: malformed dedicated acknowledgement")
+			}
+			l.prepareMu.Lock()
+			ok := l.prepared != nil && reflect.DeepEqual(*l.prepared, ack.Readiness)
+			l.prepareMu.Unlock()
+			if !ok {
+				return false, errors.New("server: link: replayed dedicated acknowledgement")
+			}
+			select {
+			case l.prepareAck <- nil:
+			default:
+			}
 		}
 		return false, nil
 	}))
@@ -272,6 +326,42 @@ func (l *Link) RoleChanged() <-chan struct{} { return l.roleCh }
 
 // Handover receives a value when the active host hands its role to this host.
 func (l *Link) Handover() <-chan struct{} { return l.handover }
+
+// AwaitDedicatedReadiness waits for the source's acknowledgement of this
+// link's nonce-bound readiness proof. It is only useful for a prepared link.
+func (l *Link) AwaitDedicatedReadiness(ctx context.Context) error {
+	select {
+	case err := <-l.prepareAck:
+		return err
+	case <-l.done:
+		if err := l.Err(); err != nil {
+			return err
+		}
+		return errors.New("server: dedicated link closed before acknowledgement")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// PersistDedicatedPreparation writes the restart-safe Prepared record only
+// after the active source acknowledged the exact signed boundary.
+func (l *Link) PersistDedicatedPreparation(ctx context.Context, path string) error {
+	if err := l.AwaitDedicatedReadiness(ctx); err != nil {
+		return err
+	}
+	l.prepareMu.Lock()
+	r := l.prepared
+	l.prepareMu.Unlock()
+	if r == nil {
+		return errors.New("server: missing acknowledged dedicated readiness")
+	}
+	return SaveDedicatedTransition(path, DedicatedTransitionRecord{
+		Version: 1, State: DedicatedTransitionPrepared, ServerID: r.ServerID,
+		DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead,
+		HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli,
+		TransitionNonce: append([]byte(nil), r.TransitionNonce...), Recovery: DedicatedRecoveryRetryPreparation,
+	})
+}
 
 // Hosts is the newest host list the active host sent, if any.
 func (l *Link) Hosts() (proto.Hosts, bool) {

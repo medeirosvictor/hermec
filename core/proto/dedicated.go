@@ -108,6 +108,19 @@ type DedicatedReadinessProof struct {
 	Signature []byte             `json:"signature"`
 }
 
+// DedicatedPrepare gives the passive destination the source-captured boundary
+// it must attest. It is meaningful only on an authenticated host link.
+type DedicatedPrepare struct {
+	Readiness DedicatedReadiness `json:"readiness"`
+}
+
+// DedicatedAck is sent only after the active source verified a proof. Keeping
+// the acknowledgement explicit prevents a destination crash/restart from
+// mistaking a locally generated proof for a completed preparation.
+type DedicatedAck struct {
+	Readiness DedicatedReadiness `json:"readiness"`
+}
+
 // Validate checks all bounded proof fields.
 func (p DedicatedReadinessProof) Validate() error {
 	if err := p.Readiness.Validate(); err != nil {

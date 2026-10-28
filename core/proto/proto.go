@@ -87,10 +87,15 @@ const (
 	TypeLinkProbe      = "link_probe"
 	TypeLinkProbeReply = "link_probe_reply"
 	TypeReach          = "reach"
-	TypeHandover       = "handover"
-	TypeWarmOffer      = "warm_offer"
-	TypeWarmAnswer     = "warm_answer"
-	TypeWarmCandidate  = "warm_candidate"
+	// Dedicated preparation messages are accepted only on an authenticated
+	// host link, never on an ordinary client connection.
+	TypeDedicatedPrepare = "dedicated_prepare"
+	TypeDedicatedProof   = "dedicated_proof"
+	TypeDedicatedAck     = "dedicated_ack"
+	TypeHandover         = "handover"
+	TypeWarmOffer        = "warm_offer"
+	TypeWarmAnswer       = "warm_answer"
+	TypeWarmCandidate    = "warm_candidate"
 )
 
 // CodeNotSharing is the error code for a watch whose target is not sharing in

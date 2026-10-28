@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"reflect"
 	"sort"
@@ -37,6 +38,9 @@ type linkState struct {
 	lastBeat time.Time
 	standby  bool // the last link_role sent
 	roleSent bool // a link_role has been sent
+	// dedicated is a source-captured boundary for a prepared destination.
+	// It is nil for ordinary failover links.
+	dedicated *proto.DedicatedReadiness
 }
 
 // selfInfo describes this host.
@@ -176,6 +180,10 @@ func (c *conn) handleLinkHello(env proto.Envelope) {
 		c.sendError(code, msg)
 		return
 	}
+	if h.Prepared {
+		s.streamDedicatedHistory(c)
+		return
+	}
 	s.streamHistory(c, h.HistoryLastTS, h.HistoryLastID)
 }
 
@@ -228,6 +236,20 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 		s.releaseWarmSlot()
 	}
 	c.link = &linkState{hello: h, lastBeat: s.clock()}
+	if h.Prepared {
+		// The chain head is captured while chainMu excludes an append. History
+		// is checked again before acknowledgement, so a concurrent chat makes
+		// this attempt retry rather than attest an ambiguous boundary.
+		nonce := make([]byte, proto.DedicatedTransitionNonceSize)
+		if _, err := rand.Read(nonce); err != nil {
+			return proto.CodeBadRequest, "cannot create preparation nonce"
+		}
+		ts, id := time.Time{}, ""
+		if s.hist != nil {
+			ts, id = s.hist.Last()
+		}
+		c.link.dedicated = &proto.DedicatedReadiness{ServerID: s.chain.ID().String(), DestinationFingerprint: c.fingerprint, ChainHead: s.chain.Head().Seq, HistoryLastID: id, HistoryLastUnixMilli: ts.UnixMilli(), TransitionNonce: nonce}
+	}
 	s.links[c] = struct{}{}
 	ok := true
 	for _, f := range frames {
@@ -246,6 +268,19 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 	s.chMu.Unlock()
 	dropSlow(dead)
 	return "", ""
+}
+
+// streamDedicatedHistory sends from the beginning so a bootstrap destination
+// cannot hide a partial local history.  The proof challenge follows the final
+// history frame, preserving the source-captured transfer boundary.
+func (s *Server) streamDedicatedHistory(c *conn) {
+	s.streamHistory(c, time.Time{}, "")
+	s.chMu.Lock()
+	r := c.link.dedicated
+	s.chMu.Unlock()
+	if r != nil {
+		_ = c.sendMsg(proto.TypeDedicatedPrepare, proto.DedicatedPrepare{Readiness: *r})
+	}
 }
 
 // streamHistory sends c the chat lines after (ts, id), paged to fit a frame;
@@ -373,6 +408,8 @@ func (c *conn) routeLink(env proto.Envelope) {
 		c.handleLinkChainIn(env)
 	case proto.TypeLinkProbe:
 		c.handleLinkProbe()
+	case proto.TypeDedicatedProof:
+		c.handleDedicatedProof(env)
 	default:
 		c.sendError(proto.CodeBadRequest, "unsupported message type "+env.Type)
 	}
