@@ -287,16 +287,22 @@ jobs:
             mkdir "$stage"
             GOOS=linux GOARCH=$goarch go build -trimpath -ldflags "$ldflags" \
               -o "$stage/hermec-server" ./cmd/hermec-server
+            GOOS=linux GOARCH=$goarch go build -trimpath -ldflags "$ldflags" \
+              -o "$stage/hermec-verify" ./cmd/hermec-verify
             cp example.server.toml "$stage/"
             cp packaging/dedicated/hermec-server.service "$stage/"
             cp packaging/dedicated/install.sh packaging/dedicated/update.sh \
               packaging/dedicated/backup.sh "$stage/"
             cp docs/dedicated-hosting.md "$stage/README.md"
-            chmod 0755 "$stage/hermec-server" "$stage"/*.sh
+            chmod 0755 "$stage/hermec-server" "$stage/hermec-verify" "$stage"/*.sh
             # The hosted runner is amd64; executing the arm64 artifact would
             # fail with Exec format error. Cross-build both, smoke-test native.
             if [ "$goarch" = "$(go env GOARCH)" ]; then
-              "$stage/hermec-server" -version
+              test "$("$stage/hermec-server" -version)" = "hermec-server $TAG"
+              test "$("$stage/hermec-verify" -version)" = "hermec-verify $TAG"
+              "$stage/hermec-verify" -mode init -identity "$stage/verifier.identity"
+              test -s "$stage/verifier.identity"
+              rm "$stage/verifier.identity"
             fi
             tar -czf "dist/hermec-server-linux-$goarch.tar.gz" -C "$stage" .
           done

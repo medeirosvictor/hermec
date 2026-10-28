@@ -399,6 +399,9 @@ func (s *Server) trimLoop() {
 	}
 }
 
+// ID returns the authenticated server chain ID.
+func (s *Server) ID() string { return s.chain.ID().String() }
+
 // Addr returns the actual listen address (host:port) after Start.
 func (s *Server) Addr() string {
 	if s.ln == nil {

@@ -1,113 +1,149 @@
 # Dedicated server hosting
 
-HERMEC can run as an operator-owned Linux systemd service. HERMEC does not
-create cloud resources, receive cloud credentials, or manage billing.
+HERMEC can run as an operator-owned Linux systemd service. It does not create
+cloud resources, receive cloud credentials, or manage billing. The dedicated
+Linux amd64/arm64 archive contains both `hermec-server` and `hermec-verify`.
+Use the same released build for server and verifier: pre-v1 protocol
+compatibility between arbitrary builds is not promised.
 
-A public server requires:
+## Provider-neutral VPS preparation
 
-- a DNS name in `public_dns` and a trusted, currently-valid TLS certificate
-  covering that name for `wss://` signaling;
-- inbound TCP 7697 and UDP 7697 (or the configured ports);
-- password or member-key admission;
-- persistent storage for `server.toml`, `hermec-server.key`, `chain.jsonl`, and
-  `history.jsonl`.
+Use a Linux amd64 or arm64 VM with systemd, a stable public IPv4/IPv6 address,
+and persistent block storage. A small voice/chat group can start with 1--2
+vCPU, 1 GiB RAM, and a modest persistent disk; size disk and network capacity
+for history, backups, cameras, and screen sharing. Attach/retain the disk
+before installing, and back it up independently. Video and screen sharing can
+produce substantial provider egress charges: check transfer pricing and set
+budget/usage alerts.
 
-The first release expects Linux amd64 or arm64 and systemd. A small group can
-start with 1-2 vCPU and 1 GiB RAM. Camera and screen traffic can create material
-egress charges; check the provider's transfer prices and alerts.
+Create a DNS record for the stable address and obtain a trusted, currently
+valid certificate for that exact name. Permit the configured signaling TCP port
+and the media UDP port(s) in **both** the provider firewall and the host
+firewall. By default `media_port = 0` uses the signaling listener's port for
+media (7697 only when `addr` uses its default); a nonzero `media_port` requires
+that UDP port instead, while `udp_port_min`/`udp_port_max` require the entire
+configured UDP range. Also permit the required outbound UDP replies and normal
+HTTPS/DNS/certificate-renewal egress. TCP-only rules allow signaling but do not
+make calls work. Do not expose SSH broadly; use administrator IP restrictions
+or a bastion.
+
+Keep `/var/lib/hermec` on persistent storage: it contains `server.toml`,
+`hermec-server.key`, `chain.jsonl`, `history.jsonl`, TLS material, and admission
+configuration. Use `systemctl status hermec-server` and
+`journalctl -u hermec-server -f` for service logs. Back up before upgrades, use
+the supplied update script, and retain the previous archive for rollback.
+
+### AWS EC2 example
+
+Choose an EC2 Linux instance matching the downloaded architecture. For a small
+initial amd64 deployment, `t3.small` is a concrete starting point; use
+`t3.medium` or a general-purpose `m6i` size when sustained CPU or more memory
+is needed. For arm64, use a Graviton-compatible Linux image and start with
+`t4g.small`; `t4g.medium` or an `m7g` size is the corresponding step up. These
+are instance-family/size examples, not price or capacity promises: measure the
+workload and review current AWS limits and pricing.
+
+Attach an EBS volume for `/var/lib/hermec`, allocate/associate an Elastic IP if
+the address must not change, and create a Route 53 (or other DNS) record for
+it. Its security group must allow TCP 7697 and UDP 7697 from the intended users
+(and constrained SSH from administrators); mirror those rules in `ufw`,
+nftables, or the distro firewall. Configure EBS snapshots/backups,
+CloudWatch/billing alarms, and certificate renewal. EC2 data transfer and
+cross-AZ traffic can cost money; review the current AWS pricing rather than
+assuming a free allowance.
 
 ## Install
 
-1. Use a Linux amd64 or arm64 system with systemd and persistent storage for
-   the state directory. For public use, arrange DNS, a trusted certificate, and
-   firewall access to the configured TCP and UDP ports; TCP alone allows
-   signaling but **not calls**.
-2. Download the dedicated bundle matching the machine, verify it against
-   `SHA256SUMS.txt`, extract it, and run `sudo ./install.sh`.
-3. Save the generated join password from the one-time bootstrap output in a
-   password manager. The server stores only its derived proof key.
-4. Obtain a trusted certificate (for example with Certbot or Caddy) and deploy
-   a copy of its full chain and private key to:
+1. Download the matching dedicated bundle, verify it against `SHA256SUMS.txt`,
+   extract it, and run `sudo ./install.sh`.
+2. Save the one-time bootstrap join password in a password manager. The server
+   stores only its derived proof key.
+3. Deploy trusted certificate files (owned/readable only by the service):
 
-       /var/lib/hermec/tls/fullchain.pem
-       /var/lib/hermec/tls/privkey.pem
+       sudo install -o hermec -g hermec -m 0600 fullchain.pem /var/lib/hermec/tls/fullchain.pem
+       sudo install -o hermec -g hermec -m 0600 privkey.pem /var/lib/hermec/tls/privkey.pem
 
-   Install them with ownership and modes the service can read without exposing
-   the private key (adjust the source paths for your certificate provider):
+4. Set `public_dns` in `/var/lib/hermec/server.toml` to the certificate DNS
+   name. Set `public_ip` for stable 1:1 NAT. Do not change generated
+   `password_key`.
+5. Validate then enable:
 
-       sudo install -o hermec -g hermec -m 0600 /path/to/fullchain.pem /var/lib/hermec/tls/fullchain.pem
-       sudo install -o hermec -g hermec -m 0600 /path/to/privkey.pem /var/lib/hermec/tls/privkey.pem
-
-   Arrange renewal deployment with the same ownership/modes and restart the
-   service after renewal.
-5. Set `public_dns` in `/var/lib/hermec/server.toml` to the DNS name on the
-   certificate. If the host uses 1:1 NAT, also set `public_ip` to its stable
-   public IP. Do not change `public = true`, `discoverable = false`, or the
-   generated `password_key`.
-6. Validate before binding sockets:
-
-       sudo -u hermec /usr/local/bin/hermec-server \
-         -config /var/lib/hermec/server.toml -check
-
-7. Enable the service:
-
+       sudo -u hermec /usr/local/bin/hermec-server -config /var/lib/hermec/server.toml -check
        sudo systemctl enable --now hermec-server
-       sudo systemctl status hermec-server
-       sudo journalctl -u hermec-server -f
 
-Share `wss://your-name.example:7697/`, the server ID printed by `-check`, and the
-join password through separate trusted channels where practical.
+Share `wss://name.example:7697/`, the server ID printed by `-check`, and the
+join password through separate trusted channels.
 
-## Backup and restore
+## Remote reachability verifier
 
-Create a consistent backup (the script briefly stops and restarts an active
-service):
+`hermec-verify` is a pure-Go, two-endpoint proof of authenticated pinned WSS
+signaling and bidirectional synthetic audio through the SFU. It is not a local
+bind test or signaling-only test. It never accepts a password in an argument or
+environment variable: pipe it once on stdin. It uses system TLS trust and has
+no insecure TLS option.
 
-    sudo ./backup.sh /safe/location/hermec-YYYYMMDD.tar.gz
+On each independently administered remote machine, create a distinct verifier
+identity locally--never copy a member or founder private key to a VPS. The
+initializer creates the file exclusively at mode 0600 and prints its public
+fingerprint; it refuses to replace an existing file:
 
-The archive contains the host private identity, so protect it like a password
-and never publish it. Test restores on a disposable machine.
+    ./hermec-verify -mode init -identity /secure/a.identity
 
-To restore:
+Exchange only those printed fingerprints through a trusted channel. Put the
+other endpoint's fingerprint in a local mode-0600 text file (one
+`abcd-efgh-ijkl-mnop` fingerprint and optional whitespace). Both identities
+must be admitted by the server and both operators must use the same voice
+channel. Then run simultaneously, changing identity and peer file on the other
+machine:
 
-1. Stop HERMEC and move the current `/var/lib/hermec` aside; do not merge two
-   identities or chain files.
-2. Create a fresh mode-0700 `/var/lib/hermec`, extract the archive there, and
-   set ownership to `hermec:hermec`.
-3. Run `hermec-server -config /var/lib/hermec/server.toml -check`.
-4. Confirm the server ID equals the backed-up server ID, then start the service.
+    < /secure/join-password ./hermec-verify \
+      -url wss://name.example:7697/ -server-id SERVER_ID \
+      -identity /secure/a.identity -expected-peer /secure/b.fingerprint \
+      -channel verify -timeout 90s -frames 10 -diagnostics /secure/a-report.json
 
-A restore deliberately preserves the server ID, chain, history, admission key,
-and TLS material.
+Do not put the password literally in shell history, an argument, or an
+environment variable; use a password-manager pipe, protected file descriptor,
+or a mode-0600 password file redirected to stdin. The verifier accepts at most
+256 password bytes (excluding a final line ending); longer terminated or
+unterminated input is rejected. The optional report is allowlisted JSON only,
+atomically written mode 0600, and contains stage/code, elapsed time,
+counts, server ID, and fingerprints--never password, keys, SDP, ICE candidates,
+or server transport errors. It is operator evidence, not an independently
+attested certificate of reachability; retain and interpret it with the endpoint
+and server logs.
 
-## Update and rollback
+A success requires the expected peer to appear in voice state and enough valid
+Opus comfort-noise frames carrying that peer's authenticated marker and
+monotonic sequence. The verifier treats the channel as exclusive: any third
+participant fails the proof rather than treating its media as evidence. Since
+both endpoints send those decodable synthetic audio frames, two successful,
+separately run invocations provide reciprocal operator evidence of both
+directions. Failures are deliberately coarse and diagnostic rather than a
+root-cause verdict: `URL_TLS` covers URL, DNS, certificate, or system trust;
+`PIN_IDENTITY` covers pin, identity, or fingerprint file; `ADMISSION` covers
+password/admission (including input timeout); `PEER_NOT_PRESENT` means the
+expected endpoint was not observed in the channel; `NEGOTIATION_UDP` means voice
+negotiation did not complete and may involve UDP/firewall/NAT/media; and
+`AUDIO_INVALID` means unexpected sender or insufficient/invalid marker audio.
 
-Download and verify a new dedicated bundle, then run:
+## Disposable-VPS acceptance checklist
 
-    sudo ./update.sh update ./hermec-server
+Before declaring public reachability, use a disposable trusted public server
+and **two independently administered remote VPSes/networks**. Pin the checked
+server ID, exchange distinct identity fingerprints, run the bundled verifier on
+both endpoints, and retain only its safe diagnostics. Confirm each report says
+success and records the expected peer frames. CI, loopback/local tests, and a
+successful server `-check` do **not** establish internet reachability.
 
-The script first verifies that the downloaded candidate reports a HERMEC
-version and runs its `-config /var/lib/hermec/server.toml -check` validation
-while an active service is still running. It then retains the previous binary,
-installs the new one atomically, waits for systemd to report it active, and
-rolls back automatically if it fails to become active.
-Persistent state is not modified. Manual rollback is:
+## Backup, update, and troubleshooting
 
-    sudo ./update.sh rollback
+Create a consistent backup with `sudo ./backup.sh /safe/location/hermec.tar.gz`.
+The archive includes private identity and must be protected like a password.
+Restore only a complete matching state directory, validate with `-check`, and
+confirm its server ID before starting.
 
-Back up first and keep the previous bundle until calls, restart persistence,
-and logs have been checked.
-
-## Troubleshooting
-
-- **Text connects but calls fail:** verify inbound and outbound UDP for the
-  configured media port, `public_ip`, the guest firewall, and NAT mapping.
-- **TLS check fails:** set `public_dns` to the certificate DNS name; use the
-  full certificate chain from a system-trusted issuer, ensure it is unexpired,
-  and let the `hermec` service user read the private key.
-- **Server ID changed:** stop immediately and restore the original
-  `hermec-server.key` and `chain.jsonl` together. Do not ask members to accept an
-  unexpected identity.
-- **Service restart loop:** inspect `journalctl -u hermec-server`; run `-check`
-  directly. Raw diagnostics stay in the operator's journal and should be
-  scrubbed before sharing.
+Update with `sudo ./update.sh update ./hermec-server`; it validates the
+candidate while the service runs and rolls back on failure. Use
+`sudo ./update.sh rollback` for manual rollback. If text works but calls fail,
+check inbound/outbound UDP, guest/provider firewalls, NAT and `public_ip`. If
+the server ID changes, stop and restore the original key and chain together.
