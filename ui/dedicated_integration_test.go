@@ -150,7 +150,7 @@ func TestDedicatedValidationHeadlessIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("stale completion closes client and commits nothing",  func(t *testing.T) {
+	t.Run("stale completion closes client and commits nothing", func(t *testing.T) {
 		g := newValidationGame(t)
 		release := make(chan struct{})
 		dialed := make(chan *client.Client, 1)
