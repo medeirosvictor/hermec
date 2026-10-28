@@ -87,10 +87,11 @@ type Client struct {
 	writeMu   sync.Mutex // gorilla permits a single concurrent writer
 	voiceOpMu sync.Mutex // orders mute writes with voice call replacement
 
-	mu      sync.Mutex // guards waiters and closed
-	waiters []*joinWaiter
-	closed  bool
-	call    *call // active voice call, if any
+	mu          sync.Mutex // guards waiters and closed
+	waiters     []*joinWaiter
+	activations map[string]chan proto.DedicatedResult
+	closed      bool
+	call        *call // active voice call, if any
 
 	warm      atomic.Bool  // paused session until a takeover promotes it
 	lastHB    atomic.Int64 // clock time of the newest hb in unix nanoseconds; 0 before the first
@@ -375,10 +376,15 @@ func (c *Client) readLoop() {
 		c.closed = true
 		ws := c.waiters
 		c.waiters = nil
+		as := c.activations
+		c.activations = nil
 		cl := c.call
 		c.mu.Unlock()
 		for _, w := range ws {
 			w.res <- ErrClosed
+		}
+		for _, ch := range as {
+			ch <- proto.DedicatedResult{Status: "error", Message: ErrClosed.Error()}
 		}
 		c.ws.Close()
 		if cl != nil {
@@ -467,6 +473,13 @@ func (c *Client) readLoop() {
 			if json.Unmarshal(env.Data, &source) == nil {
 				c.onMediaSource(source)
 			}
+		case proto.TypeDedicatedResult:
+			var r proto.DedicatedResult
+			if json.Unmarshal(env.Data, &r) != nil || r.Ref == "" {
+				c.emit(Event{Err: fmt.Errorf("client: bad dedicated activation result")})
+				continue
+			}
+			c.resolveDedicatedActivation(r)
 		case proto.TypeError:
 			var em proto.ErrorMsg
 			_ = json.Unmarshal(env.Data, &em)

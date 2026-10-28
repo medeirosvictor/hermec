@@ -68,6 +68,7 @@ func DialWithNetwork(ctx context.Context, url string, id *identity.Identity, nam
 		mediaLanes:  hasCapability(res.OK.Capabilities, proto.CapabilityMediaLanesV1),
 		pwKey:       res.Key,
 		chain:       res.Chain,
+		activations: make(map[string]chan proto.DedicatedResult),
 		events:      make(chan Event, eventBuffer),
 		done:        make(chan struct{}),
 		loopDone:    make(chan struct{}),

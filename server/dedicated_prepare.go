@@ -107,25 +107,12 @@ func (c *conn) handleDedicatedProof(env proto.Envelope) {
 		c.sendError(proto.CodeBadRequest, "source history moved during preparation")
 		return
 	}
-	// Legacy preparation records are retained only for an in-memory/test
-	// destination. A configured journal uses the durable fenced protocol.
-	if s.cfg.DedicatedTransitionPath == "" {
-		if !c.sendMsg(proto.TypeDedicatedAck, proto.DedicatedAck{Readiness: *want}) {
-			return
-		}
-		c.link.dedicated, c.link.dedicatedHistory = nil, nil
-		return
-	}
-	cert, err := c.fenceDedicatedLocked(p)
-	if err != nil {
-		// Crucially this is before the durable fence; source remains active.
-		c.sendError(proto.CodeBadRequest, "dedicated cutover not ready")
-		return
-	}
-	// A lost commit is retried from the same fenced journal after restart; no
-	// new nonce, state boundary, or certificate is ever minted.
-	_ = c.sendMsg(proto.TypeDedicatedCommit, proto.DedicatedCommit{Certificate: cert})
-	c.link.dedicated, c.link.dedicatedHistory = nil, nil
+	// Readiness is deliberately not a cutover. Persisting the proof on the
+	// authenticated link and acknowledging it lets the destination durably
+	// become Ready; only a later founder activation can fence this source.
+	proof := p
+	c.link.dedicatedProof = &proof
+	_ = c.sendMsg(proto.TypeDedicatedAck, proto.DedicatedAck{Readiness: *want})
 }
 
 func sameReadiness(a, b proto.DedicatedReadiness) bool {

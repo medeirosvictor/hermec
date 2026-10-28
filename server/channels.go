@@ -434,6 +434,8 @@ func (c *conn) route(env proto.Envelope) {
 		}
 	case proto.TypeChainAppend:
 		c.handleChainAppend(env)
+	case proto.TypeDedicatedActivate:
+		c.handleDedicatedActivate(env)
 	case proto.TypeWarmOffer, proto.TypeWarmAnswer, proto.TypeWarmCandidate:
 		c.handleWarmSignal(env)
 	case proto.TypeLinkHello:

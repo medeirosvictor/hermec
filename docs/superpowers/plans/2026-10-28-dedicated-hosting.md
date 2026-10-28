@@ -1,7 +1,7 @@
 # Dedicated AWS/VPS Hosting Implementation Plan
 
-**Status:** Tasks 1–4 are complete locally; Task 5 is next. Remote hosting is
-not available until Task 6 passes and the work is merged and released.
+**Status:** Tasks 1–5 are complete locally. Remote hosting is not available
+until Task 6 passes and the work is merged and released.
 
 ## Goal and constraints
 
@@ -22,15 +22,19 @@ peers are required.
   persistence, and versioned share/import details.
 - Commits: Tasks 1–2 `ca6ed69`, Task 3 `020492f`, Task 4 `5df0524`.
 
-## Task 5: Authorize and prepare a VPS host
+## Task 5: Authorize and prepare a VPS host — complete locally
 
 - Founder authorizes the VPS-generated public key as a host and transfers
   chain/history through the authenticated host-link model while the VPS remains
   prepared, not independently active.
-- Never transfer member private keys. Verify destination server ID, chain head,
-  history boundary and password proof before readiness.
-- Require empty voice before activation. On failure retain the current active
-  host and provide retry/recovery instructions.
+- Preparation proof only establishes Ready; it never fences or cuts over.
+  The current chain founder explicitly confirms the exact destination
+  fingerprint and transition nonce before the source performs the durable
+  fenced cutover.
+- Never transfer member private keys. The cutover revalidates destination
+  authorization, server ID, chain head, history boundary, nonce, source mode,
+  and voice emptiness under one gate. Structured pending/ready/retry/error
+  results give fixed recovery guidance without changing authority.
 
 ## Task 6: Acceptance and release
 

@@ -79,6 +79,9 @@ func TestPreparedLinkAttestsCompleteMultipageHistoryBeforePersistence(t *testing
 	if r.State != DedicatedTransitionPrepared || r.ChainHead != c.Head().Seq {
 		t.Fatalf("transition = %+v", r)
 	}
+	if source.Mode() != ModeActive {
+		t.Fatal("readiness proof automatically activated/fenced the source")
+	}
 }
 
 func TestDedicatedMutationLeaseSerializesAppendChatTrimAndDemote(t *testing.T) {

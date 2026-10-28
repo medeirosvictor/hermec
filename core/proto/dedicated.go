@@ -253,6 +253,36 @@ type DedicatedAck struct {
 	Readiness DedicatedReadiness `json:"readiness"`
 }
 
+// DedicatedActivate explicitly approves one already-ready destination. Both
+// values are required for activation, preventing a delayed UI action from
+// activating a newer preparation for the same host. An empty nonce is a
+// readiness query and can only return pending or ready.
+type DedicatedActivate struct {
+	DestinationFingerprint string `json:"destination_fingerprint"`
+	TransitionNonce        []byte `json:"transition_nonce"`
+	Ref                    string `json:"ref"`
+}
+
+// DedicatedResult is the structured answer to DedicatedActivate. Ready makes
+// the exact boundary available for a later explicit activation; Pending and
+// Retry never change serving authority.
+type DedicatedResult struct {
+	Ref       string              `json:"ref"`
+	Status    string              `json:"status"` // pending, ready, success, retry, error
+	Readiness *DedicatedReadiness `json:"readiness,omitempty"`
+	Message   string              `json:"message,omitempty"`
+}
+
+func (m DedicatedActivate) Validate() error {
+	if m.DestinationFingerprint == "" || len(m.DestinationFingerprint) > MaxDedicatedFingerprint || len(m.Ref) == 0 || len(m.Ref) > 128 {
+		return errors.New("proto: invalid dedicated activation request")
+	}
+	if len(m.TransitionNonce) != 0 && len(m.TransitionNonce) != DedicatedTransitionNonceSize {
+		return errors.New("proto: invalid dedicated activation nonce")
+	}
+	return nil
+}
+
 // Validate checks all bounded proof fields.
 func (p DedicatedReadinessProof) Validate() error {
 	if err := p.Readiness.Validate(); err != nil {

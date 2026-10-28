@@ -17,13 +17,12 @@ Hermec is a self-hosted voice, screen-share and text-chat app. See
 Chat, roles, channels, desktop UI, app hosting, LAN/Tailscale discovery, SFU
 voice, screen sharing, Windows camera publishing, signed group configuration,
 chat history, standby/failover, Windows/Linux releases, and a manual update
-banner are shipped. Dedicated-hosting Tasks 1–4 are complete locally, but
+banner are shipped. Dedicated-hosting Tasks 1–5 are complete locally, but
 remote availability is not yet claimed.
 
 ## Roadmap
 
-1. **Dedicated hosting:** authorize/prepare the VPS host (Task 5), then pass
-   remote acceptance/release (Task 6). See the
+1. **Dedicated hosting:** pass remote acceptance/release (Task 6). See the
    [dedicated plan](docs/superpowers/plans/2026-10-28-dedicated-hosting.md).
 2. **Embedded private networking:** complete real Tailscale/Headscale direct
    and relay evidence, then profile lifecycle and Create/Join flows. See the

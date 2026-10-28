@@ -93,10 +93,14 @@ const (
 	TypeDedicatedProof   = "dedicated_proof"
 	TypeDedicatedAck     = "dedicated_ack"
 	TypeDedicatedCommit  = "dedicated_commit"
-	TypeHandover         = "handover"
-	TypeWarmOffer        = "warm_offer"
-	TypeWarmAnswer       = "warm_answer"
-	TypeWarmCandidate    = "warm_candidate"
+	// Dedicated activation is an authenticated founder request to the active
+	// source. Proof receipt only establishes Ready.
+	TypeDedicatedActivate = "dedicated_activate"
+	TypeDedicatedResult   = "dedicated_result"
+	TypeHandover          = "handover"
+	TypeWarmOffer         = "warm_offer"
+	TypeWarmAnswer        = "warm_answer"
+	TypeWarmCandidate     = "warm_candidate"
 )
 
 // CodeNotSharing is the error code for a watch whose target is not sharing in

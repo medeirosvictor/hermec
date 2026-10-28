@@ -44,6 +44,7 @@ type linkState struct {
 	// dedicated and dedicatedHistory are one source-captured boundary for a
 	// prepared destination. The copied history cannot be evicted mid-sync.
 	dedicated        *proto.DedicatedReadiness
+	dedicatedProof   *proto.DedicatedReadinessProof // verified Ready proof
 	dedicatedHistory []proto.ChatMessage
 }
 
