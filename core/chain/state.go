@@ -172,11 +172,19 @@ func (s *State) Apply(e Entry) error {
 		if err := e.DecodeBody(&b); err != nil {
 			return ruleErr("bad config body")
 		}
+		if err := b.Validate(); err != nil {
+			return ruleErr("invalid config body: %v", err)
+		}
 		n.Config, n.HasConfig = b, true
 	case OpGrant:
 		var b GrantBody
-		if err := e.DecodeBody(&b); err != nil || b.Fingerprint == "" {
+		if err := e.DecodeBody(&b); err != nil || b.Fingerprint == "" || len(b.Roles) > MaxRolesPerMember {
 			return ruleErr("bad grant body")
+		}
+		for _, role := range b.Roles {
+			if !validConfigName(role, MaxRoleNameRunes) {
+				return ruleErr("bad grant body")
+			}
 		}
 		if b.Fingerprint == s.Founder && author != s.Founder {
 			return ruleErr("only the founder may change the founder's roles")

@@ -51,7 +51,7 @@ func TestLoadDropsTornFinalLine(t *testing.T) {
 		}
 		// The chain keeps working: the next append lands on the clean file.
 		h := c.Head()
-		next, err := NewEntry(f, &h, OpConfig, ConfigBody{Name: "three"}, t0)
+		next, err := NewEntry(f, &h, OpConfig, ConfigBody{Name: "three", Channels: []string{"general"}, MaxVoice: 1, MaxClients: 1, MaxPerIP: 1}, t0)
 		if err != nil {
 			t.Fatal(err)
 		}

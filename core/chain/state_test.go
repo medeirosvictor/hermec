@@ -27,6 +27,21 @@ func newBuilder(t *testing.T, founder *identity.Identity) *builder {
 
 func (b *builder) entry(by *identity.Identity, op Op, body any) Entry {
 	b.t.Helper()
+	if v, ok := body.(ConfigBody); ok {
+		if len(v.Channels) == 0 {
+			v.Channels = []string{"general"}
+		}
+		if v.MaxVoice == 0 {
+			v.MaxVoice = 1
+		}
+		if v.MaxClients == 0 {
+			v.MaxClients = 1
+		}
+		if v.MaxPerIP == 0 {
+			v.MaxPerIP = 1
+		}
+		body = v
+	}
 	b.n++
 	h := b.c.Head()
 	e, err := NewEntry(by, &h, op, body, t0.Add(time.Duration(b.n)*time.Second))
