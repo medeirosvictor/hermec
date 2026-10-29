@@ -213,9 +213,33 @@ successful server `-check` do **not** establish internet reachability.
 ## Backup, update, and troubleshooting
 
 Create a consistent backup with `sudo ./backup.sh /safe/location/hermec.tar.gz`.
-The archive includes private identity and must be protected like a password.
-Restore only a complete matching state directory, validate with `-check`, and
-confirm its server ID before starting.
+The script stops an active service while it snapshots the following private
+state: `server.toml`, `hermec-server.key`, `chain.jsonl`, `history.jsonl`, and,
+when they exist, `transition.json` and `readiness.json`. The latter two are the
+durable dedicated cutover/readiness records; retain them exactly, including for
+`prepared`, `fenced`, or `committed` transitions. Older state directories that
+predate those records back up normally.
+
+The archive is mode 0600 and includes private identity, so protect it like a
+password. It deliberately excludes `logs/` and `tls/`, including TLS private
+keys. Keep TLS material in its certificate-management backup or redeploy it
+from that source; do not add it through `HERMEC_BACKUP_EXTRA` unless an
+operator has a separate documented key-handling policy.
+
+To restore, stop the service, extract the archive into a mode-0700 matching
+state directory owned by `hermec`, restore/deploy its TLS files separately,
+and preserve the extracted mode-0600 file permissions. Then validate before
+starting:
+
+    sudo systemctl stop hermec-server
+    sudo install -d -o hermec -g hermec -m 0700 /var/lib/hermec
+    sudo tar -xzf /safe/location/hermec.tar.gz -C /var/lib/hermec
+    sudo chown -R hermec:hermec /var/lib/hermec
+    sudo -u hermec /usr/local/bin/hermec-server -config /var/lib/hermec/server.toml -check
+    sudo systemctl start hermec-server
+
+Confirm the expected server ID from `-check` before starting. If the server ID
+changes, stop and restore the original key and chain together.
 
 Update with `sudo ./update.sh update ./hermec-server`; it validates the
 candidate while the service runs and rolls back on failure. Use

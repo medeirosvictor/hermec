@@ -32,6 +32,8 @@ jobs:
           if [ -n "$out" ]; then echo "gofmt needed on:"; echo "$out"; exit 1; fi
       - run: go vet ./...
       - run: go test -race -count=1 ./...
+      - name: Dedicated backup packaging
+        run: sudo ./packaging/dedicated/backup_test.sh
 
   test-macos:
     runs-on: macos-latest
