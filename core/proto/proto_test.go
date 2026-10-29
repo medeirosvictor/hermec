@@ -52,6 +52,49 @@ func TestDecodeRejects(t *testing.T) {
 	}
 }
 
+func TestValidAuth(t *testing.T) {
+	valid := Auth{
+		PubKey: make([]byte, 32), Sig: make([]byte, 64),
+		Name: strings.Repeat("n", MaxAuthNameBytes),
+		Capabilities: func() []string {
+			caps := make([]string, MaxAuthCapabilities)
+			for i := range caps {
+				caps[i] = strings.Repeat("c", MaxAuthCapabilityBytes)
+			}
+			return caps
+		}(),
+	}
+	tests := []struct {
+		name string
+		a    Auth
+		want bool
+	}{
+		{"exact bounds", valid, true},
+		{"proof exact bound", func() Auth { a := valid; a.Proof = make([]byte, 32); return a }(), true},
+		{"short public key", func() Auth { a := valid; a.PubKey = make([]byte, 31); return a }(), false},
+		{"long public key", func() Auth { a := valid; a.PubKey = make([]byte, 33); return a }(), false},
+		{"short signature", func() Auth { a := valid; a.Sig = make([]byte, 63); return a }(), false},
+		{"long signature", func() Auth { a := valid; a.Sig = make([]byte, 65); return a }(), false},
+		{"short proof", func() Auth { a := valid; a.Proof = make([]byte, 31); return a }(), false},
+		{"long proof", func() Auth { a := valid; a.Proof = make([]byte, 33); return a }(), false},
+		{"long name", func() Auth { a := valid; a.Name = strings.Repeat("n", MaxAuthNameBytes+1); return a }(), false},
+		{"too many capabilities", func() Auth { a := valid; a.Capabilities = make([]string, MaxAuthCapabilities+1); return a }(), false},
+		{"empty capability", func() Auth { a := valid; a.Capabilities = []string{""}; return a }(), false},
+		{"long capability", func() Auth {
+			a := valid
+			a.Capabilities = []string{strings.Repeat("c", MaxAuthCapabilityBytes+1)}
+			return a
+		}(), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ValidAuth(tt.a); got != tt.want {
+				t.Errorf("ValidAuth() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestVoicePayloadsRoundTrip(t *testing.T) {
 	tests := []struct {
 		typ  string

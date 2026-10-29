@@ -131,9 +131,8 @@ func TestCreateValidates(t *testing.T) {
 	}
 }
 
-// The create form has two fields, name and port: the app dials with an empty
-// password and Join has no password field, so a hosted password would lock
-// everyone out.
+// The create form has two fields, name and port: hosted connections use their
+// retained password key and Join has no password field.
 func TestCreateFormHasNoPassword(t *testing.T) {
 	g := addTestGame(t)
 	g.add = addCreate

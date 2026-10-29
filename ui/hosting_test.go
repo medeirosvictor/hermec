@@ -3,6 +3,8 @@ package ui
 import (
 	"context"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,11 +35,24 @@ func startFounder(t *testing.T, password string) *founderSrv {
 	id := mustIdentity(t)
 	addr := freeLoopback(t)
 	f := &founderSrv{id: id, url: "ws://" + addr + "/"}
-	f.srv = server.New(server.Config{
+	cfg := server.Config{
 		HostKey: id, Addr: addr, HostName: "founder", Advertise: []string{f.url},
 		Roles:    roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
 		Channels: []string{"general"}, VoiceChannels: []string{"voice"},
-	})
+	}
+	hostChain, _, err := server.OpenChain(filepath.Join(t.TempDir(), "chain.jsonl"), id, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Chain = hostChain
+	if password != "" {
+		sid := hostChain.ID()
+		cfg.PasswordKey, err = proto.PasswordKey(password, sid[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.srv = server.New(cfg)
 	if err := f.srv.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -240,8 +255,49 @@ func TestFriendHostSkippedWhenFounderHosts(t *testing.T) {
 	}
 }
 
-// A friend host starts with the password key its session logged in with, so a
-// host that cold-starts into active never serves a passworded group open.
+// A friend host persists the password key its session logged in with, so a
+// fresh app instance that cold-starts it never serves a passworded group open.
+func TestFriendHostKeepsGroupPasswordAfterColdStart(t *testing.T) {
+	g := friendGame(t)
+	f, s, id := grantedFriend(t, g, "hunter2")
+	key := s.c.PasswordKey()
+	if len(key) != 32 {
+		t.Fatal("session has no password key")
+	}
+	if got := readHosting(t, g, id).PasswordKey; got != hex.EncodeToString(key) {
+		t.Fatalf("persisted password_key = %q, want %x", got, key)
+	}
+
+	// Stop both running hosts, then start only from the persisted hosting and
+	// chain files in a fresh game. This is a cold start, not a warm takeover.
+	g.stopFriends()
+	f.shutdown()
+	g2 := friendGame(t)
+	g2.id, g2.fp, g2.hostedPath = g.id, g.fp, g.hostedPath
+	g2.bootFriends()
+	pumpUntil(t, g2, func() bool {
+		fh := g2.friends[id]
+		return fh != nil && fh.h != nil && fh.h.Role() == server.RoleActive
+	})
+	fh := g2.friends[id]
+	url := fmt.Sprintf("ws://127.0.0.1:%d/", fh.port)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if c, err := client.Dial(ctx, url, mustIdentity(t), "x", ""); err == nil {
+		_ = c.Close()
+		t.Fatal("passworded group served without a password")
+	} else {
+		var se *client.ServerError
+		if !errors.As(err, &se) || se.Code != proto.CodeAuthFailed {
+			t.Fatalf("dial without password: %v, want auth_failed", err)
+		}
+	}
+	c, err := client.DialWith(ctx, url, mustIdentity(t), "x", "", client.DialOpts{PasswordKey: key})
+	if err != nil {
+		t.Fatalf("dial with password key: %v", err)
+	}
+	_ = c.Close()
+}
 
 func TestFriendHostNoticeOnce(t *testing.T) {
 	g := friendGame(t)

@@ -322,7 +322,7 @@ cancellation is not implemented.
   numbers and the server ID, so a recorded proof cannot be reused. Plaintext
   passwords are never accepted on the wire or in server configuration.
 - **The host proves itself first.** Before your app sends anything secret
-  (including the server password), the host sends the server's signed chain and
+  (including a password proof), the host sends the server's signed chain and
   proves it holds a key that the chain approves as a host. A machine that
   merely copied the address cannot pass.
 - **Your app remembers the server.** Each server has an ID (the hash of the

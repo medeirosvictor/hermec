@@ -41,6 +41,13 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsPlaintextPassword(t *testing.T) {
+	_, err := LoadConfig(writeTOML(t, `password = "secret"`))
+	if err == nil || !strings.Contains(err.Error(), "plaintext password is unsupported") || !strings.Contains(err.Error(), "password_key") {
+		t.Fatalf("LoadConfig plaintext password error = %v", err)
+	}
+}
+
 func TestLoadConfigVoiceChannels(t *testing.T) {
 	cfg, err := LoadConfig(writeTOML(t, `voice_channels = ["lounge"]`))
 	if err != nil {

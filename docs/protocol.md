@@ -73,7 +73,7 @@ Client                                   Server
 
 ### 3.1 Handshake
 
-The host proves it belongs to the server before the client sends its password.
+The host proves it belongs to the server before the client sends its password proof.
 Nonces are 32 random bytes. The whole handshake must finish within **10
 seconds** of the upgrade. `server_id` is the raw 32 bytes of the server ID
 (section 9.1) in both signed strings. Each signed string starts with its own

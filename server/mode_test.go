@@ -43,7 +43,8 @@ func authWarm(t *testing.T, url string, id *identity.Identity, password string) 
 	h := hello(t, c)
 	sendEnv(t, c, proto.TypeAuth, proto.Auth{
 		PubKey: id.PublicKey(), Name: "warm", Warm: true,
-		Sig: id.Sign(proto.ClientAuthBytes(h.serverNonce, h.clientNonce, h.serverID[:])),
+		Sig:   id.Sign(proto.ClientAuthBytes(h.serverNonce, h.clientNonce, h.serverID[:])),
+		Proof: passwordProof(t, password, h.serverNonce, h.clientNonce, h.serverID),
 	})
 	return c, readEnv(t, c)
 }
@@ -168,6 +169,18 @@ func TestPromoteWarm(t *testing.T) {
 			t.Fatalf("promoted conn got error: %s", e.Data)
 		}
 	}
+}
+
+func TestHostWarmAuthNoPassword(t *testing.T) {
+	cfg := passwordConfig(t, "pw")
+	host := cfg.HostKey
+	_, url := startModeServer(t, cfg)
+
+	if _, env := authWarm(t, url, host, ""); env.Type != proto.TypeAuthOK {
+		t.Fatalf("host warm auth without password: %q", env.Type)
+	}
+	c, env := authWarm(t, url, mustID(t), "")
+	requireAuthFailed(t, c, env)
 }
 
 func TestRosterHasPubKey(t *testing.T) {

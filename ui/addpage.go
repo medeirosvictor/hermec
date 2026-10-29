@@ -37,7 +37,7 @@ const (
 )
 
 // createForm is the input state of the create page. There is no password field:
-// a hosted server is dialed with the password in its hosted.toml, and Join
+// hosted connections retain a derived password key in hosted.toml, and Join
 // dials with none.
 type createForm struct {
 	name, port field

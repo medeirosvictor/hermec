@@ -109,8 +109,8 @@ func Run(ctx context.Context, ws *websocket.Conn, id *identity.Identity, name, p
 }
 
 // handshake runs the version 2 mutual handshake: the host proves itself with
-// the signed chain before the password is sent, then the client authenticates
-// with a signature bound to the server ID.
+// the signed chain before the client sends a password proof, then the client
+// authenticates with a signature bound to the server ID.
 func handshake(ws *websocket.Conn, id *identity.Identity, name, password string, o Opts) (*Result, error) {
 	env, err := readHS(ws)
 	if err != nil {
