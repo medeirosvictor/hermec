@@ -22,8 +22,8 @@ func line(t *testing.T, e Entry) []byte {
 func TestAppendConflict(t *testing.T) {
 	f := newID(t)
 	b := newBuilder(t, f)
-	e1 := b.entry(f, OpConfig, ConfigBody{Name: "a"})
-	e2 := b.entry(f, OpConfig, ConfigBody{Name: "b"})
+	e1 := b.entry(f, OpConfig, validConfig(ConfigBody{Name: "a"}))
+	e2 := b.entry(f, OpConfig, validConfig(ConfigBody{Name: "b"}))
 	if err := b.c.Append(e1); err != nil {
 		t.Fatal(err)
 	}
@@ -38,9 +38,9 @@ func TestAppendFull(t *testing.T) {
 	defer func() { maxEntries = old }()
 	f := newID(t)
 	b := newBuilder(t, f) // entry 1 of 3
-	b.must(f, OpConfig, ConfigBody{Name: "a"})
-	b.must(f, OpConfig, ConfigBody{Name: "b"})
-	if err := b.add(f, OpConfig, ConfigBody{Name: "c"}); !errors.Is(err, ErrFull) {
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "a"}))
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "b"}))
+	if err := b.add(f, OpConfig, validConfig(ConfigBody{Name: "c"})); !errors.Is(err, ErrFull) {
 		t.Fatalf("want ErrFull, got %v", err)
 	}
 	if len(b.c.Entries()) != 3 {
@@ -54,7 +54,7 @@ func TestAppendFullBytes(t *testing.T) {
 	defer func() { maxBytes = old }()
 	f := newID(t)
 	b := newBuilder(t, f)
-	err := b.add(f, OpConfig, ConfigBody{Name: strings.Repeat("x", 2000)})
+	err := b.add(f, OpConfig, validConfig(ConfigBody{Name: strings.Repeat("x", 2000)}))
 	if !errors.Is(err, ErrFull) {
 		t.Fatalf("want ErrFull, got %v", err)
 	}
@@ -67,7 +67,7 @@ func TestLoadRoundTrip(t *testing.T) {
 	if err := b.c.SetPath(path); err != nil {
 		t.Fatal(err)
 	}
-	b.must(f, OpConfig, ConfigBody{Name: "<a> & b"})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "<a> & b"}))
 	b.must(f, OpGrant, GrantBody{Fingerprint: "x", Roles: []string{"admin"}})
 	b.must(f, OpBan, FPBody{Fingerprint: "y"})
 	c2, err := Load(path)
@@ -96,9 +96,9 @@ func TestVerifyRejectsTampering(t *testing.T) {
 	if err := b.c.SetPath(path); err != nil {
 		t.Fatal(err)
 	}
-	b.must(f, OpConfig, ConfigBody{Name: "one"})
-	b.must(f, OpConfig, ConfigBody{Name: "two"})
-	b.must(f, OpConfig, ConfigBody{Name: "three"})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "one"}))
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "two"}))
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "three"}))
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +109,7 @@ func TestVerifyRejectsTampering(t *testing.T) {
 	}
 	es := b.c.Entries()
 	// forged: last entry re-signed by a non-founder, links intact
-	forged, _ := NewEntry(o, &es[2], OpConfig, ConfigBody{Name: "evil"}, t0)
+	forged, _ := NewEntry(o, &es[2], OpConfig, validConfig(ConfigBody{Name: "evil"}), t0)
 	// edited body, signature left as is
 	edited := es[1]
 	edited.Body = []byte(`{"name":"hacked"}`)
@@ -141,7 +141,7 @@ func TestAppendPersistFailureTruncates(t *testing.T) {
 	if err := b.c.SetPath(path); err != nil {
 		t.Fatal(err)
 	}
-	b.must(f, OpConfig, ConfigBody{Name: "ok"})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "ok"}))
 	before, _ := os.ReadFile(path)
 	head := b.c.Head().Hash()
 
@@ -150,7 +150,7 @@ func TestAppendPersistFailureTruncates(t *testing.T) {
 		n, _ := fl.Write(p[:len(p)/2]) // torn write
 		return n, errors.New("disk full")
 	}
-	err := b.add(f, OpConfig, ConfigBody{Name: "fails"})
+	err := b.add(f, OpConfig, validConfig(ConfigBody{Name: "fails"}))
 	writeFile = old
 	if err == nil {
 		t.Fatal("want persist error")
@@ -167,7 +167,7 @@ func TestAppendPersistFailureTruncates(t *testing.T) {
 		t.Fatalf("load after failure: %v", err)
 	}
 	// A later append succeeds and the file still loads.
-	b.must(f, OpConfig, ConfigBody{Name: "again"})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "again"}))
 	if c3, err := Load(path); err != nil || c3.Head().Hash() != b.c.Head().Hash() {
 		t.Fatalf("load after retry: %v", err)
 	}
@@ -180,8 +180,8 @@ func TestLoadCapsReads(t *testing.T) {
 	if err := b.c.SetPath(path); err != nil {
 		t.Fatal(err)
 	}
-	b.must(f, OpConfig, ConfigBody{Name: "a"})
-	b.must(f, OpConfig, ConfigBody{Name: "b"})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "a"}))
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "b"}))
 	raw, _ := os.ReadFile(path)
 
 	// Entry cap: maxEntries valid lines, then a garbage line. Reading the
@@ -229,13 +229,13 @@ func TestRollbackFailureIsSticky(t *testing.T) {
 		return n, errors.New("disk full")
 	}
 	truncateFile = func(string, int64) error { return errors.New("truncate boom") }
-	err := b.add(f, OpConfig, ConfigBody{Name: "x"})
+	err := b.add(f, OpConfig, validConfig(ConfigBody{Name: "x"}))
 	writeFile, truncateFile = oldW, oldT
 	if err == nil || !strings.Contains(err.Error(), "disk full") || !strings.Contains(err.Error(), "truncate boom") {
 		t.Fatalf("want both errors, got %v", err)
 	}
 	torn, _ := os.ReadFile(path)
-	if err := b.add(f, OpConfig, ConfigBody{Name: "y"}); err == nil {
+	if err := b.add(f, OpConfig, validConfig(ConfigBody{Name: "y"})); err == nil {
 		t.Fatal("append after failed rollback must fail")
 	}
 	after, _ := os.ReadFile(path)

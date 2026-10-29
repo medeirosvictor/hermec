@@ -17,10 +17,10 @@ func TestReplaceSwapsContentsAndRewritesFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.must(f, OpConfig, ConfigBody{Name: "mine"})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "mine"}))
 	fb := &builder{t: t, c: fork}
-	fb.must(f, OpConfig, ConfigBody{Name: "theirs"})
-	fb.must(f, OpConfig, ConfigBody{Name: "theirs2"})
+	fb.must(f, OpConfig, validConfig(ConfigBody{Name: "theirs"}))
+	fb.must(f, OpConfig, validConfig(ConfigBody{Name: "theirs2"}))
 
 	if err := b.c.Replace(fork.Entries()); err != nil {
 		t.Fatalf("Replace: %v", err)
@@ -36,7 +36,7 @@ func TestReplaceSwapsContentsAndRewritesFile(t *testing.T) {
 		t.Fatal("file was not rewritten with the replacement")
 	}
 	// Later appends still persist.
-	b.must(f, OpConfig, ConfigBody{Name: "after"})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "after"}))
 	if loaded, _ = Load(path); loaded.Head().Seq != fork.Head().Seq+1 {
 		t.Fatal("append after Replace was not persisted")
 	}
@@ -49,7 +49,7 @@ func TestReplaceRefusesPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.must(f, OpConfig, ConfigBody{Name: "newer"})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "newer"}))
 	if err := b.c.Replace(short.Entries()); !errors.Is(err, ErrRollback) {
 		t.Fatalf("want ErrRollback, got %v", err)
 	}

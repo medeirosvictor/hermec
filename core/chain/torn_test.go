@@ -17,10 +17,10 @@ func TestLoadDropsTornFinalLine(t *testing.T) {
 	if err := b.c.SetPath(path); err != nil {
 		t.Fatal(err)
 	}
-	b.must(f, OpConfig, ConfigBody{Name: "one"})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "one"}))
 	good, _ := os.ReadFile(path)
 	head := b.c.Head().Hash()
-	b.must(f, OpConfig, ConfigBody{Name: "two"})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "two"}))
 	full, _ := os.ReadFile(path)
 	lastLine := full[len(good):]
 
@@ -51,7 +51,7 @@ func TestLoadDropsTornFinalLine(t *testing.T) {
 		}
 		// The chain keeps working: the next append lands on the clean file.
 		h := c.Head()
-		next, err := NewEntry(f, &h, OpConfig, ConfigBody{Name: "three", Channels: []string{"general"}, MaxVoice: 1, MaxClients: 1, MaxPerIP: 1}, t0)
+		next, err := NewEntry(f, &h, OpConfig, validConfig(ConfigBody{Name: "three", Channels: []string{"general"}, MaxVoice: 1, MaxClients: 1, MaxPerIP: 1}), t0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,8 +72,8 @@ func TestLoadMiddleGarbageIsBad(t *testing.T) {
 	if err := b.c.SetPath(path); err != nil {
 		t.Fatal(err)
 	}
-	b.must(f, OpConfig, ConfigBody{Name: "one"})
-	b.must(f, OpConfig, ConfigBody{Name: "two"})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "one"}))
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "two"}))
 	raw, _ := os.ReadFile(path)
 	lines := bytes.Split(bytes.TrimRight(raw, "\n"), []byte("\n"))
 	data := bytes.Join([][]byte{lines[0], bytes.Repeat([]byte{0}, 20), lines[2]}, []byte("\n"))

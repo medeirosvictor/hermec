@@ -151,6 +151,13 @@ func CheckHost(c *chain.Chain, key *identity.Identity) error {
 		c.ID().Short(), identity.Fingerprint(key.PublicKey()))
 }
 
+// ValidateInitialConfig validates the group fields that will form a new
+// chain's first signed config entry. It does not create keys or write state.
+func ValidateInitialConfig(cfg Config) error {
+	_, err := configBody(defaultGroupConfig(cfg))
+	return err
+}
+
 // OpenChain loads the chain at path, or creates it from cfg's group fields
 // when the file does not exist: genesis (founder = key), one config, a grant
 // per cfg.Roles.Grants entry, and host_add for key at priority 1.
@@ -501,12 +508,21 @@ func (s *Server) kick(fp string) {
 	}
 }
 
-// chainCfg returns cfg with its group fields replaced by the chain's. A chain
-// with no config entry yet leaves cfg's own group fields in place.
-// EffectiveConfig returns cfg with signed group fields from st. Callers that
-// make admission or listener decisions must use this rather than TOML alone.
-func EffectiveConfig(cfg Config, st chain.State) Config { return chainCfg(cfg, st) }
+// EffectiveConfig returns cfg with its group fields replaced by the signed
+// config in st. A persisted chain without a config entry is a legacy/incomplete
+// chain and cannot be made safe by falling back to local TOML group fields.
+func EffectiveConfig(cfg Config, st chain.State) (Config, error) {
+	if !st.HasConfig {
+		return Config{}, errors.New("signed chain has no config entry")
+	}
+	if err := st.Config.Validate(); err != nil {
+		return Config{}, fmt.Errorf("signed chain config: %w", err)
+	}
+	return chainCfg(cfg, st), nil
+}
 
+// chainCfg is an internal compatibility helper for in-memory chains. Startup
+// callers must use EffectiveConfig, which rejects config-less chains.
 func chainCfg(cfg Config, st chain.State) Config {
 	if !st.HasConfig {
 		cfg.Roles = st.Roles()

@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -10,6 +11,35 @@ import (
 
 	"github.com/medeirosvictor/hermec/server"
 )
+
+func TestFailedNewPublicStartupLeavesNoState(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary build in -short mode")
+	}
+	dir := t.TempDir()
+	cfg := server.DefaultConfig()
+	cfg.PublicMode, cfg.Discoverable, cfg.Password = true, false, "admission"
+	raw, err := cfg.MarshalTOML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "server.toml")
+	if err := os.WriteFile(configPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "hermec-server")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	if out, err := exec.Command(bin, "-config", configPath).CombinedOutput(); err == nil {
+		t.Fatalf("unsafe public candidate started: %s", out)
+	}
+	for _, name := range []string{"hermec-server.key", "chain.jsonl"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("failed startup persisted %s: %v", name, err)
+		}
+	}
+}
 
 func TestCheckNotRunningRefusesBusyPort(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

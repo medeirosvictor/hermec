@@ -11,7 +11,7 @@ import (
 func FuzzFromEntries(f *testing.F) {
 	if id, err := identity.Generate(); err == nil {
 		g, _ := NewEntry(id, nil, OpGenesis, GenesisBody{Name: "s", Founder: id.PublicKey()}, t0)
-		c, _ := NewEntry(id, &g, OpConfig, ConfigBody{Name: "s"}, t0)
+		c, _ := NewEntry(id, &g, OpConfig, validConfig(ConfigBody{Name: "s"}), t0)
 		var buf bytes.Buffer
 		for _, e := range []Entry{g, c} {
 			j, _ := json.Marshal(e)

@@ -79,7 +79,9 @@ func main() {
 			if err != nil {
 				log.Fatalf("signed chain: %v", err)
 			}
-			cfg = server.EffectiveConfig(cfg, c.State())
+			if cfg, err = server.EffectiveConfig(cfg, c.State()); err != nil {
+				log.Fatalf("signed chain: %v", err)
+			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			log.Fatalf("signed chain: %v", err)
 		}
@@ -147,18 +149,48 @@ func main() {
 		}
 		return
 	}
+	// Load an existing chain before touching the identity. Its signed config is
+	// authoritative; a config-less legacy chain must be repaired with
+	// -apply-config rather than falling back to local TOML group fields.
+	var c *chain.Chain
+	var created bool
+	if _, statErr := os.Stat(f.chain); statErr == nil {
+		if c, err = chain.Load(f.chain); err != nil {
+			log.Fatalf("signed chain: %v", err)
+		}
+		if cfg, err = server.EffectiveConfig(cfg, c.State()); err != nil {
+			log.Fatalf("signed chain: %v", err)
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		log.Fatalf("signed chain: %v", statErr)
+	} else {
+		// Do every local preflight before generating or persisting a new
+		// identity/chain. A failed public TLS or admission check therefore leaves
+		// no durable state behind.
+		if err := server.ValidateInitialConfig(cfg); err != nil {
+			log.Fatal(err)
+		}
+		if err := validatePublicConfig(cfg, f.unsafePublicWS); err != nil {
+			log.Fatal(err)
+		}
+		created = true
+	}
 	key, err := loadOrCreateKey(f.key)
 	if err != nil {
 		log.Fatal(err)
 	}
-	c, created, err := openChain(f.chain, key, cfg)
-	if err != nil {
-		log.Fatal(err)
+	if created {
+		c, created, err = openChain(f.chain, key, cfg)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if cfg, err = server.EffectiveConfig(cfg, c.State()); err != nil {
+			log.Fatalf("signed chain: %v", err)
+		}
 	}
 	if err := checkHostKey(f.key, c, key); err != nil {
 		log.Fatal(err)
 	}
-	cfg = server.EffectiveConfig(cfg, c.State())
 	if !created && f.config != "" {
 		if set, err := server.GroupFieldsSet(f.config); err != nil {
 			log.Print(err)
@@ -237,14 +269,6 @@ func main() {
 	// attestation live beside the chain, regardless of -config.
 	cfg.DedicatedTransitionPath = transitionPath
 	cfg.HostKey, cfg.Chain, cfg.HistoryPath = key, c, f.history
-	if !created && f.config != "" {
-		if set, err := server.GroupFieldsSet(f.config); err != nil {
-			log.Print(err)
-		} else if len(set) > 0 {
-			log.Printf("WARNING: chain exists; ignoring group keys in %s: %s (use -apply-config to append them)",
-				f.config, strings.Join(set, ", "))
-		}
-	}
 
 	if cfg.Password != "" && len(cfg.PasswordKey) == 0 {
 		log.Print("NOTICE: server.toml stores the plain password; set password_key instead (the server derives it on every start)")

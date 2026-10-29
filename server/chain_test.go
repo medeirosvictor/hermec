@@ -303,6 +303,21 @@ func TestApplyTOMLHistoryKeys(t *testing.T) {
 	}
 }
 
+func TestEffectiveConfigRejectsConfiglessOrIncompleteChain(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Channels = []string{"toml-must-not-win"}
+	for name, st := range map[string]chain.State{
+		"configless": {},
+		"incomplete": {HasConfig: true, Config: chain.ConfigBody{Name: "legacy"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := EffectiveConfig(cfg, st); err == nil {
+				t.Fatal("legacy chain resolved using TOML fields")
+			}
+		})
+	}
+}
+
 func TestChainCfgHistory(t *testing.T) {
 	d, mb := 7, 16
 	st := chain.State{HasConfig: true, Config: chain.ConfigBody{HistoryDays: &d, HistoryMB: &mb}}

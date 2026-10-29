@@ -25,23 +25,27 @@ func newBuilder(t *testing.T, founder *identity.Identity) *builder {
 	return &builder{t: t, c: c}
 }
 
+// validConfig makes a complete signed config body for tests that need one.
+// Builders deliberately preserve their literals so incomplete legacy bodies
+// exercise production validation rather than receiving hidden defaults.
+func validConfig(v ConfigBody) ConfigBody {
+	if len(v.Channels) == 0 {
+		v.Channels = []string{"general"}
+	}
+	if v.MaxVoice == 0 {
+		v.MaxVoice = 1
+	}
+	if v.MaxClients == 0 {
+		v.MaxClients = 1
+	}
+	if v.MaxPerIP == 0 {
+		v.MaxPerIP = 1
+	}
+	return v
+}
+
 func (b *builder) entry(by *identity.Identity, op Op, body any) Entry {
 	b.t.Helper()
-	if v, ok := body.(ConfigBody); ok {
-		if len(v.Channels) == 0 {
-			v.Channels = []string{"general"}
-		}
-		if v.MaxVoice == 0 {
-			v.MaxVoice = 1
-		}
-		if v.MaxClients == 0 {
-			v.MaxClients = 1
-		}
-		if v.MaxPerIP == 0 {
-			v.MaxPerIP = 1
-		}
-		body = v
-	}
 	b.n++
 	h := b.c.Head()
 	e, err := NewEntry(by, &h, op, body, t0.Add(time.Duration(b.n)*time.Second))
@@ -73,7 +77,7 @@ func isRule(err error) bool {
 func TestFounderCanDoEverything(t *testing.T) {
 	f, a := newID(t), newID(t)
 	b := newBuilder(t, f)
-	b.must(f, OpConfig, ConfigBody{Name: "x", Channels: []string{"general"}})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "x", Channels: []string{"general"}}))
 	b.must(f, OpGrant, GrantBody{Fingerprint: fp(a), Roles: []string{"admin"}})
 	b.must(f, OpBan, FPBody{Fingerprint: "zzzz"})
 	b.must(f, OpUnban, FPBody{Fingerprint: "zzzz"})
@@ -128,6 +132,25 @@ func TestFounderCannotBeRevokedOrBanned(t *testing.T) {
 	}
 }
 
+func TestConfigLiteralRejectsIncompleteLegacyBody(t *testing.T) {
+	f := newID(t)
+	for name, body := range map[string]ConfigBody{
+		"name only":         {Name: "legacy"},
+		"channels only":     {Channels: []string{"general"}},
+		"limits incomplete": {Name: "legacy", Channels: []string{"general"}, MaxVoice: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := newBuilder(t, f)
+			if err := b.add(f, OpConfig, body); !isRule(err) {
+				t.Fatalf("incomplete config accepted: %v", err)
+			}
+			if b.c.State().HasConfig {
+				t.Fatal("rejected config changed state")
+			}
+		})
+	}
+}
+
 func TestConfigLatestWins(t *testing.T) {
 	f := newID(t)
 	b := newBuilder(t, f)
@@ -136,8 +159,8 @@ func TestConfigLatestWins(t *testing.T) {
 	} else if r := st.Roles(); len(r.DefaultRoles) != 1 || r.DefaultRoles[0] != "user" {
 		t.Fatalf("default roles %v", r.DefaultRoles)
 	}
-	b.must(f, OpConfig, ConfigBody{Name: "one", DefaultRoles: []string{"user"}})
-	b.must(f, OpConfig, ConfigBody{Name: "two", Roles: map[string][]string{"vip": {"send_chat"}}, DefaultRoles: []string{"vip"}})
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "one", DefaultRoles: []string{"user"}}))
+	b.must(f, OpConfig, validConfig(ConfigBody{Name: "two", Roles: map[string][]string{"vip": {"send_chat"}}, DefaultRoles: []string{"vip"}}))
 	st := b.c.State()
 	if !st.HasConfig || st.Config.Name != "two" {
 		t.Fatalf("config %+v", st.Config)
