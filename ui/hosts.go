@@ -62,18 +62,17 @@ func (g *game) hostChan() chan hostResult {
 	return g.hostCh
 }
 
-// dialCreds is what a dial of s sends: the password (hosted servers only), the
-// cached key, the pinned server ID and the lowest chain head it accepts.
+// dialCreds is what a dial of s sends: the cached key, pinned server ID and
+// lowest chain head it accepts.
 func (g *game) dialCreds(s *session) (pass string, o client.DialOpts) {
 	if e, ok := g.entryFor(s.key); ok {
 		o.Pin = e.ServerID
 		o.MinChainSeq = e.ChainSeq
 		if k, err := hex.DecodeString(e.PasswordKey); err == nil && len(k) == 32 {
-			o.PasswordKey = k // a corrupt cache is ignored; the password is used
+			o.PasswordKey = k // a corrupt cache is ignored
 		}
 	}
 	if s.key == hostedKey && g.hosted != nil {
-		pass = g.hosted.cfg.Password
 		o.PasswordKey = g.hosted.cfg.PasswordKey
 		o.Pin = g.hosted.id
 		o.MinChainSeq = 0 // the local host's own chain; dialAny raises it for a friend host

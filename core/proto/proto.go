@@ -13,9 +13,6 @@ import (
 const (
 	// Version is the protocol version carried in every envelope.
 	Version = 2
-	// LegacyVersion is the previous protocol version. Only the handshake
-	// (DecodeHandshake / EncodeV) still speaks it, to tell old peers to update.
-	LegacyVersion = 1
 	// MaxMessageSize is the largest accepted raw message, in bytes.
 	MaxMessageSize = 64 * 1024
 	// MaxRosterMembers caps the members listed in one Roster frame.
@@ -126,9 +123,7 @@ const CodeAuthFailed = "auth_failed"
 
 // Error codes added with protocol version 2.
 const (
-	CodeUpdateRequired    = "update_required"
 	CodeServerBusy        = "server_busy" // also the HTTP 503 refusal, which the client synthesizes
-	CodeServerOutdated    = "server_outdated"
 	CodeServerIDMismatch  = "server_id_mismatch"
 	CodeHostNotAuthorized = "host_not_authorized"
 	CodeBadChain          = "bad_chain"
@@ -190,12 +185,17 @@ type Challenge struct {
 }
 
 // Auth is the client's reply to a Challenge. Sig is over the nonce.
+const (
+	MaxAuthNameBytes       = 4096
+	MaxAuthCapabilities    = 16
+	MaxAuthCapabilityBytes = 64
+)
+
 type Auth struct {
-	PubKey   []byte `json:"pubkey"`
-	Name     string `json:"name"`
-	Sig      []byte `json:"sig"`
-	Password string `json:"password,omitempty"` // v0.6 clients only
-	// Proof replaces Password: PasswordProof over the nonces and server ID.
+	PubKey []byte `json:"pubkey"`
+	Name   string `json:"name"`
+	Sig    []byte `json:"sig"`
+	// Proof is PasswordProof over the nonces and server ID.
 	Proof []byte `json:"proof,omitempty"`
 	// Warm marks a standby's pre-connection, which the host may hold open
 	// before the client is promoted to a live session.
@@ -203,6 +203,19 @@ type Auth struct {
 	// Capabilities are optional features understood by this client. The server
 	// returns their supported intersection in AuthOK.
 	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// ValidAuth bounds every auth payload field before authentication work.
+func ValidAuth(a Auth) bool {
+	if len(a.PubKey) != 32 || len(a.Sig) != 64 || len(a.Proof) > 0 && len(a.Proof) != 32 || len(a.Name) > MaxAuthNameBytes || len(a.Capabilities) > MaxAuthCapabilities {
+		return false
+	}
+	for _, capability := range a.Capabilities {
+		if len(capability) == 0 || len(capability) > MaxAuthCapabilityBytes {
+			return false
+		}
+	}
+	return true
 }
 
 // ChannelInfo describes a server channel. Type is "text" or "voice".
@@ -305,7 +318,7 @@ type (
 
 // ErrorMsg reports a failure. Codes: "auth_failed", "forbidden",
 // "bad_request", "not_joined", "rate_limited", "not_sharing", "voice_full",
-// "server_full", "update_required", "server_outdated", "server_id_mismatch",
+// "server_full", "server_id_mismatch",
 // "host_not_authorized", "bad_chain", "chain_conflict", "chain_full", "banned",
 // "not_active", "active_alive", "not_standby", "chain_lost".
 type ErrorMsg struct {
@@ -478,17 +491,11 @@ type HistoryBefore struct {
 
 // Encode wraps payload in a versioned envelope and marshals it.
 func Encode(msgType string, payload any) ([]byte, error) {
-	return EncodeV(Version, msgType, payload)
-}
-
-// EncodeV is Encode with an explicit envelope version, for the handshake
-// frames that must be readable by a peer speaking LegacyVersion.
-func EncodeV(v int, msgType string, payload any) ([]byte, error) {
 	data, err := marshalNoEscape(payload)
 	if err != nil {
 		return nil, fmt.Errorf("proto: marshal payload: %w", err)
 	}
-	return marshalNoEscape(Envelope{V: v, Type: msgType, Data: data})
+	return marshalNoEscape(Envelope{V: Version, Type: msgType, Data: data})
 }
 
 // marshalNoEscape is json.Marshal without HTML escaping: '<', '>' and '&' stay
@@ -508,16 +515,10 @@ func marshalNoEscape(v any) ([]byte, error) {
 // Decode parses and validates a raw envelope. It returns an error on
 // oversized input, invalid JSON, a version mismatch, or an empty type.
 func Decode(raw []byte) (Envelope, error) {
-	return decode(raw, false)
+	return decode(raw)
 }
 
-// DecodeHandshake is Decode but also accepts LegacyVersion envelopes, so the
-// handshake can answer an old peer with update_required instead of dropping it.
-func DecodeHandshake(raw []byte) (Envelope, error) {
-	return decode(raw, true)
-}
-
-func decode(raw []byte, allowLegacy bool) (Envelope, error) {
+func decode(raw []byte) (Envelope, error) {
 	if len(raw) > MaxMessageSize {
 		return Envelope{}, fmt.Errorf("proto: message too large (%d > %d bytes)", len(raw), MaxMessageSize)
 	}
@@ -525,7 +526,7 @@ func decode(raw []byte, allowLegacy bool) (Envelope, error) {
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return Envelope{}, fmt.Errorf("proto: invalid envelope: %w", err)
 	}
-	if env.V != Version && !(allowLegacy && env.V == LegacyVersion) {
+	if env.V != Version {
 		return Envelope{}, fmt.Errorf("proto: unsupported version %d", env.V)
 	}
 	if env.Type == "" {

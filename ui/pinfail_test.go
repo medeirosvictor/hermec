@@ -13,8 +13,6 @@ func TestPinMismatchNoRetry(t *testing.T) {
 		{proto.CodeServerIDMismatch, "this server's identity changed — remove and re-add it if you trust it"},
 		{proto.CodeHostNotAuthorized, "the host's machine is not an approved host for this server"},
 		{proto.CodeBadChain, "the server sent an invalid chain"},
-		{proto.CodeServerOutdated, "the host runs an older HERMEC — ask them to update"},
-		{proto.CodeUpdateRequired, "update HERMEC to connect to this server"},
 		{proto.CodeBanned, "you are banned from this server"},
 	}
 	for _, tc := range cases {

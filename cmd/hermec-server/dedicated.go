@@ -268,8 +268,8 @@ func validatePublicConfig(cfg server.Config, unsafe bool) error {
 	if port == "0" {
 		return errors.New("public server requires a fixed, non-zero signaling TCP port")
 	}
-	if cfg.Password == "" && len(cfg.PasswordKey) == 0 && len(cfg.AllowedKeys) == 0 {
-		return errors.New("public server requires password/password_key or allowed_keys")
+	if len(cfg.PasswordKey) == 0 && len(cfg.AllowedKeys) == 0 {
+		return errors.New("public server requires password_key or allowed_keys")
 	}
 	if cfg.Discoverable {
 		return errors.New("public server must set discoverable = false")

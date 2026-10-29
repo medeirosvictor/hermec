@@ -221,7 +221,7 @@ func TestRosterStaysUnderMaxMessageSize(t *testing.T) {
 	var rosters []proto.Roster
 	for i := 0; i < 4; i++ {
 		name := fmt.Sprintf("%c", 'a'+i)
-		for len(name) < 25000 {
+		for len(name) < 4000 {
 			name += "x"
 		}
 		c := authNamed(t, url, mustID(t), name)
@@ -274,7 +274,7 @@ func TestRosterStaysUnderMaxMessageSize(t *testing.T) {
 
 func TestRosterCapsLongNames(t *testing.T) {
 	url := startServer(t, chatCfg())
-	long := "!" + strings.Repeat("x", 24999)
+	long := "!" + strings.Repeat("x", 3999)
 	authNamed(t, url, mustID(t), long)
 	authNamed(t, url, mustID(t), "bob")
 	c := authNamed(t, url, mustID(t), "carol")

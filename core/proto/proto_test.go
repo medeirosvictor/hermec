@@ -142,42 +142,14 @@ func TestRosterRoundTrip(t *testing.T) {
 	}
 }
 
-func TestDecodeRejectsV1(t *testing.T) {
-	if _, err := Decode([]byte(`{"v":1,"type":"auth"}`)); err == nil {
-		t.Fatal("Decode accepted v1 envelope")
-	}
-	if Version != 2 || LegacyVersion != 1 {
-		t.Fatalf("Version=%d LegacyVersion=%d", Version, LegacyVersion)
-	}
-}
-
-func TestDecodeHandshakeAcceptsV1AndV2(t *testing.T) {
-	for _, v := range []string{"1", "2"} {
-		if _, err := DecodeHandshake([]byte(`{"v":` + v + `,"type":"auth"}`)); err != nil {
-			t.Errorf("v%s: %v", v, err)
-		}
-	}
-	for _, raw := range []string{`{"v":3,"type":"auth"}`, `{"v":0,"type":"auth"}`, `{"v":2,"type":""}`, `nope`} {
-		if _, err := DecodeHandshake([]byte(raw)); err == nil {
+func TestDecodeRejectsUnsupportedVersions(t *testing.T) {
+	for _, raw := range []string{`{"v":1,"type":"auth"}`, `{"v":3,"type":"auth"}`, `{"v":0,"type":"auth"}`, `{"v":2,"type":""}`, `nope`} {
+		if _, err := Decode([]byte(raw)); err == nil {
 			t.Errorf("accepted %s", raw)
 		}
 	}
-	if _, err := DecodeHandshake(make([]byte, MaxMessageSize+1)); err == nil {
+	if _, err := Decode(make([]byte, MaxMessageSize+1)); err == nil {
 		t.Error("accepted oversized")
-	}
-}
-
-func TestEncodeVLegacy(t *testing.T) {
-	raw, err := EncodeV(LegacyVersion, TypeChallenge, Challenge{Nonce: []byte{1}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	env, err := DecodeHandshake(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if env.V != 1 {
-		t.Errorf("V = %d, want 1", env.V)
 	}
 }
 
@@ -213,7 +185,7 @@ func TestChainFrameRoundTrip(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"server_id":"abc"}`), &ok); err != nil || ok.ServerID != "abc" {
 		t.Errorf("server_id: %v %q", err, ok.ServerID)
 	}
-	for _, c := range []string{CodeUpdateRequired, CodeServerOutdated, CodeServerIDMismatch, CodeHostNotAuthorized, CodeBadChain, CodeChainConflict, CodeChainFull, CodeBanned} {
+	for _, c := range []string{CodeServerIDMismatch, CodeHostNotAuthorized, CodeBadChain, CodeChainConflict, CodeChainFull, CodeBanned} {
 		if c == "" {
 			t.Error("empty code")
 		}

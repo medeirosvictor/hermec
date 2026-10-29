@@ -20,7 +20,7 @@ import (
 )
 
 func TestHostedConfigRoundTrip(t *testing.T) {
-	cfg := hostedConfig("  My\u202eServer ", "pw", 7697, "FP")
+	cfg := hostedConfig("  My\u202eServer ", 7697, "FP")
 	path := filepath.Join(t.TempDir(), "sub", "hosted.toml")
 	if err := saveHosted(path, cfg); err != nil {
 		t.Fatal(err)
@@ -29,8 +29,8 @@ func TestHostedConfigRoundTrip(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("loadHosted ok=%v err=%v", ok, err)
 	}
-	if got.ServerName != "MyServer" || got.Addr != ":7697" || got.Password != "pw" {
-		t.Errorf("got name=%q addr=%q pw=%q", got.ServerName, got.Addr, got.Password)
+	if got.ServerName != "MyServer" || got.Addr != ":7697" {
+		t.Errorf("got name=%q addr=%q", got.ServerName, got.Addr)
 	}
 	if !slices.Equal(got.Channels, []string{"general"}) || !slices.Equal(got.VoiceChannels, []string{"voice"}) {
 		t.Errorf("channels=%v voice=%v", got.Channels, got.VoiceChannels)
@@ -118,7 +118,7 @@ func hostedTestGame(t *testing.T, addr string, write bool) (*game, string) {
 	withLayout(t, g)
 	path := filepath.Join(t.TempDir(), "hosted.toml")
 	if write {
-		cfg := hostedConfig("Den", "", 0, g.fp)
+		cfg := hostedConfig("Den", 0, g.fp)
 		cfg.Addr = addr
 		cfg.Discoverable = false
 		if err := saveHosted(path, cfg); err != nil {
@@ -427,7 +427,7 @@ func TestCreateHostedRunsAndOpens(t *testing.T) {
 
 func TestHostedDialsWithItsPassword(t *testing.T) {
 	g, path := hostedTestGame(t, "127.0.0.1:0", false)
-	cfg := hostedConfig("Den", "sesame", 0, g.fp)
+	cfg := hostedConfig("Den", 0, g.fp)
 	cfg.Addr, cfg.Discoverable = "127.0.0.1:0", false
 	if err := saveHosted(path, cfg); err != nil {
 		t.Fatal(err)

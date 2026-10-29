@@ -50,7 +50,7 @@ func TestInstallDedicatedBootstrapRejectsUnrelatedOrUnauthorizedState(t *testing
 func TestPreparedLinkAttestsCompleteMultipageHistoryBeforePersistence(t *testing.T) {
 	fastHostTimers(t)
 	c, sourceKey, destinationKey := twoHostChain(t)
-	source, sourceURL := startModeServer(t, Config{HostKey: sourceKey, Chain: c, HostName: "source", Password: "pw", Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}, Channels: []string{"general"}})
+	source, sourceURL := startModeServer(t, Config{HostKey: sourceKey, Chain: c, HostName: "source", Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}, Channels: []string{"general"}})
 	for i := 0; i < historyPage*2+7; i++ {
 		m := proto.ChatMessage{ID: "prepare-" + string(rune(i+1)), Channel: "general", Text: "history", TS: time.UnixMilli(int64(i + 1))}
 		if err := source.hist.Add(m); err != nil {
@@ -235,8 +235,7 @@ func TestDedicatedCommitReleasesCutoverLocksBeforeTakeover(t *testing.T) {
 	}
 	destination, destinationURL := startModeServer(t, Config{
 		HostKey: destinationKey, Chain: c, Mode: ModePrepared, Prepared: true,
-		DedicatedTransitionPath: path, HostName: "destination", Password: "pw",
-		Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}, Channels: []string{"general"},
+		DedicatedTransitionPath: path, HostName: "destination", Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}, Channels: []string{"general"},
 	})
 
 	// handleDedicatedCommit writes its ACK through a Link. A tiny peer lets the

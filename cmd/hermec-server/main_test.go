@@ -18,7 +18,7 @@ func TestFailedNewPublicStartupLeavesNoState(t *testing.T) {
 	}
 	dir := t.TempDir()
 	cfg := server.DefaultConfig()
-	cfg.PublicMode, cfg.Discoverable, cfg.Password = true, false, "admission"
+	cfg.PublicMode, cfg.Discoverable = true, false
 	raw, err := cfg.MarshalTOML()
 	if err != nil {
 		t.Fatal(err)

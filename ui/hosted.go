@@ -28,18 +28,17 @@ import (
 const wsaEADDRINUSE = syscall.Errno(10048)
 
 // hostedConfig builds the config for a server hosted from inside the app.
-func hostedConfig(name, password string, port int, adminFP string) server.Config {
+func hostedConfig(name string, port int, adminFP string) server.Config {
 	cfg := server.DefaultConfig()
 	cfg.Addr = fmt.Sprintf(":%d", port)
 	cfg.ServerName = state.CleanName(name, state.MaxServerNameRunes)
-	cfg.Password = password
 	cfg.VoiceChannels = []string{"voice"}
 	cfg.Roles.Grants = map[string][]string{adminFP: {"admin"}}
 	return cfg
 }
 
-// saveHostedLocal writes only the machine-local keys, the password and the
-// server_id; the group fields live in the chain.
+// saveHostedLocal writes only the machine-local keys and server_id; the group
+// fields live in the chain.
 func saveHostedLocal(path string, cfg server.Config) error {
 	b, err := cfg.MarshalLocalTOML()
 	if err != nil {
@@ -210,25 +209,15 @@ func chainsDir(hostedPath string) string {
 }
 
 // openHostedChain returns the chain for the hosted config at path. With a
-// server_id in cfg it loads chains/<id>.jsonl. Without one (a pre-chain
-// hosted.toml) it founds a chain from cfg's group fields, moves it to
-// chains/<id>.jsonl, sets cfg.ServerID and rewrites hosted.toml with only the
-// machine-local keys.
+// server_id in cfg it loads chains/<id>.jsonl. Without one it founds a chain
+// from cfg's group fields, moves it to chains/<id>.jsonl, sets cfg.ServerID
+// and rewrites hosted.toml with only the machine-local keys.
 func (g *game) openHostedChain(path string, cfg *server.Config) (c *chain.Chain, err error) {
 	dir := chainsDir(path)
 	if cfg.ServerID != "" {
 		c, err = chain.Load(filepath.Join(dir, cfg.ServerID+".jsonl"))
 		if err != nil {
 			return nil, err
-		}
-		if cfg.Password != "" { // an older hosted.toml: swap the password for its key
-			id := c.ID()
-			if err := migratePassword(cfg, id[:]); err != nil {
-				return nil, err
-			}
-			if err := saveHostedLocal(path, *cfg); err != nil {
-				return nil, err
-			}
 		}
 		return c, nil
 	}
@@ -250,28 +239,10 @@ func (g *game) openHostedChain(path string, cfg *server.Config) (c *chain.Chain,
 		return nil, err
 	}
 	cfg.ServerID = id
-	cid := c.ID()
-	if err := migratePassword(cfg, cid[:]); err != nil {
-		return nil, err
-	}
 	if err := saveHostedLocal(path, *cfg); err != nil {
 		return nil, err
 	}
 	return c, nil
-}
-
-// migratePassword replaces cfg.Password with its key for serverID, so
-// hosted.toml holds password_key and the password is never kept or sent.
-func migratePassword(cfg *server.Config, serverID []byte) error {
-	if cfg.Password == "" {
-		return nil
-	}
-	key, err := proto.PasswordKey(cfg.Password, serverID)
-	if err != nil {
-		return err
-	}
-	cfg.PasswordKey, cfg.Password = key, ""
-	return nil
 }
 
 // hostedFile is where the hosted config lives for this run.
@@ -448,7 +419,7 @@ func (g *game) createHosted(name, password string, port int) error {
 		return errors.New("already hosting a server")
 	}
 	path := g.hostedFile()
-	cfg := hostedConfig(name, password, port, g.fp)
+	cfg := hostedConfig(name, port, g.fp)
 	if g.hostedTweak != nil {
 		g.hostedTweak(&cfg)
 	}
@@ -456,6 +427,16 @@ func (g *game) createHosted(name, password string, port int) error {
 	c, err := g.openHostedChain(path, &cfg)
 	if err != nil {
 		return err
+	}
+	if password != "" {
+		id := c.ID()
+		cfg.PasswordKey, err = proto.PasswordKey(password, id[:])
+		if err != nil {
+			return err
+		}
+		if err := saveHostedLocal(path, cfg); err != nil {
+			return err
+		}
 	}
 	g.hostedPath = path
 	g.hosted = &hostedServer{cfg: cfg, path: path, chain: c, id: c.ID().String()}

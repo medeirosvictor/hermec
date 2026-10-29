@@ -68,7 +68,7 @@ func TestPreAuthChainBudget(t *testing.T) {
 		if err != nil {
 			break
 		}
-		env, derr := proto.DecodeHandshake(raw)
+		env, derr := proto.Decode(raw)
 		if derr != nil {
 			continue
 		}

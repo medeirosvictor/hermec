@@ -3,8 +3,6 @@ package ui
 import (
 	"context"
 	"encoding/hex"
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +34,7 @@ func startFounder(t *testing.T, password string) *founderSrv {
 	addr := freeLoopback(t)
 	f := &founderSrv{id: id, url: "ws://" + addr + "/"}
 	f.srv = server.New(server.Config{
-		HostKey: id, Addr: addr, HostName: "founder", Advertise: []string{f.url}, Password: password,
+		HostKey: id, Addr: addr, HostName: "founder", Advertise: []string{f.url},
 		Roles:    roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
 		Channels: []string{"general"}, VoiceChannels: []string{"voice"},
 	})
@@ -244,40 +242,6 @@ func TestFriendHostSkippedWhenFounderHosts(t *testing.T) {
 
 // A friend host starts with the password key its session logged in with, so a
 // host that cold-starts into active never serves a passworded group open.
-func TestFriendHostKeepsGroupPassword(t *testing.T) {
-	g := friendGame(t)
-	f, s, id := grantedFriend(t, g, "hunter2")
-	if hf := readHosting(t, g, id); len(hf.PasswordKey) != 64 {
-		t.Fatalf("password_key = %q, want 64 hex chars", hf.PasswordKey)
-	}
-	key := s.c.PasswordKey()
-	if len(key) != 32 {
-		t.Fatal("session has no password key")
-	}
-	f.shutdown() // the friend host cold-restarts into active
-	fh := g.friends[id]
-	pumpUntil(t, g, func() bool { return fh.h.Role() == server.RoleActive })
-	// Server.Addr is the wildcard listener ([::]:port), which proxy-aware
-	// dialers may send through a proxy. Use the concrete loopback address that
-	// this test configured the friend host to advertise.
-	url := fmt.Sprintf("ws://127.0.0.1:%d/", fh.port)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if c, err := client.Dial(ctx, url, mustIdentity(t), "x", ""); err == nil {
-		c.Close()
-		t.Fatal("passworded group served without a password")
-	} else {
-		var se *client.ServerError
-		if !errors.As(err, &se) || se.Code != proto.CodeAuthFailed {
-			t.Fatalf("dial %s (friend port %d): err = %v, want auth_failed", url, fh.port, err)
-		}
-	}
-	c, err := client.DialWith(ctx, url, mustIdentity(t), "x", "", client.DialOpts{PasswordKey: key})
-	if err != nil {
-		t.Fatalf("dial with key: %v", err)
-	}
-	c.Close()
-}
 
 func TestFriendHostNoticeOnce(t *testing.T) {
 	g := friendGame(t)

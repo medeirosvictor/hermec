@@ -46,7 +46,6 @@ func TestVerifierCommandsEndToEnd(t *testing.T) {
 		// prompts even though this is only an E2E test.
 		Addr:             net.JoinHostPort(ip.String(), "0"),
 		AllowLoopbackICE: true,
-		Password:         "test-password",
 		TLSCert:          cert,
 		TLSKey:           key,
 		Roles:            roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},

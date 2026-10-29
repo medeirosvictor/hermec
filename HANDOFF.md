@@ -56,11 +56,10 @@ and [noise trial](docs/superpowers/plans/2026-10-27-noise-suppression-trial.md).
 - Failover merge/call-transfer/warm-host races and cleanup gaps remain; consult
   tests and logs before changing host state. Merged chat is not pushed live to
   winner clients, and some takeover/redial failures still require manual rejoin.
-- Password/config compatibility remains delicate: use v0.6+ config writers so
-  history caps survive. Legacy plaintext-password authentication remains
-  accepted (`server/auth_proof_test.go` `TestAuthLegacyPassword`); do not expand
-  it, and preserve host proof before authentication ([protocol §3.1](docs/protocol.md#31-handshake)).
-  Chat history is plain unsigned JSONL on the host, not encrypted.
+- Pre-1.0 builds and plaintext-password configurations are unsupported and
+  rejected; there is no protocol or authentication bridge. Preserve host proof
+  before authentication ([protocol §3.1](docs/protocol.md#31-handshake)). Chat
+  history is plain unsigned JSONL on the host, not encrypted.
 - No echo cancellation: use headphones. Noise suppression is experimental only
   after a measured probe; it is not in the app.
 - Founder hosting controls exist, but no UI ban/grant controls. macOS/Linux

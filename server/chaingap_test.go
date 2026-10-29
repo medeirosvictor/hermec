@@ -27,7 +27,7 @@ func TestChainAppendDuringHandshakeIsCaughtUp(t *testing.T) {
 	}
 	defer ws.Close()
 	_, raw, _ := ws.ReadMessage()
-	env, _ := proto.DecodeHandshake(raw)
+	env, _ := proto.Decode(raw)
 	var chl proto.Challenge
 	_ = json.Unmarshal(env.Data, &chl)
 	cn := make([]byte, 32)

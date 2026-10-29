@@ -46,7 +46,6 @@ func (c Config) HistoryLimits() (days, mb int) {
 // fileConfig is the on-disk TOML shape of Config.
 type fileConfig struct {
 	Addr          string              `toml:"addr"`
-	Password      string              `toml:"password,omitempty"`
 	PasswordKey   string              `toml:"password_key,omitempty"` // hex
 	AllowedKeys   []string            `toml:"allowed_keys"`
 	Channels      []string            `toml:"channels"`
@@ -110,6 +109,9 @@ func LoadConfig(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("server: load config: %w", err)
 	}
+	if md.IsDefined("password") {
+		return Config{}, errors.New("server: load config: plaintext password is unsupported; use password_key")
+	}
 	if un := md.Undecoded(); len(un) > 0 {
 		keys := make([]string, len(un))
 		for i, k := range un {
@@ -123,7 +125,6 @@ func LoadConfig(path string) (Config, error) {
 	if fc.Addr != "" {
 		cfg.Addr = fc.Addr
 	}
-	cfg.Password = fc.Password
 	if fc.PasswordKey != "" {
 		key, err := hex.DecodeString(fc.PasswordKey)
 		if err != nil || len(key) != 32 {
@@ -251,7 +252,6 @@ func (c Config) MarshalTOML() ([]byte, error) {
 	}
 	fc := fileConfig{
 		Addr:          c.Addr,
-		Password:      c.Password,
 		PasswordKey:   hexKey(c.PasswordKey),
 		AllowedKeys:   c.AllowedKeys,
 		Channels:      c.Channels,
@@ -292,13 +292,12 @@ func (c Config) MarshalTOML() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// MarshalLocalTOML renders only the machine-local keys (addr, password, TLS,
+// MarshalLocalTOML renders only the machine-local keys (addr, password_key, TLS,
 // public, public_dns, public_ip, udp range, media_port, discoverable, msg rate, server_id). The
 // group fields live in the chain once one exists.
 func (c Config) MarshalLocalTOML() ([]byte, error) {
 	fc := fileConfig{
 		Addr:         c.Addr,
-		Password:     c.Password,
 		PasswordKey:  hexKey(c.PasswordKey),
 		TLSCert:      c.TLSCert,
 		TLSKey:       c.TLSKey,

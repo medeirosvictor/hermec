@@ -19,13 +19,9 @@
 # discoverable = false (or the explicitly unsafe development override).
 addr = "127.0.0.1:7697"
 
-# If set, every client must prove it knows this password (the password itself
-# never goes over the network). Leave empty for none.
-# password = "change-me"
-# Better: store the key instead of the password. It is a 64-character hex
-# string, scrypt(password, "hermec-pw\0" || server_id), and every host of the
-# server must hold the same one. With only `password` set, the server derives
-# the key at every start and logs a notice.
+# If set, every client must prove it knows the password behind this 64-character
+# hex key. Generate it during server setup; plaintext `password` configuration
+# is unsupported and rejected.
 # password_key = ""
 
 # Other hosts of this server, as ws:// or wss:// URLs. They are merged with the

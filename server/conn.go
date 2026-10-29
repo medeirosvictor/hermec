@@ -4,7 +4,6 @@ import (
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -21,17 +20,15 @@ import (
 
 const nonceSize = 32
 
-// passwordKey is the key clients must prove they know: the configured
-// PasswordKey, else one derived from Password for this server ID. nil means no
-// password is set.
+// passwordKey is the key clients must prove they know. nil means no password
+// admission is configured.
 func (s *Server) passwordKey(serverID []byte) []byte {
 	key, _ := s.passwordState(serverID)
 	return key
 }
 
-// passwordState returns the password key and whether a password is required,
-// from one snapshot of the mirrored key. A required password whose key cannot
-// be derived yields (nil, true).
+// passwordState returns the password key and whether password admission is
+// required, from one snapshot of the mirrored key.
 func (s *Server) passwordState(serverID []byte) (key []byte, set bool) {
 	s.pwMu.RLock()
 	mirrored, mkey := s.pwMirrored, s.pwMirror
@@ -42,13 +39,7 @@ func (s *Server) passwordState(serverID []byte) (key []byte, set bool) {
 	if len(s.cfg.PasswordKey) > 0 {
 		return s.cfg.PasswordKey, true
 	}
-	if s.cfg.Password == "" {
-		return nil, false
-	}
-	s.pwOnce.Do(func() {
-		s.pwKey, _ = proto.PasswordKey(s.cfg.Password, serverID)
-	})
-	return s.pwKey, true
+	return nil, false
 }
 
 // setPasswordKey makes k, the active host's password key, the one clients must
@@ -69,10 +60,8 @@ func (s *Server) passwordStateLocked() ([]byte, bool) {
 	return s.cfg.PasswordKey, len(s.cfg.PasswordKey) > 0
 }
 
-// checkPassword reports whether auth satisfies the server password. A proof is
-// compared against the HMAC under the key; a plain Password (v0.6 clients) is
-// run through the same derivation and compared in constant time. With no
-// password configured everything passes.
+// checkPassword reports whether auth satisfies password admission. With no
+// password key configured everything passes.
 func (s *Server) checkPassword(auth proto.Auth, serverNonce, clientNonce, serverID []byte) bool {
 	key, set := s.passwordState(serverID)
 	if !set {
@@ -81,14 +70,7 @@ func (s *Server) checkPassword(auth proto.Auth, serverNonce, clientNonce, server
 	if len(key) == 0 {
 		return false
 	}
-	if len(auth.Proof) > 0 {
-		return hmac.Equal(auth.Proof, proto.PasswordProof(key, serverNonce, clientNonce, serverID))
-	}
-	if auth.Password == "" {
-		return false
-	}
-	got, err := proto.PasswordKey(auth.Password, serverID)
-	return err == nil && subtle.ConstantTimeCompare(got, key) == 1
+	return hmac.Equal(auth.Proof, proto.PasswordProof(key, serverNonce, clientNonce, serverID))
 }
 
 // conn is one client connection. One goroutine (readLoop) reads and owns the
@@ -329,9 +311,7 @@ func (c *conn) authenticate() error {
 	if _, err := rand.Read(nonce); err != nil {
 		return err
 	}
-	// The challenge stays a v1 envelope so an old client can still read it
-	// and be told to update.
-	chRaw, err := proto.EncodeV(proto.LegacyVersion, proto.TypeChallenge, proto.Challenge{Nonce: nonce})
+	chRaw, err := proto.Encode(proto.TypeChallenge, proto.Challenge{Nonce: nonce})
 	if err != nil || !c.enqueue(chRaw) {
 		return errAuthFailed
 	}
@@ -350,7 +330,7 @@ func (c *conn) authenticate() error {
 			c.sendError("rate_limited", "too many messages; slow down")
 			return proto.Envelope{}, errAuthFailed
 		}
-		env, err := proto.DecodeHandshake(raw)
+		env, err := proto.Decode(raw)
 		if err != nil {
 			return proto.Envelope{}, errBadHandshake
 		}
@@ -369,20 +349,6 @@ func (c *conn) authenticate() error {
 	}
 	if err != nil {
 		return err // read error, or rate limited (already answered)
-	}
-	if env.V == proto.LegacyVersion {
-		// A v1 client sends auth straight after the challenge. Tell a
-		// well-formed one to update; anything else is an ordinary failure.
-		var old proto.Auth
-		if env.Type != proto.TypeAuth || json.Unmarshal(env.Data, &old) != nil {
-			return fail()
-		}
-		if raw, err := proto.EncodeV(proto.LegacyVersion, proto.TypeError, proto.ErrorMsg{
-			Code: proto.CodeUpdateRequired, Message: "update HERMEC to connect to this server",
-		}); err == nil {
-			c.enqueue(raw)
-		}
-		return errAuthFailed
 	}
 	if env.Type != proto.TypeHostProofReq {
 		return fail()
@@ -405,14 +371,7 @@ func (c *conn) authenticate() error {
 		size += len(f)
 	}
 	if !c.srv.chargeChain(c.ip, size) {
-		// Over the per-IP budget: say so (v1 envelope, readable by any
-		// client) and close, so the client retries later instead of
-		// treating this host as dead.
-		if raw, err := proto.EncodeV(proto.LegacyVersion, proto.TypeError, proto.ErrorMsg{
-			Code: proto.CodeServerBusy, Message: "server busy",
-		}); err == nil {
-			c.enqueue(raw)
-		}
+		c.sendError(proto.CodeServerBusy, "server busy")
 		return errAuthFailed
 	}
 	for _, f := range frames {
@@ -441,7 +400,7 @@ func (c *conn) authenticate() error {
 	if err := json.Unmarshal(env.Data, &auth); err != nil {
 		return fail()
 	}
-	if len(auth.PubKey) != ed25519.PublicKeySize {
+	if !proto.ValidAuth(auth) {
 		return fail()
 	}
 	pub := ed25519.PublicKey(auth.PubKey)

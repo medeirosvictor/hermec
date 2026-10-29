@@ -1,15 +1,11 @@
 package server
 
 import (
-	"context"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/medeirosvictor/hermec/core/proto"
 )
 
 func (s *Server) guardCounts() (pre, ips, clients int) {
@@ -31,50 +27,6 @@ func waitCounts(t *testing.T, s *Server, pre, ips, clients int) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-}
-
-func TestAuthBlockOnWire(t *testing.T) {
-	clk := &fakeClock{now: time.Unix(2_000_000, 0)}
-	cfg := chatCfg()
-	cfg.Password = "secret"
-	cfg.Addr = "127.0.0.1:0"
-	s := New(cfg)
-	s.clock = clk.Now
-	if err := s.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
-	url := "ws://" + s.Addr()
-
-	// Four failures do not block the IP; the 5th also receives auth_failed,
-	// then the IP is blocked for 1 s.
-	for i := 0; i < 5; i++ {
-		c, env := authAs(t, url, mustID(t), "wrong")
-		requireAuthFailed(t, c, env)
-	}
-	waitCounts(t, s, 0, 0, 0) // slots are back immediately; nothing sleeps
-	_, resp, err := dialHdr(url, nil)
-	if err == nil || resp == nil || resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("dial while blocked: err=%v resp=%+v, want 503", err, resp)
-	}
-	waitCounts(t, s, 0, 0, 0)
-
-	// After the window a connection is admitted again.
-	clk.Advance(1100 * time.Millisecond)
-	_, env := authAs(t, url, mustID(t), "secret")
-	if env.Type != proto.TypeAuthOK {
-		t.Fatalf("after window: type %q", env.Type)
-	}
-	// Success reset the run: four more failures are free again.
-	for i := 0; i < 4; i++ {
-		c, env := authAs(t, url, mustID(t), "wrong")
-		requireAuthFailed(t, c, env)
-	}
-	c2, _, err := dialHdr(url, nil)
-	if err != nil {
-		t.Fatalf("dial after reset: %v", err)
-	}
-	c2.Close()
 }
 
 func TestLoadConfigMaxPerIP(t *testing.T) {

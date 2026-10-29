@@ -36,13 +36,13 @@ func startModeServer(t *testing.T, cfg Config) (*Server, string) {
 	return s, "ws://" + s.Addr()
 }
 
-// authWarm is authAs with Auth.Warm set; the password is sent as given.
+// authWarm is authAs with Auth.Warm set.
 func authWarm(t *testing.T, url string, id *identity.Identity, password string) (*websocket.Conn, proto.Envelope) {
 	t.Helper()
 	c := dial(t, url)
 	h := hello(t, c)
 	sendEnv(t, c, proto.TypeAuth, proto.Auth{
-		PubKey: id.PublicKey(), Name: "warm", Password: password, Warm: true,
+		PubKey: id.PublicKey(), Name: "warm", Warm: true,
 		Sig: id.Sign(proto.ClientAuthBytes(h.serverNonce, h.clientNonce, h.serverID[:])),
 	})
 	return c, readEnv(t, c)
@@ -191,18 +191,4 @@ func TestRosterHasPubKey(t *testing.T) {
 		}
 		return
 	}
-}
-
-func TestHostWarmAuthNoPassword(t *testing.T) {
-	host := mustID(t)
-	cfg := modeCfg()
-	cfg.HostKey = host
-	cfg.Password = "pw"
-	_, url := startModeServer(t, cfg)
-
-	if _, env := authWarm(t, url, host, ""); env.Type != proto.TypeAuthOK {
-		t.Fatalf("host warm auth without password: %q", env.Type)
-	}
-	c, env := authWarm(t, url, mustID(t), "")
-	requireAuthFailed(t, c, env)
 }

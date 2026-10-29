@@ -20,7 +20,7 @@ func (h *hs) sendProofAuth(t *testing.T, c *websocket.Conn, id *identity.Identit
 }
 
 func TestAuthProofRightAndWrongPassword(t *testing.T) {
-	url := startServer(t, Config{Password: "s3cret"})
+	url := startServer(t, passwordConfig(t, "s3cret"))
 	for _, tc := range []struct {
 		pw string
 		ok bool
@@ -43,7 +43,7 @@ func TestAuthProofRightAndWrongPassword(t *testing.T) {
 }
 
 func TestAuthNeitherProofNorPassword(t *testing.T) {
-	url := startServer(t, Config{Password: "s3cret"})
+	url := startServer(t, passwordConfig(t, "s3cret"))
 	c := dial(t, url)
 	h := hello(t, c)
 	h.sendAuth(t, c, mustID(t), "tester", "")
@@ -72,7 +72,7 @@ func TestAuthKeyOnlyHost(t *testing.T) {
 		t.Fatalf("proof login: type = %q, want auth_ok", env.Type)
 	}
 	if _, env := authAs(t, url, mustID(t), "s3cret"); env.Type != proto.TypeAuthOK {
-		t.Fatalf("legacy login: type = %q, want auth_ok", env.Type)
+		t.Fatalf("password proof login: type = %q, want auth_ok", env.Type)
 	}
 	c, env := authAs(t, url, mustID(t), "nope")
 	requireAuthFailed(t, c, env)
@@ -81,14 +81,4 @@ func TestAuthKeyOnlyHost(t *testing.T) {
 	bad, _ := proto.PasswordKey("nope", id[:])
 	h.sendProofAuth(t, c, mustID(t), bad)
 	requireAuthFailed(t, c, readEnv(t, c))
-}
-
-func TestAuthLegacyPassword(t *testing.T) {
-	url := startServer(t, Config{Password: "s3cret"})
-	_, env := authAs(t, url, mustID(t), "s3cret")
-	if env.Type != proto.TypeAuthOK {
-		t.Fatalf("legacy password: type = %q, want auth_ok", env.Type)
-	}
-	c, env := authAs(t, url, mustID(t), "nope")
-	requireAuthFailed(t, c, env)
 }

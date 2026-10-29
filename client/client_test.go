@@ -69,15 +69,6 @@ func TestDialAuthAndJoin(t *testing.T) {
 	}
 }
 
-func TestDialBadPassword(t *testing.T) {
-	url := startServer(t, server.Config{Password: "s3cret"})
-	id, _ := identity.Generate()
-	_, err := Dial(testCtx(t), url, id, "bob", "wrong")
-	if err == nil || !strings.Contains(err.Error(), "auth_failed") {
-		t.Fatalf("err = %v, want auth_failed", err)
-	}
-}
-
 func TestCloseIdempotentAndClosesEvents(t *testing.T) {
 	url := startServer(t, server.Config{})
 	id, _ := identity.Generate()

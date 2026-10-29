@@ -80,8 +80,7 @@ func newTestHost(t *testing.T, base *chain.Chain, key *identity.Identity, name s
 	th.Host = NewHost(HostConfig{
 		Server: Config{
 			Addr: addr, Advertise: []string{th.url}, HostKey: key, Chain: cc,
-			HostName: name, Password: "pw",
-			Roles:         roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
+			HostName: name, Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
 			Channels:      []string{"general"},
 			VoiceChannels: []string{"voice"},
 		},

@@ -36,10 +36,6 @@ func DialErrorText(err error) string {
 			return "the host's machine is not an approved host for this server"
 		case proto.CodeBadChain:
 			return "the server sent an invalid chain"
-		case proto.CodeServerOutdated:
-			return "the host runs an older HERMEC — ask them to update"
-		case proto.CodeUpdateRequired:
-			return "update HERMEC to connect to this server"
 		case proto.CodeBanned:
 			return "you are banned from this server"
 		}

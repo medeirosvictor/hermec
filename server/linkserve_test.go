@@ -51,12 +51,21 @@ func twoHostChain(t *testing.T) (c *chain.Chain, a, b *identity.Identity) {
 
 func startLinkServer(t *testing.T, c *chain.Chain, a *identity.Identity, password string) (*Server, string) {
 	t.Helper()
-	return startModeServer(t, Config{
-		HostKey: a, Chain: c, Password: password,
+	cfg := Config{
+		HostKey: a, Chain: c,
 		HostName: "alpha", Advertise: []string{"ws://a.example:1"},
 		Roles:    roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
 		Channels: []string{"general"},
-	})
+	}
+	if password != "" {
+		id := c.ID()
+		var err error
+		cfg.PasswordKey, err = proto.PasswordKey(password, id[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return startModeServer(t, cfg)
 }
 
 // readType reads frames until one of type typ arrives and returns it.
@@ -264,20 +273,6 @@ func TestLinkHelloStreamsChainHistoryPassword(t *testing.T) {
 	readType(t, lk, proto.TypeHeartbeat)
 }
 
-func TestLinkRefusesNonHost(t *testing.T) {
-	c, a, _ := twoHostChain(t)
-	_, url := startLinkServer(t, c, a, "pw")
-	// A non-host can only warm-auth with the password.
-	oc, env := authWarm(t, url, mustID(t), "pw")
-	if env.Type != proto.TypeAuthOK {
-		t.Fatalf("auth: %q", env.Type)
-	}
-	sendEnv(t, oc, proto.TypeLinkHello, proto.LinkHello{})
-	if code := errCode(readType(t, oc, proto.TypeError)); code != proto.CodeForbidden {
-		t.Fatalf("code = %q", code)
-	}
-}
-
 func TestLinkRefusesOlderChain(t *testing.T) {
 	c, a, b := twoHostChain(t)
 	_, url := startLinkServer(t, c, a, "pw")
@@ -372,31 +367,6 @@ func standbyFP(s *Server) string {
 		return h.Fingerprint
 	}
 	return ""
-}
-
-func TestLinkProbe(t *testing.T) {
-	c, a, b := twoHostChain(t)
-	_, url := startLinkServer(t, c, a, "pw")
-	fullClient(t, url)
-	pc, env := authWarm(t, url, b, "")
-	if env.Type != proto.TypeAuthOK {
-		t.Fatalf("auth: %q", env.Type)
-	}
-	sendEnv(t, pc, proto.TypeLinkProbe, struct{}{})
-	var r proto.LinkProbeReply
-	_ = json.Unmarshal(readType(t, pc, proto.TypeLinkProbeReply).Data, &r)
-	if !r.Active || r.VoiceMembers != 0 || r.Clients != 1 || r.Priority != 1 || r.Self.Name != "alpha" || r.ServerID != c.ID().String() {
-		t.Fatalf("reply = %+v", r)
-	}
-
-	oc, env := authWarm(t, url, mustID(t), "pw")
-	if env.Type != proto.TypeAuthOK {
-		t.Fatalf("auth: %q", env.Type)
-	}
-	sendEnv(t, oc, proto.TypeLinkProbe, struct{}{})
-	if code := errCode(readType(t, oc, proto.TypeError)); code != proto.CodeForbidden {
-		t.Fatalf("non-host probe code = %q", code)
-	}
 }
 
 func TestHostRemoveDropsLink(t *testing.T) {

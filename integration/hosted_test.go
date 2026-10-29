@@ -22,7 +22,6 @@ func TestHostedServerServesClients(t *testing.T) {
 	cfg := server.DefaultConfig()
 	cfg.Addr = ":0"
 	cfg.ServerName = "Hosted"
-	cfg.Password = "pw"
 	cfg.VoiceChannels = []string{"voice"}
 	cfg.Roles.Grants = map[string][]string{fpA: {"admin"}}
 	b, err := cfg.MarshalTOML()

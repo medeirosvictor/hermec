@@ -200,7 +200,7 @@ func proxy(t *testing.T, url string, f func(raw []byte, env proto.Envelope) [][]
 			if err != nil {
 				return
 			}
-			env, _ := proto.DecodeHandshake(raw)
+			env, _ := proto.Decode(raw)
 			for _, out := range f(raw, env) {
 				if front.WriteMessage(mt, out) != nil {
 					return
@@ -326,10 +326,10 @@ func TestDialServerBusyFrame(t *testing.T) {
 			return
 		}
 		defer ws.Close()
-		ch, _ := proto.EncodeV(proto.LegacyVersion, proto.TypeChallenge, proto.Challenge{Nonce: make([]byte, 32)})
+		ch, _ := proto.Encode(proto.TypeChallenge, proto.Challenge{Nonce: make([]byte, 32)})
 		_ = ws.WriteMessage(websocket.TextMessage, ch)
 		_, _, _ = ws.ReadMessage() // host_proof_req
-		busy, _ := proto.EncodeV(proto.LegacyVersion, proto.TypeError, proto.ErrorMsg{Code: proto.CodeServerBusy, Message: "server busy"})
+		busy, _ := proto.Encode(proto.TypeError, proto.ErrorMsg{Code: proto.CodeServerBusy, Message: "server busy"})
 		_ = ws.WriteMessage(websocket.TextMessage, busy)
 	}))
 	t.Cleanup(srv.Close)

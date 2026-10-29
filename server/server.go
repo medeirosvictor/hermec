@@ -39,12 +39,8 @@ type Config struct {
 	// ServerID is the machine-local ID of the chain this config belongs to (as
 	// chain.ID.String()); the app stores it in hosted.toml. Unused by Server.
 	ServerID string
-	// Password, when non-empty, is what every client must know. The server
-	// derives its key from it with the chain ID, so it is never compared on
-	// the wire; prefer PasswordKey.
-	Password string
-	// PasswordKey, when set, is proto.PasswordKey(password, server ID); clients
-	// then prove they know the password without sending it.
+	// PasswordKey, when set, is the 32-byte admission key clients prove they
+	// know without sending a password.
 	PasswordKey []byte
 	// AllowedKeys are permitted fingerprints. Empty means an open server.
 	AllowedKeys []string
@@ -161,9 +157,6 @@ type Server struct {
 	// both locks are needed, acquire dedicatedMu before chainMu.
 	dedicatedMu sync.Mutex
 	upgrader    websocket.Upgrader
-
-	pwOnce sync.Once // derives pwKey from cfg.Password on first use
-	pwKey  []byte
 
 	pwMu       sync.RWMutex // guards pwMirrored and pwMirror
 	pwMirrored bool         // the key below came from the active host and overrides cfg

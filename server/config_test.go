@@ -36,7 +36,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Roles.Roles, roles.Builtin()) {
 		t.Errorf("Roles = %v", cfg.Roles.Roles)
 	}
-	if cfg.Password != "" || len(cfg.AllowedKeys) != 0 || cfg.TLSCert != "" || cfg.TLSKey != "" {
+	if len(cfg.AllowedKeys) != 0 || cfg.TLSCert != "" || cfg.TLSKey != "" {
 		t.Errorf("unexpected non-zero fields: %+v", cfg)
 	}
 }
@@ -64,7 +64,6 @@ func TestLoadConfigVoiceChannels(t *testing.T) {
 func TestLoadConfigFull(t *testing.T) {
 	p := writeTOML(t, `
 addr = "127.0.0.1:9000"
-password = "hunter2"
 allowed_keys = ["aaaa-bbbb", "cccc-dddd"]
 channels = ["lobby", "dev"]
 tls_cert = "cert.pem"
@@ -84,7 +83,6 @@ admin = ["join_channel", "send_chat", "manage"]
 	}
 	want := Config{
 		Addr:         "127.0.0.1:9000",
-		Password:     "hunter2",
 		AllowedKeys:  []string{"aaaa-bbbb", "cccc-dddd"},
 		Channels:     []string{"lobby", "dev"},
 		TLSCert:      "cert.pem",

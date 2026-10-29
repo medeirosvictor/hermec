@@ -36,7 +36,7 @@ func TestInitDedicatedCreatesSecurePersistentLayout(t *testing.T) {
 	if !cfg.PublicMode || cfg.Discoverable || cfg.TLSCert == "" || cfg.TLSKey == "" {
 		t.Fatalf("config is not strict public mode: %+v", cfg)
 	}
-	if cfg.Password != "" || len(cfg.PasswordKey) != 32 || result.Password == "" {
+	if len(cfg.PasswordKey) != 32 || result.Password == "" {
 		t.Fatal("bootstrap did not create password-key admission")
 	}
 	c, err := chain.Load(filepath.Join(dir, "chain.jsonl"))

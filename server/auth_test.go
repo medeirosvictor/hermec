@@ -76,12 +76,12 @@ func readChallenge(t *testing.T, c *websocket.Conn) []byte {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	env, err := proto.DecodeHandshake(raw)
+	env, err := proto.Decode(raw)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if env.V != proto.LegacyVersion {
-		t.Fatalf("challenge envelope v = %d, want %d", env.V, proto.LegacyVersion)
+	if env.V != proto.Version {
+		t.Fatalf("challenge envelope v = %d, want %d", env.V, proto.Version)
 	}
 	if env.Type != proto.TypeChallenge {
 		t.Fatalf("first message type = %q, want challenge", env.Type)
@@ -187,8 +187,9 @@ func hello(t *testing.T, c *websocket.Conn) *hs {
 func (h *hs) sendAuth(t *testing.T, c *websocket.Conn, id *identity.Identity, name, password string) {
 	t.Helper()
 	sendEnv(t, c, proto.TypeAuth, proto.Auth{
-		PubKey: id.PublicKey(), Name: name, Password: password,
-		Sig: id.Sign(proto.ClientAuthBytes(h.serverNonce, h.clientNonce, h.serverID[:])),
+		PubKey: id.PublicKey(), Name: name,
+		Sig:   id.Sign(proto.ClientAuthBytes(h.serverNonce, h.clientNonce, h.serverID[:])),
+		Proof: passwordProof(t, password, h.serverNonce, h.clientNonce, h.serverID),
 	})
 }
 
@@ -207,45 +208,6 @@ func TestHostProofVerifies(t *testing.T) {
 	st := h.chain.State()
 	if !st.IsHost(ed25519.PublicKey(h.hostProof.PubKey)) {
 		t.Fatal("proving key is not on the chain's host list")
-	}
-}
-
-// A v1 client (auth right after the challenge) is told to update, once, in a
-// v1 envelope, and is not counted as an auth failure.
-func TestV1ClientGetsUpdateRequired(t *testing.T) {
-	url := startServer(t, Config{})
-	id := mustID(t)
-	c := dial(t, url)
-	nonce := readChallenge(t, c)
-	raw, err := proto.EncodeV(proto.LegacyVersion, proto.TypeAuth, proto.Auth{
-		PubKey: id.PublicKey(), Name: "old", Sig: id.Sign(nonce),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := c.WriteMessage(websocket.TextMessage, raw); err != nil {
-		t.Fatal(err)
-	}
-	_, raw, err = c.ReadMessage()
-	if err != nil {
-		t.Fatal(err)
-	}
-	env, err := proto.DecodeHandshake(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if env.V != proto.LegacyVersion || env.Type != proto.TypeError {
-		t.Fatalf("got v%d %q, want v1 error", env.V, env.Type)
-	}
-	var em proto.ErrorMsg
-	if err := json.Unmarshal(env.Data, &em); err != nil {
-		t.Fatal(err)
-	}
-	if em.Code != proto.CodeUpdateRequired {
-		t.Fatalf("code = %q, want update_required", em.Code)
-	}
-	if _, _, err := c.ReadMessage(); err == nil {
-		t.Fatal("connection still open")
 	}
 }
 
@@ -380,6 +342,35 @@ func requireAuthFailed(t *testing.T, c *websocket.Conn, env proto.Envelope) {
 	}
 }
 
+func passwordProof(t *testing.T, password string, serverNonce, clientNonce []byte, serverID chain.ID) []byte {
+	t.Helper()
+	if password == "" {
+		return nil
+	}
+	key, err := proto.PasswordKey(password, serverID[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proto.PasswordProof(key, serverNonce, clientNonce, serverID[:])
+}
+
+func passwordConfig(t *testing.T, password string) Config {
+	t.Helper()
+	host := mustID(t)
+	cfg := DefaultConfig()
+	ch, err := newChain(host, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := ch.ID()
+	key, err := proto.PasswordKey(password, id[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.HostKey, cfg.Chain, cfg.PasswordKey = host, ch, key
+	return cfg
+}
+
 func mustID(t *testing.T) *identity.Identity {
 	t.Helper()
 	id, err := identity.Generate()
@@ -426,7 +417,7 @@ func TestAuthBadSignature(t *testing.T) {
 }
 
 func TestAuthWrongPassword(t *testing.T) {
-	url := startServer(t, Config{Password: "s3cret"})
+	url := startServer(t, passwordConfig(t, "s3cret"))
 	c, env := authAs(t, url, mustID(t), "nope")
 	requireAuthFailed(t, c, env)
 

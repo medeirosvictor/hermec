@@ -112,8 +112,6 @@ func Run(ctx context.Context, ws *websocket.Conn, id *identity.Identity, name, p
 // the signed chain before the password is sent, then the client authenticates
 // with a signature bound to the server ID.
 func handshake(ws *websocket.Conn, id *identity.Identity, name, password string, o Opts) (*Result, error) {
-	// The challenge is a v1 envelope, so a v1 host looks the same until it
-	// answers host_proof_req.
 	env, err := readHS(ws)
 	if err != nil {
 		return nil, fmt.Errorf("client: read challenge: %w", err)
@@ -143,14 +141,6 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 		env, err = readHS(ws)
 		if err != nil {
 			return nil, fmt.Errorf("client: read chain: %w", err)
-		}
-		if busy := busyError(env); busy != nil {
-			return nil, fmt.Errorf("client: %w", busy)
-		}
-		if env.V != proto.Version {
-			// A v1 host answers host_proof_req with an error (or nothing it
-			// understands) instead of a chain.
-			return nil, fmt.Errorf("client: %w", errOutdated())
 		}
 		if env.Type == proto.TypeError {
 			return nil, fmt.Errorf("client: %w", handshakeError(env))
@@ -184,9 +174,6 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 	env, err = readHS(ws)
 	if err != nil {
 		return nil, fmt.Errorf("client: read host_proof: %w", err)
-	}
-	if env.V != proto.Version {
-		return nil, fmt.Errorf("client: %w", errOutdated())
 	}
 	if env.Type == proto.TypeError {
 		return nil, fmt.Errorf("client: %w", handshakeError(env))
@@ -259,37 +246,19 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 	}
 }
 
-// busyError is the host's explicit server_busy refusal (the pre-auth chain
-// budget), sent as a v1-compatible error frame so any client can read it. It
-// is retryable. Nothing else maps to it: a bare close is just a lost
-// connection.
-func busyError(env proto.Envelope) *ServerError {
-	if env.Type != proto.TypeError {
-		return nil
-	}
-	if se := handshakeError(env); se.Code == proto.CodeServerBusy {
-		return se
-	}
-	return nil
-}
-
-func errOutdated() *ServerError {
-	return &ServerError{Code: proto.CodeServerOutdated, Message: "the host runs an older HERMEC"}
-}
-
 func handshakeError(env proto.Envelope) *ServerError {
 	var em proto.ErrorMsg
 	_ = json.Unmarshal(env.Data, &em)
 	return &ServerError{Code: em.Code, Message: em.Message}
 }
 
-// readHS reads one handshake message, accepting both protocol versions.
+// readHS reads one handshake message.
 func readHS(ws *websocket.Conn) (proto.Envelope, error) {
 	_, raw, err := ws.ReadMessage()
 	if err != nil {
 		return proto.Envelope{}, err
 	}
-	return proto.DecodeHandshake(raw)
+	return proto.Decode(raw)
 }
 
 func readEnv(ws *websocket.Conn) (proto.Envelope, error) {

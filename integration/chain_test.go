@@ -28,7 +28,6 @@ func TestChainHostedMigrationEndToEnd(t *testing.T) {
 		cfg := server.DefaultConfig()
 		cfg.Addr = "127.0.0.1:0"
 		cfg.ServerName = "Migrated"
-		cfg.Password = "pw"
 		c, _, err := server.OpenChain(chainPath, idA, cfg)
 		if err != nil {
 			t.Fatalf("OpenChain: %v", err)

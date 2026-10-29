@@ -28,7 +28,6 @@ type fakeHost struct {
 	key      *identity.Identity // the host key on the chain
 	ch       *chain.Chain
 	proofKey *identity.Identity // signs host_proof; defaults to key
-	v1       bool               // behave like a pre-v2 host
 	perFrame int                // entries per chain frame; 0 = all in one
 	tamper   func([]json.RawMessage) []json.RawMessage
 
@@ -122,7 +121,7 @@ func (f *fakeHost) gotAuth() *proto.Auth {
 // nil if the client did not get that far. It does not reply to the auth.
 func (f *fakeHost) handshake(ws *websocket.Conn) *proto.Auth {
 	send := func(v int, typ string, payload any) {
-		raw, err := proto.EncodeV(v, typ, payload)
+		raw, err := proto.Encode(typ, payload)
 		if err != nil {
 			f.t.Errorf("fake host encode: %v", err)
 			return
@@ -134,18 +133,13 @@ func (f *fakeHost) handshake(ws *websocket.Conn) *proto.Auth {
 		if err != nil {
 			return proto.Envelope{}, false
 		}
-		env, err := proto.DecodeHandshake(raw)
+		env, err := proto.Decode(raw)
 		return env, err == nil
 	}
 	nonce := make([]byte, 32)
 	_, _ = rand.Read(nonce)
-	send(proto.LegacyVersion, proto.TypeChallenge, proto.Challenge{Nonce: nonce})
+	send(proto.Version, proto.TypeChallenge, proto.Challenge{Nonce: nonce})
 	env, ok := read()
-	if f.v1 {
-		// A v1 host expects auth here and rejects anything else.
-		send(proto.LegacyVersion, proto.TypeError, proto.ErrorMsg{Code: "auth_failed", Message: "authentication failed"})
-		return nil
-	}
 	if !ok || env.Type != proto.TypeHostProofReq {
 		return nil
 	}
@@ -269,7 +263,7 @@ func TestDialPinMismatch(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 	if a := f.gotAuth(); a != nil {
-		t.Fatalf("the client sent auth (password %q) to a host with the wrong server ID", a.Password)
+		t.Fatalf("the client sent auth to a host with the wrong server ID")
 	}
 }
 
@@ -309,14 +303,6 @@ func TestDialRejectsTamperedChain(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if f.gotAuth() != nil {
 		t.Fatal("the client sent auth to a host with a broken chain")
-	}
-}
-
-func TestDialV1HostServerOutdated(t *testing.T) {
-	f := newFakeHost(t, func(f *fakeHost) { f.v1 = true })
-	se := dialErr(t, f.url, "")
-	if se.Code != proto.CodeServerOutdated {
-		t.Fatalf("code = %q, want server_outdated", se.Code)
 	}
 }
 

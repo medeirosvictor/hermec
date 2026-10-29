@@ -21,7 +21,7 @@ func PasswordKey(password string, serverID []byte) ([]byte, error) {
 
 // PasswordProof is the client's proof that it knows the password behind key:
 // HMAC-SHA256(key, "hermec-pw\0" || server_nonce || client_nonce || server_id).
-// It replaces Auth.Password, so the password never goes over the wire.
+// Passwords never go over the wire.
 func PasswordProof(key, serverNonce, clientNonce, serverID []byte) []byte {
 	m := hmac.New(sha256.New, key)
 	m.Write([]byte(pwDomain))

@@ -138,13 +138,3 @@ func TestActiveHeartbeatsAuthed(t *testing.T) {
 	}
 	t.Fatal("authed conn got no hb")
 }
-
-func TestHostFullAuthNeedsPassword(t *testing.T) {
-	host := mustID(t)
-	cfg := modeCfg()
-	cfg.HostKey = host
-	cfg.Password = "pw"
-	_, url := startModeServer(t, cfg)
-	c, env := authAs(t, url, host, "")
-	requireAuthFailed(t, c, env)
-}

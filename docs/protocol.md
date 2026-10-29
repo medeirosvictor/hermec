@@ -37,7 +37,7 @@ them; please report it.
 
 | Field  | Type    | Description                                              |
 |--------|---------|----------------------------------------------------------|
-| `v`    | integer | Protocol version. Must be `2`, except for the `challenge` and the `update_required` error, which are sent as `1` (section 7). |
+| `v`    | integer | Protocol version. Must be `2`; every other version is rejected. |
 | `type` | string  | Message type, non-empty. See section 4.                  |
 | `data` | object  | Type-specific payload. Omitted when the payload is empty. |
 
@@ -56,7 +56,7 @@ Conventions:
 ```
 Client                                   Server
   | -------- WebSocket upgrade --------> |
-  | <-------------- challenge ---------- |   (1) server nonce, 32 bytes (v1 envelope)
+  | <-------------- challenge ---------- |   (1) server nonce, 32 bytes
   | ----------- host_proof_req --------> |   (2) client nonce, 32 bytes
   | <--------------- chain ------------- |   (3) the signed chain, in 1+ frames
   | <------------- host_proof ---------- |       host key's proof over both nonces
@@ -78,13 +78,11 @@ Nonces are 32 random bytes. The whole handshake must finish within **10
 seconds** of the upgrade. `server_id` is the raw 32 bytes of the server ID
 (section 9.1) in both signed strings. Each signed string starts with its own
 domain prefix, ending in a NUL byte (`\x00`), so a signature made for one
-purpose cannot be replayed as another. A version 1 client sends `auth` straight
-after the `challenge`; if that `auth` is well formed the server answers
-`update_required` and closes (section 7).
+purpose cannot be replayed as another. Pre-1.0 builds are unsupported and
+rejected; there is no version bridge.
 
 1. **`challenge`** (S). Right after the upgrade the server sends a fresh server
-   nonce. The challenge is a version 1 envelope (section 7); every other
-   handshake message is version 2.
+   nonce in a version 2 envelope.
 2. **`host_proof_req`** (C), carrying the client's own nonce.
 3. **`chain`** and **`host_proof`** (S). The server sends its whole chain as
    one or more `chain` frames (section 4.2a), then `host_proof`: the host key
@@ -150,17 +148,14 @@ The server compares it in constant time. The nonces and the server ID make
 every proof single-use and specific to one server. A server with a password
 and no key (an empty stored key) refuses every login.
 
-A v0.6 client sends `auth.password` (the plain password) and no `proof`. The
-server derives the key from it and compares keys in constant time. This
-fallback exists for one release; from v0.8 a server refuses `auth.password`.
-Hosts pass the key to each other over the host link (section 4.18), never the
-password.
+The wire carries only this proof, never a plaintext password. Hosts pass the
+key to each other over the host link (section 4.18), never the password.
 
 **Pre-auth chain budget.** Sending the chain costs the host far more than the
 `host_proof_req` costs the client. A host therefore sends at most 2 MiB of
 chain frames per minute to one remote IP before it authenticates. When an IP is
-over that budget, the host sends one `error` `server_busy` (as a version 1
-envelope, so any client can read it) instead of the chain, and closes. A client
+over that budget, the host sends one version 2 `error` `server_busy` instead
+of the chain, and closes. A client
 that gets it retries later and does not count the host as dead. HTTP 503
 refusals (section 3.3) are mapped to the same code on the client side.
 
@@ -205,7 +200,7 @@ Direction: C is client to server, S is server to client.
 
 | Field   | Type   | Description                        |
 |---------|--------|------------------------------------|
-| `nonce` | base64 | The 32-byte server nonce. Sent as a version 1 envelope (section 7). |
+| `nonce` | base64 | The 32-byte server nonce. |
 
 ### 4.2 `auth` (C)
 
@@ -214,7 +209,6 @@ Direction: C is client to server, S is server to client.
 | `pubkey`   | base64 | yes      | 32-byte Ed25519 public key.               |
 | `name`     | string | yes      | Display name, cleaned and capped by the server (see 3.3). |
 | `sig`      | base64 | yes      | Ed25519 signature over the client-auth string of section 3.1. |
-| `password` | string | no       | The plain password. Only v0.6 clients send it; refused from v0.8 (section 3.1a). |
 | `proof`    | base64 | no       | Password proof, if the server has a password (section 3.1a). |
 | `warm`     | bool   | no       | True for a standby pre-connection (section 4.17). |
 | `capabilities` | string[] | no | Optional protocol extensions the client supports. `media_lanes_v1` enables independent camera and screen lanes. |
@@ -248,7 +242,7 @@ signature over the host-proof string of section 3.1.
 | `channels`    | ChannelInfo[] | All channels on the server.          |
 | `server_name` | string        | Optional. The host's configured `server_name`; omitted when the host set none. Untrusted: clients strip control and format characters and cap it at 64 runes before display. Omitted means "no name". |
 | `server_id`   | string        | The server ID (section 9.1) in its 52-character lowercase base32 form. Must equal the ID the client verified in the handshake. |
-| `capabilities` | string[]     | Optional capabilities accepted from `auth`. Omitted for a legacy session. |
+| `capabilities` | string[]     | Optional capabilities accepted from `auth`. |
 
 `channels` is an array of `ChannelInfo` objects:
 
@@ -851,8 +845,6 @@ join the channel.
 | Code          | Meaning                                                              |
 |---------------|----------------------------------------------------------------------|
 | `auth_failed` | Authentication failed; the connection is closed after this message. |
-| `update_required` | Sent by a server to a version 1 client (section 7); the connection is closed. |
-| `server_outdated` | Raised by a client that finds the host speaks an older protocol version. Never sent on the wire. |
 | `server_id_mismatch` | Raised by a client when the host's genesis hash is not the server ID it has pinned, or `auth_ok.server_id` differs from the verified one. Never sent on the wire. |
 | `host_not_authorized` | Raised by a client when the host's key is not on the chain's host list or its proof signature is invalid. A host also sends it in answer to `takeover` when its own key is no longer on the chain (section 4.17). |
 | `bad_chain` | Raised by a client when the chain it received does not verify (handshake or a live frame). An active host also sends it to a `link_hello` whose `chain_seq` is ahead of its own (section 4.18). |
@@ -874,7 +866,7 @@ join the channel.
 | `chain_lost`  | A split-brain merge dropped a chain entry the receiver authored: "your change was lost during a network split; please redo it". Sent just before `move` (section 4.16). |
 | `rate_limited`| The client is sending too fast; the connection is closed after this message. |
 
-Except for `auth_failed`, `update_required`, `banned`, `server_full`,
+Except for `auth_failed`, `banned`, `server_full`,
 `server_busy` and `rate_limited`, errors do not close the connection (a
 `not_active` at login does). `server_outdated`,
 `server_id_mismatch`, `host_not_authorized` and `bad_chain` end the attempt on
@@ -911,20 +903,9 @@ receives an unsupported version treats the message as malformed
 and receivers must ignore unknown fields and unknown message types. An
 incompatible change needs a new version number.
 
-Version 1 peers are handled during the handshake only:
-
-- The `challenge` is always sent as a version 1 envelope, so a version 1 client
-  can read it. A version 1 client answers with `auth` (version 1); the server
-  replies with one version 1 `error` `update_required` ("update HERMEC to
-  connect to this server") and closes. Anything else sent as version 1 is an
-  ordinary authentication failure.
-- A version 2 client that meets a version 1 host gets no version 2 `chain`
-  frame after `host_proof_req`; it ends the attempt with `server_outdated`
-  ("the host runs an older HERMEC").
-- A server accepts version 1 envelopes only for that first handshake message.
-  After it, every message must be version 2.
-
-Every member of a group therefore needs a release that speaks version 2.
+Only version 2 is supported. Pre-1.0 builds and configurations are rejected;
+there is no handshake or authentication bridge. Every member of a group must
+use a current release that speaks version 2.
 
 ## 8. Discovery
 

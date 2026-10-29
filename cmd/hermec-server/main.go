@@ -87,9 +87,6 @@ func main() {
 		}
 		shown := cfg
 		shown.PasswordKey = nil
-		if shown.Password != "" {
-			shown.Password = "<redacted>"
-		}
 		out, err := shown.MarshalTOML()
 		if err != nil {
 			log.Fatal(err)
@@ -195,7 +192,7 @@ func main() {
 		if set, err := server.GroupFieldsSet(f.config); err != nil {
 			log.Print(err)
 		} else if len(set) > 0 {
-			if len(cfg.AllowedKeys) == 0 && strings.Contains(strings.Join(set, ","), "allowed_keys") && cfg.Password == "" && len(cfg.PasswordKey) == 0 {
+			if len(cfg.AllowedKeys) == 0 && strings.Contains(strings.Join(set, ","), "allowed_keys") && len(cfg.PasswordKey) == 0 {
 				log.Fatal("chain has no admission allowlist; TOML allowed_keys is ignored and cannot secure this server (use -apply-config)")
 			}
 			log.Printf("WARNING: chain exists; ignoring group keys in %s: %s (use -apply-config to append them)", f.config, strings.Join(set, ", "))
@@ -269,10 +266,6 @@ func main() {
 	// attestation live beside the chain, regardless of -config.
 	cfg.DedicatedTransitionPath = transitionPath
 	cfg.HostKey, cfg.Chain, cfg.HistoryPath = key, c, f.history
-
-	if cfg.Password != "" && len(cfg.PasswordKey) == 0 {
-		log.Print("NOTICE: server.toml stores the plain password; set password_key instead (the server derives it on every start)")
-	}
 
 	host := server.NewHost(buildHostConfig(f, cfg, dir, func(s string) { log.Print(s) }))
 	if err := host.Start(); err != nil {

@@ -319,8 +319,8 @@ cancellation is not implemented.
 - **Proof-capable clients do not send the password.** The server keeps only a
   key made from the password with scrypt (a slow, memory-hungry function, so
   guessing is expensive). They send an HMAC proof over both sides' random
-  numbers and the server ID, so a recorded proof cannot be reused. Legacy
-  plaintext-password authentication remains accepted for compatibility.
+  numbers and the server ID, so a recorded proof cannot be reused. Plaintext
+  passwords are never accepted on the wire or in server configuration.
 - **The host proves itself first.** Before your app sends anything secret
   (including the server password), the host sends the server's signed chain and
   proves it holds a key that the chain approves as a host. A machine that
@@ -360,7 +360,7 @@ cancellation is not implemented.
    that port number instead of 7697; `media_port` in the server config picks a
    different media port if you need one.
 2. **Admission depends on how the server was created.** Standalone
-   configuration supports `password` and `allowed_keys` (see
+   configuration supports `password_key` and `allowed_keys` (see
    [example.server.toml](example.server.toml)). App-created local servers have
    no password setup UI, so anyone who can reach that port can join, including
    other devices on your home Wi-Fi.
@@ -389,8 +389,7 @@ cancellation is not implemented.
    a server or person) is the real identity.
 6. **The handshake does not bind the connection.** On plain `ws://`, someone
    on the network path between you and the host could relay a real host's
-   proof and so read your chat; a legacy password client can also expose its
-   plaintext password. Use TLS (set `tls_cert` and
+   proof and so read your chat. Use TLS (set `tls_cert` and
    `tls_key` in the server config; both are in
    [example.server.toml](example.server.toml); the server then serves `wss://`)
    or a network that is already encrypted. Tailscale is, and it is what this
@@ -465,14 +464,12 @@ Entries that an admin's app sends to a running server with `chain_append`
 `history_days` and `history_mb` apply at once, and the name, channels and the
 other limits from a later config apply at the next start. The founder always
 keeps every permission and always passes `allowed_keys`, as does every approved
-host. The password, port, TLS and the other machine settings stay in the TOML
-and never go into the chain. Use `password_key` (hex) instead of `password`
-if you can: the server turns `password` into the key at every start and logs a
-notice that the file still holds the plain password.
+host. The password key, port, TLS and the other machine settings stay in the
+TOML and never go into the chain. Configure only `password_key` (hex);
+plaintext `password` configuration is rejected.
 
-Everyone in a group needs HERMEC v0.6 or newer: an older app is told to update
-HERMEC, and a v0.6 app that meets an older server reports that the host runs an
-older version.
+Pre-1.0 builds and configurations are unsupported and rejected. There is no
+protocol or plaintext-password compatibility bridge.
 
 Servers announce themselves on the LAN and on Tailscale (if the `tailscale` CLI
 is on PATH), so friends see them in the app's DISCOVERED list. To label your

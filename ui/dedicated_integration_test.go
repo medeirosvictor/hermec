@@ -31,7 +31,6 @@ func TestDedicatedValidationHeadlessIntegration(t *testing.T) {
 	srv := server.New(server.Config{
 		Addr:             "127.0.0.1:0",
 		HistoryPath:      t.TempDir() + "/history.jsonl",
-		Password:         "admission-secret",
 		Discoverable:     false,
 		ServerName:       "dedicated-test",
 		Channels:         []string{"general"},
