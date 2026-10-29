@@ -1,7 +1,8 @@
 # Hermec: session handoff
 
 User docs: [README](README.md), [friend quickstart](docs/quickstart-friends.md),
-[dedicated guide](docs/dedicated-hosting.md), and [protocol](docs/protocol.md).
+[dedicated guide](docs/dedicated-hosting.md), [AWS EC2 from zero](docs/aws-ec2-from-zero.md),
+and [protocol](docs/protocol.md).
 Roadmap: [PLAN.md](PLAN.md).
 
 ## Current work
@@ -18,7 +19,7 @@ Roadmap: [PLAN.md](PLAN.md).
   distribution/updater follows migration.
 
 Active references: [dedicated plan](docs/superpowers/plans/2026-10-28-dedicated-hosting.md),
-[private-network plan](docs/superpowers/plans/2026-10-28-private-network-lifecycle.md),
+[AWS disposable-VPS runbook](docs/aws-ec2-from-zero.md), [private-network plan](docs/superpowers/plans/2026-10-28-private-network-lifecycle.md),
 [migration plan](docs/superpowers/plans/2026-10-28-hosting-method-migration.md),
 [approved design](docs/superpowers/specs/2026-10-26-hosting-readiness-design.md),
 and [noise trial](docs/superpowers/plans/2026-10-27-noise-suppression-trial.md).
