@@ -16,6 +16,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
+	"github.com/medeirosvictor/hermec/core/names"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
 )
@@ -47,7 +48,32 @@ func GroupFieldsSet(path string) ([]string, error) {
 
 // configBody renders cfg's group fields as a chain config body. Roles equal to
 // the builtin definition are omitted: the chain layers overrides on builtins.
-func configBody(cfg Config) chain.ConfigBody {
+// defaultGroupConfig supplies defaults for programmatic Config values before
+// they become their first signed config entry. Signed entries themselves never
+// receive defaults during replay.
+func defaultGroupConfig(cfg Config) Config {
+	d := DefaultConfig()
+	cfg.ServerName = names.Clean(cfg.ServerName, chain.MaxServerNameRunes)
+	if len(cfg.Channels) == 0 {
+		cfg.Channels = d.Channels
+	}
+	if cfg.MaxVoice == 0 {
+		cfg.MaxVoice = d.MaxVoice
+	}
+	if cfg.MaxClients == 0 {
+		cfg.MaxClients = d.MaxClients
+	}
+	if cfg.MaxPerIP == 0 {
+		cfg.MaxPerIP = d.MaxPerIP
+	}
+	if cfg.Roles.Roles == nil && cfg.Roles.DefaultRoles == nil {
+		cfg.Roles.Roles = d.Roles.Roles
+		cfg.Roles.DefaultRoles = d.Roles.DefaultRoles
+	}
+	return cfg
+}
+
+func configBody(cfg Config) (chain.ConfigBody, error) {
 	b := chain.ConfigBody{
 		Name:          cfg.ServerName,
 		Channels:      cfg.Channels,
@@ -70,7 +96,11 @@ func configBody(cfg Config) chain.ConfigBody {
 		}
 		b.Roles[name] = permStrings(perms)
 	}
-	return normConfig(b)
+	b = normConfig(b)
+	if err := b.Validate(); err != nil {
+		return chain.ConfigBody{}, fmt.Errorf("server: invalid group config: %w", err)
+	}
+	return b, nil
 }
 
 func permStrings(ps []roles.Permission) []string {
@@ -143,6 +173,7 @@ func OpenChain(path string, key *identity.Identity, cfg Config) (c *chain.Chain,
 
 // newChain builds an unpersisted chain from cfg with key as founder and sole host.
 func newChain(key *identity.Identity, cfg Config) (*chain.Chain, error) {
+	cfg = defaultGroupConfig(cfg)
 	now := time.Now()
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
@@ -184,6 +215,7 @@ func newChain(key *identity.Identity, cfg Config) (*chain.Chain, error) {
 // "grant <fp>", "revoke <fp>") and refuses with a *chain.RuleError when key may
 // not change the config.
 func ApplyTOML(c *chain.Chain, key *identity.Identity, cfg Config, set []string) (applied []string, err error) {
+	cfg = defaultGroupConfig(cfg)
 	st := c.State()
 	fp := identity.Fingerprint(key.PublicKey())
 	if !st.Can(fp, chain.OpConfig) {
@@ -207,7 +239,10 @@ func ApplyTOML(c *chain.Chain, key *identity.Identity, cfg Config, set []string)
 		return nil
 	}
 
-	cfgBody := configBody(cfg)
+	cfgBody, err := configBody(cfg)
+	if err != nil {
+		return nil, err
+	}
 	want := cfgBody
 	if st.HasConfig {
 		want = normConfig(st.Config)
@@ -245,6 +280,9 @@ func ApplyTOML(c *chain.Chain, key *identity.Identity, cfg Config, set []string)
 			want.HistoryMB = cfgBody.HistoryMB
 		}
 		want = normConfig(want)
+	}
+	if err := want.Validate(); err != nil {
+		return applied, fmt.Errorf("server: invalid group config: %w", err)
 	}
 	if !st.HasConfig || !reflect.DeepEqual(want, normConfig(st.Config)) {
 		if err := add("config", chain.OpConfig, want); err != nil {
@@ -465,6 +503,10 @@ func (s *Server) kick(fp string) {
 
 // chainCfg returns cfg with its group fields replaced by the chain's. A chain
 // with no config entry yet leaves cfg's own group fields in place.
+// EffectiveConfig returns cfg with signed group fields from st. Callers that
+// make admission or listener decisions must use this rather than TOML alone.
+func EffectiveConfig(cfg Config, st chain.State) Config { return chainCfg(cfg, st) }
+
 func chainCfg(cfg Config, st chain.State) Config {
 	if !st.HasConfig {
 		cfg.Roles = st.Roles()

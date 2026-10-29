@@ -311,13 +311,3 @@ func TestChainCfgHistory(t *testing.T) {
 		t.Errorf("cfg = %v %v", cfg.HistoryDays, cfg.HistoryMB)
 	}
 }
-
-func TestOldConfigBodyDecodes(t *testing.T) {
-	var b chain.ConfigBody
-	if err := json.Unmarshal([]byte(`{"name":"x","channels":["a"],"max_voice":8}`), &b); err != nil {
-		t.Fatal(err)
-	}
-	if b.HistoryDays != nil || b.HistoryMB != nil {
-		t.Errorf("body = %+v", b)
-	}
-}

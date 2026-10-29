@@ -159,6 +159,16 @@ func (c *conn) sendMsg(msgType string, payload any) bool {
 	return c.enqueue(raw)
 }
 
+// sendMandatory queues a protocol-critical frame. Unlike best-effort updates,
+// an oversized mandatory frame is a failed handshake, never a silent drop.
+func (c *conn) sendMandatory(msgType string, payload any) bool {
+	raw, err := proto.Encode(msgType, payload)
+	if err != nil || len(raw) > proto.MaxMessageSize {
+		return false
+	}
+	return c.enqueue(raw)
+}
+
 func (c *conn) sendError(code, message string) {
 	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message})
 }
@@ -489,14 +499,16 @@ func (c *conn) authenticate() error {
 	for _, capability := range accepted {
 		c.capabilities[capability] = true
 	}
-	c.sendMsg(proto.TypeAuthOK, proto.AuthOK{
+	if !c.sendMandatory(proto.TypeAuthOK, proto.AuthOK{
 		Fingerprint:  fp,
 		Roles:        c.srv.roles().RolesFor(fp),
 		Channels:     c.srv.channelInfos(),
 		ServerName:   c.srv.cfg.ServerName,
 		ServerID:     id.String(),
 		Capabilities: accepted,
-	})
+	}) {
+		return errAuthFailed
+	}
 	if !auth.Warm {
 		c.sendMsg(proto.TypeHosts, c.srv.hostsInfo())
 	}

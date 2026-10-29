@@ -60,20 +60,6 @@ func main() {
 		}
 	}
 
-	if f.printConfig {
-		shown := cfg
-		shown.PasswordKey = nil
-		if shown.Password != "" {
-			shown.Password = "<redacted>"
-		}
-		out, err := shown.MarshalTOML()
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Print(string(out))
-		return
-	}
-
 	dir := "."
 	if f.config != "" {
 		dir = filepath.Dir(f.config)
@@ -86,6 +72,28 @@ func main() {
 	}
 	if f.history == "" {
 		f.history = filepath.Join(dir, "history.jsonl")
+	}
+	if f.printConfig {
+		if _, err := os.Stat(f.chain); err == nil {
+			c, err := chain.Load(f.chain)
+			if err != nil {
+				log.Fatalf("signed chain: %v", err)
+			}
+			cfg = server.EffectiveConfig(cfg, c.State())
+		} else if !errors.Is(err, os.ErrNotExist) {
+			log.Fatalf("signed chain: %v", err)
+		}
+		shown := cfg
+		shown.PasswordKey = nil
+		if shown.Password != "" {
+			shown.Password = "<redacted>"
+		}
+		out, err := shown.MarshalTOML()
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(string(out))
+		return
 	}
 	if f.dedicatedHostKey {
 		if f.dedicatedStatus || f.dedicatedPrepare != "" || f.dedicatedRetry || f.dedicatedAttestationStatus || f.dedicatedAttestationReset {
@@ -139,6 +147,28 @@ func main() {
 		}
 		return
 	}
+	key, err := loadOrCreateKey(f.key)
+	if err != nil {
+		log.Fatal(err)
+	}
+	c, created, err := openChain(f.chain, key, cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := checkHostKey(f.key, c, key); err != nil {
+		log.Fatal(err)
+	}
+	cfg = server.EffectiveConfig(cfg, c.State())
+	if !created && f.config != "" {
+		if set, err := server.GroupFieldsSet(f.config); err != nil {
+			log.Print(err)
+		} else if len(set) > 0 {
+			if len(cfg.AllowedKeys) == 0 && strings.Contains(strings.Join(set, ","), "allowed_keys") && cfg.Password == "" && len(cfg.PasswordKey) == 0 {
+				log.Fatal("chain has no admission allowlist; TOML allowed_keys is ignored and cannot secure this server (use -apply-config)")
+			}
+			log.Printf("WARNING: chain exists; ignoring group keys in %s: %s (use -apply-config to append them)", f.config, strings.Join(set, ", "))
+		}
+	}
 	if err := validatePublicConfig(cfg, f.unsafePublicWS); err != nil {
 		log.Fatal(err)
 	}
@@ -153,17 +183,6 @@ func main() {
 		if f.check {
 			return
 		}
-	}
-	key, err := loadOrCreateKey(f.key)
-	if err != nil {
-		log.Fatal(err)
-	}
-	c, created, err := openChain(f.chain, key, cfg)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := checkHostKey(f.key, c, key); err != nil {
-		log.Fatal(err)
 	}
 	// A surviving preparation record is never permission to activate. Load it
 	// before constructing Host, validate its local boundary, and keep even a

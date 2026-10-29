@@ -237,6 +237,7 @@ func New(cfg Config) *Server {
 		cfg.HostKey = k
 	}
 	if cfg.Chain == nil {
+		cfg = defaultGroupConfig(cfg)
 		c, err := newChain(cfg.HostKey, cfg)
 		if err != nil {
 			panic(fmt.Sprintf("server: build default chain: %v", err))
