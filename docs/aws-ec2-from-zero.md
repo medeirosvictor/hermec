@@ -131,23 +131,37 @@ random archive or execute a URL-piped installer. When a GitHub release exists,
 download the matching `hermec-server-linux-amd64.tar.gz` (or `arm64`) and its
 published `SHA256SUMS.txt` from that release, not from an untrusted mirror.
 
-Verify the archive against the checksum before extracting it. Example, with the
-expected checksum file obtained from the same trusted release:
+Verify the **exact archive you will extract** before extracting or uploading it.
+The following selects its named entry from the trusted checksum file; it fails
+when that entry is absent or its hash does not match. Do not use
+`--ignore-missing`, which could report success without checking this archive.
 
 ```sh
-sha256sum -c SHA256SUMS.txt --ignore-missing
+archive=hermec-server-linux-amd64.tar.gz # use the arm64 name when appropriate
+entry="$(awk -v file="$archive" \
+  'length($1) == 64 && ($2 == file || $2 == "*" file) { print; found = 1; exit }
+   END { if (!found) exit 1 }' SHA256SUMS.txt)" \
+  || { echo "no SHA256 entry for $archive" >&2; exit 1; }
+printf '%s\n' "$entry" | sha256sum -c -
 ```
 
-Upload the already-verified archive and checksum, then verify again on the VPS
+Upload that already-verified archive and checksum, then verify the same exact
+uploaded archive **before** creating an extraction directory or invoking `tar`
 (the upload account should be `ubuntu`, not root):
 
 ```sh
 scp -i /safe/path/hermec-task6.pem hermec-server-linux-amd64.tar.gz SHA256SUMS.txt \
   ubuntu@hermec-test.example.com:~/
 ssh -i /safe/path/hermec-task6.pem ubuntu@hermec-test.example.com
-mkdir -p ~/hermec-bundle && tar -xzf ~/hermec-server-linux-amd64.tar.gz -C ~/hermec-bundle
+cd ~
+archive=hermec-server-linux-amd64.tar.gz # use the arm64 name when appropriate
+entry="$(awk -v file="$archive" \
+  'length($1) == 64 && ($2 == file || $2 == "*" file) { print; found = 1; exit }
+   END { if (!found) exit 1 }' SHA256SUMS.txt)" \
+  || { echo "no SHA256 entry for $archive" >&2; exit 1; }
+printf '%s\n' "$entry" | sha256sum -c -
+mkdir -p ~/hermec-bundle && tar -xzf "$archive" -C ~/hermec-bundle
 cd ~/hermec-bundle
-sha256sum -c ~/SHA256SUMS.txt --ignore-missing
 sudo ./install.sh
 ```
 
@@ -203,10 +217,37 @@ sudo /etc/letsencrypt/renewal-hooks/deploy/hermec-tls
 sudo ufw delete allow 80/tcp
 ```
 
-Also remove the EC2 security-group TCP 80 rule. Before each standalone renewal,
-temporarily add it in both places, run `sudo certbot renew`, then remove it.
-Test that procedure before relying on it. Do not copy `/etc/letsencrypt` keys
-into backups, chat, or diagnostics.
+Also remove the EC2 security-group TCP 80 rule. Certbot standalone cannot
+renew while TCP 80 is closed, so use this tested procedure for **every**
+renewal (including its first test):
+
+1. In **EC2 → Security Groups → `hermec-task6-sg` → Inbound rules**, temporarily
+   add TCP 80 from `0.0.0.0/0` and `::/0`. On the instance, open the matching
+   UFW rule: `sudo ufw allow 80/tcp`.
+2. While both rules are open, run both commands and inspect their output:
+
+   ```sh
+   sudo certbot renew --dry-run
+   sudo certbot renew
+   sudo /etc/letsencrypt/renewal-hooks/deploy/hermec-tls
+   sudo systemctl status hermec-server --no-pager
+   ```
+
+   The deploy hook runs automatically after a successful real renewal; invoking
+   it here also verifies the copy-and-restart path when no certificate was due.
+3. Immediately remove the UFW rule with `sudo ufw delete allow 80/tcp`, then
+   delete the temporary TCP 80 rule from the security group. Do this even if a
+   Certbot command fails, before troubleshooting. Confirm `sudo ufw status` and
+   the security-group inbound-rule list no longer show TCP 80.
+
+Put a calendar reminder well before the 90-day certificate expiry (for example,
+at 60 days) and perform this procedure manually. Do **not** enable unattended
+standalone renewal unless its automation can reliably open and close both the
+AWS security-group and UFW rules; otherwise it will fail when port 80 is
+closed. DNS-01 can be a safer automation design because it does not require
+opening port 80, but configure a DNS provider plugin and its least-privilege
+credentials only according to that provider's and Certbot's documentation.
+Do not copy `/etc/letsencrypt` keys into backups, chat, or diagnostics.
 
 Validate the configuration and start the service:
 
@@ -261,14 +302,18 @@ or trust failures are instead in the verifier's `URL_TLS` class.
 
 ## Are app features missing?
 
-The backup defect is fixed. There is no known application feature blocker before
-the remote test; the remaining gaps before availability are validation-only:
-real disposable-VPS/AWS evidence, remote reciprocal media proof, and the Task
-6 operational scenarios above. Deliberately deferred features include private
-networking/Tailscale or Headscale release work, desktop distribution/updater,
-UI ban/grant controls, macOS/Linux camera/share publishing, window capture,
-shared-screen audio, simulcast, and echo cancellation. These are not reasons
-to claim the unreleased remote gate passed.
+The backup defect is fixed. No newly identified dedicated-hosting feature blocks
+beginning remote acceptance after that fix. This is not a general reliability
+claim: known failover/media risks remain, including failover merge,
+call-transfer, warm-host race, cleanup, and recovery behavior. They are exactly
+why Task 6 requires real-device remote media and recovery/failover tests before
+any availability or release claim.
+
+Deliberately deferred features include private networking/Tailscale or
+Headscale release work, desktop distribution/updater, UI ban/grant controls,
+macOS/Linux camera/share publishing, window capture, shared-screen audio,
+simulcast, and echo cancellation. These are not reasons to claim the
+unreleased remote gate passed.
 
 ## Teardown: prevent surprise charges
 
@@ -284,6 +329,10 @@ After evidence is captured and secrets/backups are handled according to the
 3. Disassociate and **release** the Elastic IP. Verify no other Elastic IPs,
    EBS volumes, snapshots, AMIs, load balancers, NAT gateways, or test DNS
    records remain.
-4. Leave the AWS Budget active and revisit Billing/Cost Explorer after charges
+4. If you created a Route 53 hosted zone solely for this disposable test and it
+   is not shared with another domain, service, or delegation, delete its
+   disposable records and then delete the hosted zone. Do **not** delete a
+   shared hosted zone; remove only this test's record instead.
+5. Leave the AWS Budget active and revisit Billing/Cost Explorer after charges
    have had time to appear. Delete stale alarms/resources only after preserving
    the minimum approved Task 6 evidence.
