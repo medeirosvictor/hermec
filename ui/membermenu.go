@@ -14,10 +14,7 @@ func (g *game) addMemberHits(gm geometry) {
 	if !gm.showMembers {
 		return
 	}
-	rows, note := g.memberRows()
-	if note != "" {
-		return
-	}
+	rows := g.memberRows()
 	r := gm.membersR
 	y := gm.paneY0
 	for i := g.cur().ms.rosterScroll; i < len(rows); i++ {

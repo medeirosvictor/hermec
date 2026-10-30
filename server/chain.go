@@ -509,8 +509,8 @@ func (s *Server) kick(fp string) {
 }
 
 // EffectiveConfig returns cfg with its group fields replaced by the signed
-// config in st. A persisted chain without a config entry is a legacy/incomplete
-// chain and cannot be made safe by falling back to local TOML group fields.
+// config in st. A persisted chain without a config entry is incomplete and
+// cannot be made safe by falling back to local TOML group fields.
 func EffectiveConfig(cfg Config, st chain.State) (Config, error) {
 	if !st.HasConfig {
 		return Config{}, errors.New("signed chain has no config entry")
@@ -521,8 +521,8 @@ func EffectiveConfig(cfg Config, st chain.State) (Config, error) {
 	return chainCfg(cfg, st), nil
 }
 
-// chainCfg is an internal compatibility helper for in-memory chains. Startup
-// callers must use EffectiveConfig, which rejects config-less chains.
+// chainCfg overlays st's signed group fields on cfg for in-memory chains.
+// Startup callers must use EffectiveConfig, which rejects config-less chains.
 func chainCfg(cfg Config, st chain.State) Config {
 	if !st.HasConfig {
 		cfg.Roles = st.Roles()

@@ -107,7 +107,7 @@ func (s *State) SetConnected(channels []proto.ChannelInfo, fingerprint string) {
 	s.Status = ""
 }
 
-// cleanMembers copies ms with every name cleaned (a v0.4 server sends them raw).
+// cleanMembers copies ms with every name cleaned: names are untrusted input.
 func cleanMembers(ms []proto.Member) []proto.Member {
 	out := append([]proto.Member(nil), ms...)
 	for i := range out {

@@ -205,7 +205,7 @@ type Server struct {
 	http    *http.Server
 	ln      net.Listener
 	udp     net.PacketConn // discovery responder; nil when not discoverable
-	mux     ice.UDPMux     // single-port media mux; nil in legacy UDP-range mode
+	mux     ice.UDPMux     // single-port media mux; nil until Start
 	pionNet transport.Net  // validated provider network; nil for system networking
 
 	// readinessLock is held by an active source for its whole serving lifetime.

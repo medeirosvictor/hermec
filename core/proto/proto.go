@@ -392,7 +392,7 @@ type Presence struct {
 	Channel string   `json:"channel"`
 	Members []Member `json:"members"`
 	// Total is the real member count; Members may be a prefix of the list
-	// when the full frame would not fit MaxMessageSize. Zero from old servers.
+	// when the full frame would not fit MaxMessageSize.
 	Total int `json:"total,omitempty"`
 }
 

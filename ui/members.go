@@ -9,16 +9,14 @@ import (
 	"github.com/medeirosvictor/hermec/ui/state"
 )
 
-const oldServerNote = "member list needs a newer server"
-
-// memberRows is the viewed server's member list as drawable rows, or a note
-// when the server predates the roster.
-func (g *game) memberRows() (rows []state.RosterRow, note string) {
+// memberRows is the viewed server's member list as drawable rows; none until
+// the server's first roster arrives.
+func (g *game) memberRows() []state.RosterRow {
 	st := g.cur().st
 	if !st.HasRoster {
-		return nil, oldServerNote
+		return nil
 	}
-	return state.RosterRows(st.Roster, st.RosterTotal), ""
+	return state.RosterRows(st.Roster, st.RosterTotal)
 }
 
 // rosterVisible is how many member rows fit in the panel below the header row.
@@ -48,11 +46,7 @@ func (g *game) drawMembers(screen *ebiten.Image, gm geometry) {
 	dst := clip(screen, r.x0, r.y0, r.x1, r.y1)
 	x := r.x0 + pad
 	cols := int((r.x1 - r.x0 - 2*pad) / gm.adv)
-	rows, note := g.memberRows()
-	if note != "" {
-		g.drawText(dst, state.Ellipsize(note, cols), x, gm.paneY0, g.th.Dim)
-		return
-	}
+	rows := g.memberRows()
 	y := gm.paneY0
 	for i := g.cur().ms.rosterScroll; i < len(rows); i++ {
 		if y+gm.lh > r.y1-pad {
@@ -84,7 +78,7 @@ func (g *game) wheelMembers(s *session, gm geometry, fx, fy, wy float64) bool {
 	}
 	var n int
 	n, s.ms.wheelCarry = state.WheelLines(s.ms.wheelCarry, wy, wheelLinesPerNotch)
-	rows, _ := g.memberRows()
+	rows := g.memberRows()
 	s.ms.rosterScroll = state.ClampScroll(len(rows), g.rosterVisible(gm), s.ms.rosterScroll-n)
 	return true
 }

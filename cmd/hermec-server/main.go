@@ -147,7 +147,7 @@ func main() {
 		return
 	}
 	// Load an existing chain before touching the identity. Its signed config is
-	// authoritative; a config-less legacy chain must be repaired with
+	// authoritative; a config-less chain must be repaired with
 	// -apply-config rather than falling back to local TOML group fields.
 	var c *chain.Chain
 	var created bool

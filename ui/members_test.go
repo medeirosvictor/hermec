@@ -122,16 +122,16 @@ func TestToggleMembersPersists(t *testing.T) {
 
 func TestMembersPanelRows(t *testing.T) {
 	g := mainGame(t)
-	if rows, note := g.memberRows(); len(rows) != 0 || note != "member list needs a newer server" {
-		t.Errorf("old server: %v %q", rows, note)
+	if rows := g.memberRows(); len(rows) != 0 {
+		t.Errorf("rows before the first roster: %v", rows)
 	}
 	st := g.cur().st
 	st.Roster = []proto.Member{{Name: "ann", Fingerprint: "a"}, {Name: "bob", Fingerprint: "b"}}
 	st.RosterTotal, st.HasRoster = 5, true
-	rows, note := g.memberRows()
+	rows := g.memberRows()
 	last := rows[len(rows)-1]
-	if note != "" || last.Kind != state.RosterMore || last.Text != "and 3 more" {
-		t.Errorf("rows %v note %q", rows, note)
+	if last.Kind != state.RosterMore || last.Text != "and 3 more" {
+		t.Errorf("rows %v", rows)
 	}
 }
 
@@ -148,7 +148,7 @@ func rosterGame(t *testing.T, n int) (*game, geometry) {
 func TestMembersWheel(t *testing.T) {
 	g, gm := rosterGame(t, 80)
 	s := g.cur()
-	rows, _ := g.memberRows()
+	rows := g.memberRows()
 	max := state.ClampScroll(len(rows), g.rosterVisible(gm), 1<<20)
 	if max == 0 {
 		t.Fatal("list fits; need overflow")

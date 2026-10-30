@@ -439,7 +439,7 @@ func (g *game) updateMain() {
 	s.ms.scroll = state.ClampScroll(total, gm.visible, s.ms.scroll)
 	g.maybeLoadOlder(s, total, gm.visible)
 	if gm.showMembers { // a hidden list keeps its scroll for when it returns
-		rows, _ := g.memberRows()
+		rows := g.memberRows()
 		s.ms.rosterScroll = state.ClampScroll(len(rows), g.rosterVisible(gm), s.ms.rosterScroll)
 	}
 	s.ms.channelScroll = state.ClampScroll(len(s.st.Rows()), g.channelVisible(gm), s.ms.channelScroll)
