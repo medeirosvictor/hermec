@@ -80,6 +80,7 @@ func DialWithNetwork(ctx context.Context, url string, id *identity.Identity, nam
 		c.rtt.pong(p, time.Now())
 		return nil
 	})
+	c.lastHB.Store(time.Now().UnixNano()) // the host heartbeats every session: the grace runs from login
 	go c.readLoop()
 	go c.watchdog(time.Now)
 	c.startPinger(pingInterval, pongTimeout, time.Now)

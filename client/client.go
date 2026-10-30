@@ -93,7 +93,7 @@ type Client struct {
 	call        *call // active voice call, if any
 
 	warm      atomic.Bool  // paused session until a takeover promotes it
-	lastHB    atomic.Int64 // clock time of the newest hb in unix nanoseconds; 0 before the first
+	lastHB    atomic.Int64 // clock time of the newest hb (login before the first) in unix nanoseconds
 	lostFired atomic.Bool  // ActiveLost was emitted
 
 	loopbackICE atomic.Bool

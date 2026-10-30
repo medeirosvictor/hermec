@@ -125,8 +125,8 @@ func (c *Client) onMove(env proto.Envelope) {
 	c.emit(Event{Move: &m})
 }
 
-// watchdog reports ActiveLost once when no hb has arrived for proto.HeartbeatGrace.
-// It stays quiet until the first hb: hosts before v0.7 send none. now is the
+// watchdog reports ActiveLost once when no hb has arrived for
+// proto.HeartbeatGrace (counted from login until the first hb). now is the
 // clock, and must be the one stamping c.lastHB.
 func (c *Client) watchdog(now func() time.Time) {
 	grace := proto.HeartbeatGrace
@@ -139,8 +139,7 @@ func (c *Client) watchdog(now func() time.Time) {
 		case <-c.loopDone:
 			return
 		case <-t.C:
-			last := c.lastHB.Load()
-			if last != 0 && now().Sub(time.Unix(0, last)) >= grace {
+			if now().Sub(time.Unix(0, c.lastHB.Load())) >= grace {
 				c.activeLost(false)
 				return
 			}
@@ -161,9 +160,5 @@ func (c *Client) activeLost(block bool) {
 	}
 }
 
-// connLost counts a dropped connection as silence once heartbeats were seen.
-func (c *Client) connLost() {
-	if c.lastHB.Load() != 0 {
-		c.activeLost(true)
-	}
-}
+// connLost counts a dropped connection as host silence.
+func (c *Client) connLost() { c.activeLost(true) }

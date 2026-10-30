@@ -160,7 +160,8 @@ func TestActiveLostAfterSilence(t *testing.T) {
 	}
 }
 
-// dropHB proxies url, forwarding every frame except hb: a host before v0.7.
+// dropHB proxies url, forwarding every frame except hb: a host that went silent
+// while its TCP connection stayed open.
 func dropHB(t *testing.T, url string) string {
 	return proxy(t, url, func(raw []byte, env proto.Envelope) [][]byte {
 		if env.Type == proto.TypeHeartbeat {
@@ -212,16 +213,16 @@ func proxy(t *testing.T, url string, f func(raw []byte, env proto.Envelope) [][]
 	return "ws" + strings.TrimPrefix(srv.URL, "http") + "/"
 }
 
-func TestNoActiveLostOnOldHost(t *testing.T) {
+func TestActiveLostWhenNoHeartbeatEverArrives(t *testing.T) {
 	url := dropHB(t, startServer(t, server.Config{}))
 	c, err := Dial(testCtx(t), url, mustIdent(t), "alice", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	// The grace is 1.5 s; wait past it.
-	if _, ok := waitEvent(c, 2*time.Second, func(e Event) bool { return e.ActiveLost }); ok {
-		t.Fatal("ActiveLost without any hb")
+	// The grace is 1.5 s from login.
+	if _, ok := waitEvent(c, 3*time.Second, func(e Event) bool { return e.ActiveLost }); !ok {
+		t.Fatal("no ActiveLost from a host that never sent hb")
 	}
 }
 
