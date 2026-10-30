@@ -121,7 +121,7 @@ func hostedTestGame(t *testing.T, addr string, write bool) (*game, string) {
 		cfg := hostedConfig("Den", 0, g.fp)
 		cfg.Addr = addr
 		cfg.Discoverable = false
-		if err := saveHosted(path, cfg); err != nil {
+		if _, err := g.foundHostedChain(path, &cfg); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -429,7 +429,7 @@ func TestHostedDialsWithItsPassword(t *testing.T) {
 	g, path := hostedTestGame(t, "127.0.0.1:0", false)
 	cfg := hostedConfig("Den", 0, g.fp)
 	cfg.Addr, cfg.Discoverable = "127.0.0.1:0", false
-	if err := saveHosted(path, cfg); err != nil {
+	if _, err := g.foundHostedChain(path, &cfg); err != nil {
 		t.Fatal(err)
 	}
 	g.bootHosted(path)

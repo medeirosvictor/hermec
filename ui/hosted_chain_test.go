@@ -37,8 +37,8 @@ func TestServerIDMenuRowCopies(t *testing.T) {
 	}
 }
 
-// saveHosted writes cfg in full, group fields included: the pre-chain
-// hosted.toml format that the migration tests start from.
+// saveHosted writes cfg in full, group fields included, without founding a
+// chain.
 func saveHosted(path string, cfg server.Config) error {
 	b, err := cfg.MarshalTOML()
 	if err != nil {
@@ -51,28 +51,31 @@ func chainFileFor(path, id string) string {
 	return filepath.Join(filepath.Dir(path), "chains", id+".jsonl")
 }
 
-func TestHostedMigrationCreatesChain(t *testing.T) {
+// A hosted.toml without server_id is refused, not turned into a new chain.
+func TestBootHostedRefusesMissingServerID(t *testing.T) {
+	g, path := hostedTestGame(t, "", false)
+	cfg := hostedConfig("Den", 0, g.fp)
+	cfg.Addr, cfg.Discoverable = "127.0.0.1:0", false
+	if err := saveHosted(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	g.bootHosted(path)
+	if g.hosted != nil {
+		t.Fatalf("hosted = %+v, want none", g.hosted)
+	}
+	if !strings.Contains(g.notice, "server_id") {
+		t.Errorf("notice = %q", g.notice)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "chains")); !os.IsNotExist(err) {
+		t.Errorf("chains dir created: %v", err)
+	}
+}
+
+func TestBootHostedLoadsFoundedChain(t *testing.T) {
 	g, path := hostedTestGame(t, "127.0.0.1:0", true)
 	g.bootHosted(path)
 	if g.hosted == nil || g.hosted.srv == nil || g.hosted.chain == nil {
 		t.Fatalf("hosted = %+v, want running with a chain", g.hosted)
-	}
-	id := g.hosted.chain.ID().String()
-	if _, err := os.Stat(chainFileFor(path, id)); err != nil {
-		t.Fatalf("chain file: %v", err)
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(b)
-	if !strings.Contains(text, "server_id") || !strings.Contains(text, id) {
-		t.Errorf("hosted.toml lacks server_id %s:\n%s", id, text)
-	}
-	for _, k := range []string{"server_name", "channels", "grants", "voice_channels"} {
-		if strings.Contains(text, k) {
-			t.Errorf("hosted.toml still has %q:\n%s", k, text)
-		}
 	}
 	st := g.hosted.chain.State()
 	if st.Founder != g.fp {
@@ -80,9 +83,6 @@ func TestHostedMigrationCreatesChain(t *testing.T) {
 	}
 	if st.Config.Name != "Den" || g.hosted.name() != "Den" {
 		t.Errorf("chain name = %q, name() = %q", st.Config.Name, g.hosted.name())
-	}
-	if g.hosted.id != id {
-		t.Errorf("hosted.id = %q", g.hosted.id)
 	}
 }
 
@@ -121,7 +121,7 @@ func TestHostedRestartKeepsServerID(t *testing.T) {
 // Group keys in hosted.toml are inert once the chain exists; boot says so.
 func TestBootHostedWarnsOnGroupKeys(t *testing.T) {
 	g, path := hostedTestGame(t, "127.0.0.1:0", true)
-	g.bootHosted(path) // migrates: hosted.toml now holds local keys only
+	g.bootHosted(path)
 	if g.notice != "" {
 		t.Fatalf("first boot notice = %q", g.notice)
 	}

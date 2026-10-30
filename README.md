@@ -611,8 +611,7 @@ The server runs while the app is open. If you approve a friend as a host, it
 can keep going without you (see [Hosting, standby and
 failover](#hosting-standby-and-failover)). Its signed chain (the server's identity
 and group settings, with you as founder) is kept in a `chains` folder next to
-`hosted.toml`; a server created before v0.6 gets its chain the first time v0.6
-starts it. Its chat history is kept in a `history` folder there too, one
+`hosted.toml`. Its chat history is kept in a `history` folder there too, one
 `<server-id>.jsonl` file per server.
 
 The app has no settings page for the group yet, and keys you add to

@@ -208,19 +208,23 @@ func chainsDir(hostedPath string) string {
 	return filepath.Join(filepath.Dir(hostedPath), "chains")
 }
 
-// openHostedChain returns the chain for the hosted config at path. With a
-// server_id in cfg it loads chains/<id>.jsonl. Without one it founds a chain
-// from cfg's group fields, moves it to chains/<id>.jsonl, sets cfg.ServerID
-// and rewrites hosted.toml with only the machine-local keys.
-func (g *game) openHostedChain(path string, cfg *server.Config) (c *chain.Chain, err error) {
-	dir := chainsDir(path)
-	if cfg.ServerID != "" {
-		c, err = chain.Load(filepath.Join(dir, cfg.ServerID+".jsonl"))
-		if err != nil {
-			return nil, err
-		}
-		return c, nil
+// errHostedNoServerID reports a hosted.toml without the server_id every
+// supported build writes.
+var errHostedNoServerID = errors.New("hosted.toml has no server_id; leave this server and create it again")
+
+// loadHostedChain loads chains/<server_id>.jsonl for the hosted config at path.
+func loadHostedChain(path string, cfg server.Config) (*chain.Chain, error) {
+	if cfg.ServerID == "" {
+		return nil, errHostedNoServerID
 	}
+	return chain.Load(filepath.Join(chainsDir(path), cfg.ServerID+".jsonl"))
+}
+
+// foundHostedChain founds a chain from cfg's group fields, stores it as
+// chains/<id>.jsonl, sets cfg.ServerID and writes hosted.toml with only the
+// machine-local keys.
+func (g *game) foundHostedChain(path string, cfg *server.Config) (*chain.Chain, error) {
+	dir := chainsDir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -229,7 +233,7 @@ func (g *game) openHostedChain(path string, cfg *server.Config) (c *chain.Chain,
 		return nil, err
 	}
 	defer os.RemoveAll(tmpDir)
-	c, _, err = server.OpenChain(filepath.Join(tmpDir, "chain.jsonl"), g.id, *cfg)
+	c, _, err := server.OpenChain(filepath.Join(tmpDir, "chain.jsonl"), g.id, *cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -274,16 +278,14 @@ func (g *game) bootHosted(path string) {
 		return
 	}
 	var inert string
-	if cfg.ServerID != "" { // without one, the group keys found the chain (migration)
-		if set, err := server.GroupFieldsSet(path); err != nil {
-			g.logf("hosted.toml: %v", err)
-		} else if len(set) > 0 {
-			inert = fmt.Sprintf("hosted.toml: ignoring group keys %s; the chain holds them (close the app and use hermec-server -apply-config)",
-				strings.Join(set, ", "))
-			g.logf("WARNING: %s", inert)
-		}
+	if set, err := server.GroupFieldsSet(path); err != nil {
+		g.logf("hosted.toml: %v", err)
+	} else if len(set) > 0 {
+		inert = fmt.Sprintf("hosted.toml: ignoring group keys %s; the chain holds them (close the app and use hermec-server -apply-config)",
+			strings.Join(set, ", "))
+		g.logf("WARNING: %s", inert)
 	}
-	c, err := g.openHostedChain(path, &cfg)
+	c, err := loadHostedChain(path, cfg)
 	if err != nil {
 		g.notice = fmt.Sprintf("hosted chain unreadable: %v", err)
 		return
@@ -423,8 +425,7 @@ func (g *game) createHosted(name, password string, port int) error {
 	if g.hostedTweak != nil {
 		g.hostedTweak(&cfg)
 	}
-	cfg.ServerID = "" // openHostedChain founds the chain and saves hosted.toml
-	c, err := g.openHostedChain(path, &cfg)
+	c, err := g.foundHostedChain(path, &cfg)
 	if err != nil {
 		return err
 	}
