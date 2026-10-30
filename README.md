@@ -455,9 +455,7 @@ the file, edit the TOML and run `hermec-server -config server.toml
 something listens on the config's port, and the changes apply when the server
 starts. It needs `-config`, appends only the group keys the TOML actually sets
 (grants are compared only when `[grants]` is set), signed by the server's key,
-then prints what it appended and exits. Everyone who runs `-apply-config` on a
-group must have HERMEC v0.6 or newer: an older one writes a config without the
-history keys, which resets `history_days` and `history_mb` to their defaults.
+then prints what it appended and exits.
 Entries that an admin's app sends to a running server with `chain_append`
 (grants, bans, a new config) are different: `allowed_keys`, roles, bans,
 `history_days` and `history_mb` apply at once, and the name, channels and the

@@ -26,8 +26,10 @@ and [noise trial](docs/superpowers/plans/2026-10-27-noise-suppression-trial.md).
 
 ## Non-negotiable constraints
 
-- Before v1, no mixed-version call/media bridging; negotiate safely but expect
-  same-build peers.
+- No backward compatibility before 1.0.0 (Victor, 2026-10-30): no code, config
+  key, protocol path or test exists to support an earlier HERMEC build. Every
+  client and host in a group runs the same build; anything older is rejected,
+  not bridged.
 - Anyone can self-host; no project servers, in-app cloud provisioning, cloud
   credentials, or claim that public hosting is safe without TLS and admission.
 - The host is trusted; Ed25519 keys, not names, are identity. Never transfer

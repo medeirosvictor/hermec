@@ -211,7 +211,6 @@ Direction: C is client to server, S is server to client.
 | `sig`      | base64 | yes      | Ed25519 signature over the client-auth string of section 3.1. |
 | `proof`    | base64 | no       | Password proof, if the server has a password (section 3.1a). |
 | `warm`     | bool   | no       | True for a standby pre-connection (section 4.17). |
-| `capabilities` | string[] | no | Optional protocol extensions the client supports. `media_lanes_v1` enables independent camera and screen lanes. |
 
 ### 4.2a `host_proof_req` (C), `chain` (S) and `host_proof` (S)
 
@@ -242,7 +241,6 @@ signature over the host-proof string of section 3.1.
 | `channels`    | ChannelInfo[] | All channels on the server.          |
 | `server_name` | string        | Optional. The host's configured `server_name`; omitted when the host set none. Untrusted: clients strip control and format characters and cap it at 64 runes before display. Omitted means "no name". |
 | `server_id`   | string        | The server ID (section 9.1) in its 52-character lowercase base32 form. Must equal the ID the client verified in the handshake. |
-| `capabilities` | string[]     | Optional capabilities accepted from `auth`. |
 
 `channels` is an array of `ChannelInfo` objects:
 
@@ -258,7 +256,7 @@ signature over the host-proof string of section 3.1.
 | `code`    | string | Machine-readable code, see section 5.               |
 | `message` | string | Human-readable detail; not stable, do not parse it. |
 | `ref`     | string | Optional. The `ref` of the `chain_append` this error answers (section 4.14a). |
-| `gen`     | int    | Optional. The `gen` of the `watch` this error answers (section 4.15). |
+| `gen`     | int    | Optional. The `gen` of the `media_start` or `media_subscribe` this error answers (section 4.15). |
 
 ### 4.5 `join` (C)
 
@@ -412,9 +410,9 @@ WebRTC (negotiated as in section 4.13). The server acts as an SFU (selective for
 | `rtc_answer`    | C/S | `{"sdp": string}` SDP answer.                                  |
 | `rtc_candidate` | C/S | `{"candidate": string}` one ICE candidate (JSON candidate init). |
 
-`VoiceMember`: `fingerprint` (string), `name` (string), `muted` (bool),
-`sharing` (bool, omitted when false; legacy alias for an active screen), and
-`media` (optional array of active `"camera"`/`"screen"` lanes; section 4.15a).
+`VoiceMember`: `fingerprint` (string), `name` (string), `muted` (bool) and
+`media` (optional array of active `"camera"`/`"screen"` lanes; section 4.15).
+A member with `"screen"` in `media` is sharing their screen.
 
 Semantics:
 
@@ -534,100 +532,11 @@ The server name, channels and limits of a `config` entry are read at start-up
 and apply from the next start; the exception is `history_days` and
 `history_mb`, which apply at once (section 4.9a).
 
-### 4.15 Screen share messages
+### 4.15 Camera and screen media
 
-A member of a voice call can share their screen. Signaling rides the same
-WebSocket; the video travels over the same WebRTC connection as the audio
-(negotiated as in section 4.13).
-
-| Type          | Dir | Payload                                                          |
-|---------------|-----|------------------------------------------------------------------|
-| `share_start` | C   | `{}` the sender starts sharing their screen.                     |
-| `share_stop`  | C   | `{}` the sender stops sharing.                                   |
-| `watch`       | C   | `{"fingerprint": string}` watch that member's share. `""` stops watching. |
-
-Semantics:
-
-- `share_start` and `share_stop` only work while the sender is in a voice
-  call; outside a call they are silently ignored. Each one changes the
-  sender's `sharing` flag and the server re-broadcasts `voice_state`
-  (section 4.12) to everyone.
-- `watch` outside a call yields `error` `not_joined`.
-- Leaving the call (or disconnecting) stops the share.
-- `watch` names a member by fingerprint. The target must be sharing in the
-  same voice channel as the sender, or the server answers `error`
-  `not_sharing`. A client watches at most one share at a time; a new `watch`
-  replaces the old one. `watch` with an empty fingerprint stops watching.
-- A watch ends by itself when the sharer stops or leaves, or when the watcher
-  leaves the call.
-- Sharing and watching need no permission beyond being in the call (which
-  itself needs the usual `join_channel` permission); there is no separate
-  share permission.
-- A client adds its video track to the call only after the server's
-  `voice_state` shows the client's own `sharing: true`, so a refused share
-  never puts an unanswerable video section into the call's negotiation.
-
-Media:
-
-- Video is **VP8**, RTP payload type **96**, with RTCP `nack` and `pli`
-  feedback. The sharer sends one video track to the server.
-- The server forwards a sharer's video **only to the members watching it**.
-  Members who are not watching receive no video packets.
-- When someone starts watching, the server asks the sharer for a keyframe
-  (PLI), so the new watcher can start decoding quickly.
-- Each viewer has one video transceiver. The server renegotiates with
-  `rtc_offer` (section 4.13) only the first time a viewer gets video; after
-  that it swaps the source on the same media section without renegotiating
-  (when a viewer switches to another sharer, or the sharer stops and starts
-  again). The stream id of the track (`video-<fingerprint>`) therefore names
-  only the first sharer that viewer received. A client must identify the
-  sharer from its own `watch` request, never from the track's stream id or
-  msid, and should expect a keyframe after each switch (the server requests
-  it from the new sharer). Clients must handle server offers at any time.
-- `video_source` (S): `{"fingerprint": string, "seq": uint16}`. Because the
-  source behind a viewer's single track changes without renegotiation, and
-  packets of the old source can still be in flight, the server marks the
-  boundary explicitly. Whenever it attaches a source to a viewer's video
-  (first attach or a switch), it sends `video_source` with that sharer's
-  fingerprint and the RTP sequence number, exactly as the viewer receives it,
-  of the new source's first packet. The server numbers the viewer's packets
-  itself (continuous across switches) and sends no further packet of the
-  previous source once the boundary is fixed. The message is queued before any
-  packet of the new source is written, but the WebSocket and RTP travel
-  separately, so it may arrive after the first packets. A client therefore
-  waits for it after each `watch`, discards packets whose sequence number is
-  before `seq` (16-bit serial-number order), restarts its depacketizer and
-  decoder at `seq`, waits for a keyframe, and labels frames with `fingerprint`.
-  `watch` may carry `"gen": uint32` (a client-chosen number, new for each
-  effective watch request; omitted = 0). The server echoes the newest gen it
-  has accepted in `video_source.gen`, and a client ignores a `video_source`
-  whose gen is not its current one (0 = server or client without gens), so a
-  boundary announced for an earlier watch of the same sharer is not mistaken
-  for the current one. A repeated `watch` of the sharer already watched
-  changes nothing except that, with a new gen, the server repeats the current
-  `video_source` under it. An `error` that refuses a `watch` (`not_sharing`,
-  `not_joined`) carries the request's gen in `error.gen` (omitted when the
-  request had none); a client acts on it only if it matches its pending
-  watch. A `watch` refused with `not_sharing` changes
-  nothing: the previous source keeps streaming, and the client keeps (or
-  restores) its previous target.
-  When a viewer's source is detached (`watch` with `""`, or the sharer
-  stopped) the server sends `{"fingerprint": "", "seq": 0}`; clients may
-  ignore it. A client that gets no
-  `video_source` for about 3 seconds after `watch` may fall back to restarting
-  on the first packet it receives.
-- A server refuses an `rtc_offer` that contains a video section it has no
-  codec for with `error` `bad_request` "no common video codec; media reset,
-  send a new rtc_offer", and the client recovers as in section 4.13.
-- Hermec does not send audio from the shared screen.
-
-### 4.15a Independent media lanes (`media_lanes_v1`)
-
-A client offers `media_lanes_v1` in `auth.capabilities`; a supporting server
-echoes it in `auth_ok.capabilities`. Only then may either side use these
-messages. Without it, screen sharing uses the section 4.15 messages and camera
-is unavailable. Before v1, mixed-version call media is not a supported release
-target; clients and hosts in a call are expected to run the same build.
+A member of a voice call can publish a camera and a screen independently.
+Signaling rides the same WebSocket; the video travels over the same WebRTC
+connection as the audio (negotiated as in section 4.13).
 
 | Type | Dir | Payload |
 |------|-----|---------|
@@ -636,28 +545,52 @@ target; clients and hosts in a call are expected to run the same build.
 | `media_subscribe` | C | `{"kind":"screen","fingerprint":string,"gen"?:uint32}` selects one screen; an empty fingerprint clears it. |
 | `media_source` | S | `{"kind":string,"fingerprint":string,"slot":int,"seq":uint16,"gen"?:uint32}` identifies a slot's source and RTP boundary; an empty fingerprint detaches it. |
 
-Modern calls negotiate a stable layout in their first offer: outgoing tracks
-`camera-publish` and `screen-publish`, incoming camera tracks
-`camera-slot-0` through `camera-slot-9`, and incoming `screen-slot-0`. Empty
-lanes remain negotiated but carry no packets. Every active camera is assigned
-to every other modern participant, up to ten active cameras per voice room;
-each participant selects at most one screen. Camera and screen may publish at
-the same time and stop independently. Unknown kinds or lane messages without
-the negotiated capability get `bad_request`; an eleventh camera gets
-`media_full` with the rejected declaration's `gen`; selecting a member who is not publishing that lane gets
-`not_publishing`.
+Every call negotiates a stable layout in its first offer: outgoing tracks
+`camera-publish` and `screen-publish`, incoming camera tracks `camera-slot-0`
+through `camera-slot-9`, and incoming `screen-slot-0`. Empty lanes remain
+negotiated but carry no packets. Video is **VP8**, RTP payload type **96**, with
+RTCP `nack` and `pli` feedback.
 
-`media_source` has the same boundary rules as `video_source`, additionally
-keyed by `(kind, slot)`. Camera slot assignments are automatic. Screen
-assignments echo the newest subscription `gen`, so stale boundaries cannot
-replace the current selection. The semantic lane priority is audio, then
-screen, then camera. This is metadata only in this version; no adaptive
-transport or bandwidth policy is claimed.
+Semantics:
+
+- Lane messages need the sender to be in a voice call (`not_joined`
+  otherwise); being in the call is the only permission. Leaving the call (or
+  disconnecting) stops every publication and subscription.
+- Every active camera is assigned to every other participant, up to ten active
+  cameras per voice room; an eleventh gets `media_full` with the rejected
+  declaration's `gen`. Camera slot assignments are automatic.
+- Each participant selects at most one screen with `media_subscribe`.
+  Selecting a member who is not publishing a screen in the same room gets
+  `not_publishing`; a member of another room gets `forbidden`; unknown kinds
+  get `bad_request`. Each refusal carries the request's `gen`, and the
+  previous selection stays in force.
+- Camera and screen may publish at the same time and stop independently.
+- An `rtc_offer` with a video section the server has no codec for is refused
+  with `bad_request` "no common video codec; media reset, send a new
+  rtc_offer", and the client recovers as in section 4.13.
+- The server asks a publisher for a keyframe (PLI) when a slot is attached to
+  its stream, relays viewers' keyframe requests at most once per second, and
+  never forwards a lane's packets to a participant whose slot is not assigned
+  to it.
+
+Boundaries: a slot's source changes without renegotiation, and packets of the
+old source can still be in flight, so the server marks the change with
+`media_source`. It numbers each slot's packets itself (continuous across
+switches), fixes the RTP sequence number of the new source's first packet, and
+queues `media_source` before writing any packet of the new source. The
+WebSocket and RTP travel separately, so the message may arrive after the first
+packets. A client discards packets before `seq` (16-bit serial-number order),
+restarts its depacketizer and decoder at `seq`, waits for a keyframe, and
+labels frames with `fingerprint`. Screen assignments echo the newest
+subscription `gen`; a client ignores a screen `media_source` whose `gen` is not
+its current one, so a stale boundary cannot replace the current selection.
 
 The reference camera publication profile is VP8 at 640x360, 15 fps and about
-300 kbps. Screen quality remains the user's 720p/1080p choice. Both use the
-same WebRTC connection as Opus audio. On host takeover, active publications
-and the selected screen are adopted onto the promoted warm connection.
+300 kbps. Screen quality is the user's 720p/1080p choice. The semantic lane
+priority is audio, then screen, then camera; this is metadata only, with no
+adaptive bandwidth policy. Hermec does not send audio from the shared screen.
+On host takeover, active publications and the selected screen are adopted onto
+the promoted warm connection.
 
 ### 4.16 Host list and moving: `hosts`, `hb`, `move`, `reach`
 
@@ -675,9 +608,8 @@ name ("hosted by").
 
 `hb` (S): `{seq}`. The active host sends it to every authenticated client, warm
 session and link every **500 ms**. A client that sees no `hb` for **1500 ms**
-(three missed beats) treats the active host as lost. A client waits for its
-first `hb` before it starts counting, so a host that sends none is never judged
-lost.
+(three missed beats, counted from login until the first `hb`) treats the
+active host as lost.
 
 `reach` (C): `{fingerprint, ok}`. A client reports whether its warm dial to the
 host with that fingerprint worked. The active host picks the standby as the
@@ -851,7 +783,6 @@ join the channel.
 | `forbidden`   | The role lacks the required permission (`join_channel`, `send_chat`). |
 | `bad_request` | Malformed message, unknown channel, unsupported message type, or chat text over 4096 bytes (`message too long`). |
 | `not_joined`  | The operation needs channel membership the client does not have (`leave`, `chat_send`, `history_before`, voice messages). |
-| `not_sharing` | `watch` named a member who is not sharing in the sender's voice channel. |
 | `not_publishing` | `media_subscribe` named a member who is not publishing that media lane in the sender's voice channel. |
 | `media_full`  | A camera start would exceed the ten-camera room limit. |
 | `voice_full`  | `voice_join` named a channel already at its participant cap (`max_voice`, default 25). |
