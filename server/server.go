@@ -64,12 +64,8 @@ type Config struct {
 	// PublicIP, if set, is advertised as the server's ICE host address
 	// (NAT 1:1) for voice on internet-facing hosts. Empty = local addresses.
 	PublicIP string
-	// UDPPortMin and UDPPortMax, when both non-zero, restrict the UDP ports
-	// used for voice media (for firewalls). Min must be <= Max.
-	UDPPortMin, UDPPortMax uint16
 	// MediaPort is the single UDP port all WebRTC media uses (through an ICE
-	// UDP mux). 0 means the same port number as the listener. Ignored when
-	// UDPPortMin/UDPPortMax are set (legacy ephemeral range).
+	// UDP mux). 0 means the same port number as the listener.
 	MediaPort int
 	// AllowLoopbackICE restricts ICE to loopback (no LAN candidates, no mDNS).
 	// This breaks remote peers, so it is for tests only; not exposed in the

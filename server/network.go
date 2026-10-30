@@ -21,9 +21,6 @@ func (s *Server) validateNetwork() error {
 	if s.cfg.PublicIP != "" {
 		return errors.New("server: network provider cannot use public_ip")
 	}
-	if s.cfg.UDPPortMin != 0 || s.cfg.UDPPortMax != 0 {
-		return errors.New("server: network provider cannot use legacy UDP port ranges")
-	}
 	pionNet := s.cfg.Network.PionNet()
 	if pionNet == nil {
 		return errors.New("server: network PionNet is nil")

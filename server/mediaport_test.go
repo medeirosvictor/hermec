@@ -167,21 +167,6 @@ func TestMediaPortInUse(t *testing.T) {
 	}
 }
 
-func TestLegacyUDPRangeStillWorks(t *testing.T) {
-	s := startLoopback(t, func(c *Config) {
-		c.UDPPortMin, c.UDPPortMax = 50000, 50100
-		c.Discoverable = false
-	})
-	if s.mux != nil {
-		t.Fatal("mux created although udp_port_min/max is set")
-	}
-	pc, err := net.ListenPacket("udp", fmt.Sprintf("127.0.0.1:%d", tcpPort(t, s)))
-	if err != nil {
-		t.Fatalf("listen UDP port should be free: %v", err)
-	}
-	pc.Close()
-}
-
 func TestMediaPortConfigRoundTrip(t *testing.T) {
 	c := DefaultConfig()
 	c.MediaPort = 9000

@@ -504,8 +504,7 @@ strongly recommended.**
 
 For internet-facing servers, configure `public_ip` (your server's public IPv4)
 and, for firewall policy, note that all media uses one UDP port (the server's
-port number by default; `media_port` overrides it, and `udp_port_min`/
-`udp_port_max` select the older random-port range instead). See
+port number by default; `media_port` overrides it). See
 [example.server.toml](example.server.toml) for details.
 
 ### Camera and call view

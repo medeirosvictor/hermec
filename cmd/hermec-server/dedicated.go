@@ -233,9 +233,6 @@ func validateListenAddress(cfg server.Config) error {
 	if err != nil || p < 0 || p > 65535 {
 		return fmt.Errorf("signaling address %q has invalid TCP port", cfg.Addr)
 	}
-	if cfg.MediaPort != 0 && (cfg.UDPPortMin != 0 || cfg.UDPPortMax != 0) {
-		return errors.New("media_port conflicts with udp_port_min/udp_port_max")
-	}
 	return nil
 }
 

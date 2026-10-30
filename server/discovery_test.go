@@ -152,22 +152,10 @@ func TestDiscoveryRateLimit(t *testing.T) {
 }
 
 func TestDiscoverableFalseNoSocket(t *testing.T) {
-	// The legacy UDP range keeps media off the listen port, so with
-	// discovery off nothing binds UDP there.
-	s := startDiscoverable(t, func(c *Config) {
-		c.Discoverable = false
-		c.UDPPortMin, c.UDPPortMax = 50000, 50100
-	}, nil)
+	s := startDiscoverable(t, func(c *Config) { c.Discoverable = false }, nil)
 	if s.udp != nil {
-		t.Fatal("udp socket created")
+		t.Fatal("discovery socket created")
 	}
-	// The UDP port is free: we can bind it ourselves.
-	_, port, _ := net.SplitHostPort(s.Addr())
-	pc, err := net.ListenPacket("udp", "127.0.0.1:"+port)
-	if err != nil {
-		t.Fatalf("udp port in use: %v", err)
-	}
-	pc.Close()
 }
 
 func TestShutdownClosesDiscovery(t *testing.T) {

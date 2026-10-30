@@ -201,7 +201,6 @@ func TestHostNetworkRejectsUnsafeCombinationsBeforeBind(t *testing.T) {
 		{"nil pion", func(_ *Config, n *serverRecordingNetwork) { n.pion = nil }, "PionNet"},
 		{"discovery", func(c *Config, _ *serverRecordingNetwork) { c.Discoverable = true }, "LAN discovery"},
 		{"public ip", func(c *Config, _ *serverRecordingNetwork) { c.PublicIP = "203.0.113.1" }, "public_ip"},
-		{"legacy ports", func(c *Config, _ *serverRecordingNetwork) { c.UDPPortMin, c.UDPPortMax = 50000, 50100 }, "legacy UDP"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

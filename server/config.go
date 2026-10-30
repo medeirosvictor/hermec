@@ -55,8 +55,6 @@ type fileConfig struct {
 	PublicMode    bool                `toml:"public,omitempty"`
 	PublicDNS     string              `toml:"public_dns,omitempty"`
 	PublicIP      string              `toml:"public_ip"`
-	UDPPortMin    uint16              `toml:"udp_port_min"`
-	UDPPortMax    uint16              `toml:"udp_port_max"`
 	MediaPort     int                 `toml:"media_port"`
 	DefaultRoles  []string            `toml:"default_roles"`
 	Roles         map[string][]string `toml:"roles"`
@@ -153,10 +151,6 @@ func LoadConfig(path string) (Config, error) {
 	cfg.PublicMode = fc.PublicMode
 	cfg.PublicDNS = fc.PublicDNS
 	cfg.PublicIP = fc.PublicIP
-	cfg.UDPPortMin, cfg.UDPPortMax = fc.UDPPortMin, fc.UDPPortMax
-	if (cfg.UDPPortMin == 0) != (cfg.UDPPortMax == 0) || cfg.UDPPortMin > cfg.UDPPortMax {
-		return Config{}, errors.New("server: load config: udp_port_min and udp_port_max must be set together with min <= max")
-	}
 	if fc.MediaPort < 0 || fc.MediaPort > 65535 {
 		return Config{}, errors.New("server: load config: media_port must be between 0 and 65535")
 	}
@@ -261,8 +255,6 @@ func (c Config) MarshalTOML() ([]byte, error) {
 		PublicMode:    c.PublicMode,
 		PublicDNS:     c.PublicDNS,
 		PublicIP:      c.PublicIP,
-		UDPPortMin:    c.UDPPortMin,
-		UDPPortMax:    c.UDPPortMax,
 		MediaPort:     c.MediaPort,
 		DefaultRoles:  c.Roles.DefaultRoles,
 		Roles:         make(map[string][]string, len(c.Roles.Roles)),
@@ -293,7 +285,7 @@ func (c Config) MarshalTOML() ([]byte, error) {
 }
 
 // MarshalLocalTOML renders only the machine-local keys (addr, password_key, TLS,
-// public, public_dns, public_ip, udp range, media_port, discoverable, msg rate, server_id). The
+// public, public_dns, public_ip, media_port, discoverable, msg rate, server_id). The
 // group fields live in the chain once one exists.
 func (c Config) MarshalLocalTOML() ([]byte, error) {
 	fc := fileConfig{
@@ -304,8 +296,6 @@ func (c Config) MarshalLocalTOML() ([]byte, error) {
 		PublicMode:   c.PublicMode,
 		PublicDNS:    c.PublicDNS,
 		PublicIP:     c.PublicIP,
-		UDPPortMin:   c.UDPPortMin,
-		UDPPortMax:   c.UDPPortMax,
 		MediaPort:    c.MediaPort,
 		MsgRate:      c.MsgRate,
 		MsgBurst:     c.MsgBurst,

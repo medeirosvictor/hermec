@@ -54,11 +54,6 @@ voice_channels = ["voice"]
 # listen port (7697 -> UDP 7697). Set this to use a different one (0 = default).
 # media_port = 0
 
-# Voice (legacy): restrict media to this UDP port range instead of the single
-# port above; when set it takes precedence. Both or neither.
-# udp_port_min = 50000
-# udp_port_max = 50100
-
 # Message rate limiting: messages per second sustained rate and burst bucket size.
 # Either being 0 disables all rate limiting. Defaults: 30 sustained, 60 burst.
 # msg_rate = 30

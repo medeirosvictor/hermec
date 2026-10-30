@@ -26,11 +26,10 @@ budget/usage alerts.
 
 Create a DNS record for the stable address and obtain a trusted, currently
 valid certificate for that exact name. Permit the configured signaling TCP port
-and the media UDP port(s) in **both** the provider firewall and the host
+and the media UDP port in **both** the provider firewall and the host
 firewall. By default `media_port = 0` uses the signaling listener's port for
 media (7697 only when `addr` uses its default); a nonzero `media_port` requires
-that UDP port instead, while `udp_port_min`/`udp_port_max` require the entire
-configured UDP range. Also permit the required outbound UDP replies and normal
+that UDP port instead. Also permit the required outbound UDP replies and normal
 HTTPS/DNS/certificate-renewal egress. TCP-only rules allow signaling but do not
 make calls work. Do not expose SSH broadly; use administrator IP restrictions
 or a bastion.

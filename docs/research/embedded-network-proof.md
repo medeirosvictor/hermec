@@ -30,8 +30,8 @@ Root module:
 - Clients retain the validated Pion network for active and warm peers. Private
   WebSocket dials ignore global proxy/TLS dial hooks.
 - Servers use the provider for TCP, UDP media, Pion APIs and authenticated host
-  links. Provider mode rejects LAN discovery, `public_ip`, legacy UDP ranges and
-  nil Pion networks before binding.
+  links. Provider mode rejects LAN discovery, `public_ip` and nil
+  Pion networks before binding.
 - Startup rollback and late peer creation close resources without closing the
   borrowed provider.
 

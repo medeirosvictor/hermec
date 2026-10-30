@@ -55,17 +55,15 @@ func (c *mediaConn) ReadFrom(p []byte) (int, net.Addr, error) {
 
 // startUDP binds the server's UDP sockets on host (the TCP listener's
 // interface) after the TCP listener is up: the discovery responder (when
-// discoverable) and the single media port (unless the legacy
-// UDPPortMin/UDPPortMax range is set). By default both live on the listener's
-// port number, so they share one socket. Discovery goroutines are joined by
-// Shutdown through s.wg; the mux is closed there too.
+// discoverable) and the single media port. By default both live on the
+// listener's port number, so they share one socket. Discovery goroutines are
+// joined by Shutdown through s.wg; the mux is closed there too.
 func (s *Server) startUDP(host string, port int) error {
-	media := !(s.cfg.UDPPortMin != 0 && s.cfg.UDPPortMax != 0)
 	mediaPort := s.cfg.MediaPort
 	if mediaPort == 0 {
 		mediaPort = port
 	}
-	shared := media && mediaPort == port
+	shared := mediaPort == port
 
 	var d *discoverer
 	var pc net.PacketConn
@@ -90,7 +88,7 @@ func (s *Server) startUDP(host string, port int) error {
 	}
 
 	mc := pc
-	if media && !shared {
+	if !shared {
 		var err error
 		mc, err = s.listenPacket(context.Background(), "udp", net.JoinHostPort(host, strconv.Itoa(mediaPort)), false)
 		if err != nil {
@@ -110,14 +108,10 @@ func (s *Server) startUDP(host string, port int) error {
 				s.discoverLoop(pc, d)
 			}()
 		}
-		if media {
-			mc = &mediaConn{PacketConn: mc}
-		}
+		mc = &mediaConn{PacketConn: mc}
 	}
-	if media {
-		s.mux = ice.NewUDPMuxDefault(ice.UDPMuxParams{UDPConn: mc})
-		s.logf("media: UDP port %d", mediaPort)
-	}
+	s.mux = ice.NewUDPMuxDefault(ice.UDPMuxParams{UDPConn: mc})
+	s.logf("media: UDP port %d", mediaPort)
 	return nil
 }
 
