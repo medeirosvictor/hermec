@@ -16,9 +16,8 @@ type laneSource struct {
 	fail atomic.Bool
 }
 
-func TestStartShareUsesNegotiatedMediaMessages(t *testing.T) {
+func TestStartShareUsesMediaMessages(t *testing.T) {
 	s := newStub(t, true)
-	s.mediaLanes = true
 	c := dialStub(t, s)
 	if err := c.JoinVoice(testCtx(t), "lobby", nopSource{stop: make(chan struct{})}, nopSink{}); err != nil {
 		t.Fatal(err)
@@ -34,9 +33,6 @@ func TestStartShareUsesNegotiatedMediaMessages(t *testing.T) {
 	}
 	if !s.waitType(proto.TypeMediaStop) {
 		t.Fatalf("messages = %v, want media_start and media_stop", s.seen)
-	}
-	if s.sawType(proto.TypeShareStart) || s.sawType(proto.TypeShareStop) {
-		t.Fatalf("modern share used legacy messages: %v", s.seen)
 	}
 }
 

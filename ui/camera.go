@@ -91,10 +91,6 @@ func (g *game) toggleCamera() {
 		s.st.Status = "camera: unsupported"
 		return
 	}
-	if g.cameraOps.start == nil && !s.c.SupportsMediaLanes() {
-		s.st.Status = "server does not support webcams"
-		return
-	}
 	g.camera.gen++
 	gen, c, deviceID, fp := g.camera.gen, s.c, g.set.CameraDevice, g.fp
 	cancel := make(chan struct{})
@@ -177,7 +173,7 @@ func cameraNotice(err error) string {
 	var serverErr *client.ServerError
 	message := strings.ToLower(err.Error())
 	switch {
-	case errors.Is(err, cameracap.ErrUnsupported), errors.Is(err, client.ErrCameraUnsupported):
+	case errors.Is(err, cameracap.ErrUnsupported):
 		return "server does not support webcams"
 	case errors.As(err, &serverErr) && serverErr.Code == proto.CodeMediaFull:
 		return "camera limit reached for the room"

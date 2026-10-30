@@ -14,15 +14,11 @@ const (
 )
 
 var (
-	ErrAlreadyCamera     = errors.New("client: camera already active")
-	ErrCameraUnsupported = errors.New("client: server does not support camera")
+	ErrAlreadyCamera = errors.New("client: camera already active")
 )
 
 // StartCamera publishes src using HERMEC's fixed camera profile.
 func (c *Client) StartCamera(src FrameSource) error {
-	if !c.SupportsMediaLanes() {
-		return ErrCameraUnsupported
-	}
 	cl := c.getCall()
 	if cl == nil {
 		return ErrNotInVoice

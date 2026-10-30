@@ -13,7 +13,6 @@ import (
 
 	"github.com/pion/ice/v4"
 	"github.com/pion/interceptor"
-	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 
@@ -105,24 +104,7 @@ type peer struct {
 	senders map[*forwarder]*webrtc.RTPSender // tracks this peer receives
 	retired int                              // inactive audio m-lines left on pc by removed senders
 
-	// Screen share. watchers are the peers receiving this peer's video;
-	// watching is the sharer this peer receives video from.
-	watchers  map[*peer]bool
-	watching  *peer
-	kfWanted  bool      // a keyframe is owed to this viewer once an answer covering its video lands
-	kfInOffer bool      // the outstanding server offer includes this viewer's video
-	lastPLI   time.Time // last PLI written to this peer's PC (sharer side)
-
-	// Pion never frees a transceiver, so a viewer gets exactly one video
-	// transceiver (vsender) for its lifetime; switching or restarting a
-	// watch swaps the track on it (ReplaceTrack) instead of adding m-lines.
-	vsender *webrtc.RTPSender
-	vfwd    *forwarder // the video forwarder currently feeding vsender
-	vout    *outStream // keeps vsender's seq/timestamps continuous across switches
-	vrw     *rewrite   // numbering of the source currently feeding vsender
-	wgen    uint32     // gen of the viewer's latest watch request, echoed in video_source
-
-	sharing atomic.Bool // this peer is sharing (set by the actor, read by forwarders)
+	lastPLI time.Time // last PLI written to this peer's PC (publisher side)
 
 	videoReceivers map[*webrtc.RTPReceiver]proto.MediaKind
 	activeMedia    map[proto.MediaKind]bool
@@ -131,7 +113,7 @@ type peer struct {
 	screenGen      uint32
 }
 
-// outStream is the outgoing RTP numbering of one viewer's video sender.
+// outStream is the outgoing RTP numbering of one viewer's video slot.
 type outStream struct {
 	mu      sync.Mutex
 	started bool
@@ -203,7 +185,7 @@ func (r *rewrite) apply(pkt *rtp.Packet) *rtp.Packet {
 type forwarder struct {
 	pub    *peer
 	remote *webrtc.TrackRemote
-	video  bool // VP8 screen share; fanned out only to the publisher's watchers
+	video  bool // VP8 camera or screen; fanned out through viewer slots
 	kind   proto.MediaKind
 
 	mu    sync.Mutex
@@ -274,16 +256,14 @@ func (s *Server) newVoiceSession(ch string) *voiceSession {
 // servers.
 func (s *Server) newRTCAPI() *webrtc.API {
 	me := &webrtc.MediaEngine{}
-	if !s.cfg.NoVP8 {
-		_ = me.RegisterCodec(webrtc.RTPCodecParameters{
-			RTPCodecCapability: webrtc.RTPCodecCapability{
-				MimeType:     webrtc.MimeTypeVP8,
-				ClockRate:    90000,
-				RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}},
-			},
-			PayloadType: 96,
-		}, webrtc.RTPCodecTypeVideo)
-	}
+	_ = me.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{
+			MimeType:     webrtc.MimeTypeVP8,
+			ClockRate:    90000,
+			RTCPFeedback: []webrtc.RTCPFeedback{{Type: "nack"}, {Type: "nack", Parameter: "pli"}},
+		},
+		PayloadType: 96,
+	}, webrtc.RTPCodecTypeVideo)
 	_ = me.RegisterCodec(webrtc.RTPCodecParameters{
 		RTPCodecCapability: webrtc.RTPCodecCapability{
 			MimeType:    webrtc.MimeTypeOpus,
@@ -428,7 +408,7 @@ func (vs *voiceSession) teardown() {
 func (vs *voiceSession) addPeer(c *conn) {
 	vs.post(func() {
 		if _, ok := vs.peers[c]; !ok {
-			vs.peers[c] = &peer{c: c, senders: make(map[*forwarder]*webrtc.RTPSender), watchers: make(map[*peer]bool)}
+			vs.peers[c] = &peer{c: c, senders: make(map[*forwarder]*webrtc.RTPSender)}
 		}
 	})
 }
@@ -439,45 +419,13 @@ func (vs *voiceSession) removePeer(c *conn) {
 		if !ok {
 			return
 		}
-		vs.clearWatchers(p)
-		if p.watching != nil {
-			delete(p.watching.watchers, p)
-			p.watching = nil
-		}
 		vs.removeModernPublisher(p)
 		delete(vs.peers, c)
 		vs.releaseMedia(p)
 	})
 }
 
-// shareStarted (called under chMu; non-blocking) marks c as sharing; only a
-// sharing peer's video is relayed.
-func (vs *voiceSession) shareStarted(c *conn) {
-	vs.post(func() {
-		if p, ok := vs.peers[c]; ok {
-			p.sharing.Store(true)
-		}
-	})
-}
-
-// shareStopped (called under chMu; non-blocking) removes the sharer's video
-// from every watcher. The conn-side watch state is already cleared.
-func (vs *voiceSession) shareStopped(c *conn) {
-	vs.post(func() {
-		if p, ok := vs.peers[c]; ok {
-			p.sharing.Store(false)
-			vs.clearWatchers(p)
-		}
-	})
-}
-
 func (vs *voiceSession) mediaStarted(c *conn, kind proto.MediaKind) {
-	if !c.hasCapability(proto.CapabilityMediaLanesV1) {
-		if kind == proto.MediaScreen {
-			vs.shareStarted(c)
-		}
-		return
-	}
 	vs.post(func() {
 		if p := vs.peers[c]; p != nil {
 			vs.startModernMedia(p, kind)
@@ -486,12 +434,6 @@ func (vs *voiceSession) mediaStarted(c *conn, kind proto.MediaKind) {
 }
 
 func (vs *voiceSession) mediaStopped(c *conn, kind proto.MediaKind) {
-	if !c.hasCapability(proto.CapabilityMediaLanesV1) {
-		if kind == proto.MediaScreen {
-			vs.shareStopped(c)
-		}
-		return
-	}
 	vs.post(func() {
 		if p := vs.peers[c]; p != nil {
 			vs.stopModernMedia(p, kind)
@@ -500,12 +442,6 @@ func (vs *voiceSession) mediaStopped(c *conn, kind proto.MediaKind) {
 }
 
 func (vs *voiceSession) setMediaSubscription(c, target *conn, kind proto.MediaKind, gen uint32) {
-	if !c.hasCapability(proto.CapabilityMediaLanesV1) {
-		if kind == proto.MediaScreen {
-			vs.setWatch(c, target, gen)
-		}
-		return
-	}
 	vs.post(func() {
 		viewer := vs.peers[c]
 		if viewer == nil {
@@ -516,12 +452,6 @@ func (vs *voiceSession) setMediaSubscription(c, target *conn, kind proto.MediaKi
 }
 
 func (vs *voiceSession) resendMediaSource(c *conn, kind proto.MediaKind, gen uint32) {
-	if !c.hasCapability(proto.CapabilityMediaLanesV1) {
-		if kind == proto.MediaScreen {
-			vs.resendSource(c, gen)
-		}
-		return
-	}
 	vs.post(func() {
 		viewer := vs.peers[c]
 		if viewer == nil {
@@ -534,89 +464,14 @@ func (vs *voiceSession) resendMediaSource(c *conn, kind proto.MediaKind, gen uin
 	})
 }
 
-// setWatch (called under chMu; non-blocking) points viewer c at the sharer
-// target (nil = stop watching).
-func (vs *voiceSession) setWatch(c, target *conn, gen uint32) {
-	vs.post(func() {
-		v, ok := vs.peers[c]
-		if !ok {
-			return
-		}
-		v.wgen = gen
-		if v.watching != nil {
-			delete(v.watching.watchers, v)
-			v.watching = nil
-		}
-		v.kfWanted = false
-		if target != nil {
-			if t, ok := vs.peers[target]; ok && t.sharing.Load() {
-				v.watching = t
-				t.watchers[v] = true
-				vs.requestKeyframe(t, true)
-			}
-		}
-		vs.syncTracks(v)
-	})
-}
-
-// resendSource (called under chMu; non-blocking) adopts a new watch gen for a
-// viewer whose source did not change and repeats the current boundary under it.
-func (vs *voiceSession) resendSource(c *conn, gen uint32) {
-	vs.post(func() {
-		v, ok := vs.peers[c]
-		if !ok {
-			return
-		}
-		v.wgen = gen
-		if v.vfwd != nil && v.vrw != nil {
-			vs.sendVideoSource(v, v.vfwd.pub.c.fingerprint, v.vrw.bseq)
-		}
-	})
-}
-
-// clearWatchers (actor) detaches every viewer of sharer p and drops their
-// video track.
-func (vs *voiceSession) clearWatchers(p *peer) {
-	viewers := p.watchers
-	p.watchers = make(map[*peer]bool)
-	for v := range viewers {
-		v.watching = nil
-		v.kfWanted = false
-		vs.syncTracks(v)
-	}
-}
-
-// PLI spacing per sharer. Viewer-relayed requests are limited to one per
-// second; the server's own requests (a viewer started watching) to one per
-// 500 ms, so toggling watch cannot make the sharer emit keyframes at message
-// rate. Both share one timestamp.
+// PLI spacing per publisher. Viewer-relayed requests are limited to one per
+// second; the server's own requests (a viewer's slot was attached) to one per
+// 500 ms, so toggling a subscription cannot make the publisher emit keyframes
+// at message rate. Both share one timestamp.
 const (
 	relayPLIInterval  = time.Second
 	forcedPLIInterval = 500 * time.Millisecond
 )
-
-// requestKeyframe (actor) writes a PLI to sharer t's PC, subject to the
-// per-sharer spacing above.
-func (vs *voiceSession) requestKeyframe(t *peer, force bool) {
-	if t.pc == nil {
-		return
-	}
-	now := time.Now()
-	min := relayPLIInterval
-	if force {
-		min = forcedPLIInterval
-	}
-	if now.Sub(t.lastPLI) < min {
-		return
-	}
-	for _, f := range t.fwds {
-		if f.video && !f.isDead() {
-			t.lastPLI = now
-			_ = t.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(f.remote.SSRC())}})
-			return
-		}
-	}
-}
 
 // handleRTC is called from a conn's read loop after it verified membership.
 func (vs *voiceSession) handleRTC(c *conn, env proto.Envelope) {
@@ -703,7 +558,7 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 			go vs.drainReceiverRTCP(recv)
 			isVideo := remote.Kind() == webrtc.RTPCodecTypeVideo
 			mediaKind := proto.MediaKind("")
-			if isVideo && p.c.hasCapability(proto.CapabilityMediaLanesV1) {
+			if isVideo {
 				var ok bool
 				mediaKind, ok = p.videoReceivers[recv]
 				if !ok {
@@ -776,20 +631,14 @@ func (vs *voiceSession) handleOffer(p *peer, sdp string) {
 		}
 	}
 	pc := p.pc
-	modern := p.c.hasCapability(proto.CapabilityMediaLanesV1)
-	layout := modernOfferLayout{}
-	if modern {
-		layout = classifyModernOffer(parseOfferedMedia(sdp))
-	}
+	layout := classifyModernOffer(parseOfferedMedia(sdp))
 	if err := pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}); err != nil {
 		fail("invalid rtc_offer")
 		return
 	}
-	if modern {
-		if err := vs.configureModernAnswer(p, pc, layout); err != nil {
-			fail("cannot bind media slots")
-			return
-		}
+	if err := vs.configureModernAnswer(p, pc, layout); err != nil {
+		fail("cannot bind media slots")
+		return
 	}
 	vs.flushPending(p)
 	answer, err := pc.CreateAnswer(nil)
@@ -848,15 +697,6 @@ func (vs *voiceSession) handleAnswer(p *peer, sdp string) {
 	p.negotiating = false
 	vs.stopOfferTimer(p)
 	vs.flushPending(p)
-	if p.kfInOffer {
-		// The answered offer carried this viewer's video, so the track is
-		// bound now; a keyframe sent earlier may have been dropped.
-		p.kfInOffer = false
-		if p.kfWanted && p.watching != nil {
-			p.kfWanted = false
-			vs.requestKeyframe(p.watching, true)
-		}
-	}
 	if p.dirty {
 		p.dirty = false
 		vs.renegotiate(p)
@@ -914,7 +754,6 @@ func (vs *voiceSession) renegotiate(p *peer) {
 		return
 	}
 	p.negotiating = true
-	p.kfInOffer = p.kfWanted && p.vfwd != nil
 	p.offerGen++
 	gen, pc := p.offerGen, p.pc
 	vs.stopOfferTimer(p)
@@ -967,7 +806,7 @@ func (vs *voiceSession) syncTracks(q *peer) {
 			continue
 		}
 		for _, f := range r.fwds {
-			if f.video { // video goes through syncVideo
+			if f.video { // video goes through the viewer's slots
 				continue
 			}
 			if _, ok := q.senders[f]; ok || f.isDead() {
@@ -993,8 +832,8 @@ func (vs *voiceSession) syncTracks(q *peer) {
 	// Pion never frees a transceiver, and reusing an audio line would keep the
 	// previous speaker's stream id (clients attribute audio by it), so bound
 	// the growth by rebuilding this peer's PC once enough lines are retired.
-	// The rebuild also restarts the member's own published audio and any
-	// screen share they send (viewers see a brief freeze), and because
+	// The rebuild also restarts the member's own published audio and video
+	// (viewers see a brief freeze), and because
 	// releaseMedia re-syncs everyone else, the room tends to reset together.
 	if q.retired > maxInactiveLines {
 		vs.srv.logf("voice %q: %s has %d inactive audio lines; resetting its media", vs.channel, q.c.fingerprint, q.retired)
@@ -1002,95 +841,9 @@ func (vs *voiceSession) syncTracks(q *peer) {
 		vs.releaseMedia(q)
 		return
 	}
-	if q.c.hasCapability(proto.CapabilityMediaLanesV1) {
-		vs.syncModernViewer(q)
-	} else if vs.syncVideo(q) {
-		changed = true
-	}
+	vs.syncModernViewer(q)
 	if changed {
 		vs.renegotiate(q)
-	}
-}
-
-// syncVideo (actor) points q's single video sender at the forwarder of the
-// sharer q watches (or at nothing). It reports whether a renegotiation is
-// needed, which is only the case the first time q gets a video transceiver.
-func (vs *voiceSession) syncVideo(q *peer) bool {
-	var want *forwarder
-	if t := q.watching; t != nil && t.sharing.Load() {
-		for _, f := range t.fwds {
-			if f.video && !f.isDead() {
-				want = f
-				break
-			}
-		}
-	}
-	if q.vfwd == want {
-		return false
-	}
-	if q.vfwd != nil {
-		// The sender keeps its stale local track but nothing writes to it.
-		q.vfwd.removeSink(q)
-		q.vfwd = nil
-		if q.vrw != nil {
-			q.vrw.retire()
-			q.vrw = nil
-		}
-		if want == nil {
-			vs.sendVideoSource(q, "", 0)
-		}
-	}
-	if want == nil {
-		return false
-	}
-	fp := want.pub.c.fingerprint
-	local, err := webrtc.NewTrackLocalStaticRTP(want.remote.Codec().RTPCodecCapability, "video-"+fp, fp)
-	if err != nil {
-		return false
-	}
-	if q.vout == nil {
-		q.vout = &outStream{}
-	}
-	changed := false
-	if q.vsender == nil {
-		tr, err := q.pc.AddTransceiverFromTrack(local, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
-		if err != nil {
-			return false
-		}
-		q.vsender = tr.Sender()
-		vs.wg.Add(1)
-		go vs.readViewerRTCP(q.vsender, q)
-		q.kfWanted = true // sent once an answer covering this transceiver lands
-		changed = true
-	} else {
-		if err := q.vsender.ReplaceTrack(local); err != nil {
-			return false
-		}
-		q.kfWanted = false
-		vs.requestKeyframe(want.pub, true) // already negotiated: bound now
-	}
-	q.vfwd = want
-	// Fix the boundary, tell the viewer, and only then let the new source's
-	// packets reach the sender: the forwarder writes to q only through its
-	// sink, which is added last. attach also retires the previous source's
-	// rewrite, so none of its in-flight packets can be numbered at or after
-	// the boundary. The WebSocket and RTP paths are independent, so the
-	// message can still arrive after the first packets; the client copes.
-	q.vrw = q.vout.attach(q.vrw)
-	vs.sendVideoSource(q, fp, q.vrw.bseq)
-	want.addSink(q, local, q.pc, q.vrw)
-	return changed
-}
-
-// sendVideoSource (actor) tells q which source its video track carries from
-// seq on ("" = detached).
-func (vs *voiceSession) sendVideoSource(q *peer, fp string, seq uint16) {
-	raw, err := proto.Encode(proto.TypeVideoSource, proto.VideoSource{Fingerprint: fp, Seq: seq, Gen: q.wgen})
-	if err != nil {
-		return
-	}
-	if !q.c.enqueue(raw) {
-		dropSlow([]*conn{q.c})
 	}
 }
 
@@ -1110,12 +863,6 @@ func (vs *voiceSession) releaseMedia(p *peer) {
 		f.removeSink(p)
 	}
 	p.senders = make(map[*forwarder]*webrtc.RTPSender)
-	if p.vfwd != nil {
-		p.vfwd.removeSink(p)
-	}
-	// A fresh PC gets a fresh video transceiver; syncVideo re-arms kfWanted
-	// when it re-attaches a watched stream.
-	p.vsender, p.vfwd, p.vout, p.vrw, p.kfInOffer = nil, nil, nil, nil, false
 	p.videoReceivers = nil
 	for _, slot := range p.slots {
 		if slot.fwd != nil {
@@ -1148,9 +895,6 @@ func (vs *voiceSession) runForwarder(f *forwarder) {
 		pkt, _, err := f.remote.ReadRTP()
 		if err != nil {
 			return
-		}
-		if f.video && f.kind == "" && !f.pub.sharing.Load() {
-			continue // only a sharing peer's video is relayed
 		}
 		snap = snap[:0]
 		f.mu.Lock()
@@ -1189,25 +933,8 @@ func (vs *voiceSession) runForwarder(f *forwarder) {
 
 func (vs *voiceSession) pruneSender(sub *peer, f *forwarder) {
 	if f.video {
-		if f.kind != "" {
-			if slot := sub.slotForSource(f.kind, f.pub.c.fingerprint); slot != nil {
-				vs.attachSlot(sub, slot, nil, slot.gen)
-			}
-			return
-		}
-		// Single reusable video sender: just detach and re-attach.
-		if sub.vfwd == f {
-			sub.vfwd = nil
-			if sub.vrw != nil {
-				sub.vrw.retire()
-				sub.vrw = nil
-				vs.sendVideoSource(sub, "", 0)
-			}
-			if sub.pc != nil {
-				if st := sub.pc.ConnectionState(); st != webrtc.PeerConnectionStateClosed && st != webrtc.PeerConnectionStateFailed {
-					vs.syncTracks(sub)
-				}
-			}
+		if slot := sub.slotForSource(f.kind, f.pub.c.fingerprint); slot != nil {
+			vs.attachSlot(sub, slot, nil, slot.gen)
 		}
 		return
 	}
@@ -1275,29 +1002,6 @@ func (vs *voiceSession) drainRTCP(snd *webrtc.RTPSender) {
 	for {
 		if _, _, err := snd.Read(buf); err != nil {
 			return
-		}
-	}
-}
-
-// readViewerRTCP reads a viewer's RTCP for a video sender (which also keeps
-// pion's interceptors running) and relays keyframe requests (PLI/FIR) to the
-// sharer through the actor, which rate-limits them to one per second.
-func (vs *voiceSession) readViewerRTCP(snd *webrtc.RTPSender, v *peer) {
-	defer vs.wg.Done()
-	for {
-		pkts, _, err := snd.ReadRTCP()
-		if err != nil {
-			return
-		}
-		for _, pk := range pkts {
-			switch pk.(type) {
-			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
-				vs.post(func() {
-					if v.watching != nil && v.vfwd != nil {
-						vs.requestKeyframe(v.watching, false)
-					}
-				})
-			}
 		}
 	}
 }

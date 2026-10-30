@@ -126,12 +126,7 @@ func (g *game) watchFn(c *client.Client, fp string) {
 			// error text reaches the status line as an Err event; here only
 			// the view has to follow a refusal.
 			var se *client.ServerError
-			var err error
-			if c.SupportsMediaLanes() {
-				err = c.SubscribeScreen(fp)
-			} else {
-				err = c.Watch(fp)
-			}
+			err := c.SubscribeScreen(fp)
 			if errors.As(err, &se) && fp != "" {
 				g.watchRefused.Store(&fp)
 			}
@@ -193,11 +188,8 @@ func (g *game) selectScreen(fp string) {
 	}
 	name, _ := s.st.SharerIn(s.st.InCall, fp)
 	g.endSelfPreview()
-	if g.watch.fp != "" && !g.watch.self && g.watch.fp != fp && s.c.SupportsMediaLanes() {
+	if g.watch.fp != "" && !g.watch.self && g.watch.fp != fp {
 		g.retireMediaView(mediaViewKey{Kind: proto.MediaScreen, Fingerprint: g.watch.fp})
-	}
-	if !s.c.SupportsMediaLanes() {
-		g.resetVideo()
 	}
 	g.watchRefused.Store(nil)
 	g.watch = watchState{fp: fp, name: name}
@@ -241,9 +233,7 @@ func (g *game) stopWatching() {
 		return
 	}
 	if s := g.callSess(); s != nil && s.c != nil {
-		if s.c.SupportsMediaLanes() {
-			g.retireMediaView(mediaViewKey{Kind: proto.MediaScreen, Fingerprint: fp})
-		}
+		g.retireMediaView(mediaViewKey{Kind: proto.MediaScreen, Fingerprint: fp})
 		g.watchFn(s.c, "")
 	}
 }
@@ -591,9 +581,7 @@ func (g *game) drawVideo(screen *ebiten.Image, off image.Point) {
 
 func (g *game) presentationView() *videoView {
 	if !g.watch.self {
-		if s := g.callSess(); s != nil && s.c != nil && s.c.SupportsMediaLanes() {
-			return g.mediaViews[mediaViewKey{Kind: proto.MediaScreen, Fingerprint: g.watch.fp}]
-		}
+		return g.mediaViews[mediaViewKey{Kind: proto.MediaScreen, Fingerprint: g.watch.fp}]
 	}
 	return &g.vid
 }

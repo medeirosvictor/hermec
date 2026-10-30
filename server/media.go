@@ -7,10 +7,6 @@ type mediaSubscription struct {
 	Gen         uint32
 }
 
-func (c *conn) hasCapability(capability string) bool {
-	return c.capabilities[capability]
-}
-
 func (c *conn) publishing(kind proto.MediaKind) bool {
 	return c.published[kind]
 }
@@ -29,11 +25,8 @@ func validMediaKind(kind proto.MediaKind) bool {
 	return kind == proto.MediaCamera || kind == proto.MediaScreen
 }
 
-// mediaSet applies a negotiated modern publisher declaration.
+// mediaSet applies a publisher declaration.
 func (s *Server) mediaSet(c *conn, kind proto.MediaKind, on bool) string {
-	if !c.hasCapability(proto.CapabilityMediaLanesV1) {
-		return proto.CodeBadRequest
-	}
 	return s.setMedia(c, kind, on)
 }
 
@@ -86,10 +79,10 @@ func (s *Server) setMedia(c *conn, kind proto.MediaKind, on bool) string {
 	return ""
 }
 
-// mediaSubscribe applies a negotiated modern subscription. Only screen is
-// subscription-controlled in media_lanes_v1; cameras are assigned automatically.
+// mediaSubscribe applies a subscription. Only screen is subscription-controlled;
+// cameras are assigned automatically.
 func (s *Server) mediaSubscribe(c *conn, kind proto.MediaKind, fp string, gen uint32) string {
-	if !c.hasCapability(proto.CapabilityMediaLanesV1) || kind != proto.MediaScreen {
+	if kind != proto.MediaScreen {
 		return proto.CodeBadRequest
 	}
 	return s.setMediaSubscription(c, kind, fp, gen)

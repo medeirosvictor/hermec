@@ -28,7 +28,7 @@ func (s *State) CallParticipants() []CallParticipant {
 			Name:        CleanName(member.Name, MaxServerNameRunes),
 			Self:        member.Fingerprint == s.fingerprint,
 			Muted:       member.Muted,
-			Sharing:     member.Sharing,
+			Sharing:     member.Sharing(),
 		}
 		for _, kind := range member.Media {
 			switch kind {

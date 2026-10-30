@@ -59,13 +59,6 @@ const (
 	TypeChain        = "chain"
 	TypeChainAppend  = "chain_append"
 
-	// Screen sharing.
-	TypeShareStart = "share_start"
-	TypeShareStop  = "share_stop"
-	TypeWatch      = "watch"
-	// TypeVideoSource (S) marks the boundary of a viewer's video stream.
-	TypeVideoSource = "video_source"
-
 	// Independent camera and screen lanes.
 	TypeMediaStart     = "media_start"
 	TypeMediaStop      = "media_stop"
@@ -99,10 +92,6 @@ const (
 	TypeWarmAnswer        = "warm_answer"
 	TypeWarmCandidate     = "warm_candidate"
 )
-
-// CodeNotSharing is the error code for a watch whose target is not sharing in
-// the sender's voice channel.
-const CodeNotSharing = "not_sharing"
 
 const (
 	CodeMediaFull     = "media_full"
@@ -185,11 +174,7 @@ type Challenge struct {
 }
 
 // Auth is the client's reply to a Challenge. Sig is over the nonce.
-const (
-	MaxAuthNameBytes       = 4096
-	MaxAuthCapabilities    = 16
-	MaxAuthCapabilityBytes = 64
-)
+const MaxAuthNameBytes = 4096
 
 type Auth struct {
 	PubKey []byte `json:"pubkey"`
@@ -200,22 +185,11 @@ type Auth struct {
 	// Warm marks a standby's pre-connection, which the host may hold open
 	// before the client is promoted to a live session.
 	Warm bool `json:"warm,omitempty"`
-	// Capabilities are optional features understood by this client. The server
-	// returns their supported intersection in AuthOK.
-	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // ValidAuth bounds every auth payload field before authentication work.
 func ValidAuth(a Auth) bool {
-	if len(a.PubKey) != 32 || len(a.Sig) != 64 || len(a.Proof) > 0 && len(a.Proof) != 32 || len(a.Name) > MaxAuthNameBytes || len(a.Capabilities) > MaxAuthCapabilities {
-		return false
-	}
-	for _, capability := range a.Capabilities {
-		if len(capability) == 0 || len(capability) > MaxAuthCapabilityBytes {
-			return false
-		}
-	}
-	return true
+	return len(a.PubKey) == 32 && len(a.Sig) == 64 && (len(a.Proof) == 0 || len(a.Proof) == 32) && len(a.Name) <= MaxAuthNameBytes
 }
 
 // ChannelInfo describes a server channel. Type is "text" or "voice".
@@ -233,8 +207,6 @@ type AuthOK struct {
 	ServerName string `json:"server_name,omitempty"`
 	// ServerID is the server's chain identity (chain.ID.String() form).
 	ServerID string `json:"server_id"`
-	// Capabilities is the accepted intersection of client and server features.
-	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // VoiceJoin requests joining a voice channel.
@@ -255,37 +227,17 @@ type VoiceMember struct {
 	Fingerprint string      `json:"fingerprint"`
 	Name        string      `json:"name"`
 	Muted       bool        `json:"muted"`
-	Sharing     bool        `json:"sharing,omitempty"`
 	Media       []MediaKind `json:"media,omitempty"`
 }
 
-// ShareStart announces that the sender is sharing its screen.
-type ShareStart struct{}
-
-// ShareStop announces that the sender stopped sharing.
-type ShareStop struct{}
-
-// Watch says the sender now watches the sharer with this fingerprint; ""
-// stops watching. A viewer watches one stream at a time.
-type Watch struct {
-	Fingerprint string `json:"fingerprint"`
-	// Gen identifies this watch request; the server echoes the newest one in
-	// VideoSource.Gen so a client can tell a stale boundary from a current one.
-	// 0 (omitted) from clients that do not number their requests.
-	Gen uint32 `json:"gen,omitempty"`
-}
-
-// VideoSource tells a viewer which sharer the packets on its (single) video
-// track belong to from now on. Seq is the RTP sequence number, as the viewer
-// receives it, of that source's first packet; every packet before it (serial
-// number order) belongs to the previous source. Fingerprint "" means the
-// viewer's video was detached (Seq is 0 and unused).
-type VideoSource struct {
-	Fingerprint string `json:"fingerprint"`
-	Seq         uint16 `json:"seq"`
-	// Gen is the Gen of the watch request this boundary answers (0 if the
-	// client sent none).
-	Gen uint32 `json:"gen,omitempty"`
+// Sharing reports whether the member publishes a screen.
+func (m VoiceMember) Sharing() bool {
+	for _, kind := range m.Media {
+		if kind == MediaScreen {
+			return true
+		}
+	}
+	return false
 }
 
 // VoiceState is the full participant list of a voice channel.

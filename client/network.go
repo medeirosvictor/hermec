@@ -65,7 +65,6 @@ func DialWithNetwork(ctx context.Context, url string, id *identity.Identity, nam
 		channels:    res.OK.Channels,
 		serverName:  res.OK.ServerName,
 		serverID:    res.OK.ServerID,
-		mediaLanes:  hasCapability(res.OK.Capabilities, proto.CapabilityMediaLanesV1),
 		pwKey:       res.Key,
 		chain:       res.Chain,
 		activations: make(map[string]chan proto.DedicatedResult),

@@ -59,7 +59,7 @@ func (vs *voiceSession) startModernMedia(p *peer, kind proto.MediaKind) {
 		vs.cameraOrder = append(vs.cameraOrder, p)
 	}
 	for _, viewer := range vs.peers {
-		if viewer != p && viewer.c.hasCapability(proto.CapabilityMediaLanesV1) {
+		if viewer != p {
 			vs.syncModernViewer(viewer)
 		}
 	}
@@ -79,7 +79,7 @@ func (vs *voiceSession) stopModernMedia(p *peer, kind proto.MediaKind) {
 		}
 	}
 	for _, viewer := range vs.peers {
-		if viewer == p || !viewer.c.hasCapability(proto.CapabilityMediaLanesV1) {
+		if viewer == p {
 			continue
 		}
 		if slot := viewer.slotForSource(kind, p.c.fingerprint); slot != nil {

@@ -512,27 +512,22 @@ func (g *game) applyJoin(r joinResult) {
 	g.logf("joined %s on %s", r.channel, s.url)
 }
 
-// noteEvent reacts to client events beyond what state.Apply records. A host
-// that cannot carry screen share has already ended our share in the client, so
-// the button must go back to "share".
+// noteEvent reacts to client events beyond what state.Apply records.
 func (g *game) noteEvent(s *session, ev client.Event) {
 	s.confirmChat(ev.Chat, g.fp)
 	if errors.Is(ev.Err, client.ErrScreenResume) && g.watch.fp != "" && g.callSess() == s {
 		g.stopWatching()
 		s.st.Status = client.ErrScreenResume.Error()
 	}
-	if errors.Is(ev.Err, client.ErrShareUnsupported) && g.share.on && g.share.c == s.c {
-		g.stopShare()
-	}
-	// A refusal that reaches us for the watch still in force (it arrived after
-	// Watch gave up waiting) ends the view; a timely refusal is handled by the
-	// media worker, which sees it as Watch's error.
+	// A refusal that reaches us for the subscription still in force (it arrived
+	// after SubscribeScreen gave up waiting) ends the view; a timely refusal is
+	// handled by the media worker, which sees it as SubscribeScreen's error.
 	var se *client.ServerError
 	if errors.As(ev.Err, &se) && se.Code == proto.CodeMediaFull && g.camera.c == s.c {
 		g.stopCamera()
 		s.st.Status = cameraNotice(se)
 	}
-	if errors.As(ev.Err, &se) && se.Code == proto.CodeNotSharing && se.Gen != 0 &&
+	if errors.As(ev.Err, &se) && se.Code == proto.CodeNotPublishing && se.Gen != 0 &&
 		s.c != nil && se.Gen == s.c.WatchGen() && g.watch.fp != "" && g.callSess() == s {
 		g.stopWatching()
 	}

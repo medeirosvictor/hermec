@@ -59,7 +59,7 @@ func Letterbox(fw, fh int, x0, y0, x1, y1 float64) (x, y, w, h float64) {
 // ch and sharing their screen.
 func (s *State) SharerIn(ch, fp string) (name string, ok bool) {
 	for _, m := range s.Voice[ch] {
-		if m.Fingerprint == fp && m.Sharing {
+		if m.Fingerprint == fp && m.Sharing() {
 			return m.Name, true
 		}
 	}

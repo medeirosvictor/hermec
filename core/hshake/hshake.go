@@ -196,8 +196,7 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 	}
 	a := proto.Auth{
 		PubKey: id.PublicKey(), Name: name, Warm: o.Warm,
-		Sig:          id.Sign(proto.ClientAuthBytes(ch.Nonce, clientNonce, sid[:])),
-		Capabilities: []string{proto.CapabilityMediaLanesV1},
+		Sig: id.Sign(proto.ClientAuthBytes(ch.Nonce, clientNonce, sid[:])),
 	}
 	if len(pwKey) > 0 {
 		a.Proof = proto.PasswordProof(pwKey, ch.Nonce, clientNonce, sid[:])

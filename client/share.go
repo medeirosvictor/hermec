@@ -3,7 +3,6 @@ package client
 import (
 	"errors"
 	"fmt"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -378,44 +377,7 @@ func (c *Client) StartShare(src FrameSource, w, h, fps, kbps int) error {
 		}
 		return err
 	}
-	// The video sender is added once the server's voice_state shows us sharing
-	// (onVoiceState): a pre-v0.5 host never confirms, so it never sees a video
-	// m-line it cannot answer, and a bad_request for share_start ends the
-	// share (shareUnsupported).
 	return nil
-}
-
-// ErrShareUnsupported reports that the host cannot carry screen share. It is
-// delivered as an Err event; the share it ended is already stopped.
-var ErrShareUnsupported = errors.New("this server does not support screen share (host needs v0.5.0+)")
-
-const msgShareStartUnsupported = "unsupported message type " + proto.TypeShareStart
-
-// shareUnsupported ends our share without telling the server (a v0.4 host
-// would only answer share_stop with another bad_request) and reports
-// ErrShareUnsupported. Read loop only; it never blocks on the share loops.
-func (c *Client) shareUnsupported() {
-	if cl := c.getCall(); cl != nil {
-		if sl := cl.takePublisherIf(proto.MediaScreen, nil); sl != nil {
-			go sl.stop()
-		}
-		cl.post(func() { cl.vidWanted = false })
-	}
-	c.emit(Event{Err: ErrShareUnsupported})
-}
-
-// dropVideo gives up on sending video after negotiation kept failing: the
-// share ends (the server is told) and later PeerConnections of this call are
-// built audio-only, so voice survives a host that cannot carry video. Actor only.
-func (cl *call) dropVideo() {
-	cl.vidWanted = false
-	sl := cl.takePublisherIf(proto.MediaScreen, nil)
-	if sl == nil {
-		return
-	}
-	go sl.stop()
-	_ = cl.c.sendPublisherStop(proto.MediaScreen)
-	cl.c.emitNB(Event{Err: fmt.Errorf("%w: video negotiation failed", ErrShareUnsupported)})
 }
 
 // VideoEncodeErrors returns how many frames failed to encode so far.
@@ -469,63 +431,34 @@ func (c *Client) stopPublisher(cl *call, kind proto.MediaKind, only *videoPublis
 }
 
 func (c *Client) sendPublisherStart(kind proto.MediaKind, publisher *videoPublisher) error {
-	if c.SupportsMediaLanes() {
-		gen := c.mediaWire.Add(1)
-		publisher.wireGen.Store(gen)
-		return c.send(proto.TypeMediaStart, proto.MediaStart{Kind: kind, Gen: gen})
-	}
-	return c.send(proto.TypeShareStart, proto.ShareStart{})
+	gen := c.mediaWire.Add(1)
+	publisher.wireGen.Store(gen)
+	return c.send(proto.TypeMediaStart, proto.MediaStart{Kind: kind, Gen: gen})
 }
 
 func (c *Client) sendPublisherStop(kind proto.MediaKind) error {
-	if c.SupportsMediaLanes() {
-		return c.send(proto.TypeMediaStop, proto.MediaStop{Kind: kind})
-	}
-	return c.send(proto.TypeShareStop, proto.ShareStop{})
+	return c.send(proto.TypeMediaStop, proto.MediaStop{Kind: kind})
 }
 
-// Watch asks the server for sharer fp's video; "" stops watching. Decoded
-// frames arrive at the VideoSink. Watch("") returns at once. Otherwise Watch
-// waits (up to videoSourceWait) for the server's answer, so calls never
-// overlap: it returns nil when the server announced the source (video_source),
-// the server's error if it refused (not_sharing; the previous watch is then
-// still in force and is restored here, the error is also delivered as an Err
-// event), or ErrWatchTimeout if no answer came (the new target is kept and the
-// first-packet fallback applies). Watch lasts until the sharer stops or you
-// stop it: after a share ends it must be called again. Concurrent callers are
-// serialized.
-func (c *Client) Watch(fp string) error {
-	if c.SupportsMediaLanes() {
-		err := c.SubscribeScreen(fp)
-		var serverErr *ServerError
-		if errors.As(err, &serverErr) && serverErr.Code == proto.CodeNotPublishing {
-			return &ServerError{Code: proto.CodeNotSharing, Message: serverErr.Message, Gen: serverErr.Gen}
-		}
-		return err
-	}
-	return c.watchScreen(fp, false, false)
-}
+// SubscribeScreen selects whose screen fills our screen slot; "" clears it.
+// Decoded frames arrive at the MediaSink. SubscribeScreen("") returns at once.
+// Otherwise it waits (up to videoSourceWait) for the server's answer, so calls
+// never overlap: it returns nil when the server announced the source
+// (media_source), the server's error if it refused (not_publishing; the
+// previous subscription is then still in force and is restored here, the
+// error is also delivered as an Err event), or ErrWatchTimeout if no answer
+// came. A subscription lasts until the publisher stops or you change it.
+// Concurrent callers are serialized.
+func (c *Client) SubscribeScreen(fp string) error { return c.watchScreen(fp, false) }
 
-// SubscribeScreen selects the modern screen lane. On a legacy server it
-// preserves Watch's compatibility behavior.
-func (c *Client) SubscribeScreen(fp string) error {
-	return c.watchScreen(fp, c.SupportsMediaLanes(), false)
-}
-
-func (c *Client) watchScreen(fp string, modern, quiet bool) error {
+func (c *Client) watchScreen(fp string, quiet bool) error {
 	if c.getCall() == nil {
 		return ErrNotInVoice
 	}
 	c.watchCallMu.Lock()
 	defer c.watchCallMu.Unlock()
-	wire, wait := c.beginWatchMode(fp, quiet)
-	var err error
-	if modern {
-		err = c.send(proto.TypeMediaSubscribe, proto.MediaSubscribe{Kind: proto.MediaScreen, Fingerprint: fp, Gen: wire})
-	} else {
-		err = c.send(proto.TypeWatch, proto.Watch{Fingerprint: fp, Gen: wire})
-	}
-	if err != nil {
+	wire, wait := c.beginWatch(fp, quiet)
+	if err := c.send(proto.TypeMediaSubscribe, proto.MediaSubscribe{Kind: proto.MediaScreen, Fingerprint: fp, Gen: wire}); err != nil {
 		c.watchFailed(wire, err) // never sent: nothing changed server side
 		c.endWatch(wait)
 		return err
@@ -552,17 +485,13 @@ func (c *Client) watchScreen(fp string, modern, quiet bool) error {
 	}
 }
 
-// ErrWatchTimeout is returned by Watch when the server did not answer in time.
+// ErrWatchTimeout is returned by SubscribeScreen when the server did not answer in time.
 var ErrWatchTimeout = errors.New("client: no answer to watch")
 
-// beginWatch switches the local watch target and returns the wire gen to send
+// beginWatch switches the local screen target and returns the wire gen to send
 // and, when an answer is to be awaited, the channel it will arrive on. Calls
-// are serialized by Watch, so at most one watch is ever pending.
-func (c *Client) beginWatch(fp string) (wire uint32, wait chan error) {
-	return c.beginWatchMode(fp, false)
-}
-
-func (c *Client) beginWatchMode(fp string, quiet bool) (wire uint32, wait chan error) {
+// are serialized by watchScreen, so at most one subscription is ever pending.
+func (c *Client) beginWatch(fp string, quiet bool) (wire uint32, wait chan error) {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
 	// Re-watching the sharer we already have a boundary for changes nothing;
@@ -606,7 +535,7 @@ func (c *Client) watchAnsweredLocked(err error) {
 	}
 }
 
-// watchFailed handles the refusal (not_sharing, not_joined) of the watch with
+// watchFailed handles the refusal (not_publishing, not_joined) of the subscription with
 // the given gen, or a failure to send it: the server keeps streaming the
 // previous source, so we go back to it and frames stay labelled with it. The
 // reader is told (new gen/id) to restart on the restored boundary. The error
@@ -633,23 +562,23 @@ func (c *Client) watchFailed(gen uint32, err error) bool {
 	return quiet
 }
 
-// onVideoSource records the server's source boundary. Messages for a sharer
-// we are not (or no longer) watching are stale and ignored; "" means the
-// server detached our video.
-func (c *Client) onVideoSource(m proto.VideoSource) bool {
+// onScreenSource records the server's screen-slot boundary. Messages for a
+// publisher we are not (or no longer) subscribed to are stale and ignored;
+// "" means the server detached our screen slot.
+func (c *Client) onScreenSource(fp string, seq uint16, gen uint32) bool {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
-	if m.Gen != 0 && m.Gen != c.watchWire {
+	if gen != c.watchWire {
 		return false
 	}
-	if m.Fingerprint == "" {
+	if fp == "" {
 		c.srcHave = false
 		return true
 	}
-	if m.Fingerprint != c.watchFP {
-		return false // not the sharer / not the watch request we are waiting on
+	if fp != c.watchFP {
+		return false // not the publisher / not the request we are waiting on
 	}
-	c.srcHave, c.srcSeq = true, m.Seq
+	c.srcHave, c.srcSeq = true, seq
 	c.watchQuiet = 0
 	c.srcID++
 	c.prevWatch = nil
@@ -657,40 +586,30 @@ func (c *Client) onVideoSource(m proto.VideoSource) bool {
 	return true
 }
 
-// watchState is a consistent snapshot of the watch target and source boundary.
+// watchState is a consistent snapshot of the screen target and source boundary.
 type watchState struct {
 	fp   string
-	gen  uint64 // changes on every Watch call
-	have bool   // the server announced the source (video_source)
+	gen  uint64 // changes on every subscription change
+	have bool   // the server announced the source (media_source)
 	seq  uint16 // first sequence number of the source
 	id   uint64 // changes on every announcement
 	at   time.Time
-	wire uint32 // gen sent to the server with the Watch
+	wire uint32 // gen sent to the server with the subscription
 }
 
 func (c *Client) watchStateLocked() watchState {
 	return watchState{c.watchFP, c.watchGen, c.srcHave, c.srcSeq, c.srcID, c.watchAt, c.watchWire}
 }
 
-// watchSnapshot returns the watch state. The server keeps one video
-// transceiver per viewer and swaps its source, so the track's own stream id
-// only names the first sharer; the target and boundary come from Watch and
-// the server's video_source.
+// watchSnapshot returns the screen subscription state.
 func (c *Client) watchSnapshot() watchState {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
 	return c.watchStateLocked()
 }
 
-// watchTarget returns the sharer we asked to watch and a counter that changes
-// on every Watch call.
-func (c *Client) watchTarget() (string, uint64) {
-	w := c.watchSnapshot()
-	return w.fp, w.gen
-}
-
-// WatchGen returns the gen of the watch request currently in force (what a
-// refused watch's error.gen is compared with); 0 before any Watch.
+// WatchGen returns the gen of the screen subscription currently in force (what
+// a refused subscription's error.gen is compared with); 0 before any.
 func (c *Client) WatchGen() uint32 {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
@@ -812,20 +731,6 @@ func (cl *call) keyAfterNegotiation() {
 	}
 }
 
-// ensureVideo makes sure the PeerConnection carries our video sender and, if
-// it had to add one, renegotiates. Actor only.
-func (cl *call) ensureVideo() {
-	cl.vidWanted = true
-	if cl.pc == nil || cl.vsenders[proto.MediaScreen] != nil {
-		return // no PC yet: newPC adds the sender to the offer it is about to make
-	}
-	if err := cl.addVideoSender(cl.pc); err != nil {
-		cl.fail(fmt.Errorf("client: add video sender: %w", err))
-		return
-	}
-	cl.offerSoon()
-}
-
 // offerSoon offers now if the signalling state allows, otherwise when the
 // current exchange ends (the answer handler checks offerDirty). Actor only.
 func (cl *call) offerSoon() {
@@ -834,20 +739,6 @@ func (cl *call) offerSoon() {
 		return
 	}
 	cl.startOffer()
-}
-
-func (cl *call) addVideoSender(pc *webrtc.PeerConnection) error {
-	tr, err := pc.AddTransceiverFromTrack(cl.vtracks[proto.MediaScreen], webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly})
-	if err != nil {
-		return err
-	}
-	snd := tr.Sender()
-	if cl.vsenders == nil {
-		cl.vsenders = make(map[proto.MediaKind]*webrtc.RTPSender)
-	}
-	cl.vsenders[proto.MediaScreen] = snd
-	cl.startVideoRTCP(snd, proto.MediaScreen)
-	return nil
 }
 
 func (cl *call) startVideoRTCP(snd *webrtc.RTPSender, kind proto.MediaKind) {
@@ -882,165 +773,4 @@ func (l *pliLimiter) allow(now time.Time, force bool) bool {
 	}
 	l.last = now
 	return true
-}
-
-// latestFrame hands the newest decoded frame to a sink goroutine, replacing
-// any frame it has not picked up yet.
-type latestFrame struct {
-	mu   sync.Mutex
-	f    *video.Frame
-	fp   string
-	gen  uint64
-	wake chan struct{}
-}
-
-func (l *latestFrame) put(f *video.Frame, fp string, gen uint64) {
-	l.mu.Lock()
-	l.f, l.fp, l.gen = f, fp, gen
-	l.mu.Unlock()
-	select {
-	case l.wake <- struct{}{}:
-	default:
-	}
-}
-
-func (l *latestFrame) take() (*video.Frame, string, uint64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	f, fp, gen := l.f, l.fp, l.gen
-	l.f = nil
-	return f, fp, gen
-}
-
-func (l *latestFrame) clear() {
-	l.mu.Lock()
-	l.f = nil
-	l.mu.Unlock()
-}
-
-// readVideo receives one remote VP8 track: depacketize, decode, hand the
-// newest frame to the sink on its own goroutine. Runs under cl.wg; ends when
-// the track does.
-func (cl *call) readVideo(pc *webrtc.PeerConnection, remote *webrtc.TrackRemote) {
-	defer cl.wg.Done()
-	dec, err := video.NewDecoder()
-	if err != nil {
-		cl.c.emitNB(Event{Err: err})
-		return
-	}
-	defer func() { dec.Close() }()
-
-	lf := &latestFrame{wake: make(chan struct{}, 1)}
-	done := make(chan struct{})
-	delivered := make(chan struct{})
-	go func() {
-		defer close(delivered)
-		for {
-			select {
-			case <-done:
-				return
-			case <-lf.wake:
-				if f, fp, gen := lf.take(); f != nil {
-					// A frame decoded before a Watch change must not outlive it.
-					if _, cur := cl.c.watchTarget(); cur != gen {
-						continue
-					}
-					if sink := cl.c.videoSink(); sink != nil {
-						sink.WriteVideoFrame(fp, f)
-					}
-				}
-			}
-		}
-	}()
-	defer func() { close(done); <-delivered }()
-
-	var lim pliLimiter
-	pli := func(force bool) {
-		if !lim.allow(time.Now(), force) {
-			return
-		}
-		_ = pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(remote.SSRC())}})
-	}
-	// The first keyframe may have been sent before this track was bound.
-	pli(true)
-
-	// start (re)opens the gate at a source boundary: fresh sample builder and
-	// decoder, so nothing of an earlier stream is ever decoded as this one,
-	// and the new source is asked for a keyframe.
-	var g srcGate
-	start := func(seq uint16) bool {
-		g.start(seq)
-		lf.clear()
-		dec.Close()
-		nd, err := video.NewDecoder()
-		if err != nil {
-			cl.c.emitNB(Event{Err: err})
-			return false
-		}
-		dec = nd
-		pli(true)
-		return true
-	}
-	w := cl.c.watchSnapshot()
-	fp, gen := w.fp, w.gen
-	var lastID uint64
-	warned := false
-	for {
-		pkt, _, err := remote.ReadRTP()
-		if err != nil {
-			return
-		}
-		cl.c.vstats.recvBytes.Add(uint64(len(pkt.Payload)))
-		w = cl.c.watchSnapshot()
-		if w.gen != gen {
-			// Watch changed the target: deliver nothing until the server
-			// announces where the new source starts.
-			fp, gen = w.fp, w.gen
-			g.stop()
-			lf.clear()
-		}
-		if fp == "" {
-			continue // not watching anyone
-		}
-		if w.have && w.id != lastID {
-			lastID = w.id
-			if !start(w.seq) {
-				return
-			}
-		} else if !g.active {
-			if w.have || time.Since(w.at) < videoSourceWait {
-				continue // boundary unknown (or already handled): this packet cannot be placed
-			}
-			// No video_source from this server: start on the first packet.
-			if !warned {
-				warned = true
-				log.Printf("client: no video_source from the server %s after watch; starting on the first packet", videoSourceWait)
-			}
-			if !start(pkt.SequenceNumber) {
-				return
-			}
-		}
-		frames, lost, needKey := g.push(pkt)
-		// Also keep asking while the gate is open but nothing has come out of
-		// it: partial keyframes (first packets sent before the track was
-		// bound) produce neither frames nor loss reports. pli is rate limited.
-		if lost || needKey || (g.active && !g.keyed) {
-			pli(false) // NACK did not repair it: only a keyframe resyncs the decoder
-		}
-		for _, data := range frames {
-			if cl.c.videoSink() == nil {
-				continue
-			}
-			f, err := dec.Decode(data)
-			if err != nil {
-				pli(false)
-				continue
-			}
-			if f == nil {
-				continue
-			}
-			cl.c.vstats.recvFrames.Add(1)
-			lf.put(f, fp, gen)
-		}
-	}
 }

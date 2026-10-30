@@ -51,7 +51,7 @@ func localOffer(t *testing.T, pc *webrtc.PeerConnection) string {
 func TestModernOfferHasTwoPublishTracksAndElevenReceiveSlots(t *testing.T) {
 	pc := mediaTestPC(t)
 	audio, video := mediaTestTracks(t)
-	senders, err := addInitialMediaTracks(pc, audio, video, true, false)
+	senders, err := addInitialMediaTracks(pc, audio, video)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,25 +77,5 @@ func TestModernOfferHasTwoPublishTracksAndElevenReceiveSlots(t *testing.T) {
 		if got, ok := parseSlotTrackID(slotTrackID(want)); !ok || got != want {
 			t.Fatalf("slot ID round trip = %+v, %v; want %+v", got, ok, want)
 		}
-	}
-}
-
-func TestLegacyOfferKeepsSingleOnDemandScreenTrack(t *testing.T) {
-	audio, video := mediaTestTracks(t)
-	pc := mediaTestPC(t)
-	if _, err := addInitialMediaTracks(pc, audio, video, false, false); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Count(localOffer(t, pc), "m=video "); got != 0 {
-		t.Fatalf("initial legacy offer has %d video m-lines, want 0", got)
-	}
-
-	audio, video = mediaTestTracks(t)
-	pc = mediaTestPC(t)
-	if _, err := addInitialMediaTracks(pc, audio, video, false, true); err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Count(localOffer(t, pc), "m=video "); got != 1 {
-		t.Fatalf("sharing legacy offer has %d video m-lines, want 1", got)
 	}
 }

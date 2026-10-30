@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/medeirosvictor/hermec/client"
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/video"
 )
@@ -30,7 +31,7 @@ func settle(t *testing.T, g *game) {
 // client ends on is the last click.
 func TestWatchOpsAreSerialized(t *testing.T) {
 	g, s := shareGame(t)
-	s.st.Voice["voice"][1].Sharing = true
+	s.st.Voice["voice"][1].Media = []proto.MediaKind{proto.MediaScreen}
 	var mu sync.Mutex
 	var applied []string
 	release := make(chan struct{})

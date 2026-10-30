@@ -105,7 +105,7 @@ func shareGame(t *testing.T) (*game, *session) {
 	s.st.SetInCall("voice")
 	g.vc = voiceCall{start: time.Now()}
 	s.st.Voice["voice"] = []proto.VoiceMember{
-		{Fingerprint: "annfp", Name: "ann", Sharing: true},
+		{Fingerprint: "annfp", Name: "ann", Media: []proto.MediaKind{proto.MediaScreen}},
 		{Fingerprint: "bobfp", Name: "bob"},
 	}
 	return g, s
@@ -184,34 +184,6 @@ func TestShareStartFailureReportsAndReleases(t *testing.T) {
 	}
 	if !cp.closed.Load() {
 		t.Fatal("capture source leaked after a failed start")
-	}
-}
-
-// A host without screen share ends the share in the client; the button must
-// return to "share" and the status must say why.
-func TestShareUnsupportedEventReleasesButton(t *testing.T) {
-	g, s := shareGame(t)
-	cp := twoMonitors()
-	rec := &recorder{}
-	g.shareOps = rec.ops(cp, true)
-	g.openShareMenu(g.geom())
-	g.menu.items[0].act()
-	settle(t, g)
-	if !g.share.on {
-		t.Fatal("share did not start")
-	}
-	ev := client.Event{Err: client.ErrShareUnsupported}
-	s.st.Apply(ev, true)
-	g.noteEvent(s, ev)
-	settle(t, g)
-	if g.share.on || g.shareLabel() != "share" {
-		t.Fatalf("share still on after the host refused it (label %q)", g.shareLabel())
-	}
-	if want := "this server does not support screen share (host needs v0.5.0+)"; s.st.Status != want {
-		t.Fatalf("status = %q, want %q", s.st.Status, want)
-	}
-	if !cp.closed.Load() {
-		t.Fatal("capture source leaked")
 	}
 }
 
@@ -299,7 +271,7 @@ func TestLiveSwitchesStream(t *testing.T) {
 	g, s := shareGame(t)
 	rec := &recorder{}
 	g.shareOps = rec.ops(twoMonitors(), true)
-	s.st.Voice["voice"][1].Sharing = true
+	s.st.Voice["voice"][1].Media = []proto.MediaKind{proto.MediaScreen}
 	g.clickLive(state.Hit{Kind: state.HitLive, Key: "annfp"})
 	settle(t, g)
 	g.clickLive(state.Hit{Kind: state.HitLive, Key: "bobfp"})

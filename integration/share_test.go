@@ -101,7 +101,7 @@ func (v *voiceClient) sharing(fp string) bool {
 		return false
 	}
 	for _, m := range st.Members {
-		if m.Fingerprint == fp && m.Sharing {
+		if m.Fingerprint == fp && m.Sharing() {
 			return true
 		}
 	}
@@ -115,7 +115,7 @@ func (v *voiceClient) sharing(fp string) bool {
 // labels and sizes instead.
 func watchOK(t *testing.T, v *voiceClient, fp string) {
 	t.Helper()
-	if err := v.c.Watch(fp); err != nil {
+	if err := v.c.SubscribeScreen(fp); err != nil {
 		if errors.Is(err, client.ErrWatchTimeout) {
 			t.Logf("Watch(%.8s): %v (continuing)", fp, err)
 			return
@@ -134,7 +134,7 @@ func warmUp(t *testing.T, viewer *voiceClient, rec *recVideo, sharers ...*voiceC
 		watchOK(t, viewer, s.fp)
 		eventually(t, 20*time.Second, "warm-up frames", func() bool { return rec.n(s.fp) >= 2 })
 	}
-	if err := viewer.c.Watch(""); err != nil {
+	if err := viewer.c.SubscribeScreen(""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -155,7 +155,7 @@ func TestShareWatchEndToEnd(t *testing.T) {
 		t.Fatalf("StartShare: %v", err)
 	}
 	eventually(t, 10*time.Second, "B sees A sharing", func() bool { return b.sharing(a.fp) })
-	if err := b.c.Watch(a.fp); err != nil {
+	if err := b.c.SubscribeScreen(a.fp); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, 15*time.Second, "B receives video", func() bool { return bv.n(a.fp) >= 10 })
@@ -196,7 +196,7 @@ func TestLateWatcherGetsKeyframe(t *testing.T) {
 	eventually(t, 10*time.Second, "B sees A sharing", func() bool { return b.sharing(a.fp) })
 	time.Sleep(3 * time.Second)
 	start := time.Now()
-	if err := b.c.Watch(a.fp); err != nil {
+	if err := b.c.SubscribeScreen(a.fp); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, 5*time.Second, "first frame", func() bool { return bv.n(a.fp) >= 1 })
@@ -221,7 +221,7 @@ func TestStopShareEndsWatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, 10*time.Second, "B sees A sharing", func() bool { return b.sharing(a.fp) })
-	if err := b.c.Watch(a.fp); err != nil {
+	if err := b.c.SubscribeScreen(a.fp); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, 15*time.Second, "video", func() bool { return bv.n(a.fp) >= 5 })
@@ -236,7 +236,7 @@ func TestStopShareEndsWatch(t *testing.T) {
 		}
 		for _, m := range st.Members {
 			if m.Fingerprint == a.fp {
-				return !m.Sharing
+				return !m.Sharing()
 			}
 		}
 		return false
@@ -253,7 +253,7 @@ func TestStopShareEndsWatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, 10*time.Second, "B sees A sharing again", func() bool { return b.sharing(a.fp) })
-	if err := b.c.Watch(a.fp); err != nil {
+	if err := b.c.SubscribeScreen(a.fp); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, 15*time.Second, "video resumes", func() bool { return bv.n(a.fp) >= before+5 })
@@ -292,8 +292,8 @@ func TestWatchRefusedThenSwitch(t *testing.T) {
 	eventually(t, 15*time.Second, "frames from A", func() bool { return cv.n(a.fp) >= 3 })
 
 	var se *client.ServerError
-	if err := c.c.Watch("nobody-is-sharing-this"); !errors.As(err, &se) || se.Code != proto.CodeNotSharing {
-		t.Fatalf("refused Watch returned %v, want a not_sharing ServerError", err)
+	if err := c.c.SubscribeScreen("nobody-is-sharing-this"); !errors.As(err, &se) || se.Code != proto.CodeNotPublishing {
+		t.Fatalf("refused Watch returned %v, want a not_publishing ServerError", err)
 	}
 	base := cv.n(a.fp)
 	eventually(t, 10*time.Second, "A frames continue after the refused watch", func() bool { return cv.n(a.fp) >= base+3 })
@@ -352,7 +352,7 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 			if i%2 == 1 {
 				fp = b.fp
 			}
-			_ = d.c.Watch(fp)
+			_ = d.c.SubscribeScreen(fp)
 			select {
 			case <-stopFlip:
 				return
@@ -378,7 +378,7 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 		t.Errorf("frames labelled A have sizes %v, want only %v", got, sizeA)
 	}
 
-	if err := c.c.Watch(""); err != nil {
+	if err := c.c.SubscribeScreen(""); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(700 * time.Millisecond)

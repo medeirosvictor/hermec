@@ -11,36 +11,6 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 )
 
-func authedMedia(t *testing.T, url string) (*websocket.Conn, *identity.Identity) {
-	t.Helper()
-	id := mustID(t)
-	c := dial(t, url)
-	h := hello(t, c)
-	sendEnv(t, c, proto.TypeAuth, proto.Auth{
-		PubKey: id.PublicKey(), Name: "tester",
-		Sig:          id.Sign(proto.ClientAuthBytes(h.serverNonce, h.clientNonce, h.serverID[:])),
-		Capabilities: []string{proto.CapabilityMediaLanesV1},
-	})
-	env := readEnv(t, c)
-	if env.Type != proto.TypeAuthOK {
-		t.Fatalf("auth type = %q", env.Type)
-	}
-	var ok proto.AuthOK
-	if err := json.Unmarshal(env.Data, &ok); err != nil {
-		t.Fatal(err)
-	}
-	if len(ok.Capabilities) != 1 || ok.Capabilities[0] != proto.CapabilityMediaLanesV1 {
-		t.Fatalf("accepted capabilities = %v", ok.Capabilities)
-	}
-	expectHosts(t, c)
-	for env = readEnv(t, c); env.Type == proto.TypeVoiceState; env = readEnv(t, c) {
-	}
-	if env.Type != proto.TypeRoster {
-		t.Fatalf("after auth: type = %q, want roster", env.Type)
-	}
-	return c, id
-}
-
 func hasMedia(m proto.VoiceMember, kind proto.MediaKind) bool {
 	for _, got := range m.Media {
 		if got == kind {
@@ -110,11 +80,11 @@ func TestCameraLimitRejectsEleventhAndAllowsRetry(t *testing.T) {
 	cfg := shareCfg()
 	cfg.MaxVoice = 20
 	url := startServer(t, cfg)
-	observer, _ := authedMedia(t, url)
+	observer, _ := authed(t, url)
 	peers := make([]*websocket.Conn, 11)
 	ids := make([]*identity.Identity, 11)
 	for i := range peers {
-		peers[i], ids[i] = authedMedia(t, url)
+		peers[i], ids[i] = authed(t, url)
 		joinLounge(t, peers[i])
 	}
 	readMediaVoiceUntil(t, observer, func(v proto.VoiceState) bool { return len(v.Members) == 11 })
@@ -140,8 +110,8 @@ func TestCameraLimitRejectsEleventhAndAllowsRetry(t *testing.T) {
 
 func TestMediaStateIsIdempotentAndScopedToVoiceRoom(t *testing.T) {
 	url := startServer(t, shareCfg())
-	a, aid := authedMedia(t, url)
-	b, _ := authedMedia(t, url)
+	a, aid := authed(t, url)
+	b, _ := authed(t, url)
 	joinLounge(t, a)
 	readMediaVoiceUntil(t, a, func(v proto.VoiceState) bool { return len(v.Members) == 1 })
 
@@ -186,31 +156,5 @@ func TestMediaStateIsIdempotentAndScopedToVoiceRoom(t *testing.T) {
 	sendEnv(t, b, proto.TypeMediaSubscribe, proto.MediaSubscribe{Kind: proto.MediaScreen, Fingerprint: fpOf(aid), Gen: 8})
 	if em := readMediaError(t, b); em.Code != proto.CodeNotPublishing || em.Gen != 8 {
 		t.Fatalf("inactive subscribe error = %+v", em)
-	}
-
-	legacy, _ := authed(t, url)
-	sendEnv(t, legacy, proto.TypeMediaStart, proto.MediaStart{Kind: proto.MediaCamera})
-	if em := readMediaError(t, legacy); em.Code != proto.CodeBadRequest {
-		t.Fatalf("unnegotiated media error = %+v", em)
-	}
-}
-
-func TestLegacyShareMapsToScreenLane(t *testing.T) {
-	url := startServer(t, shareCfg())
-	legacy, lid := authed(t, url)
-	observer, _ := authedMedia(t, url)
-	joinLounge(t, legacy)
-	readMediaVoiceUntil(t, observer, func(v proto.VoiceState) bool { return len(v.Members) == 1 })
-	sendEnv(t, legacy, proto.TypeShareStart, proto.ShareStart{})
-	v := readMediaVoiceUntil(t, observer, func(v proto.VoiceState) bool {
-		return sharingOf(v, fpOf(lid))
-	})
-	if !mediaOf(v, fpOf(lid), proto.MediaScreen) {
-		t.Fatalf("legacy share missing screen lane: %+v", v)
-	}
-	sendEnv(t, legacy, proto.TypeShareStop, proto.ShareStop{})
-	v = readMediaVoiceUntil(t, observer, func(v proto.VoiceState) bool { return !sharingOf(v, fpOf(lid)) })
-	if mediaOf(v, fpOf(lid), proto.MediaScreen) {
-		t.Fatalf("legacy stop kept screen lane: %+v", v)
 	}
 }

@@ -15,7 +15,7 @@ func selfGame(t *testing.T) (*game, *session, *recorder, *time.Time) {
 	t.Helper()
 	g, s := shareGame(t)
 	g.fp = "mefp"
-	s.st.Voice["voice"] = append(s.st.Voice["voice"], proto.VoiceMember{Fingerprint: "mefp", Name: "me", Sharing: true})
+	s.st.Voice["voice"] = append(s.st.Voice["voice"], proto.VoiceMember{Fingerprint: "mefp", Name: "me", Media: []proto.MediaKind{proto.MediaScreen}})
 	rec := &recorder{}
 	g.shareOps = rec.ops(twoMonitors(), true)
 	now := time.Unix(1000, 0)

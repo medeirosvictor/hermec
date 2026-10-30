@@ -88,7 +88,7 @@ func (s *Server) voiceStateLocked(ch string) []byte {
 	for m, muted := range s.voice[ch] {
 		members = append(members, proto.VoiceMember{
 			Fingerprint: m.fingerprint, Name: m.name, Muted: muted,
-			Sharing: m.publishing(proto.MediaScreen), Media: m.mediaKinds(),
+			Media: m.mediaKinds(),
 		})
 	}
 	sort.Slice(members, func(i, j int) bool {
@@ -131,27 +131,6 @@ func (s *Server) removeVoiceLocked(c *conn) string {
 	c.voiceCh = ""
 	s.sessionLeaveLocked(ch, c) // may destroy the channel's media session
 	return ch
-}
-
-// clearShareLocked clears c's sharing flag and the watch of every viewer of c
-// in ch. The session side (video tracks) is cleared by the caller's path:
-// shareSet posts it, and a leaving peer's forwarders die with its media.
-// Caller holds chMu.
-// shareSet sets or clears c's sharing flag and re-broadcasts the channel's
-// voice_state. Outside a call it is ignored.
-func (s *Server) shareSet(c *conn, on bool) {
-	_ = s.setMedia(c, proto.MediaScreen, on)
-}
-
-// watch records that c watches the sharer with fingerprint fp ("" stops).
-// Returns "" on success, "not_joined" outside a call, or "not_sharing" when
-// fp is not sharing in c's channel.
-func (s *Server) watch(c *conn, fp string, gen uint32) string {
-	code := s.setMediaSubscription(c, proto.MediaScreen, fp, gen)
-	if code == proto.CodeNotPublishing || code == proto.CodeForbidden || code == proto.CodeBadRequest {
-		return proto.CodeNotSharing
-	}
-	return code
 }
 
 // voiceJoin puts c in voice channel ch (moving it if already in another).
@@ -257,10 +236,6 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 		if c.srv.voiceMute(c, m.Muted) == "not_joined" {
 			c.sendError("not_joined", "not in a voice channel")
 		}
-	case proto.TypeShareStart:
-		c.srv.shareSet(c, true)
-	case proto.TypeShareStop:
-		c.srv.shareSet(c, false)
 	case proto.TypeMediaStart:
 		var m proto.MediaStart
 		if json.Unmarshal(env.Data, &m) != nil {
@@ -269,7 +244,7 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 		}
 		switch c.srv.mediaSet(c, m.Kind, true) {
 		case proto.CodeBadRequest:
-			c.sendError(proto.CodeBadRequest, "media lanes were not negotiated or the kind is invalid")
+			c.sendError(proto.CodeBadRequest, "invalid media kind")
 		case proto.CodeMediaFull:
 			c.sendErrorGen(proto.CodeMediaFull, "this voice channel already has 10 active cameras", m.Gen)
 		case "not_joined":
@@ -283,7 +258,7 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 		}
 		switch c.srv.mediaSet(c, m.Kind, false) {
 		case proto.CodeBadRequest:
-			c.sendError(proto.CodeBadRequest, "media lanes were not negotiated or the kind is invalid")
+			c.sendError(proto.CodeBadRequest, "invalid media kind")
 		case "not_joined":
 			c.sendError("not_joined", "not in a voice channel")
 		}
@@ -295,25 +270,13 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 		}
 		switch c.srv.mediaSubscribe(c, m.Kind, m.Fingerprint, m.Gen) {
 		case proto.CodeBadRequest:
-			c.sendErrorGen(proto.CodeBadRequest, "media lanes were not negotiated or the kind is invalid", m.Gen)
+			c.sendErrorGen(proto.CodeBadRequest, "invalid media kind", m.Gen)
 		case proto.CodeForbidden:
 			c.sendErrorGen(proto.CodeForbidden, "that member is outside your voice channel", m.Gen)
 		case proto.CodeNotPublishing:
 			c.sendErrorGen(proto.CodeNotPublishing, "that member is not publishing this media in your channel", m.Gen)
 		case "not_joined":
 			c.sendErrorGen("not_joined", "not in a voice channel", m.Gen)
-		}
-	case proto.TypeWatch:
-		var m proto.Watch
-		if json.Unmarshal(env.Data, &m) != nil {
-			c.sendError(proto.CodeBadRequest, "malformed watch")
-			return true
-		}
-		switch c.srv.watch(c, m.Fingerprint, m.Gen) {
-		case "not_joined":
-			c.sendErrorGen("not_joined", "not in a voice channel", m.Gen)
-		case proto.CodeNotSharing:
-			c.sendErrorGen(proto.CodeNotSharing, "that member is not sharing in your channel", m.Gen)
 		}
 	case proto.TypeRTCOffer, proto.TypeRTCAnswer, proto.TypeRTCCandidate:
 		c.routeRTC(env)

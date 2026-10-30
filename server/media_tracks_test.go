@@ -40,7 +40,7 @@ func TestServerRejectsExtraOrMisorderedVideoTracksWithoutDroppingVoice(t *testin
 	}
 
 	s, url := startServerS(t, shareCfg())
-	badPeer := newModernTestPeer(t, url, false)
+	badPeer := newTestPeer(t, url)
 	var videos []*webrtc.TrackLocalStaticRTP
 	for i, id := range []string{screenPublishTrackID, cameraPublishTrackID} {
 		track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000}, id, badPeer.fp)
@@ -57,7 +57,7 @@ func TestServerRejectsExtraOrMisorderedVideoTracksWithoutDroppingVoice(t *testin
 			t.Fatal(err)
 		}
 	}
-	listener := newTestPeer(t, url, false)
+	listener := newTestPeer(t, url)
 	badPeer.join()
 	listener.join()
 	stop := make(chan struct{})

@@ -79,7 +79,6 @@ type Client struct {
 	channels    []proto.ChannelInfo
 	serverName  string // from auth_ok; immutable after Dial
 	serverID    string // chain.ID.String() of the verified chain; immutable after Dial
-	mediaLanes  bool   // auth-negotiated media_lanes_v1 support
 	mediaWire   atomic.Uint32
 	pwKey       []byte // the password key this login used; nil without a password
 	chain       *chain.Chain
@@ -98,7 +97,6 @@ type Client struct {
 	lostFired atomic.Bool  // ActiveLost was emitted
 
 	loopbackICE atomic.Bool
-	audioOnly   atomic.Bool
 
 	wpMu sync.Mutex // guards wp
 	wp   *warmPeer  // data-channel PeerConnection to the standby, if opened
@@ -215,19 +213,6 @@ func (c *Client) Channels() []proto.ChannelInfo {
 // ServerName returns the display name the server announced in auth_ok, or ""
 // if it has none.
 func (c *Client) ServerName() string { return c.serverName }
-
-// SupportsMediaLanes reports whether the authenticated server accepted the
-// independent camera/screen protocol before voice negotiation.
-func (c *Client) SupportsMediaLanes() bool { return c.mediaLanes }
-
-func hasCapability(capabilities []string, want string) bool {
-	for _, capability := range capabilities {
-		if capability == want {
-			return true
-		}
-	}
-	return false
-}
 
 // Events returns the event stream. It is closed when the connection dies.
 // Consumers must drain it: a full buffer applies backpressure to the read
@@ -463,11 +448,6 @@ func (c *Client) readLoop() {
 			c.onRTC(env)
 		case proto.TypeWarmAnswer:
 			c.onWarmAnswer(env)
-		case proto.TypeVideoSource:
-			var vsrc proto.VideoSource
-			if json.Unmarshal(env.Data, &vsrc) == nil {
-				c.onVideoSource(vsrc)
-			}
 		case proto.TypeMediaSource:
 			var source proto.MediaSource
 			if json.Unmarshal(env.Data, &source) == nil {

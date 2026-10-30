@@ -3,7 +3,6 @@
 package state
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -154,8 +153,6 @@ func (s *State) Apply(ev client.Event, open bool) {
 		}
 	case ev.Hosts != nil:
 		s.HostedBy = CleanName(ev.Hosts.Active.Name, MaxServerNameRunes)
-	case errors.Is(ev.Err, client.ErrShareUnsupported):
-		s.Status = ev.Err.Error() // a plain explanation, not an error code
 	case ev.Err != nil:
 		s.Status = fmt.Sprintf("error: %v", ev.Err)
 	}

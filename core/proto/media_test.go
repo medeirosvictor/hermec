@@ -62,13 +62,14 @@ func TestVoiceMemberMediaOmitEmpty(t *testing.T) {
 	if !reflect.DeepEqual(got.Media, want) {
 		t.Fatalf("Media = %v, want %v", got.Media, want)
 	}
+}
 
-	var old VoiceMember
-	if err := json.Unmarshal([]byte(`{"fingerprint":"f","name":"n","muted":false,"sharing":true}`), &old); err != nil {
-		t.Fatal(err)
+func TestVoiceMemberSharingFollowsScreenLane(t *testing.T) {
+	if (VoiceMember{Media: []MediaKind{MediaCamera}}).Sharing() {
+		t.Fatal("camera alone must not count as sharing")
 	}
-	if !old.Sharing || len(old.Media) != 0 {
-		t.Fatalf("old payload = %+v", old)
+	if !(VoiceMember{Media: []MediaKind{MediaCamera, MediaScreen}}).Sharing() {
+		t.Fatal("screen lane must count as sharing")
 	}
 }
 

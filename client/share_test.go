@@ -417,16 +417,3 @@ func TestSeqBefore(t *testing.T) {
 		}
 	}
 }
-
-func TestOnVideoSourceIgnoresStale(t *testing.T) {
-	c := &Client{}
-	c.watchFP, c.watchGen = "B", 2
-	c.onVideoSource(proto.VideoSource{Fingerprint: "A", Seq: 9})
-	if w := c.watchSnapshot(); w.have {
-		t.Fatal("video_source for a sharer we are not watching was accepted")
-	}
-	c.onVideoSource(proto.VideoSource{Fingerprint: "B", Seq: 77})
-	if w := c.watchSnapshot(); !w.have || w.seq != 77 {
-		t.Fatalf("video_source for the watched sharer not recorded: %+v", w)
-	}
-}

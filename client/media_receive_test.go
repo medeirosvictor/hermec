@@ -96,7 +96,7 @@ func TestMediaReceiversDeliverConcurrentCameraAndScreenFrames(t *testing.T) {
 	keys := []slotKey{{Kind: proto.MediaCamera, Index: 0}, {Kind: proto.MediaCamera, Index: 1}, {Kind: proto.MediaScreen, Index: 0}}
 	fps := []string{"camera-a", "camera-b", "screen-c"}
 	gens := []uint32{0, 0, 7}
-	watching(c, "screen-c", 7, 0)
+	subscribed(c, "screen-c", 7, 0)
 	receivers := make([]*mediaReceiver, len(keys))
 	for i, key := range keys {
 		c.onMediaSource(proto.MediaSource{Kind: key.Kind, Slot: key.Index, Fingerprint: fps[i], Seq: uint16(100 + i*100), Gen: gens[i]})
@@ -159,9 +159,9 @@ func TestReassignedSlotDropsOldAndPreKeyframePackets(t *testing.T) {
 
 func TestStaleMediaSourceGenerationCannotReplaceCurrentScreen(t *testing.T) {
 	c := &Client{}
-	aGen, aWait := c.beginWatch("A")
+	aGen, aWait := c.beginWatch("A", false)
 	c.endWatch(aWait)
-	bGen, _ := c.beginWatch("B")
+	bGen, _ := c.beginWatch("B", false)
 	c.onMediaSource(proto.MediaSource{Kind: proto.MediaScreen, Slot: 0, Fingerprint: "B", Seq: 200, Gen: bGen})
 	c.onMediaSource(proto.MediaSource{Kind: proto.MediaScreen, Slot: 0, Fingerprint: "A", Seq: 100, Gen: aGen})
 
@@ -171,9 +171,8 @@ func TestStaleMediaSourceGenerationCannotReplaceCurrentScreen(t *testing.T) {
 	}
 }
 
-func TestMediaReceiversModernWatchUsesMediaSubscribe(t *testing.T) {
+func TestSubscribeScreenUsesMediaSubscribe(t *testing.T) {
 	s := newStub(t, true)
-	s.mediaLanes = true
 	c := dialStub(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -182,10 +181,10 @@ func TestMediaReceiversModernWatchUsesMediaSubscribe(t *testing.T) {
 	if err := c.JoinVoice(ctx, "lobby", nopSource{stop: stop}, nopSink{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Watch("screen-publisher"); err != nil {
+	if err := c.SubscribeScreen("screen-publisher"); err != nil {
 		t.Fatal(err)
 	}
-	if !s.sawType(proto.TypeMediaSubscribe) || s.sawType(proto.TypeWatch) {
-		t.Fatal("modern watch did not use media_subscribe exclusively")
+	if !s.sawType(proto.TypeMediaSubscribe) {
+		t.Fatal("SubscribeScreen did not send media_subscribe")
 	}
 }

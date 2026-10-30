@@ -56,13 +56,6 @@ func TestValidAuth(t *testing.T) {
 	valid := Auth{
 		PubKey: make([]byte, 32), Sig: make([]byte, 64),
 		Name: strings.Repeat("n", MaxAuthNameBytes),
-		Capabilities: func() []string {
-			caps := make([]string, MaxAuthCapabilities)
-			for i := range caps {
-				caps[i] = strings.Repeat("c", MaxAuthCapabilityBytes)
-			}
-			return caps
-		}(),
 	}
 	tests := []struct {
 		name string
@@ -78,13 +71,6 @@ func TestValidAuth(t *testing.T) {
 		{"short proof", func() Auth { a := valid; a.Proof = make([]byte, 31); return a }(), false},
 		{"long proof", func() Auth { a := valid; a.Proof = make([]byte, 33); return a }(), false},
 		{"long name", func() Auth { a := valid; a.Name = strings.Repeat("n", MaxAuthNameBytes+1); return a }(), false},
-		{"too many capabilities", func() Auth { a := valid; a.Capabilities = make([]string, MaxAuthCapabilities+1); return a }(), false},
-		{"empty capability", func() Auth { a := valid; a.Capabilities = []string{""}; return a }(), false},
-		{"long capability", func() Auth {
-			a := valid
-			a.Capabilities = []string{strings.Repeat("c", MaxAuthCapabilityBytes+1)}
-			return a
-		}(), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

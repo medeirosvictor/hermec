@@ -50,9 +50,7 @@ func (c *Client) onMediaSource(source proto.MediaSource) {
 		return
 	}
 	if key.Kind == proto.MediaScreen {
-		if source.Gen == 0 || !c.onVideoSource(proto.VideoSource{
-			Fingerprint: source.Fingerprint, Seq: source.Seq, Gen: source.Gen,
-		}) {
+		if source.Gen == 0 || !c.onScreenSource(source.Fingerprint, source.Seq, source.Gen) {
 			return
 		}
 	}

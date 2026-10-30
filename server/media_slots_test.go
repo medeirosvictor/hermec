@@ -34,7 +34,7 @@ func joinModernScene(t *testing.T, n int) (*Server, []*testPeer, chan struct{}) 
 	s, url := startServerS(t, shareCfg())
 	peers := make([]*testPeer, n)
 	for i := range peers {
-		peers[i] = newModernTestPeer(t, url, false)
+		peers[i] = newTestPeer(t, url)
 		peers[i].join()
 	}
 	peers[0].waitState(func(v proto.VoiceState) bool { return len(v.Members) == n })

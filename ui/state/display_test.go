@@ -21,7 +21,7 @@ func TestDisplayNamesCleaned(t *testing.T) {
 	}
 
 	s.VoiceChannels = []string{"voice"}
-	s.Apply(vstate("voice", proto.VoiceMember{Fingerprint: "a", Name: bad, Sharing: true}), true)
+	s.Apply(vstate("voice", proto.VoiceMember{Fingerprint: "a", Name: bad, Media: []proto.MediaKind{proto.MediaScreen}}), true)
 	var occ *Row
 	for _, r := range s.Rows() {
 		if r.Kind == RowOccupant {

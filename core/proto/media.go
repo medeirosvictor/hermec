@@ -8,8 +8,7 @@ const (
 	MediaCamera MediaKind = "camera"
 	MediaScreen MediaKind = "screen"
 
-	CapabilityMediaLanesV1 = "media_lanes_v1"
-	MaxCameraSlots         = 10
+	MaxCameraSlots = 10
 )
 
 // Priority is the lane's semantic importance; lower values are protected

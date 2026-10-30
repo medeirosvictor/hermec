@@ -30,7 +30,7 @@ func TestCallParticipantsCarryCameraScreenMuteAndStableOrder(t *testing.T) {
 	s.SetInCall("lobby")
 	s.Apply(vstate("lobby",
 		proto.VoiceMember{Fingerprint: "z", Name: "zoe", Media: []proto.MediaKind{proto.MediaScreen}},
-		proto.VoiceMember{Fingerprint: "b", Name: "al\u202eic\x00e", Muted: true, Sharing: true},
+		proto.VoiceMember{Fingerprint: "b", Name: "al\u202eic\x00e", Muted: true, Media: []proto.MediaKind{proto.MediaScreen}},
 		proto.VoiceMember{Fingerprint: "self", Name: "Alice", Media: []proto.MediaKind{proto.MediaCamera}},
 		proto.VoiceMember{Fingerprint: "a", Name: "Alice"},
 	), true)

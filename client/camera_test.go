@@ -1,7 +1,6 @@
 package client
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/medeirosvictor/hermec/core/proto"
@@ -9,7 +8,6 @@ import (
 
 func TestCameraAndScreenStartStopIndependently(t *testing.T) {
 	s := newStub(t, true)
-	s.mediaLanes = true
 	c := dialStub(t, s)
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
@@ -34,22 +32,9 @@ func TestCameraAndScreenStartStopIndependently(t *testing.T) {
 	}
 }
 
-func TestCameraUnsupportedWithoutMediaLanes(t *testing.T) {
-	s := newStub(t, true)
-	c := dialStub(t, s)
-	stop := make(chan struct{})
-	t.Cleanup(func() { close(stop) })
-	if err := c.JoinVoice(testCtx(t), "lobby", nopSource{stop: stop}, nopSink{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.StartCamera(&countSource{}); !errors.Is(err, ErrCameraUnsupported) {
-		t.Fatalf("StartCamera = %v, want ErrCameraUnsupported", err)
-	}
-}
-
 func TestCameraMediaFullStopsTheRejectedPublisher(t *testing.T) {
 	s := newStub(t, true)
-	s.mediaLanes, s.rejectCamera = true, true
+	s.rejectCamera = true
 	c := dialStub(t, s)
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
@@ -66,7 +51,6 @@ func TestCameraMediaFullStopsTheRejectedPublisher(t *testing.T) {
 
 func TestStaleCameraRejectionDoesNotStopANewerPublisher(t *testing.T) {
 	s := newStub(t, true)
-	s.mediaLanes = true
 	c := dialStub(t, s)
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
@@ -86,7 +70,6 @@ func TestStaleCameraRejectionDoesNotStopANewerPublisher(t *testing.T) {
 
 func TestAdoptCallCarriesActivePublishersAndScreenSubscription(t *testing.T) {
 	oldServer, newServer := newStub(t, true), newStub(t, true)
-	oldServer.mediaLanes, newServer.mediaLanes = true, true
 	oldClient, newClient := dialStub(t, oldServer), dialStub(t, newServer)
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
@@ -119,7 +102,6 @@ func TestAdoptCallCarriesActivePublishersAndScreenSubscription(t *testing.T) {
 
 func TestStopDuringAdoptionWinsOverSavedCameraState(t *testing.T) {
 	oldServer, newServer := newStub(t, true), newStub(t, true)
-	oldServer.mediaLanes, newServer.mediaLanes = true, true
 	gate := make(chan struct{})
 	newServer.offerGate = gate
 	oldClient, newClient := dialStub(t, oldServer), dialStub(t, newServer)
@@ -153,7 +135,6 @@ func TestStopDuringAdoptionWinsOverSavedCameraState(t *testing.T) {
 
 func TestStopAfterDisconnectBeforeAdoptionDoesNotRestoreCamera(t *testing.T) {
 	oldServer, newServer := newStub(t, true), newStub(t, true)
-	oldServer.mediaLanes, newServer.mediaLanes = true, true
 	oldClient, newClient := dialStub(t, oldServer), dialStub(t, newServer)
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
@@ -177,7 +158,6 @@ func TestStopAfterDisconnectBeforeAdoptionDoesNotRestoreCamera(t *testing.T) {
 
 func TestAdoptCallKeepsVoiceWhenSelectedScreenIsUnavailable(t *testing.T) {
 	oldServer, newServer := newStub(t, true), newStub(t, true)
-	oldServer.mediaLanes, newServer.mediaLanes = true, true
 	newServer.rejectSubscribe = true
 	oldClient, newClient := dialStub(t, oldServer), dialStub(t, newServer)
 	stop := make(chan struct{})

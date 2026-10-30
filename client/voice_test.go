@@ -24,7 +24,6 @@ type stubServer struct {
 	t               *testing.T
 	url             string
 	answer          bool // act as an SFU answerer; false = never answer offers
-	mediaLanes      bool // advertise the modern media control plane
 	rejectSubscribe bool
 	rejectCamera    bool
 	offerGate       <-chan struct{}
@@ -100,9 +99,6 @@ func (s *stubServer) serve(ws *websocket.Conn) {
 	fp := identity.Fingerprint(a.PubKey)
 	ok := proto.AuthOK{Fingerprint: fp, Roles: []string{"user"}, ServerID: sid,
 		Channels: []proto.ChannelInfo{{Name: "lobby", Type: "voice"}}}
-	if s.mediaLanes {
-		ok.Capabilities = []string{proto.CapabilityMediaLanesV1}
-	}
 	send(proto.TypeAuthOK, ok)
 	for {
 		_, raw, err := ws.ReadMessage()

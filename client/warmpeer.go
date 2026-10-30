@@ -257,15 +257,9 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 	c.adoptMu.Unlock()
 	_ = from.send(proto.TypeVoiceLeave, proto.VoiceLeave{}) // fails on the dead connection
 	tctx, cancel := context.WithTimeout(ctx, adoptTeardownWait)
-	old.teardownCtx(tctx)
+	old.teardownCtx(tctx) // a stuck teardown must not cost the user the call: join anyway
 	cancel()
-	vid := false
-	select {
-	case <-old.tdDone:
-		vid = old.vidWanted // the actor has exited, so its state is ours to read
-	default: // a stuck teardown must not cost the user the call: join anyway
-	}
-	if err := c.joinCall(ctx, old.channel, old.src, old.sink, old.muted.Load(), vid, pc); err != nil {
+	if err := c.joinCall(ctx, old.channel, old.src, old.sink, old.muted.Load(), pc); err != nil {
 		_ = c.finishAdoption(nil, true)
 		return err
 	}
@@ -274,7 +268,7 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 	}
 	if watch.fp != "" {
 		if err := c.restoreScreen(ctx, watch.fp); err != nil {
-			_ = c.watchScreen("", c.SupportsMediaLanes(), true)
+			_ = c.watchScreen("", true)
 			c.emitNB(Event{Err: fmt.Errorf("%w: %v", ErrScreenResume, err)})
 		}
 	}
@@ -302,7 +296,7 @@ func (c *Client) restoreScreen(ctx context.Context, fp string) error {
 	deadline := time.NewTimer(adoptSubscribeRetryFor)
 	defer deadline.Stop()
 	for {
-		err := c.watchScreen(fp, c.SupportsMediaLanes(), true)
+		err := c.watchScreen(fp, true)
 		var serverErr *ServerError
 		if err == nil || !errors.As(err, &serverErr) || serverErr.Code != proto.CodeNotPublishing {
 			return err

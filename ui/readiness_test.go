@@ -202,7 +202,7 @@ func TestScrolledLiveTargetMatchesVisibleOccupant(t *testing.T) {
 	}
 	channels = append(channels, proto.ChannelInfo{Name: "lounge", Type: "voice"})
 	s.st.SetConnected(channels, "fp")
-	s.st.Voice["lounge"] = []proto.VoiceMember{{Fingerprint: "presenter", Name: "presenter", Sharing: true}}
+	s.st.Voice["lounge"] = []proto.VoiceMember{{Fingerprint: "presenter", Name: "presenter", Media: []proto.MediaKind{proto.MediaScreen}}}
 	gm := g.geom()
 	rows := s.st.Rows()
 	visible := g.channelVisible(gm)

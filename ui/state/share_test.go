@@ -65,7 +65,7 @@ func TestLetterbox(t *testing.T) {
 func TestRowsCarrySharing(t *testing.T) {
 	s := New()
 	s.VoiceChannels = []string{"voice"}
-	s.Voice["voice"] = []proto.VoiceMember{{Fingerprint: "a", Name: "ann", Sharing: true}, {Fingerprint: "b", Name: "bob"}}
+	s.Voice["voice"] = []proto.VoiceMember{{Fingerprint: "a", Name: "ann", Media: []proto.MediaKind{proto.MediaScreen}}, {Fingerprint: "b", Name: "bob"}}
 	var got []bool
 	for _, r := range s.Rows() {
 		if r.Kind == RowOccupant {
@@ -79,7 +79,7 @@ func TestRowsCarrySharing(t *testing.T) {
 
 func TestSharerIn(t *testing.T) {
 	s := New()
-	s.Voice["voice"] = []proto.VoiceMember{{Fingerprint: "a", Name: "ann", Sharing: true}, {Fingerprint: "b", Name: "bob"}}
+	s.Voice["voice"] = []proto.VoiceMember{{Fingerprint: "a", Name: "ann", Media: []proto.MediaKind{proto.MediaScreen}}, {Fingerprint: "b", Name: "bob"}}
 	if n, ok := s.SharerIn("voice", "a"); !ok || n != "ann" {
 		t.Fatalf("a = %q %v", n, ok)
 	}

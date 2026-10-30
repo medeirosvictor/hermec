@@ -190,7 +190,7 @@ func TestWarmPeerAdoptedOnVoiceJoin(t *testing.T) {
 	}
 
 	// A second member to receive the audio.
-	b := newTestPeer(t, url, false)
+	b := newTestPeer(t, url)
 	var got atomic.Int64
 	b.pc.OnTrack(func(tr *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		for {

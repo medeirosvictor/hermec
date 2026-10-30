@@ -90,12 +90,12 @@ func pumpAudio(stop <-chan struct{}, tracks ...*webrtc.TrackLocalStaticRTP) {
 
 func TestSecondAudioTrackIgnored(t *testing.T) {
 	s, url := startServerS(t, shareCfg())
-	a := newTestPeer(t, url, false)
+	a := newTestPeer(t, url)
 	extra, _ := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus, ClockRate: 48000, Channels: 2}, "audio2-"+a.fp, a.fp)
 	if _, err := a.pc.AddTrack(extra); err != nil {
 		t.Fatal(err)
 	}
-	b := newTestPeer(t, url, false)
+	b := newTestPeer(t, url)
 	a.join()
 	b.join()
 	stop := make(chan struct{})
@@ -125,12 +125,12 @@ func TestSecondAudioTrackIgnored(t *testing.T) {
 
 func TestAudioTransceiversStayBoundedOverChurn(t *testing.T) {
 	s, url := startServerS(t, shareCfg())
-	stay := newTestPeer(t, url, false)
+	stay := newTestPeer(t, url)
 	stay.join()
 	vs := waitSession(t, s, "lounge")
 	max := 0
 	for i := 0; i < 50; i++ {
-		c := newTestPeer(t, url, false)
+		c := newTestPeer(t, url)
 		c.join()
 		stop := make(chan struct{})
 		pumpAudio(stop, c.audio)
@@ -159,9 +159,11 @@ func TestAudioTransceiversStayBoundedOverChurn(t *testing.T) {
 			return gone
 		})
 	}
-	// own receive line + live lines + inactive lines up to the rebuild threshold
-	// (bound = live + maxInactiveLines + slack).
-	if bound := 2 + maxInactiveLines + 1; max > bound {
+	// Fixed media layout (own audio, camera and screen receive lines plus the
+	// camera and screen send slots) + the churner's live audio line + inactive
+	// audio lines up to the rebuild threshold + slack.
+	fixed := 3 + proto.MaxCameraSlots + 1
+	if bound := fixed + 1 + maxInactiveLines + 1; max > bound {
 		t.Fatalf("staying member's PC grew to %d transceivers over 50 join/leave cycles, want <= %d", max, bound)
 	}
 }
@@ -170,8 +172,8 @@ func TestOversizeOfferResetsPeer(t *testing.T) {
 	cfg := shareCfg()
 	cfg.maxOfferBytes = 200 // any real offer is bigger
 	s, url := startServerS(t, cfg)
-	a := newTestPeer(t, url, false)
-	b := newTestPeer(t, url, false)
+	a := newTestPeer(t, url)
+	b := newTestPeer(t, url)
 	a.join()
 	b.join()
 	stop := make(chan struct{})
