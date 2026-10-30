@@ -1,7 +1,6 @@
 package state
 
 import (
-	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -40,12 +39,3 @@ func TestFontScaleBounds(t *testing.T) {
 	}
 }
 
-func TestOldUpdateCheckKeyStillLoads(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "settings.toml")
-	if err := os.WriteFile(p, []byte("name = \"a\"\nupdate_check = false\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if s, err := LoadSettings(p); err != nil || s.Name != "a" {
-		t.Fatalf("%+v %v", s, err)
-	}
-}

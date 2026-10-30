@@ -220,8 +220,8 @@ The script stops an active service while it snapshots the following private
 state: `server.toml`, `hermec-server.key`, `chain.jsonl`, `history.jsonl`, and,
 when they exist, `transition.json` and `readiness.json`. The latter two are the
 durable dedicated cutover/readiness records; retain them exactly, including for
-`prepared`, `fenced`, or `committed` transitions. Older state directories that
-predate those records back up normally.
+`prepared`, `fenced`, or `committed` transitions. A server that never took
+part in a cutover has neither file.
 
 The archive is mode 0600 and includes private identity, so protect it like a
 password. It deliberately excludes `logs/` and `tls/`, including TLS private

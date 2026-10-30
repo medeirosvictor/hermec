@@ -72,9 +72,8 @@ func updateRowLabel(st updateStatus, a *update.Available, cur string) string {
 
 // startUpdateCheck runs the release check in the background (house
 // goroutine+channel pattern). The result arrives on g.updateCh, drained in
-// pollUpdate. Check bounds its own time, so context.Background is enough. It
-// always runs: the old update_check setting is no longer read. Only one check
-// is in flight at a time.
+// pollUpdate. Check bounds its own time, so context.Background is enough. Only
+// one check is in flight at a time.
 func (g *game) startUpdateCheck() {
 	if v := os.Getenv(fakeUpdateEnv); v != "" && !g.updBusy {
 		g.updBusy, g.updStatus = true, updChecking

@@ -91,5 +91,5 @@ backup_and_restore() {
 backup_and_restore prepared prepared ready
 backup_and_restore fenced fenced ready
 backup_and_restore committed committed ready
-# Pre-dedicated state has no optional records and must remain backup-compatible.
-backup_and_restore legacy
+# A server that never took part in a cutover has no optional records.
+backup_and_restore no-transition

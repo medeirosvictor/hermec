@@ -268,14 +268,8 @@ func Run(opts Options) error {
 		}
 		opts.KeyPath = p
 	}
-	// Settings load before the identity is created: a first run means
-	// settings.toml, servers.toml and identity.key are all still absent.
-	serversPath := opts.ServersPath
-	if serversPath == "" {
-		serversPath, _ = DefaultServersPath()
-	}
 	var boot game // holds load results until the real game is built
-	boot.loadSettings(opts.SettingsPath, serversPath, opts.KeyPath)
+	boot.loadSettings(opts.SettingsPath)
 	id, err := LoadOrCreateIdentity(opts.KeyPath)
 	if err != nil {
 		return fmt.Errorf("identity: %w", err)

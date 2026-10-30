@@ -103,7 +103,7 @@ func scanlinesOr(s state.Settings, def bool) bool {
 
 // loadSettings reads the settings file into g.set. Failures become the
 // notice; an unreadable file is moved aside so it is not overwritten.
-func (g *game) loadSettings(path string, others ...string) {
+func (g *game) loadSettings(path string) {
 	if path == "" {
 		p, err := DefaultSettingsPath()
 		if err != nil {
@@ -113,7 +113,7 @@ func (g *game) loadSettings(path string, others ...string) {
 		path = p
 	}
 	g.settingsPath = path
-	s, err := state.LoadOrInitSettings(path, others...) // nothing on disk yet: modern first-run defaults
+	s, err := state.LoadOrInitSettings(path) // nothing on disk yet: first-run defaults
 	if err != nil {
 		g.notice = fmt.Sprintf("settings.toml unreadable (%v); moved to .bad", err)
 		_ = os.Rename(path, filepath.Clean(path)+".bad")

@@ -358,26 +358,6 @@ func TestHelpRowIsLast(t *testing.T) {
 	}
 }
 
-func TestUpdateCheckIgnoresOldSetting(t *testing.T) {
-	// update_check = false is kept so old files load, but the check still runs.
-	off := false
-	g := testGame(t)
-	g.set.UpdateCheck = &off
-	g.ver = "v1.0.0"
-	g.updateCh = make(chan updateResult, 1)
-	called := make(chan struct{}, 1)
-	g.checkFn = func(context.Context, string) (update.Available, bool, error) {
-		called <- struct{}{}
-		return update.Available{}, false, nil
-	}
-	g.startUpdateCheck()
-	select {
-	case <-called:
-	case <-time.After(2 * time.Second):
-		t.Fatal("check did not run with update_check = false")
-	}
-}
-
 func TestHelpScrollReclampsBeforeDelta(t *testing.T) {
 	g := testGame(t)
 	g.openHelp()

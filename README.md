@@ -175,7 +175,6 @@ whether a newer version exists (development builds never make this request) and,
 It sends no identifiers beyond a normal HTTPS request. The check always runs in
 release builds; the "update" row in Settings (gear tile or F10) shows its status
 and re-checks, or opens the Releases page when a newer version is available.
-The old `update_check` key in `settings.toml` is ignored.
 
 ## Development
 

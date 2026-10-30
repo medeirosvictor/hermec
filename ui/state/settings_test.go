@@ -138,62 +138,15 @@ func TestMembersRoundTrip(t *testing.T) {
 	}
 }
 
-// A first run needs settings.toml, servers.toml and identity.key all absent; a
-// user who only has a servers list or a key predates settings and keeps the
-// retro look.
-func TestFirstRunNeedsEveryFileAbsent(t *testing.T) {
-	for _, have := range []string{"", "servers.toml", "identity.key"} {
-		dir := t.TempDir()
-		if have != "" {
-			if err := os.WriteFile(filepath.Join(dir, have), []byte("x"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		s, err := LoadOrInitSettings(filepath.Join(dir, "settings.toml"), filepath.Join(dir, "servers.toml"), filepath.Join(dir, "identity.key"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		modern := s.Palette == "slate" && s.FontID() == "jetbrains-mono"
-		legacy := s.Palette == "" && s.FontID() == "vt323"
-		if have == "" && !modern {
-			t.Errorf("nothing exists: %+v, want modern defaults", s)
-		}
-		if have != "" && !legacy {
-			t.Errorf("%s exists: %+v (font %q), want amber/VT323", have, s, s.FontID())
-		}
-	}
-}
-
 func TestFirstRunDefaultsAreModern(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "settings.toml") // does not exist
-	s, err := LoadOrInitSettings(p, filepath.Join(d, "servers.toml"), filepath.Join(d, "identity.key"))
+	s, err := LoadOrInitSettings(p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Palette != "slate" || s.Font != "jetbrains-mono" || s.FontID() != "jetbrains-mono" || s.Scanlines != nil {
 		t.Fatalf("first run = %+v", s)
-	}
-}
-
-func TestLegacySettingsKeepRetroFont(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "settings.toml")
-	if err := os.WriteFile(p, []byte("name = \"zoe\"\npalette = \"green\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	s, err := LoadOrInitSettings(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.Palette != "green" || s.Name != "zoe" || s.FontID() != "vt323" {
-		t.Fatalf("legacy = %+v (font %q)", s, s.FontID())
-	}
-	// A legacy file with no palette stays amber (""), not slate.
-	if err := os.WriteFile(p, []byte("name = \"zoe\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if s, _ = LoadOrInitSettings(p); s.Palette != "" || s.FontID() != "vt323" {
-		t.Fatalf("legacy no palette = %+v", s)
 	}
 }
 
@@ -217,7 +170,7 @@ func TestMalformedSettingsNotFirstRun(t *testing.T) {
 	if err == nil {
 		t.Fatal("malformed file must error")
 	}
-	if s.Palette != "" || s.Font != "" || s.FontID() != "vt323" {
+	if s.Palette != "" || s.Font != "" {
 		t.Fatalf("malformed file got first-run defaults: %+v", s)
 	}
 }
