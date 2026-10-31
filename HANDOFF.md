@@ -9,11 +9,27 @@ Roadmap: [PLAN.md](PLAN.md).
 
 - Branch: `feature/dedicated-hosting` in `.worktrees/dedicated-hosting`.
 - Dedicated Tasks 1–5 are complete locally (`ca6ed69`, `020492f`, `5df0524`
-  plus the founder desktop authorization/cutover flow). The documentation
-  changes are committed with the dedicated-hosting work.
-- **Next work: Task 6 — remote acceptance/release.** There is no disposable
-  VPS/AWS test yet: do not claim remote hosting is available or provision cloud
-  resources.
+  plus the founder desktop authorization/cutover flow). Task 6's automated gate
+  passed; the evidence is in the dedicated plan.
+- The 2026-10-30 security audit's four findings are fixed: public admission is
+  validated against the signed chain's effective config; signed config bodies
+  are bounds-checked on every append and replay; plaintext-password auth (the
+  scrypt exhaustion path) is gone; `update.sh` validates a staged copy as the
+  service user in a `systemd-run` sandbox and never runs a candidate as root.
+- All pre-1.0 compatibility code is removed (protocol v1, plaintext passwords,
+  the old share/watch media plane and capability negotiation, the pre-v0.7
+  heartbeat grace, UDP port ranges, the pre-chain `hosted.toml` migration and
+  settings shims). The modern camera/screen lanes are the only media path.
+- **Next work: Task 6 — remote acceptance/release.** Victor is setting up the
+  AWS account and disposable EC2 instance following
+  [docs/aws-ec2-from-zero.md](docs/aws-ec2-from-zero.md); run the
+  disposable-VPS and AWS rows with him. Do not claim remote hosting is
+  available or provision cloud resources. The `systemd-run` validation branch
+  of `update.sh` has no automated coverage; exercise it on the VPS
+  (update/rollback row).
+- Deferred audit suggestions: signed release manifests (Sigstore/cosign or an
+  offline minisign key) for update provenance, and one shared secure
+  atomic-file helper for the several private-file writers.
 - Private networking cannot ship before real Tailscale/Headscale direct and
   relay evidence. Migration follows dedicated/private hosting; desktop
   distribution/updater follows migration.
