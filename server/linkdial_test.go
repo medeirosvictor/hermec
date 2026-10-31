@@ -47,8 +47,11 @@ func dialLink(t *testing.T, aURL string, b *Server) *Link {
 	if err != nil {
 		t.Fatalf("DialLink: %v", err)
 	}
-	t.Cleanup(l.Close)
-	go l.Run()
+	ran := make(chan struct{})
+	// Join Run (and its beat goroutine) so tests can restore the package-level
+	// heartbeat timing without racing a reader.
+	t.Cleanup(func() { l.Close(); <-ran })
+	go func() { defer close(ran); l.Run() }()
 	return l
 }
 
