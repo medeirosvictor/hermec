@@ -40,7 +40,18 @@ Roadmap: [PLAN.md](PLAN.md).
     `server/dedicated` (records), `server/host`, later `server/sfu`; in `ui`
     move pure logic into `ui/state` and pull out `ui/crt`; one
     `internal/fsutil.WriteFileAtomic`.
-- **Then the regular-use musts, first wave** (PLAN item 3): per-person
+- **Next steps, in order:**
+  1. Easy, low-risk extractions (PLAN item 1a): `server/history`,
+     `internal/ratelimit`, `server/dedicated` records, `server/host`,
+     `internal/fsutil.WriteFileAtomic`, dedicated lifecycle out of
+     `cmd/hermec-server` (and split its `main()`), split
+     `conn.authenticate`, `ui/crt`, pure `ui` helpers into `ui/state`, one
+     `ui/dedicated` feature. One commit each, no behavior change, full gate
+     green per commit.
+  2. Regular-use musts, first wave (below).
+  3. Agree the `ui.game` / SFU / client split design with Victor (PLAN 1b),
+     then execute it.
+- **Regular-use musts, first wave** (PLAN item 3): per-person
   volume and mic gain; mid-call audio device switching; auto-rejoin voice after
   a reconnect plus an in-app updater (now required: builds must match exactly).
   Second wave: moderation UI, invite links, push-to-talk then echo

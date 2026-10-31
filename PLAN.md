@@ -25,13 +25,28 @@ remote availability is not yet claimed.
 Priority order as of 2026-10-31 (Victor). Dedicated-hosting remote acceptance
 runs in parallel whenever the EC2 instance is ready.
 
-1. **Code organization (top priority).** Break the largest files and the
-   god types into feature-sized, well-rounded parts where it makes sense:
-   `ui.game` (126 fields, 385 methods over 36 files), `server.Server`
-   (135 methods over 22 files), `client.Client` (100 methods), the 1,000-line
-   `server/sfu.go`, `client/voice.go`/`share.go`, and logic living in
-   `cmd/hermec-server`. The measured offender list is in [HANDOFF.md](HANDOFF.md);
-   the design is agreed with Victor before refactoring starts.
+1. **Code organization (top priority).** Two stages:
+   - **1a. Easy, low-risk extractions (next up).** Each is its own commit that
+     builds and passes on its own, with no behavior change:
+     - `server/history`: move `History` (self-contained type) out of `server`.
+     - `internal/ratelimit`: `ratelimit.go` and `readpace.go`.
+     - `server/dedicated`: transition records, readiness lock, URL helper
+       (now in `core/proto`), bootstrap record logic.
+     - `server/host`: `Host` orchestration and `hostmerge.go`, behind a narrow
+       interface to `Server`; one known-hosts store shared with the app.
+     - `internal/fsutil.WriteFileAtomic`, replacing the nine temp+rename
+       writers (fixes the weak `writeFile0600`).
+     - Move dedicated lifecycle/config validation out of `cmd/hermec-server`
+       into the library; break `main()` (271 lines) and
+       `conn.authenticate` (177 lines) into named steps.
+     - `ui/crt` for the CRT shader; pure helpers from `ui` into `ui/state`;
+       merge the three `ui/dedicated*` files into one feature;
+       `ui/state/watch.go` already renamed.
+   - **1b. Bigger splits (design with Victor first).** `ui.game` (126 fields,
+     385 methods) into per-feature state structs (call, video, hosting,
+     settings, …) with their own update/draw; split `server/sfu.go` and
+     `client/voice.go`/`share.go` along publish / receive / signalling lines.
+     The measured offender list is in [HANDOFF.md](HANDOFF.md).
 2. **Dedicated hosting:** pass remote acceptance/release (Task 6) on a
    disposable EC2 instance. See the
    [dedicated plan](docs/superpowers/plans/2026-10-28-dedicated-hosting.md) and
