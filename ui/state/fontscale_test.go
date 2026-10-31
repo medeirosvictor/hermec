@@ -38,4 +38,3 @@ func TestFontScaleBounds(t *testing.T) {
 		}
 	}
 }
-
