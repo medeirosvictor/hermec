@@ -65,8 +65,8 @@ func (c *conn) handleLinkSyncIn(env proto.Envelope) {
 	dropSlow(dead)
 }
 
-// sendHandover asks the linked host with this fingerprint to become active.
-func (s *Server) sendHandover(fp string) bool {
+// SendHandover asks the linked host with this fingerprint to become active.
+func (s *Server) SendHandover(fp string) bool {
 	s.chMu.Lock()
 	defer s.chMu.Unlock()
 	for c := range s.links {
@@ -99,9 +99,9 @@ func (s *Server) Promote() bool {
 	return true
 }
 
-// setFollowerMode sets m (standby or idle) unless the host is active, which a
+// SetFollowerMode sets m (standby or idle) unless the host is active, which a
 // takeover may have made it meanwhile; it reports whether it set m.
-func (s *Server) setFollowerMode(m Mode) bool {
+func (s *Server) SetFollowerMode(m Mode) bool {
 	t := &s.takeover
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -112,9 +112,9 @@ func (s *Server) setFollowerMode(m Mode) bool {
 	return s.Mode() == m
 }
 
-// resumeActive undoes goIdle when a handover or merge is called off, restoring
+// ResumeActive undoes GoIdle when a handover or merge is called off, restoring
 // whether the host counted as promoted.
-func (s *Server) resumeActive(promoted bool) {
+func (s *Server) ResumeActive(promoted bool) {
 	t := &s.takeover
 	t.mu.Lock()
 	s.SetMode(ModeActive)
@@ -149,15 +149,15 @@ func (c *conn) handleLinkChainIn(env proto.Envelope) {
 	}
 	for _, e := range es {
 		if err := c.srv.applyLinkEntry(e); err != nil {
-			c.srv.logf("server: link chain entry %d: %v", e.Seq, err)
+			c.srv.Logf("server: link chain entry %d: %v", e.Seq, err)
 			return
 		}
 	}
 }
 
-// goIdle sets ModeIdle. The dedicated lease always precedes chainMu, so a
+// GoIdle sets ModeIdle. The dedicated lease always precedes chainMu, so a
 // readiness commit cannot deadlock with this demotion.
-func (s *Server) goIdle() {
+func (s *Server) GoIdle() {
 	s.dedicatedMu.Lock()
 	s.chainMu.Lock()
 	s.setModeLocked(ModeIdle)
@@ -171,7 +171,7 @@ func (s *Server) goIdle() {
 // links are dropped so their peers look for the new active host. Nothing is
 // left connected to serve a client on a host that no longer does.
 func (s *Server) Demote(to proto.HostInfo, reason string, lostAuthors map[string]bool) {
-	s.goIdle()
+	s.GoIdle()
 	s.chMu.Lock()
 	clients := make([]*conn, 0, len(s.authed))
 	for c := range s.authed {
@@ -194,10 +194,10 @@ func (s *Server) Demote(to proto.HostInfo, reason string, lostAuthors map[string
 	}
 }
 
-// lostAuthors returns the fingerprints of the authors of our chain entries
+// LostAuthors returns the fingerprints of the authors of our chain entries
 // that the chain `theirs` lacks (compared by hash), for the entries after the
 // two chains' common prefix.
-func (s *Server) lostAuthors(theirs []chain.Entry) map[string]bool {
+func (s *Server) LostAuthors(theirs []chain.Entry) map[string]bool {
 	have := make(map[[32]byte]bool, len(theirs))
 	for _, e := range theirs {
 		have[e.Hash()] = true

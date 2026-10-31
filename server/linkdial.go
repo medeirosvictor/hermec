@@ -89,7 +89,7 @@ func DialLink(ctx context.Context, url string, s *Server) (*Link, error) {
 			readiness = &proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}
 		}
 	}
-	return dialLinkOpts(ctx, url, s, false, readiness)
+	return DialLinkOpts(ctx, url, s, false, readiness)
 }
 
 // DialDedicatedLink resumes r when non-nil, rather than allowing the source to
@@ -99,13 +99,13 @@ func DialDedicatedLink(ctx context.Context, url string, s *Server, r *proto.Dedi
 	if r != nil && r.Validate() != nil {
 		return nil, errors.New("server: invalid dedicated readiness")
 	}
-	return dialLinkOpts(ctx, url, s, false, r)
+	return DialLinkOpts(ctx, url, s, false, r)
 }
 
-// dialLinkOpts is DialLink; with full set it asks for the active host's whole
+// DialLinkOpts is DialLink; with full set it asks for the active host's whole
 // history, not just the lines after our newest, because after a merge the
 // active host may hold lines older than our newest that we lack.
-func dialLinkOpts(ctx context.Context, url string, s *Server, full bool, dedicated *proto.DedicatedReadiness) (*Link, error) {
+func DialLinkOpts(ctx context.Context, url string, s *Server, full bool, dedicated *proto.DedicatedReadiness) (*Link, error) {
 	ws, peerFingerprint, err := dialHost(ctx, url, s, s.chain.Head().Seq) // never follow a host behind our chain
 	if err != nil {
 		return nil, err
@@ -115,7 +115,7 @@ func dialLinkOpts(ctx context.Context, url string, s *Server, full bool, dedicat
 	hello := proto.LinkHello{
 		Build:     version.Version,
 		ChainSeq:  s.chain.Head().Seq,
-		Addrs:     s.advertise(),
+		Addrs:     s.Advertise(),
 		Name:      s.cfg.HostName,
 		Prepared:  s.Prepared(),
 		Dedicated: dedicated,
@@ -134,12 +134,12 @@ func dialLinkOpts(ctx context.Context, url string, s *Server, full bool, dedicat
 // priority. It authenticates warm with our host key, so no password is needed.
 // A host whose chain is behind ours does not answer.
 func ProbeHost(ctx context.Context, url string, s *Server) (proto.LinkProbeReply, error) {
-	return probeHost(ctx, url, s, s.chain.Head().Seq)
+	return ProbeHostSeq(ctx, url, s, s.chain.Head().Seq)
 }
 
-// probeHost is ProbeHost accepting a host whose chain head is at least minSeq;
+// ProbeHostSeq is ProbeHost accepting a host whose chain head is at least minSeq;
 // a split-brain probe passes 0, for the other side may be behind or diverged.
-func probeHost(ctx context.Context, url string, s *Server, minSeq uint64) (proto.LinkProbeReply, error) {
+func ProbeHostSeq(ctx context.Context, url string, s *Server, minSeq uint64) (proto.LinkProbeReply, error) {
 	var reply proto.LinkProbeReply
 	ws, _, err := dialHost(ctx, url, s, minSeq)
 	if err != nil {
@@ -269,7 +269,7 @@ func (l *Link) Run() {
 		case proto.TypeLinkRole:
 			var r proto.LinkRole
 			if json.Unmarshal(env.Data, &r) != nil {
-				l.s.logf("server: link: malformed link_role ignored")
+				l.s.Logf("server: link: malformed link_role ignored")
 				break
 			}
 			l.standby.Store(r.Standby)
@@ -277,7 +277,7 @@ func (l *Link) Run() {
 		case proto.TypeHosts:
 			var h proto.Hosts
 			if json.Unmarshal(env.Data, &h) != nil {
-				l.s.logf("server: link: malformed hosts ignored")
+				l.s.Logf("server: link: malformed hosts ignored")
 				break
 			}
 			l.evMu.Lock()
@@ -537,7 +537,7 @@ func (s *Server) mergeLinkMessages(msgs []proto.ChatMessage) {
 		return
 	}
 	if _, err := s.hist.Merge(msgs); err != nil {
-		s.logf("server: link history: %v", err)
+		s.Logf("server: link history: %v", err)
 		return
 	}
 	limit := s.clock().Add(maxStoredSkew)

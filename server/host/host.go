@@ -1,4 +1,4 @@
-package server
+package host
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/server"
 )
 
 // Orchestrator timing. Variables so tests can shorten them.
@@ -54,9 +55,9 @@ const (
 	RolePrepared = "prepared"
 )
 
-// HostConfig configures a Host.
-type HostConfig struct {
-	Server Config
+// Config configures a Host.
+type Config struct {
+	Server server.Config
 	// Known returns the URLs of the other hosts we know, except our own
 	// advertised ones.
 	Known func() []string
@@ -80,8 +81,8 @@ type HostConfig struct {
 // it, follows it as standby or idle, takes over when it disappears, settles a
 // split brain, and hands the role back to a higher-priority host.
 type Host struct {
-	hc  HostConfig
-	srv *Server
+	hc  Config
+	srv *server.Server
 
 	ctx      context.Context // canceled by Shutdown
 	cancel   context.CancelFunc
@@ -106,24 +107,24 @@ type Host struct {
 	mu       sync.Mutex
 	role     string
 	roleName string // the active host's name while standby
-	link     *Link
+	link     *server.Link
 	active   proto.HostInfo // the active host as last learned, while not active
 }
 
-// NewHost returns a Host for hc. Ordinary hosts start idle; a prepared host
-// starts in the passive ModePrepared regardless of any other requested mode.
-func NewHost(hc HostConfig) *Host {
-	prepared := hc.Prepared || hc.Server.Prepared || hc.Server.Mode == ModePrepared
+// New returns a Host for hc. Ordinary hosts start idle; a prepared host
+// starts in the passive server.ModePrepared regardless of any other requested mode.
+func New(hc Config) *Host {
+	prepared := hc.Prepared || hc.Server.Prepared || hc.Server.Mode == server.ModePrepared
 	if prepared {
-		hc.Server.Mode = ModePrepared
+		hc.Server.Mode = server.ModePrepared
 		hc.Server.Prepared = true
 	} else {
-		hc.Server.Mode = ModeIdle
+		hc.Server.Mode = server.ModeIdle
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Host{
 		hc:       hc,
-		srv:      New(hc.Server),
+		srv:      server.New(hc.Server),
 		ctx:      ctx,
 		cancel:   cancel,
 		done:     make(chan struct{}),
@@ -140,8 +141,17 @@ func NewHost(hc HostConfig) *Host {
 	return h
 }
 
+// signal wakes a waiter on ch without blocking; a signal already pending is
+// enough.
+func signal(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
 // Server returns the host's server.
-func (h *Host) Server() *Server { return h.srv }
+func (h *Host) Server() *server.Server { return h.srv }
 
 // Role is "active", "standby", "idle" or "prepared".
 func (h *Host) Role() string {
@@ -157,7 +167,7 @@ func (h *Host) Active() proto.HostInfo {
 	role, l, info := h.role, h.link, h.active
 	h.mu.Unlock()
 	if role == RoleActive {
-		return h.srv.selfInfo()
+		return h.srv.SelfInfo()
 	}
 	if l != nil {
 		if hs, ok := l.Hosts(); ok {
@@ -176,7 +186,7 @@ func (h *Host) Start() error {
 	h.srv.SetPromoteHook(func() { signal(h.promoted) })
 	// A committed journal is authoritative on restart: it has already made the
 	// destination active, so do not leave orchestration permanently prepared.
-	if !h.srv.Prepared() && h.srv.Mode() == ModeActive {
+	if !h.srv.Prepared() && h.srv.Mode() == server.ModeActive {
 		h.prepared = false
 		h.setRole(RoleActive, "")
 	}
@@ -215,7 +225,7 @@ func (h *Host) loop() {
 	}
 	l := h.rejoin(nil, coldStartWindow)
 	for !h.stopped() {
-		if h.srv.Mode() == ModeFenced {
+		if h.srv.Mode() == server.ModeFenced {
 			if l != nil {
 				l.Close()
 			}
@@ -224,7 +234,7 @@ func (h *Host) loop() {
 		}
 		if l != nil {
 			l = h.runLinked(l)
-		} else if h.srv.Prepared() || h.srv.Mode() == ModeFenced {
+		} else if h.srv.Prepared() || h.srv.Mode() == server.ModeFenced {
 			// Stay passive while the source is unavailable; retrying a link is
 			// safe, electing ourselves is not.
 			if !h.pause(coldProbeEvery) {
@@ -268,7 +278,7 @@ func (h *Host) targets(extra []string) []string {
 		return []string{h.hc.PinnedHost}
 	}
 	own := make(map[string]bool)
-	for _, a := range h.srv.advertise() {
+	for _, a := range h.srv.Advertise() {
 		own[a] = true
 	}
 	var known []string
@@ -290,7 +300,7 @@ func (h *Host) targets(extra []string) []string {
 // learn remembers host addresses and passes the set to SaveKnown when it grew.
 func (h *Host) learn(addrs ...string) {
 	own := make(map[string]bool)
-	for _, a := range h.srv.advertise() {
+	for _, a := range h.srv.Advertise() {
 		own[a] = true
 	}
 	for _, a := range h.seen {
@@ -332,7 +342,7 @@ func (h *Host) probeEach(ctx context.Context, urls []string, minSeq uint64, fn f
 	ch := make(chan res, len(urls))
 	for _, u := range urls {
 		go func() {
-			r, err := probeHost(ctx, u, h.srv, minSeq)
+			r, err := server.ProbeHostSeq(ctx, u, h.srv, minSeq)
 			ch <- res{u, r, err}
 		}()
 	}
@@ -353,34 +363,34 @@ func (h *Host) probeEach(ctx context.Context, urls []string, minSeq uint64, fn f
 
 // sameServer reports whether a probe reply is from an active host of our server.
 func (h *Host) sameServer(r proto.LinkProbeReply) bool {
-	return r.Active && r.ServerID == h.srv.chain.ID().String()
+	return r.Active && r.ServerID == h.srv.Chain().ID().String()
 }
 
 // coldStart looks for an active host among the known ones (and extra) for up
 // to coldStartWindow and links to the first it finds.
-func (h *Host) coldStart(extra []string, window time.Duration) *Link {
+func (h *Host) coldStart(extra []string, window time.Duration) *server.Link {
 	if len(h.targets(extra)) == 0 {
 		return nil
 	}
-	mine := h.srv.selfInfo().Priority
+	mine := h.srv.SelfInfo().Priority
 	start := time.Now()
 	end, hardEnd := start.Add(window), start.Add(3*window)
 	for {
 		// Probe again and again: a host that answers inactive may be about to
 		// become active, and a refused one may be starting.
-		var link *Link
+		var link *server.Link
 		better := false // a reachable, inactive host outranks us
 		ctx, cancel := context.WithTimeout(h.ctx, window)
-		h.probeEach(ctx, h.targets(extra), h.srv.chain.Head().Seq, func(url string, r proto.LinkProbeReply) bool {
+		h.probeEach(ctx, h.targets(extra), h.srv.Chain().Head().Seq, func(url string, r proto.LinkProbeReply) bool {
 			if !h.sameServer(r) {
-				better = better || (r.ServerID == h.srv.chain.ID().String() && r.Priority > 0 && r.Priority < mine)
+				better = better || (r.ServerID == h.srv.Chain().ID().String() && r.Priority > 0 && r.Priority < mine)
 				return false
 			}
 			if !h.hostOnChain(r.Self.Fingerprint) { // removed from our chain: not ours to follow
 				return false
 			}
 			dctx, dcancel := context.WithTimeout(h.ctx, dialTimeout)
-			l, err := DialLink(dctx, url, h.srv)
+			l, err := server.DialLink(dctx, url, h.srv)
 			dcancel()
 			if err != nil {
 				return false
@@ -421,8 +431,8 @@ func (h *Host) pause(d time.Duration) bool {
 // rejoin is the cold start: it links to an active host if one answers, else
 // makes this host active. It returns the link, or nil when the host is active
 // (or stopping).
-func (h *Host) rejoin(extra []string, window time.Duration) *Link {
-	if h.srv.Mode() == ModeFenced {
+func (h *Host) rejoin(extra []string, window time.Duration) *server.Link {
+	if h.srv.Mode() == server.ModeFenced {
 		h.setRole(RoleIdle, "")
 		return nil
 	}
@@ -433,10 +443,10 @@ func (h *Host) rejoin(extra []string, window time.Duration) *Link {
 		}
 		return nil
 	}
-	if h.srv.Mode() == ModeFenced {
+	if h.srv.Mode() == server.ModeFenced {
 		return nil
 	}
-	if h.srv.Mode() == ModeActive {
+	if h.srv.Mode() == server.ModeActive {
 		// A client's takeover promoted us meanwhile.
 		if l != nil {
 			l.Close()
@@ -449,7 +459,7 @@ func (h *Host) rejoin(extra []string, window time.Duration) *Link {
 		return l
 	}
 	if h.srv.Prepared() {
-		h.srv.SetMode(ModePrepared)
+		h.srv.SetMode(server.ModePrepared)
 		h.setRole(RolePrepared, "")
 		return nil
 	}
@@ -458,7 +468,7 @@ func (h *Host) rejoin(extra []string, window time.Duration) *Link {
 }
 
 // install starts l and makes it the host's link.
-func (h *Host) install(l *Link) {
+func (h *Host) install(l *server.Link) {
 	h.hadLink = true
 	h.mu.Lock()
 	h.link = l
@@ -473,9 +483,9 @@ func (h *Host) install(l *Link) {
 }
 
 // applyRole sets the server mode and role from what the active host says of us.
-func (h *Host) applyRole(l *Link) {
+func (h *Host) applyRole(l *server.Link) {
 	if h.srv.Prepared() {
-		if h.srv.setFollowerMode(ModePrepared) {
+		if h.srv.SetFollowerMode(server.ModePrepared) {
 			h.mu.Lock()
 			name := h.active.Name
 			h.mu.Unlock()
@@ -497,10 +507,10 @@ func (h *Host) applyRole(l *Link) {
 	}
 	// A takeover may have promoted the host meanwhile; that stands.
 	if l.Standby() {
-		if h.srv.setFollowerMode(ModeStandby) {
+		if h.srv.SetFollowerMode(server.ModeStandby) {
 			h.setRole(RoleStandby, name)
 		}
-	} else if h.srv.setFollowerMode(ModeIdle) {
+	} else if h.srv.SetFollowerMode(server.ModeIdle) {
 		h.setRole(RoleIdle, "")
 	}
 }
@@ -509,14 +519,14 @@ func (h *Host) applyRole(l *Link) {
 // (failover) the warm sessions go live and everyone is told; a first start has
 // nothing to announce.
 func (h *Host) becomeActive(failover bool) {
-	if h.srv.Mode() == ModeFenced {
+	if h.srv.Mode() == server.ModeFenced {
 		h.setRole(RoleIdle, "")
 		return
 	}
 	if h.srv.Prepared() {
 		// Server state is authoritative: a Host constructed before a restart or
 		// reached through an unusual orchestration path still cannot activate.
-		h.srv.SetMode(ModePrepared)
+		h.srv.SetMode(server.ModePrepared)
 		h.setRole(RolePrepared, "")
 		return
 	}
@@ -526,7 +536,7 @@ func (h *Host) becomeActive(failover bool) {
 	if failover {
 		h.srv.Promote()
 	} else {
-		h.srv.SetMode(ModeActive)
+		h.srv.SetMode(server.ModeActive)
 		h.srv.PromoteWarm()
 	}
 	h.setRole(RoleActive, "")
@@ -534,8 +544,9 @@ func (h *Host) becomeActive(failover bool) {
 
 // runLinked follows the active host over l until it is lost, then returns the
 // next link, or nil once the host is active.
-func (h *Host) runLinked(l *Link) *Link {
-	beat := time.NewTicker(heartbeatInterval)
+func (h *Host) runLinked(l *server.Link) *server.Link {
+	interval, _ := server.HeartbeatTiming()
+	beat := time.NewTicker(interval)
 	defer beat.Stop()
 	for {
 		select {
@@ -545,7 +556,7 @@ func (h *Host) runLinked(l *Link) *Link {
 		case <-l.RoleChanged():
 			h.applyRole(l)
 		case <-h.promoted:
-			if h.srv.Prepared() || h.srv.Mode() != ModeActive {
+			if h.srv.Prepared() || h.srv.Mode() != server.ModeActive {
 				continue // a stale signal
 			}
 			// A client's takeover promoted us.
@@ -577,7 +588,7 @@ func (h *Host) runLinked(l *Link) *Link {
 // failover runs when the link to the active host ended: it gives clients
 // heartbeatGrace to send takeovers, then looks for an active host again and
 // becomes active itself if there is none.
-func (h *Host) failover(l *Link) *Link {
+func (h *Host) failover(l *server.Link) *server.Link {
 	var extra []string
 	if hs, ok := l.Hosts(); ok {
 		h.learnHosts(hs)
@@ -595,6 +606,7 @@ func (h *Host) failover(l *Link) *Link {
 	if !l.Standby() {
 		window = 2 * coldStartWindow
 	}
+	_, heartbeatGrace := server.HeartbeatTiming()
 	grace := time.NewTimer(heartbeatGrace)
 	defer grace.Stop()
 	for {
@@ -602,7 +614,7 @@ func (h *Host) failover(l *Link) *Link {
 		case <-h.ctx.Done():
 			return nil
 		case <-h.promoted:
-			if h.srv.Mode() == ModeActive {
+			if h.srv.Mode() == server.ModeActive {
 				h.becomeActive(false)
 				return nil
 			}
@@ -616,8 +628,8 @@ func (h *Host) failover(l *Link) *Link {
 
 // runActive serves as the active host until it is demoted, then returns the
 // link to the new active host, or nil if stopping or active again.
-func (h *Host) runActive() *Link {
-	if h.srv.Mode() == ModeFenced {
+func (h *Host) runActive() *server.Link {
+	if h.srv.Mode() == server.ModeFenced {
 		h.setRole(RoleIdle, "")
 		return nil
 	}
@@ -644,7 +656,7 @@ func (h *Host) runActive() *Link {
 			for _, p := range h.srv.Links() {
 				h.learn(p.Addrs...)
 			}
-			voice, _ := h.srv.load()
+			voice, _ := h.srv.Load()
 			now := time.Now()
 			if voice > 0 {
 				emptySince = time.Time{}
@@ -673,7 +685,7 @@ func (h *Host) waitActive(addrs []string) bool {
 	for time.Now().Before(deadline) && !h.stopped() {
 		for _, u := range addrs {
 			ctx, cancel := context.WithTimeout(h.ctx, handoverProbeTimeout)
-			r, err := ProbeHost(ctx, u, h.srv)
+			r, err := server.ProbeHost(ctx, u, h.srv)
 			cancel()
 			if err == nil && h.sameServer(r) {
 				return true

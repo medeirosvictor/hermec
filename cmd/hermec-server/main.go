@@ -20,6 +20,7 @@ import (
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/server/dedicated"
 	"github.com/medeirosvictor/hermec/server/history"
+	"github.com/medeirosvictor/hermec/server/host"
 	"github.com/medeirosvictor/hermec/server/serverctl"
 	"github.com/medeirosvictor/hermec/version"
 )
@@ -341,11 +342,11 @@ func restoreTransition(f *flags, cfg *server.Config, key *identity.Identity, c *
 
 // serve starts the host and runs it until SIGINT or SIGTERM.
 func serve(f flags, cfg server.Config, dir string, c *chain.Chain) error {
-	host := server.NewHost(buildHostConfig(f, cfg, dir, func(s string) { log.Print(s) }))
-	if err := host.Start(); err != nil {
+	h := host.New(buildHostConfig(f, cfg, dir, func(s string) { log.Print(s) }))
+	if err := h.Start(); err != nil {
 		return err
 	}
-	srv := host.Server()
+	srv := h.Server()
 	scheme := "ws"
 	if cfg.TLSCert != "" {
 		scheme = "wss"
@@ -364,7 +365,7 @@ func serve(f flags, cfg server.Config, dir string, c *chain.Chain) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := host.Shutdown(ctx); err != nil {
+	if err := h.Shutdown(ctx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
 	}
 	return nil

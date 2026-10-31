@@ -16,6 +16,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/netpath"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/host"
 	"github.com/medeirosvictor/hermec/video"
 )
 
@@ -97,7 +98,7 @@ func RunScenario(parent context.Context, cfg ScenarioConfig) (report ScenarioRep
 	report.ServerID = group.ID().String()
 	report.Addresses = []string{primaryURL, standbyURL}
 
-	primary := server.NewHost(server.HostConfig{Server: server.Config{
+	primary := host.New(host.Config{Server: server.Config{
 		Addr: net.JoinHostPort(cfg.PrimaryAddr, fmt.Sprint(cfg.Port)), Network: cfg.Networks[0],
 		HostKey: founder, Chain: group, HostName: "probe-primary", Advertise: []string{primaryURL},
 		Discoverable: false, AllowLoopbackICE: cfg.LoopbackICE,
@@ -112,13 +113,13 @@ func RunScenario(parent context.Context, cfg ScenarioConfig) (report ScenarioRep
 		}
 	}()
 	started := time.Now()
-	err = waitFor(ctx, func() bool { return primary.Role() == server.RoleActive })
+	err = waitFor(ctx, func() bool { return primary.Role() == host.RoleActive })
 	report.check("primary_active", started, err)
 	if err != nil {
 		return report, err
 	}
 
-	standby := server.NewHost(server.HostConfig{Server: server.Config{
+	standby := host.New(host.Config{Server: server.Config{
 		Addr: net.JoinHostPort(cfg.StandbyAddr, fmt.Sprint(cfg.StandbyPort)), Network: cfg.Networks[2],
 		HostKey: standbyKey, Chain: standbyChain, HostName: "probe-standby", Advertise: []string{standbyURL},
 		Discoverable: false, AllowLoopbackICE: cfg.LoopbackICE,
@@ -128,7 +129,7 @@ func RunScenario(parent context.Context, cfg ScenarioConfig) (report ScenarioRep
 	}
 	defer standby.Shutdown(context.Background())
 	started = time.Now()
-	err = waitFor(ctx, func() bool { return standby.Role() == server.RoleStandby })
+	err = waitFor(ctx, func() bool { return standby.Role() == host.RoleStandby })
 	report.check("standby_signaling", started, err)
 	if err != nil {
 		return report, err

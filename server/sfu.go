@@ -374,7 +374,7 @@ func (vs *voiceSession) logStats() {
 		vkbps = float64(video-vs.statsVideo) * 8 / 1000 / secs
 	}
 	vs.statsAt, vs.statsBytes, vs.statsVideo = now, total, video
-	vs.srv.logf("voice %q: %d participants, ~%.0f kbps relayed, ~%.0f kbps video, %d write errors", vs.channel, len(vs.peers), kbps, vkbps, vs.writeErrors.Load())
+	vs.srv.Logf("voice %q: %d participants, ~%.0f kbps relayed, ~%.0f kbps video, %d write errors", vs.channel, len(vs.peers), kbps, vkbps, vs.writeErrors.Load())
 }
 
 // teardown (actor): close every PeerConnection, then join every goroutine
@@ -555,7 +555,7 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 				var ok bool
 				mediaKind, ok = p.videoReceivers[recv]
 				if !ok {
-					vs.srv.logf("voice %q: %s sent an unexpected video track; ignoring it", vs.channel, p.c.fingerprint)
+					vs.srv.Logf("voice %q: %s sent an unexpected video track; ignoring it", vs.channel, p.c.fingerprint)
 					vs.wg.Add(1)
 					go vs.discardTrack(remote)
 					return
@@ -564,7 +564,7 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 			for _, g := range p.fwds {
 				if g.kind == mediaKind && !g.isDead() {
 					// One audio track and one track per negotiated video lane; discard extras.
-					vs.srv.logf("voice %q: %s sent a second %s track; ignoring it", vs.channel, p.c.fingerprint, remote.Kind())
+					vs.srv.Logf("voice %q: %s sent a second %s track; ignoring it", vs.channel, p.c.fingerprint, remote.Kind())
 					vs.wg.Add(1)
 					go vs.discardTrack(remote)
 					return
@@ -728,7 +728,7 @@ func (vs *voiceSession) renegotiate(p *peer) {
 		err = p.pc.SetLocalDescription(offer)
 	}
 	if err != nil {
-		vs.srv.logf("voice %q: renegotiation offer failed: %v", vs.channel, err)
+		vs.srv.Logf("voice %q: renegotiation offer failed: %v", vs.channel, err)
 		p.c.sendError(proto.CodeBadRequest, "renegotiation failed; media reset, send a new rtc_offer")
 		vs.releaseMedia(p)
 		return
@@ -737,9 +737,9 @@ func (vs *voiceSession) renegotiate(p *peer) {
 	if err != nil || len(raw) > vs.srv.offerLimit() {
 		// A dropped offer would wedge negotiation, so reset instead.
 		if err != nil {
-			vs.srv.logf("voice %q: cannot encode rtc_offer for %s: %v; resetting its media", vs.channel, p.c.fingerprint, err)
+			vs.srv.Logf("voice %q: cannot encode rtc_offer for %s: %v; resetting its media", vs.channel, p.c.fingerprint, err)
 		} else {
-			vs.srv.logf("voice %q: rtc_offer for %s is %d bytes (max %d); resetting its media", vs.channel, p.c.fingerprint, len(raw), vs.srv.offerLimit())
+			vs.srv.Logf("voice %q: rtc_offer for %s is %d bytes (max %d); resetting its media", vs.channel, p.c.fingerprint, len(raw), vs.srv.offerLimit())
 		}
 		p.c.sendError(proto.CodeBadRequest, "rtc_offer too large; media reset, send a new rtc_offer")
 		vs.releaseMedia(p)
@@ -752,7 +752,7 @@ func (vs *voiceSession) renegotiate(p *peer) {
 	p.offerTimer = time.AfterFunc(answerTimeout, func() {
 		vs.post(func() {
 			if p.negotiating && p.offerGen == gen && p.pc == pc {
-				vs.srv.logf("voice %q: no rtc_answer from %s; resetting its media", vs.channel, p.c.fingerprint)
+				vs.srv.Logf("voice %q: no rtc_answer from %s; resetting its media", vs.channel, p.c.fingerprint)
 				p.c.sendError(proto.CodeBadRequest, "rtc_answer timeout; media reset, send a new rtc_offer")
 				vs.releaseMedia(p)
 			}
@@ -828,7 +828,7 @@ func (vs *voiceSession) syncTracks(q *peer) {
 	// (viewers see a brief freeze), and because
 	// releaseMedia re-syncs everyone else, the room tends to reset together.
 	if q.retired > maxInactiveLines {
-		vs.srv.logf("voice %q: %s has %d inactive audio lines; resetting its media", vs.channel, q.c.fingerprint, q.retired)
+		vs.srv.Logf("voice %q: %s has %d inactive audio lines; resetting its media", vs.channel, q.c.fingerprint, q.retired)
 		q.c.sendError(proto.CodeBadRequest, "too many retired audio lines; media reset, send a new rtc_offer")
 		vs.releaseMedia(q)
 		return

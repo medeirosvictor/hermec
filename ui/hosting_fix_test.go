@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/medeirosvictor/hermec/core/chain"
-	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/host"
 )
 
 func TestStartHostedDoesNotBlock(t *testing.T) {
@@ -114,7 +114,7 @@ func TestFriendStopAsyncAndRestartWaits(t *testing.T) {
 	port := g.friends[id].port
 	release := make(chan struct{})
 	old := shutdownHostFn
-	shutdownHostFn = func(h *server.Host) {
+	shutdownHostFn = func(h *host.Host) {
 		<-release
 		old(h)
 	}

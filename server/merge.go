@@ -24,11 +24,29 @@ const mergeAckTimeout = 30 * time.Second
 // noHistory is a HistoryLastTS far enough ahead that the peer sends none.
 func noHistory() time.Time { return time.Now().AddDate(100, 0, 0) }
 
-// dialMerge opens a host link to the winner of a split brain at url, asking for
+// loses is the yield rule: fewer voice members yields; on a tie fewer clients
+// yields; on a tie the larger priority number yields.
+func loses(voice, clients, prio int, o proto.YieldLoad) bool {
+	if voice != o.VoiceMembers {
+		return voice < o.VoiceMembers
+	}
+	if clients != o.Clients {
+		return clients < o.Clients
+	}
+	return prio > o.Priority
+}
+
+// Loses reports whether, with our load as it is now, we yield to o.
+func (s *Server) Loses(o proto.YieldLoad) bool {
+	voice, clients := s.load()
+	return loses(voice, clients, s.SelfInfo().Priority, o)
+}
+
+// DialMerge opens a host link to the winner of a split brain at url, asking for
 // its whole chain (our own may be ahead of or diverge from it) and none of its
-// history. It returns the link's socket, ready for sendMergeHistory, and the
+// history. It returns the link's socket, ready for SendMergeHistory, and the
 // winner's chain entries after genesis.
-func dialMerge(ctx context.Context, url string, s *Server) (*websocket.Conn, []chain.Entry, error) {
+func DialMerge(ctx context.Context, url string, s *Server) (*websocket.Conn, []chain.Entry, error) {
 	ws, _, err := dialHost(ctx, url, s, 0)
 	if err != nil {
 		return nil, nil, err
@@ -39,16 +57,16 @@ func dialMerge(ctx context.Context, url string, s *Server) (*websocket.Conn, []c
 	}
 	_ = ws.SetReadDeadline(deadline)
 	_ = ws.SetWriteDeadline(deadline)
-	stop := watchClose(ctx, ws)
+	stop := WatchClose(ctx, ws)
 	defer stop()
 	voice, clients := s.load()
 	hello := proto.LinkHello{
 		Build:         version.Version,
-		Addrs:         s.advertise(),
+		Addrs:         s.Advertise(),
 		Name:          s.cfg.HostName,
 		HistoryLastTS: noHistory(),
 		// The winner checks it still wins against this load.
-		Yield: &proto.YieldLoad{VoiceMembers: voice, Clients: clients, Priority: s.selfInfo().Priority},
+		Yield: &proto.YieldLoad{VoiceMembers: voice, Clients: clients, Priority: s.SelfInfo().Priority},
 	}
 	raw, err := proto.Encode(proto.TypeLinkHello, hello)
 	if err == nil {
@@ -80,10 +98,10 @@ func dialMerge(ctx context.Context, url string, s *Server) (*websocket.Conn, []c
 	return ws, entries, nil
 }
 
-// sendMergeHistory sends every chat line we hold to the winner as link_sync
+// SendMergeHistory sends every chat line we hold to the winner as link_sync
 // pages and waits until it has merged them: a link_probe sent after the last
 // page is answered after the pages were handled.
-func (s *Server) sendMergeHistory(ws *websocket.Conn) error {
+func (s *Server) SendMergeHistory(ws *websocket.Conn) error {
 	if s.hist != nil {
 		var ts time.Time
 		id := ""
@@ -123,9 +141,9 @@ func (s *Server) sendMergeHistory(ws *websocket.Conn) error {
 	})
 }
 
-// watchClose closes ws when ctx ends, so a read or write blocked on it fails;
+// WatchClose closes ws when ctx ends, so a read or write blocked on it fails;
 // the returned stop ends the watch.
-func watchClose(ctx context.Context, ws *websocket.Conn) (stop func()) {
+func WatchClose(ctx context.Context, ws *websocket.Conn) (stop func()) {
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -137,10 +155,25 @@ func watchClose(ctx context.Context, ws *websocket.Conn) (stop func()) {
 	return func() { close(done) }
 }
 
-// replaceChain makes the chain es (genesis first) ours, in place, and applies
+// SendChainEntries sends entries to the host on ws as chain frames.
+func SendChainEntries(ws *websocket.Conn, entries []chain.Entry) error {
+	frames, err := chainFrames(entries)
+	if err != nil {
+		return err
+	}
+	for _, f := range frames {
+		_ = ws.SetWriteDeadline(time.Now().Add(writeTimeout))
+		if err := ws.WriteMessage(websocket.TextMessage, f); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ReplaceChain makes the chain es (genesis first) ours, in place, and applies
 // it as a link would: group state, history limits, links of removed hosts,
 // and the kick of everyone banned.
-func (s *Server) replaceChain(es []chain.Entry) error {
+func (s *Server) ReplaceChain(es []chain.Entry) error {
 	s.dedicatedMu.Lock()
 	defer s.dedicatedMu.Unlock()
 	if s.Mode() == ModeFenced {

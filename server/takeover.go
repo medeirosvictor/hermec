@@ -126,7 +126,7 @@ func (s *Server) announcePromotion() {
 func (s *Server) systemChatLocked(ch, text string) []*conn {
 	id, err := newMessageID()
 	if err != nil {
-		s.logf("server: chat id: %v", err)
+		s.Logf("server: chat id: %v", err)
 		return nil
 	}
 	// Same strictly increasing timestamps as chat.
@@ -138,7 +138,7 @@ func (s *Server) systemChatLocked(ch, text string) []*conn {
 	msg := proto.ChatMessage{ID: id, Channel: ch, Text: text, TS: ts, System: true}
 	if s.hist != nil {
 		if herr := s.hist.Add(msg); herr != nil {
-			s.logf("server: history: %v", herr)
+			s.Logf("server: history: %v", herr)
 		}
 	}
 	var dead []*conn

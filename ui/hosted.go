@@ -22,6 +22,7 @@ import (
 	"github.com/medeirosvictor/hermec/discover"
 	"github.com/medeirosvictor/hermec/internal/fsutil"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/host"
 	"github.com/medeirosvictor/hermec/ui/state"
 )
 
@@ -124,7 +125,7 @@ var clipboardWrite = clipboard.WriteAll
 // chain, the running server (nil while stopped or failed to start) and the dial
 // URL.
 type hostedServer struct {
-	srv   *server.Host
+	srv   *host.Host
 	cfg   server.Config
 	chain *chain.Chain
 	id    string // chain.ID().String(), the pin the hosted session dials with
@@ -137,14 +138,14 @@ type hostedServer struct {
 	logf  func(format string, args ...any)
 }
 
-// knownHosts is HostConfig.Known: the hosts hosted.toml remembers.
+// knownHosts is host.Config.Known: the hosts hosted.toml remembers.
 func (h *hostedServer) knownHosts() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Clone(h.known)
 }
 
-// saveKnown is HostConfig.SaveKnown: it adds urls to the known hosts and
+// saveKnown is host.Config.SaveKnown: it adds urls to the known hosts and
 // rewrites hosted.toml.
 func (h *hostedServer) saveKnown(urls []string) {
 	h.mu.Lock()
@@ -318,7 +319,7 @@ func (g *game) startHosted() error {
 	cfg.HostName = g.defaultName()
 	h.logf = g.logf
 	h.known = slices.Clone(h.cfg.KnownHosts)
-	srv := server.NewHost(server.HostConfig{
+	srv := host.New(host.Config{
 		Server: cfg, Known: h.knownHosts, SaveKnown: h.saveKnown,
 		Notify: func(msg string) { g.logf("%s", msg) },
 	})

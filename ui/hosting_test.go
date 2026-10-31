@@ -19,6 +19,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/host"
 	"github.com/medeirosvictor/hermec/ui/state"
 )
 
@@ -111,7 +112,7 @@ func friendGame(t *testing.T) *game {
 func friendRole(g *game, id string) func() bool {
 	return func() bool {
 		f := g.friends[id]
-		return f != nil && f.h != nil && f.h.Role() == server.RoleStandby
+		return f != nil && f.h != nil && f.h.Role() == host.RoleStandby
 	}
 }
 
@@ -277,7 +278,7 @@ func TestFriendHostKeepsGroupPasswordAfterColdStart(t *testing.T) {
 	g2.bootFriends()
 	pumpUntil(t, g2, func() bool {
 		fh := g2.friends[id]
-		return fh != nil && fh.h != nil && fh.h.Role() == server.RoleActive
+		return fh != nil && fh.h != nil && fh.h.Role() == host.RoleActive
 	})
 	fh := g2.friends[id]
 	url := fmt.Sprintf("ws://127.0.0.1:%d/", fh.port)
@@ -321,7 +322,7 @@ func TestHostedUsesOrchestrator(t *testing.T) {
 	if err := g.createHosted("Den", "", 0); err != nil {
 		t.Fatal(err)
 	}
-	pumpUntil(t, g, func() bool { return g.hosted.srv.Role() == server.RoleActive }) // the host loop settles on its own goroutine
+	pumpUntil(t, g, func() bool { return g.hosted.srv.Role() == host.RoleActive }) // the host loop settles on its own goroutine
 }
 
 func TestHostedKnownHostsPersist(t *testing.T) {

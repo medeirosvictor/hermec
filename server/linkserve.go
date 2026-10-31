@@ -49,15 +49,15 @@ type linkState struct {
 	dedicatedHistory []proto.ChatMessage
 }
 
-// selfInfo describes this host.
-func (s *Server) selfInfo() proto.HostInfo {
+// SelfInfo describes this host.
+func (s *Server) SelfInfo() proto.HostInfo {
 	st := s.chain.State()
 	pub := s.cfg.HostKey.PublicKey()
 	prio, _ := hostPriority(&st, pub)
 	return proto.HostInfo{
 		Fingerprint: identity.Fingerprint(pub),
 		Name:        s.cfg.HostName,
-		Addrs:       s.advertise(),
+		Addrs:       s.Advertise(),
 		Priority:    prio,
 	}
 }
@@ -161,7 +161,7 @@ func (s *Server) updateStandbyLocked() []*conn {
 		return dead
 	}
 	s.standby.Store(next)
-	if raw, err := proto.Encode(proto.TypeHosts, proto.Hosts{Active: s.selfInfo(), Standby: next}); err == nil {
+	if raw, err := proto.Encode(proto.TypeHosts, proto.Hosts{Active: s.SelfInfo(), Standby: next}); err == nil {
 		dead = append(dead, s.broadcastAuthedLocked(raw)...)
 		for c := range s.links {
 			if !c.enqueue(raw) {
@@ -208,8 +208,7 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 	// A split-brain loser sends its load; if we would lose to it now, the merge
 	// is wrong way round and we refuse.
 	if h.Yield != nil {
-		voice, clients := s.load()
-		if loses(voice, clients, s.selfInfo().Priority, *h.Yield) {
+		if s.Loses(*h.Yield) {
 			return proto.CodeNotActive, "this host would yield to you"
 		}
 	}
@@ -315,7 +314,7 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 		ok = ok && c.enqueue(keyFrame)
 		if ok {
 			dead = s.updateStandbyLocked()
-			if !c.sendMsg(proto.TypeHosts, proto.Hosts{Active: s.selfInfo(), Standby: s.standby.Load()}) {
+			if !c.sendMsg(proto.TypeHosts, proto.Hosts{Active: s.SelfInfo(), Standby: s.standby.Load()}) {
 				dead = append(dead, c)
 			}
 		} else {
@@ -497,7 +496,7 @@ func (c *conn) handleLinkProbe() {
 		c.sendError(proto.CodeForbidden, "only hosts on the chain may probe")
 		return
 	}
-	self := s.selfInfo()
+	self := s.SelfInfo()
 	voice, clients := s.load()
 	c.sendMsg(proto.TypeLinkProbeReply, proto.LinkProbeReply{
 		Active:       s.Mode() == ModeActive,

@@ -1,4 +1,4 @@
-package server
+package host
 
 import (
 	"testing"
@@ -56,7 +56,7 @@ func TestColdStartIgnoresRemovedHost(t *testing.T) {
 	fastHostTimers(t)
 	base, a, b, d := threeHostChain(t)
 	hd := newTestHost(t, base, d, "delta")
-	extraHost(t, hd.Server().chain, a) // d's chain: base + one entry
+	extraHost(t, hd.Server().Chain(), a) // d's chain: base + one entry
 	hd.start(t)
 	waitRole(t, hd, RoleActive, time.Second)
 	mine, err := chain.FromEntries(base.Entries())

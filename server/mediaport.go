@@ -113,7 +113,7 @@ func (s *Server) startUDP(host string, port int) error {
 		mc = &mediaConn{PacketConn: mc}
 	}
 	s.mux = ice.NewUDPMuxDefault(ice.UDPMuxParams{UDPConn: mc})
-	s.logf("media: UDP port %d", mediaPort)
+	s.Logf("media: UDP port %d", mediaPort)
 	return nil
 }
 

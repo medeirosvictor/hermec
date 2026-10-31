@@ -86,10 +86,10 @@ func (s *Server) validateDedicatedCertificate(r dedicated.Record, fenced bool) e
 		return errors.New("server: invalid dedicated certificate")
 	}
 	if fenced {
-		if c.SourceFingerprint != s.selfInfo().Fingerprint {
+		if c.SourceFingerprint != s.SelfInfo().Fingerprint {
 			return errors.New("server: fenced transition names another source")
 		}
-	} else if !reflect.DeepEqual(c.Destination, s.selfInfo()) {
+	} else if !reflect.DeepEqual(c.Destination, s.SelfInfo()) {
 		return errors.New("server: committed transition names another destination")
 	}
 	return nil
@@ -120,11 +120,11 @@ func (c *conn) fenceDedicatedLocked(p proto.DedicatedReadinessProof) (proto.Dedi
 		return proto.DedicatedCertificate{}, errors.New("destination is no longer an authorized host")
 	}
 	dst := proto.HostInfo{Fingerprint: c.fingerprint, Name: c.link.hello.Name, Addrs: append([]string(nil), c.link.hello.Addrs...), Priority: priority}
-	sig, err := proto.SignDedicatedCutover(s.cfg.HostKey, p.Readiness, s.selfInfo().Fingerprint, dst)
+	sig, err := proto.SignDedicatedCutover(s.cfg.HostKey, p.Readiness, s.SelfInfo().Fingerprint, dst)
 	if err != nil {
 		return proto.DedicatedCertificate{}, err
 	}
-	cert := proto.DedicatedCertificate{Readiness: p.Readiness, SourceFingerprint: s.selfInfo().Fingerprint, Destination: dst, Signature: sig}
+	cert := proto.DedicatedCertificate{Readiness: p.Readiness, SourceFingerprint: s.SelfInfo().Fingerprint, Destination: dst, Signature: sig}
 	r := dedicated.Record{Version: 1, State: dedicated.Fenced, ServerID: p.Readiness.ServerID, DestinationFingerprint: p.Readiness.DestinationFingerprint, ChainHead: p.Readiness.ChainHead, ChainHeadHash: append([]byte(nil), p.Readiness.ChainHeadHash...), HistoryLastID: p.Readiness.HistoryLastID, HistoryLastUnixMilli: p.Readiness.HistoryLastUnixMilli, HistoryCount: p.Readiness.HistoryCount, HistoryHash: append([]byte(nil), p.Readiness.HistoryHash...), TransitionNonce: append([]byte(nil), p.Readiness.TransitionNonce...), Certificate: &cert, Recovery: dedicated.RecoveryInspectCommit}
 	if err := dedicated.Save(s.cfg.DedicatedTransitionPath, r); err != nil {
 		return proto.DedicatedCertificate{}, err
@@ -170,7 +170,7 @@ func (l *Link) handleDedicatedCommit(env proto.Envelope) error {
 		if !s.Prepared() || s.Mode() != ModePrepared {
 			return errors.New("server: link: unexpected dedicated commit")
 		}
-		self := s.selfInfo()
+		self := s.SelfInfo()
 		if c.Readiness.DestinationFingerprint != self.Fingerprint || !reflect.DeepEqual(c.Destination, self) {
 			return errors.New("server: link: unexpected dedicated commit")
 		}

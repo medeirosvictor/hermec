@@ -2,16 +2,12 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
-	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
-	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/server/dedicated"
 	"github.com/medeirosvictor/hermec/server/history"
 )
@@ -69,69 +65,5 @@ func TestRestorePreparingTransitionRemainsPassiveAndExact(t *testing.T) {
 	s.SetMode(ModeActive) // the public guard must retain passive mode
 	if s.Mode() != ModePrepared {
 		t.Fatal("prepared destination accepted activation")
-	}
-}
-
-func TestPreparedHostWithSourceLinkCannotPromoteThroughPublicAPI(t *testing.T) {
-	fastHostTimers(t)
-	c, sourceKey, destinationKey := twoHostChain(t)
-	source, sourceURL := startModeServer(t, Config{
-		HostKey: sourceKey, Chain: c, HostName: "source", Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
-		Channels: []string{"general"},
-	})
-	if source.Mode() != ModeActive {
-		t.Fatalf("source mode = %v, want active", source.Mode())
-	}
-	destinationChain, err := chain.FromEntries(c.Entries())
-	if err != nil {
-		t.Fatal(err)
-	}
-	destinationAddr := freeAddr(t)
-	h := NewHost(HostConfig{
-		Prepared: true,
-		Server: Config{
-			Addr: destinationAddr, Advertise: []string{"ws://" + destinationAddr},
-			HostKey: destinationKey, Chain: destinationChain, HostName: "destination", Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
-			Channels: []string{"general"},
-		},
-		Known: func() []string { return []string{sourceURL} },
-	})
-	if err := h.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer h.Shutdown(context.Background())
-
-	waitFor(t, "prepared destination source link", func() bool {
-		return len(source.Links()) == 1 && h.Role() == RolePrepared
-	})
-
-	// These are all public activation-capable Server operations. A prepared
-	// destination has no public commit seam: source presence alone cannot
-	// substitute for verified durable transition evidence and a cutover.
-	h.Server().SetMode(ModeActive)
-	if h.Server().Mode() != ModePrepared {
-		t.Fatalf("SetMode activated prepared destination: %v", h.Server().Mode())
-	}
-	h.Server().SetMode(ModeIdle)
-	if h.Server().Promote() || h.Server().Mode() == ModeActive {
-		t.Fatal("Promote activated prepared destination")
-	}
-	h.Server().SetMode(ModePrepared)
-	h.Server().PromoteWarm()
-	if h.Server().Mode() == ModeActive || h.Role() != RolePrepared || !h.Server().Prepared() {
-		t.Fatalf("public API activated prepared destination: role %q mode %v prepared %v", h.Role(), h.Server().Mode(), h.Server().Prepared())
-	}
-}
-
-func TestPreparedHostDoesNotSelfElectWhenSourceIsUnavailable(t *testing.T) {
-	fastHostTimers(t)
-	h := NewHost(HostConfig{Prepared: true, Server: Config{Addr: freeAddr(t)}})
-	if err := h.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer h.Shutdown(context.Background())
-	time.Sleep(700 * time.Millisecond) // exceeds the shortened cold-start window
-	if h.Role() != RolePrepared || h.Server().Mode() != ModePrepared {
-		t.Fatalf("unlinked prepared host self-elected: role %q mode %v", h.Role(), h.Server().Mode())
 	}
 }

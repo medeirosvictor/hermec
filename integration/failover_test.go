@@ -18,13 +18,14 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/host"
 )
 
 // fastHosts shortens the host and heartbeat timers for a test.
 func fastHosts(t *testing.T) {
 	t.Helper()
 	r1 := server.SetHeartbeatForTest(50*time.Millisecond, 150*time.Millisecond)
-	r2 := server.SetHostTimersForTest(300*time.Millisecond, 300*time.Millisecond, 300*time.Millisecond, 50*time.Millisecond)
+	r2 := host.SetTimersForTest(300*time.Millisecond, 300*time.Millisecond, 300*time.Millisecond, 50*time.Millisecond)
 	t.Cleanup(func() { r2(); r1() })
 }
 
@@ -32,7 +33,7 @@ func fastHosts(t *testing.T) {
 // has priority i+1. Each host's known set is settable.
 type hostSet struct {
 	t     *testing.T
-	hosts []*server.Host
+	hosts []*host.Host
 	keys  []*identity.Identity
 	urls  []string
 	fps   []string
@@ -94,7 +95,7 @@ func newHostSet(t *testing.T, n int, linked bool) *hostSet {
 				}
 			}
 		}
-		h := server.NewHost(server.HostConfig{
+		h := host.New(host.Config{
 			Server: hcfg,
 			Known: func() []string {
 				hs.mu.Lock()
@@ -144,19 +145,19 @@ func startHostSet(t *testing.T, n int) *hostSet {
 	t.Helper()
 	hs := newHostSet(t, n, true)
 	hs.start(0)
-	hs.waitRole(0, server.RoleActive, 5*time.Second)
+	hs.waitRole(0, host.RoleActive, 5*time.Second)
 	for i := 1; i < n; i++ {
 		hs.start(i)
 	}
 	eventually(t, 10*time.Second, "all hosts linked", func() bool { return len(hs.hosts[0].Server().Links()) == n-1 })
 	if n > 1 {
-		hs.waitRole(1, server.RoleStandby, 5*time.Second)
+		hs.waitRole(1, host.RoleStandby, 5*time.Second)
 	}
 	return hs
 }
 
 // startHosts is startHostSet for tests that need only the hosts.
-func startHosts(t *testing.T, n int) []*server.Host { return startHostSet(t, n).hosts }
+func startHosts(t *testing.T, n int) []*host.Host { return startHostSet(t, n).hosts }
 
 // freeLoopbackAddr returns a loopback address whose TCP and UDP ports were
 // both free a moment ago, so a host can advertise it before it starts.
@@ -185,7 +186,7 @@ func freeLoopbackAddr(t *testing.T) string {
 	return ""
 }
 
-func hostURL(h *server.Host) string { return "ws://" + h.Server().Addr() + "/" }
+func hostURL(h *host.Host) string { return "ws://" + h.Server().Addr() + "/" }
 
 // follower is a client that does what the UI does around host failover: it
 // keeps a warm session on the standby from the hosts event, opens a warm voice
@@ -722,7 +723,7 @@ func TestFailoverWithin2s(t *testing.T) {
 		return a.fullOn(hs.fps[1]) && b.fullOn(hs.fps[1])
 	})
 	t.Logf("failover took %v", time.Since(start))
-	hs.waitRole(1, server.RoleActive, 2*time.Second)
+	hs.waitRole(1, host.RoleActive, 2*time.Second)
 	bothWays(t, a, b, 20)
 	a.say(t, "after failover")
 	eventually(t, 5*time.Second, "chat after", func() bool { return b.hasChat("after failover") })
@@ -757,10 +758,10 @@ func TestClientBlipNoFailover(t *testing.T) {
 	if alive < 1 || takeovers != 0 {
 		t.Errorf("alive refusals = %d, takeovers = %d; want >= 1 and 0", alive, takeovers)
 	}
-	if hosts[0].Role() != server.RoleActive || hosts[1].Role() != server.RoleStandby {
+	if hosts[0].Role() != host.RoleActive || hosts[1].Role() != host.RoleStandby {
 		t.Fatalf("roles = %s, %s; want active, standby", hosts[0].Role(), hosts[1].Role())
 	}
-	if hosts[2].Role() == server.RoleActive {
+	if hosts[2].Role() == host.RoleActive {
 		t.Fatal("host 2 became active")
 	}
 	x.say(t, "after the blip")
@@ -785,7 +786,7 @@ func TestStandbyReplacedThenFailover(t *testing.T) {
 	eventually(t, 5*time.Second, "both full on host 2", func() bool {
 		return a.fullOn(hs.fps[2]) && b.fullOn(hs.fps[2])
 	})
-	hs.waitRole(2, server.RoleActive, 2*time.Second)
+	hs.waitRole(2, host.RoleActive, 2*time.Second)
 	bothWays(t, a, b, 20)
 }
 
@@ -793,8 +794,8 @@ func TestSplitBrainChatMerge(t *testing.T) {
 	hs := newHostSet(t, 2, false)
 	hs.start(0)
 	hs.start(1)
-	hs.waitRole(0, server.RoleActive, 5*time.Second)
-	hs.waitRole(1, server.RoleActive, 5*time.Second)
+	hs.waitRole(0, host.RoleActive, 5*time.Second)
+	hs.waitRole(1, host.RoleActive, 5*time.Second)
 	a := followFailover(t, hs.urls[0], "alice", 0xA1)
 	b := followFailover(t, hs.urls[1], "bob", 0xB2)
 	a.say(t, "line on A")
@@ -807,8 +808,8 @@ func TestSplitBrainChatMerge(t *testing.T) {
 	if _, _, _, moves := b.counts(); len(moves) != 1 || moves[0].Reason != "merge" {
 		t.Fatalf("bob's moves = %+v, want one merge", moves)
 	}
-	hs.waitRole(0, server.RoleActive, 5*time.Second)
-	hs.waitRole(1, server.RoleStandby, 10*time.Second)
+	hs.waitRole(0, host.RoleActive, 5*time.Second)
+	hs.waitRole(1, host.RoleStandby, 10*time.Second)
 	eventually(t, 10*time.Second, "both lines on the winner", func() bool {
 		h := historyOf(t, hs.urls[0])
 		return hasText(h, "line on A", false) && hasText(h, "line on B", false)
@@ -820,14 +821,14 @@ func TestSplitBrainChatMerge(t *testing.T) {
 func TestHandbackOnlyWhenVoiceEmpty(t *testing.T) {
 	hs := newHostSet(t, 2, false)
 	hs.start(1)
-	hs.waitRole(1, server.RoleActive, 5*time.Second)
+	hs.waitRole(1, host.RoleActive, 5*time.Second)
 	c := followFailover(t, hs.urls[1], "carol", 0xC3)
 	c.joinVoice(t)
 
 	hs.setKnown(0, hs.urls[1])
 	hs.start(0)
 	time.Sleep(2 * time.Second) // several handback checks
-	if hs.hosts[1].Role() != server.RoleActive || hs.hosts[0].Role() == server.RoleActive {
+	if hs.hosts[1].Role() != host.RoleActive || hs.hosts[0].Role() == host.RoleActive {
 		t.Fatalf("roles = %s, %s during voice; want host 1 active", hs.hosts[0].Role(), hs.hosts[1].Role())
 	}
 	if _, _, _, moves := c.counts(); len(moves) != 0 {
@@ -835,12 +836,12 @@ func TestHandbackOnlyWhenVoiceEmpty(t *testing.T) {
 	}
 
 	c.leaveVoice(t)
-	hs.waitRole(0, server.RoleActive, 10*time.Second)
+	hs.waitRole(0, host.RoleActive, 10*time.Second)
 	eventually(t, 10*time.Second, "carol moved to host 0", func() bool { return c.fullOn(hs.fps[0]) })
 	if _, _, _, moves := c.counts(); len(moves) != 1 || moves[0].Reason != "handback" {
 		t.Fatalf("moves = %+v, want one handback", moves)
 	}
-	if hs.hosts[1].Role() == server.RoleActive {
+	if hs.hosts[1].Role() == host.RoleActive {
 		t.Fatal("host 1 is still active")
 	}
 	c.say(t, "home again")

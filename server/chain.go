@@ -446,7 +446,7 @@ func (c *conn) handleChainAppend(env proto.Envelope) {
 		return
 	default:
 		s.chainMu.Unlock()
-		s.logf("server: chain_append from %s: %v", c.fingerprint, err)
+		s.Logf("server: chain_append from %s: %v", c.fingerprint, err)
 		c.sendErrorRef(proto.CodeBadRequest, "entry rejected", m.Ref)
 		return
 	}

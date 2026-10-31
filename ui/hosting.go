@@ -18,11 +18,12 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/host"
 	"github.com/medeirosvictor/hermec/ui/state"
 )
 
 // A friend the founder granted hosting can let this PC host the server: a
-// server.Host runs beside the app, follows the active host as standby and
+// host.Host runs beside the app, follows the active host as standby and
 // takes over when it disappears. Its files live next to hosted.toml.
 
 // Friend hosts listen on the first free port of this range.
@@ -47,10 +48,10 @@ type hostingFile struct {
 	Enabled     bool     `toml:"enabled"`
 }
 
-// friendHost is a server.Host this app runs for a server it does not found.
+// friendHost is a host.Host this app runs for a server it does not found.
 // h is nil until the background start finishes.
 type friendHost struct {
-	h    *server.Host
+	h    *host.Host
 	id   string
 	path string // the hosting file
 	port int
@@ -67,7 +68,7 @@ func (f *friendHost) save() {
 	}
 }
 
-// setKey is HostConfig.OnPasswordKey: it keeps the key the active host
+// setKey is host.Config.OnPasswordKey: it keeps the key the active host
 // supplied, so a restart starts with it.
 func (f *friendHost) setKey(key []byte) {
 	f.mu.Lock()
@@ -76,14 +77,14 @@ func (f *friendHost) setKey(key []byte) {
 	f.save()
 }
 
-// knownHosts is HostConfig.Known.
+// knownHosts is host.Config.Known.
 func (f *friendHost) knownHosts() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.file.KnownHosts)
 }
 
-// addKnown is HostConfig.SaveKnown, and also what sessions feed it: it adds
+// addKnown is host.Config.SaveKnown, and also what sessions feed it: it adds
 // urls to the known hosts and rewrites the hosting file when the set grew.
 func (f *friendHost) addKnown(urls []string) {
 	f.mu.Lock()
@@ -99,7 +100,7 @@ func (f *friendHost) addKnown(urls []string) {
 type friendStarted struct {
 	id  string
 	f   *friendHost
-	h   *server.Host
+	h   *host.Host
 	err error
 }
 
@@ -278,7 +279,7 @@ func (g *game) startFriend(id string, c *chain.Chain, hf hostingFile) bool {
 			<-prev
 		}
 		cfg.Advertise = g.advertiseAddrs(port)
-		h := server.NewHost(server.HostConfig{
+		h := host.New(host.Config{
 			Server: cfg, Known: f.knownHosts, SaveKnown: f.addKnown, OnPasswordKey: f.setKey,
 			Notify: func(msg string) { g.logf("friend host %s: %s", shortID(id), msg) },
 		})
@@ -360,7 +361,7 @@ func (g *game) applyFriend(r friendStarted) {
 	g.logf("hosting %s for a friend on port %d", shortID(r.id), r.f.port)
 }
 
-func shutdownHost(h *server.Host) {
+func shutdownHost(h *host.Host) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = h.Shutdown(ctx)
@@ -371,7 +372,7 @@ var shutdownHostFn = shutdownHost
 
 // shutdownAsync shuts h down in the background; friendStop[id] closes once it
 // has released its port, and a later host of id waits for that.
-func (g *game) shutdownAsync(id string, h *server.Host) {
+func (g *game) shutdownAsync(id string, h *host.Host) {
 	if g.friendStop == nil {
 		g.friendStop = map[string]chan struct{}{}
 	}

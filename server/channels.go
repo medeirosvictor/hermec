@@ -334,7 +334,7 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 	id, err := newMessageID()
 	if err != nil {
 		s.chMu.Unlock()
-		s.logf("server: chat id: %v", err)
+		s.Logf("server: chat id: %v", err)
 		return ""
 	}
 	// Clients order by (ts, id) and ids are random, so timestamps must be
@@ -351,7 +351,7 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 	if s.hist != nil {
 		// A store failure must not lose the live message.
 		if herr := s.hist.Add(msg); herr != nil {
-			s.logf("server: history: %v", herr)
+			s.Logf("server: history: %v", herr)
 		}
 	}
 	var dead []*conn
@@ -364,7 +364,7 @@ func (s *Server) chat(c *conn, ch, text string) (code string) {
 	if s.hist != nil {
 		// Outside chMu; a rewrite holds the store lock only for its final swap.
 		if err := s.hist.Compact(s.clock()); err != nil {
-			s.logf("server: history compact: %v", err)
+			s.Logf("server: history compact: %v", err)
 		}
 	}
 	return ""

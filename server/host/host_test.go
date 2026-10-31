@@ -1,8 +1,9 @@
-package server
+package host
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -11,17 +12,19 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/medeirosvictor/hermec/core/chain"
+	"github.com/medeirosvictor/hermec/core/hshake"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
+	"github.com/medeirosvictor/hermec/server"
 )
 
 // fastHostTimers shortens the orchestrator and heartbeat timers for a test.
 func fastHostTimers(t *testing.T) {
 	t.Helper()
 	ms := time.Millisecond
-	t.Cleanup(SetHeartbeatForTest(50*ms, 150*ms))
-	t.Cleanup(SetHostTimersForTest(300*ms, 300*ms, 300*ms, 50*ms))
+	t.Cleanup(server.SetHeartbeatForTest(50*ms, 150*ms))
+	t.Cleanup(SetTimersForTest(300*ms, 300*ms, 300*ms, 50*ms))
 }
 
 // threeHostChain is a chain with three hosts at priorities 1, 2 and 3, and
@@ -77,8 +80,8 @@ func newTestHost(t *testing.T, base *chain.Chain, key *identity.Identity, name s
 	}
 	addr := freeAddr(t)
 	th := &testHost{url: "ws://" + addr, key: key, known: known}
-	th.Host = NewHost(HostConfig{
-		Server: Config{
+	th.Host = New(Config{
+		Server: server.Config{
 			Addr: addr, Advertise: []string{th.url}, HostKey: key, Chain: cc,
 			HostName: name, Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
 			Channels:      []string{"general"},
@@ -134,14 +137,138 @@ func readErrOfCode(t *testing.T, c *websocket.Conn, code string) {
 	}
 }
 
+// clientOn dials url, authenticates as id and joins general.
 func clientOn(t *testing.T, url string, id *identity.Identity) *websocket.Conn {
 	t.Helper()
-	c, env := authAs(t, url, id, "pw")
-	if env.Type != proto.TypeAuthOK {
-		t.Fatalf("auth on %s: %q", url, env.Type)
+	c, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { c.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := hshake.Run(ctx, c, id, "tester", "pw", hshake.Opts{}); err != nil {
+		t.Fatalf("auth on %s: %v", url, err)
 	}
 	sendEnv(t, c, proto.TypeJoin, proto.Join{Channel: "general"})
 	return c
+}
+
+func mustID(t *testing.T) *identity.Identity {
+	t.Helper()
+	id, err := identity.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// hostChain is a chain founded by a new key, with others added as hosts at
+// priorities 2, 3, ...
+func hostChain(t *testing.T, others ...*identity.Identity) (*chain.Chain, *identity.Identity) {
+	t.Helper()
+	a := mustID(t)
+	c := server.New(server.Config{
+		HostKey:  a,
+		Roles:    roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}},
+		Channels: []string{"general"},
+	}).Chain()
+	for i, o := range others {
+		head := c.Head()
+		e, err := chain.NewEntry(a, &head, chain.OpHostAdd,
+			chain.HostAddBody{PubKey: []byte(o.PublicKey()), Priority: i + 2}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Append(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return c, a
+}
+
+func twoHostChain(t *testing.T) (c *chain.Chain, a, b *identity.Identity) {
+	t.Helper()
+	b = mustID(t)
+	c, a = hostChain(t, b)
+	return c, a, b
+}
+
+func sendEnv(t *testing.T, c *websocket.Conn, typ string, payload any) {
+	t.Helper()
+	raw, err := proto.Encode(typ, payload)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if err := c.WriteMessage(websocket.TextMessage, raw); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+}
+
+// readType reads frames until one of type typ arrives and returns it.
+func readType(t *testing.T, c *websocket.Conn, typ string) proto.Envelope {
+	t.Helper()
+	_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		_, raw, err := c.ReadMessage()
+		if err != nil {
+			t.Fatalf("waiting for %q: %v", typ, err)
+		}
+		env, err := proto.Decode(raw)
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if env.Type == typ {
+			return env
+		}
+	}
+}
+
+// startServer starts a plain server on a loopback port.
+func startServer(t *testing.T, cfg server.Config) (*server.Server, string) {
+	t.Helper()
+	cfg.Addr = "127.0.0.1:0"
+	s := server.New(cfg)
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.Shutdown(ctx)
+	})
+	return s, "ws://" + s.Addr()
+}
+
+func waitFor(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	for i := 0; i < 300; i++ {
+		if ok() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+func histAll(s *server.Server) []proto.ChatMessage {
+	msgs, _ := s.HistoryForTest().After(time.Time{}, "", 100)
+	return msgs
+}
+
+// seedHistory adds n lines to s's history, oldest first.
+func seedHistory(t *testing.T, s *server.Server, n int) {
+	t.Helper()
+	base := time.Now().UTC().Add(-time.Hour)
+	for i := 0; i < n; i++ {
+		m := proto.ChatMessage{
+			ID: fmt.Sprintf("%032x", i+1), Channel: "general",
+			Text: fmt.Sprintf("m%d", i), TS: base.Add(time.Duration(i) * time.Second),
+		}
+		if err := s.HistoryForTest().Add(m); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestColdStartAlone(t *testing.T) {
@@ -150,7 +277,7 @@ func TestColdStartAlone(t *testing.T) {
 	h := newTestHost(t, base, a, "alpha")
 	h.start(t)
 	waitRole(t, h, RoleActive, 500*time.Millisecond)
-	if h.Server().Mode() != ModeActive {
+	if h.Server().Mode() != server.ModeActive {
 		t.Fatal("server is not in active mode")
 	}
 	if got := h.notified(); len(got) == 0 || got[len(got)-1] != "hosting: active" {
@@ -178,7 +305,7 @@ func TestColdStartJoinsActive(t *testing.T) {
 	if got := hb.Active(); got.Name != "alpha" {
 		t.Fatalf("B's active host = %+v", got)
 	}
-	if hb.Server().Mode() != ModeStandby {
+	if hb.Server().Mode() != server.ModeStandby {
 		t.Fatal("B's server is not standby")
 	}
 }
@@ -198,8 +325,8 @@ func TestStandbyBecomesActiveWithoutClients(t *testing.T) {
 	if err := ha.Shutdown(ctx); err != nil {
 		t.Fatal(err)
 	}
-	waitRole(t, hb, RoleActive, heartbeatGrace+coldStartWindow+200*time.Millisecond)
-	if hb.Server().Mode() != ModeActive {
+	waitRole(t, hb, RoleActive, heartbeatGrace()+coldStartWindow+200*time.Millisecond)
+	if hb.Server().Mode() != server.ModeActive {
 		t.Fatal("B's server is not active")
 	}
 }
@@ -221,24 +348,24 @@ func TestSplitBrainMerge(t *testing.T) {
 	sendEnv(t, a1, proto.TypeChatSend, proto.ChatSend{Channel: "general", Text: "line on A"})
 	fc := clientOn(t, hb.url, a)
 	sendEnv(t, fc, proto.TypeChatSend, proto.ChatSend{Channel: "general", Text: "line on B"})
-	head := hb.Server().chain.Head()
+	head := hb.Server().Chain().Head()
 	e, err := chain.NewEntry(a, &head, chain.OpGrant,
 		chain.GrantBody{Fingerprint: identity.Fingerprint(mustID(t).PublicKey()), Roles: []string{"admin"}}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	sendAppend(t, fc, e)
-	waitFor(t, "grant on B", func() bool { return hb.Server().chain.Head().Seq == e.Seq })
+	waitFor(t, "grant on B", func() bool { return hb.Server().Chain().Head().Seq == e.Seq })
 	// A makes a different change at the same position: the chains fork, so B's
 	// grant is lost when B yields (a mere prefix would be kept; see
 	// TestYieldKeepsNewerEntriesOnWinner).
-	headA := ha.Server().chain.Head()
+	headA := ha.Server().Chain().Head()
 	ea, err := chain.NewEntry(a, &headA, chain.OpGrant,
 		chain.GrantBody{Fingerprint: identity.Fingerprint(mustID(t).PublicKey()), Roles: []string{"admin"}}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ha.Server().chain.Append(ea); err != nil {
+	if err := ha.Server().Chain().Append(ea); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "lines", func() bool { return len(histAll(ha.Server())) == 1 && len(histAll(hb.Server())) == 1 })
@@ -264,7 +391,7 @@ func TestSplitBrainMerge(t *testing.T) {
 		return len(got) == 2
 	})
 	waitFor(t, "B's chain equals A's", func() bool {
-		return hb.Server().chain.Head().Hash() == ha.Server().chain.Head().Hash()
+		return hb.Server().Chain().Head().Hash() == ha.Server().Chain().Head().Hash()
 	})
 	waitRole(t, hb, RoleStandby, 2*time.Second)
 	waitFor(t, "B's history", func() bool { return len(histAll(hb.Server())) == 2 })
@@ -301,7 +428,7 @@ func TestHandbackWhenVoiceEmpty(t *testing.T) {
 	}
 	waitFor(t, "B to leave active", func() bool { return hb.Role() != RoleActive })
 	waitFor(t, "B linked", func() bool { return hb.Role() == RoleStandby || hb.Role() == RoleIdle })
-	if hb.Server().Mode() == ModeActive {
+	if hb.Server().Mode() == server.ModeActive {
 		t.Fatal("B's server is still active")
 	}
 	_ = client.SetReadDeadline(time.Now().Add(3 * time.Second))
@@ -315,10 +442,7 @@ func TestHandbackWhenVoiceEmpty(t *testing.T) {
 
 func TestNoHandbackDuringVoice(t *testing.T) {
 	ha, hb, _ := handbackFixture(t)
-	s := hb.Server()
-	s.chMu.Lock()
-	s.voice["voice"] = map[*conn]bool{{srv: s, fingerprint: "synthetic"}: false}
-	s.chMu.Unlock()
+	hb.Server().SetLoadForTest(func() (int, int) { return 1, 0 }) // one voice member
 	time.Sleep(3 * handbackIdle)
 	if hb.Role() != RoleActive {
 		t.Fatalf("B is %q during voice, want active", hb.Role())
@@ -326,4 +450,25 @@ func TestNoHandbackDuringVoice(t *testing.T) {
 	if ha.Role() == RoleActive {
 		t.Fatal("A became active during voice")
 	}
+}
+
+func heartbeatGrace() time.Duration {
+	_, grace := server.HeartbeatTiming()
+	return grace
+}
+
+func fixedLoad(clients int) func() (int, int) {
+	return func() (int, int) { return 0, clients }
+}
+
+// historyPage is the server's history page size, the unit of a merge's pacing.
+const historyPage = 100
+
+func sendAppend(t *testing.T, c *websocket.Conn, e chain.Entry) {
+	t.Helper()
+	raw, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendEnv(t, c, proto.TypeChainAppend, proto.ChainAppend{Entry: raw})
 }

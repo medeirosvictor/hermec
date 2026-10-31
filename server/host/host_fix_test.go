@@ -1,10 +1,8 @@
-package server
+package host
 
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,14 +14,11 @@ import (
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/server"
 )
 
-func fixedLoad(clients int) func() (int, int) {
-	return func() (int, int) { return 0, clients }
-}
-
 // hostChangedLines counts the "host changed" system lines in s's history.
-func hostChangedLines(s *Server) int {
+func hostChangedLines(s *server.Server) int {
 	n := 0
 	for _, m := range histAll(s) {
 		if m.System && strings.HasPrefix(m.Text, "host changed to") {
@@ -93,7 +88,7 @@ func TestIdleHostFollowsPromotedStandby(t *testing.T) {
 	if err := ha.Shutdown(ctx); err != nil {
 		t.Fatal(err)
 	}
-	waitRole(t, hb, RoleActive, heartbeatGrace+coldStartWindow+300*time.Millisecond)
+	waitRole(t, hb, RoleActive, heartbeatGrace()+coldStartWindow+300*time.Millisecond)
 	waitFor(t, "C linked to B", func() bool {
 		for _, p := range hb.Server().Links() {
 			if p.Fingerprint == identity.Fingerprint(d.PublicKey()) {
@@ -125,14 +120,14 @@ func plainFollower(t *testing.T, base *chain.Chain, key *identity.Identity, url 
 		t.Fatal(err)
 	}
 	addr := freeAddr(t)
-	s, _ := startModeServer(t, Config{
-		Addr: addr, HostKey: key, Chain: cc, Mode: ModeStandby, HostName: "alpha",
+	s, _ := startServer(t, server.Config{
+		Addr: addr, HostKey: key, Chain: cc, Mode: server.ModeStandby, HostName: "alpha",
 		Advertise: []string{"ws://" + addr},
 		Channels:  []string{"general"},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	l, err := DialLink(ctx, url, s)
+	l, err := server.DialLink(ctx, url, s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,8 +249,8 @@ func TestMutualYieldNeverLeavesNoneActive(t *testing.T) {
 	hb := newTestHost(t, base, b, "beta")
 	var bClients atomic.Int32
 	bClients.Store(1)
-	ha.Server().load = func() (int, int) { return 1, 2 } // voice keeps B from handing back
-	hb.Server().load = func() (int, int) { return 1, int(bClients.Load()) }
+	ha.Server().SetLoadForTest(func() (int, int) { return 1, 2 }) // voice keeps B from handing back
+	hb.Server().SetLoadForTest(func() (int, int) { return 1, int(bClients.Load()) })
 	// B loses when it first looks; before it commits its load flips.
 	hb.testHooks.beforeYieldRecheck = func() { bClients.Store(5) }
 	ha.start(t)
@@ -267,26 +262,13 @@ func TestMutualYieldNeverLeavesNoneActive(t *testing.T) {
 
 	end := time.Now().Add(2 * time.Second)
 	for time.Now().Before(end) {
-		if ha.Server().Mode() != ModeActive && hb.Server().Mode() != ModeActive {
+		if ha.Server().Mode() != server.ModeActive && hb.Server().Mode() != server.ModeActive {
 			t.Fatalf("neither host was active: A=%v %v B=%v %v", ha.Server().Mode(), ha.notified(), hb.Server().Mode(), hb.notified())
 		}
 		time.Sleep(3 * time.Millisecond)
 	}
-	if hb.Server().Mode() != ModeActive || ha.Server().Mode() == ModeActive {
+	if hb.Server().Mode() != server.ModeActive || ha.Server().Mode() == server.ModeActive {
 		t.Fatalf("modes: A=%v %v B=%v %v, want B alone active", ha.Server().Mode(), ha.notified(), hb.Server().Mode(), hb.notified())
-	}
-}
-
-func TestMergeRefusedWhenWinnerWouldLose(t *testing.T) {
-	a, b, aURL, _, _, _, _ := linkPair(t, "pw")
-	a.load = fixedLoad(1)
-	b.load = fixedLoad(3) // the loser claims more clients than the winner has
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	ws, _, err := dialMerge(ctx, aURL, b)
-	if err == nil {
-		ws.Close()
-		t.Fatal("the winner accepted a merge it would itself lose")
 	}
 }
 
@@ -300,15 +282,15 @@ func TestYieldNeedsWinnerOnOurChain(t *testing.T) {
 	}
 	hd := newTestHost(t, base, d, "gamma")
 	hb := newTestHost(t, short, b, "beta")
-	hd.Server().load = fixedLoad(3)
-	hb.Server().load = fixedLoad(0)
+	hd.Server().SetLoadForTest(fixedLoad(3))
+	hb.Server().SetLoadForTest(fixedLoad(0))
 	hd.start(t)
 	hb.start(t)
 	waitRole(t, hd, RoleActive, time.Second)
 	waitRole(t, hb, RoleActive, time.Second)
 	hb.setKnown(hd.url)
 	time.Sleep(2 * probeEvery) // at least one probe tick after setKnown
-	if hb.Server().Mode() != ModeActive {
+	if hb.Server().Mode() != server.ModeActive {
 		t.Fatal("B yielded to a host that is not on its chain")
 	}
 }
@@ -318,26 +300,26 @@ func TestYieldKeepsNewerEntriesOnWinner(t *testing.T) {
 	base, a, b, _ := threeHostChain(t)
 	ha := newTestHost(t, base, a, "alpha")
 	hb := newTestHost(t, base, b, "beta")
-	ha.Server().load = fixedLoad(2)
-	hb.Server().load = fixedLoad(1)
+	ha.Server().SetLoadForTest(fixedLoad(2))
+	hb.Server().SetLoadForTest(fixedLoad(1))
 	ha.start(t)
 	hb.start(t)
 	waitRole(t, ha, RoleActive, time.Second)
 	waitRole(t, hb, RoleActive, time.Second)
-	head := hb.Server().chain.Head()
+	head := hb.Server().Chain().Head()
 	e, err := chain.NewEntry(a, &head, chain.OpBan, chain.FPBody{Fingerprint: identity.Fingerprint(mustID(t).PublicKey())}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := hb.Server().chain.Append(e); err != nil {
+	if err := hb.Server().Chain().Append(e); err != nil {
 		t.Fatal(err)
 	}
-	want := hb.Server().chain.Head()
+	want := hb.Server().Chain().Head()
 	ha.setKnown(hb.url)
 	hb.setKnown(ha.url)
 	waitRole(t, hb, RoleStandby, 3*time.Second)
-	waitFor(t, "A has B's newer entry", func() bool { return ha.Server().chain.Head().Hash() == want.Hash() })
-	if hb.Server().chain.Head().Hash() != want.Hash() {
+	waitFor(t, "A has B's newer entry", func() bool { return ha.Server().Chain().Head().Hash() == want.Hash() })
+	if hb.Server().Chain().Head().Hash() != want.Hash() {
 		t.Fatal("B's chain was rolled back")
 	}
 }
@@ -347,8 +329,8 @@ func TestYieldAbortsWhenHistoryFails(t *testing.T) {
 	base, a, b, _ := threeHostChain(t)
 	ha := newTestHost(t, base, a, "alpha")
 	hb := newTestHost(t, base, b, "beta")
-	ha.Server().load = fixedLoad(2)
-	hb.Server().load = fixedLoad(1)
+	ha.Server().SetLoadForTest(fixedLoad(2))
+	hb.Server().SetLoadForTest(fixedLoad(1))
 	hb.testHooks.beforeMergeHistory = func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -362,7 +344,7 @@ func TestYieldAbortsWhenHistoryFails(t *testing.T) {
 	ha.setKnown(hb.url)
 	hb.setKnown(ha.url)
 	time.Sleep(2 * probeEvery) // at least one probe tick after setKnown
-	if hb.Server().Mode() != ModeActive {
+	if hb.Server().Mode() != server.ModeActive {
 		t.Fatal("B did not stay active after the merge failed")
 	}
 	// The client was neither moved nor disconnected.
@@ -383,13 +365,13 @@ func TestShutdownMidMergeReturns(t *testing.T) {
 	hb := newTestHost(t, base, b, "beta")
 	var stall atomic.Bool
 	release := make(chan struct{})
-	ha.Server().load = func() (int, int) {
+	ha.Server().SetLoadForTest(func() (int, int) {
 		if stall.Load() {
 			<-release
 		}
 		return 0, 2
-	}
-	hb.Server().load = fixedLoad(1)
+	})
+	hb.Server().SetLoadForTest(fixedLoad(1))
 	t.Cleanup(func() { close(release) }) // runs before the hosts shut down
 	hb.testHooks.beforeMergeHistory = func() {
 		stall.Store(true) // A stops answering the probe that ends the merge
@@ -425,134 +407,44 @@ func TestApplyRoleKeepsPromotion(t *testing.T) {
 	l := hb.Host.link
 	hb.Host.mu.Unlock()
 	hb.applyRole(l)
-	if hb.Server().Mode() != ModeActive {
+	if hb.Server().Mode() != server.ModeActive {
 		t.Fatalf("applyRole overwrote the promotion: mode %v", hb.Server().Mode())
 	}
 }
 
-func TestMergeLinkIsNotAStandbyCandidate(t *testing.T) {
-	a, b, aURL, _, _, _, _ := linkPair(t, "pw")
-	a.load = fixedLoad(1)
-	b.load = fixedLoad(0)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	ws, _, err := dialMerge(ctx, aURL, b)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ws.Close()
-	waitFor(t, "merge link", func() bool { return len(a.Links()) == 1 })
-	if fp := standbyFP(a); fp != "" {
-		t.Fatalf("a merge link was picked as standby: %s", fp)
-	}
-}
+// A loser whose history takes longer than the heartbeat grace to send still
+// merges: both hosts end with one active and the winner holds every line.
+func TestSplitBrainMergeLongHistory(t *testing.T) {
+	fastHostTimers(t)
+	base, a, b, _ := threeHostChain(t)
+	ha := newTestHost(t, base, a, "alpha")
+	hb := newTestHost(t, base, b, "beta")
+	ha.Server().SetLoadForTest(fixedLoad(2))
+	hb.Server().SetLoadForTest(fixedLoad(1))
+	ha.start(t)
+	hb.start(t)
+	waitRole(t, ha, RoleActive, time.Second)
+	waitRole(t, hb, RoleActive, time.Second)
+	const n = 8 * historyPage // 8 pages at mergePace: well over heartbeatGrace
+	seedHistory(t, hb.Server(), n)
 
-func TestSendMergeHistoryOversizeLineErrors(t *testing.T) {
-	s, _ := startModeServer(t, Config{Channels: []string{"general"}})
-	big := proto.ChatMessage{ID: "big", Channel: "general", Text: strings.Repeat("x", 70*1024), TS: time.Now().UTC()}
-	if err := s.hist.Add(big); err != nil {
-		t.Skipf("history refuses the line: %v", err)
+	ha.setKnown(hb.url)
+	hb.setKnown(ha.url)
+	waitRole(t, hb, RoleStandby, 10*time.Second)
+	if ha.Role() != RoleActive {
+		t.Fatalf("A is %q, want active", ha.Role())
 	}
-	var err error
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Errorf("sendMergeHistory panicked: %v", r)
-			}
-		}()
-		err = s.sendMergeHistory(nil)
-	}()
-	if err == nil {
-		t.Fatal("want an error for a line that cannot fit a frame")
-	}
-}
-
-// A history of several pages reaches the winner whole, in a bounded time: the
-// pacing between pages must not make a merge take minutes.
-func TestSendMergeHistoryMultiPage(t *testing.T) {
-	s, _ := startModeServer(t, Config{Channels: []string{"general"}})
-	const n = 6 * historyPage
-	seedHistory(t, s, n)
-
-	type result struct{ msgs, pages int }
-	got := make(chan result, 1)
-	up := websocket.Upgrader{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ws, err := up.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		defer ws.Close()
-		var res result
+	waitFor(t, "all lines on A", func() bool {
+		total := 0
+		var ts time.Time
+		id := ""
 		for {
-			_, raw, err := ws.ReadMessage()
-			if err != nil {
-				return
+			msgs, more := ha.Server().HistoryForTest().After(ts, id, historyPage)
+			total += len(msgs)
+			if !more || len(msgs) == 0 {
+				return total >= n
 			}
-			env, _ := proto.Decode(raw)
-			switch env.Type {
-			case proto.TypeLinkSync:
-				var ls proto.LinkSync
-				_ = json.Unmarshal(env.Data, &ls)
-				res.msgs += len(ls.Messages)
-				res.pages++
-			case proto.TypeLinkProbe: // sent after the last page
-				got <- res
-				reply, _ := proto.Encode(proto.TypeLinkProbeReply, proto.LinkProbeReply{})
-				_ = ws.WriteMessage(websocket.TextMessage, reply)
-				return
-			}
+			ts, id = msgs[len(msgs)-1].TS, msgs[len(msgs)-1].ID
 		}
-	}))
-	t.Cleanup(srv.Close)
-	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ws.Close()
-
-	start := time.Now()
-	if err := s.sendMergeHistory(ws); err != nil {
-		t.Fatal(err)
-	}
-	res := <-got
-	if res.msgs != n || res.pages < 2 {
-		t.Fatalf("winner got %d messages in %d pages, want %d in several", res.msgs, res.pages, n)
-	}
-	if limit := time.Duration(res.pages)*(mergePace+50*time.Millisecond) + 2*time.Second; time.Since(start) > limit {
-		t.Fatalf("merging %d pages took %v, want under %v", res.pages, time.Since(start), limit)
-	}
-}
-
-func TestReplaceChainKicksBannedAndDropsRemovedLinks(t *testing.T) {
-	_, b, _, bURL, ak, _, ac := linkPair(t, "pw")
-	m := mustID(t)
-	mc, env := authWarm(t, bURL, m, "")
-	if env.Type != proto.TypeAuthOK {
-		t.Fatalf("warm auth: %q", env.Type)
-	}
-	fc, err := chain.FromEntries(ac.Entries())
-	if err != nil {
-		t.Fatal(err)
-	}
-	head := fc.Head()
-	e, err := chain.NewEntry(ak, &head, chain.OpBan, chain.FPBody{Fingerprint: identity.Fingerprint(m.PublicKey())}, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fc.Append(e); err != nil {
-		t.Fatal(err)
-	}
-	if err := b.replaceChain(fc.Entries()); err != nil {
-		t.Fatal(err)
-	}
-	_ = mc.SetReadDeadline(time.Now().Add(3 * time.Second))
-	for {
-		if _, _, err := mc.ReadMessage(); err != nil {
-			if ne, ok := err.(interface{ Timeout() bool }); ok && ne.Timeout() {
-				t.Fatal("the banned warm session was not closed by replaceChain")
-			}
-			return
-		}
-	}
+	})
 }

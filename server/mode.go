@@ -46,6 +46,9 @@ type serverMode struct {
 // Mode returns the host's current mode.
 func (s *Server) Mode() Mode { return Mode(s.modeState.mode.Load()) }
 
+// HeartbeatTiming returns the heartbeat interval and grace.
+func HeartbeatTiming() (interval, grace time.Duration) { return heartbeatInterval, heartbeatGrace }
+
 // SetMode switches the host's mode. Promoting warm sessions is the caller's
 // job (promoteWarmLocked).
 func (s *Server) SetMode(m Mode) {
@@ -89,7 +92,7 @@ func (s *Server) Prepared() bool { return s.prepared.Load() }
 // hostsInfo is the host list for a hosts frame; with none set, this host alone.
 func (s *Server) hostsInfo() proto.Hosts {
 	if s.Mode() == ModeActive {
-		return proto.Hosts{Active: s.selfInfo(), Standby: s.standby.Load()}
+		return proto.Hosts{Active: s.SelfInfo(), Standby: s.standby.Load()}
 	}
 	if h := s.modeState.hosts.Load(); h != nil {
 		return *h

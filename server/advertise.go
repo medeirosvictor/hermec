@@ -5,9 +5,9 @@ import (
 	"slices"
 )
 
-// advertise is the address list this host announces: the one set with
+// Advertise is the address list this host announces: the one set with
 // SetAdvertise, else the config's.
-func (s *Server) advertise() []string {
+func (s *Server) Advertise() []string {
 	s.advMu.RLock()
 	defer s.advMu.RUnlock()
 	if s.advSet {

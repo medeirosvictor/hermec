@@ -14,6 +14,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/internal/fsutil"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/host"
 )
 
 // knownHostsFile is the file next to the config where the host remembers the
@@ -86,8 +87,8 @@ func splitTrim(s, sep string) []string {
 }
 
 // buildHostConfig turns cfg and the host flags into the config of a
-// server.Host. dir holds known_hosts.txt. notify gets the role lines.
-func buildHostConfig(f flags, cfg server.Config, dir string, notify func(string)) server.HostConfig {
+// host.Host. dir holds known_hosts.txt. notify gets the role lines.
+func buildHostConfig(f flags, cfg server.Config, dir string, notify func(string)) host.Config {
 	kh := &knownHosts{path: filepath.Join(dir, knownHostsFile), flagged: f.hosts, configured: cleanURLs(cfg.KnownHosts, "known_hosts")}
 	cfg.Advertise = f.advertise
 	if len(cfg.Advertise) == 0 {
@@ -101,7 +102,7 @@ func buildHostConfig(f flags, cfg server.Config, dir string, notify func(string)
 	if cfg.HostName == "" {
 		cfg.HostName, _ = os.Hostname()
 	}
-	hc := server.HostConfig{Server: cfg, Known: kh.list, SaveKnown: kh.save, Notify: notify}
+	hc := host.Config{Server: cfg, Known: kh.list, SaveKnown: kh.save, Notify: notify}
 	if cfg.Prepared && len(cfg.KnownHosts) == 1 {
 		hc.PinnedHost = cfg.KnownHosts[0]
 	}

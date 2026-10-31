@@ -22,7 +22,7 @@ import (
 )
 
 func TestPreparedLinkAttestsCompleteMultipageHistoryBeforePersistence(t *testing.T) {
-	fastHostTimers(t)
+	t.Cleanup(SetHeartbeatForTest(50*time.Millisecond, 150*time.Millisecond))
 	c, sourceKey, destinationKey := twoHostChain(t)
 	source, sourceURL := startModeServer(t, Config{HostKey: sourceKey, Chain: c, HostName: "source", Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}, Channels: []string{"general"}})
 	for i := 0; i < historyPage*2+7; i++ {
@@ -110,10 +110,10 @@ func TestFencedServerRejectsMergeMutationsAndFollowerRoleChanges(t *testing.T) {
 	}
 	s.hist = h
 	s.SetMode(ModeFenced)
-	if s.setFollowerMode(ModeStandby) || s.Mode() != ModeFenced {
+	if s.SetFollowerMode(ModeStandby) || s.Mode() != ModeFenced {
 		t.Fatalf("fenced server drifted to follower mode %v", s.Mode())
 	}
-	if err := s.replaceChain(c.Entries()); err == nil {
+	if err := s.ReplaceChain(c.Entries()); err == nil {
 		t.Fatal("fenced server accepted merge chain replacement")
 	}
 	s.mergeLinkMessages([]proto.ChatMessage{{ID: "after-fence", Channel: "general", TS: time.Now()}})
@@ -230,11 +230,11 @@ func TestDedicatedCommitReleasesCutoverLocksBeforeTakeover(t *testing.T) {
 	peerWS := <-peerConns
 	defer peerWS.Close()
 
-	sig, err := proto.SignDedicatedCutover(sourceKey, readiness, identity.Fingerprint(sourceKey.PublicKey()), destination.selfInfo())
+	sig, err := proto.SignDedicatedCutover(sourceKey, readiness, identity.Fingerprint(sourceKey.PublicKey()), destination.SelfInfo())
 	if err != nil {
 		t.Fatal(err)
 	}
-	certificate := proto.DedicatedCertificate{Readiness: readiness, SourceFingerprint: identity.Fingerprint(sourceKey.PublicKey()), Destination: destination.selfInfo(), Signature: sig}
+	certificate := proto.DedicatedCertificate{Readiness: readiness, SourceFingerprint: identity.Fingerprint(sourceKey.PublicKey()), Destination: destination.SelfInfo(), Signature: sig}
 	data, err := json.Marshal(proto.DedicatedCommit{Certificate: certificate})
 	if err != nil {
 		t.Fatal(err)

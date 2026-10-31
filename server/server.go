@@ -126,8 +126,17 @@ type Config struct {
 	KnownHosts []string
 }
 
-// logf writes a server log line through cfg.Logf, or log.Printf.
-func (s *Server) logf(format string, args ...any) {
+// Chain returns the server's chain.
+func (s *Server) Chain() *chain.Chain { return s.chain }
+
+// Promoted reports whether a takeover promoted this host.
+func (s *Server) Promoted() bool { return s.promoted.Load() }
+
+// Load returns the voice members and clients the yield rule compares.
+func (s *Server) Load() (voice, clients int) { return s.load() }
+
+// Logf writes a server log line through cfg.Logf, or log.Printf.
+func (s *Server) Logf(format string, args ...any) {
 	if s.cfg.Logf != nil {
 		s.cfg.Logf(format, args...)
 		return
@@ -249,7 +258,7 @@ func New(cfg Config) *Server {
 		},
 	}
 	if err := CheckHost(cfg.Chain, cfg.HostKey); err != nil {
-		s.logf("server: WARNING: %v; clients will refuse this host", err)
+		s.Logf("server: WARNING: %v; clients will refuse this host", err)
 	}
 	s.load = s.measureLoad
 	s.prepared.Store(cfg.Prepared || cfg.Mode == ModePrepared)
@@ -322,12 +331,12 @@ func (s *Server) Start() (err error) {
 			s.lastChatTS = n
 		}
 		if n := h.Newest(); n.After(limit) {
-			s.logf("server: history: newest stored line is dated %s, over %s ahead of now; ignoring it for new timestamps", n.Format(time.RFC3339), maxStoredSkew)
+			s.Logf("server: history: newest stored line is dated %s, over %s ahead of now; ignoring it for new timestamps", n.Format(time.RFC3339), maxStoredSkew)
 		}
 		s.chMu.Unlock()
 		s.applyHistoryLimits()
 		if n := h.Skipped(); n > 0 {
-			s.logf("server: history: skipped %d malformed lines in %s", n, s.cfg.HistoryPath)
+			s.Logf("server: history: skipped %d malformed lines in %s", n, s.cfg.HistoryPath)
 		}
 		if err := s.restoreDedicatedTransition(); err != nil {
 			return err
@@ -442,7 +451,7 @@ func (s *Server) trimHistory() {
 func (s *Server) trimHistoryLocked() {
 	s.applyHistoryLimits()
 	if err := s.hist.Trim(s.clock()); err != nil {
-		s.logf("server: history trim: %v", err)
+		s.Logf("server: history trim: %v", err)
 	}
 }
 

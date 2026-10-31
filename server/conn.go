@@ -119,7 +119,7 @@ func (c *conn) enqueue(raw []byte) bool {
 			Type string `json:"type"`
 		}
 		_ = json.Unmarshal(raw, &head)
-		c.srv.logf("server: dropping %d-byte %q frame for %s (max %d)", len(raw), head.Type, c.fingerprint, proto.MaxMessageSize)
+		c.srv.Logf("server: dropping %d-byte %q frame for %s (max %d)", len(raw), head.Type, c.fingerprint, proto.MaxMessageSize)
 		return true
 	}
 	c.sendMu.Lock()
@@ -275,7 +275,7 @@ func (c *conn) refuseBuild(build string) bool {
 	if build == version.Version {
 		return false
 	}
-	c.srv.logf("server: refused %s: runs build %q, this server runs %q", c.ip, build, version.Version)
+	c.srv.Logf("server: refused %s: runs build %q, this server runs %q", c.ip, build, version.Version)
 	c.sendError(proto.CodeVersionMismatch, proto.VersionMismatchMessage(version.Version, build))
 	return true
 }
