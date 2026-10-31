@@ -1,4 +1,4 @@
-package main
+package serverctl
 
 import (
 	"crypto/rand"
@@ -26,50 +26,41 @@ import (
 
 const dedicatedConfigName = "server.toml"
 
-// dedicatedTransitionPath is the sole journal location. It follows the chain,
-// not -config, so every workflow addresses identical persistent state.
-func dedicatedTransitionPath(chainPath string) string {
-	if abs, err := filepath.Abs(chainPath); err == nil {
-		chainPath = abs
-	}
-	return filepath.Join(filepath.Dir(filepath.Clean(chainPath)), dedicated.TransitionFile)
-}
-
-type dedicatedInitResult struct {
+type InitResult struct {
 	Dir      string
 	Config   string
 	ServerID string
 	Password string
 }
 
-// initDedicated creates a complete persistent state layout in a sibling temp
+// InitDedicated creates a complete persistent state layout in a sibling temp
 // directory and renames it into place, so partial initialization is never
 // mistaken for a usable server.
-func initDedicated(path string) (dedicatedInitResult, error) {
+func InitDedicated(path string) (InitResult, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return dedicatedInitResult{}, err
+		return InitResult{}, err
 	}
 	// An existing directory is accepted only when it is empty and private, so
 	// the installer can hand the service user a directory it cannot create.
 	existing := false
 	if info, err := os.Stat(abs); err == nil {
 		if err := requireEmptyPrivateDir(abs, info); err != nil {
-			return dedicatedInitResult{}, err
+			return InitResult{}, err
 		}
 		existing = true
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return dedicatedInitResult{}, err
+		return InitResult{}, err
 	}
 	parent := filepath.Dir(abs)
 	if existing {
 		parent = abs
 	} else if err := os.MkdirAll(parent, 0o700); err != nil {
-		return dedicatedInitResult{}, err
+		return InitResult{}, err
 	}
 	tmp, err := os.MkdirTemp(parent, ".hermec-dedicated-")
 	if err != nil {
-		return dedicatedInitResult{}, err
+		return InitResult{}, err
 	}
 	keep := false
 	defer func() {
@@ -79,13 +70,13 @@ func initDedicated(path string) (dedicatedInitResult, error) {
 	}()
 	for _, dir := range []string{"tls", "logs", "backups"} {
 		if err := os.Mkdir(filepath.Join(tmp, dir), 0o700); err != nil {
-			return dedicatedInitResult{}, err
+			return InitResult{}, err
 		}
 	}
 	keyPath := filepath.Join(tmp, "hermec-server.key")
-	key, err := loadOrCreateKey(keyPath)
+	key, err := LoadOrCreateKey(keyPath)
 	if err != nil {
-		return dedicatedInitResult{}, err
+		return InitResult{}, err
 	}
 	cfg := server.DefaultConfig()
 	cfg.Addr = ":7697"
@@ -101,46 +92,46 @@ func initDedicated(path string) (dedicatedInitResult, error) {
 	chainPath := filepath.Join(tmp, "chain.jsonl")
 	c, created, err := server.OpenChain(chainPath, key, cfg)
 	if err != nil {
-		return dedicatedInitResult{}, err
+		return InitResult{}, err
 	}
 	if !created {
-		return dedicatedInitResult{}, errors.New("dedicated bootstrap unexpectedly found a chain")
+		return InitResult{}, errors.New("dedicated bootstrap unexpectedly found a chain")
 	}
 	secret := make([]byte, 24)
 	if _, err := rand.Read(secret); err != nil {
-		return dedicatedInitResult{}, err
+		return InitResult{}, err
 	}
 	password := base64.RawURLEncoding.EncodeToString(secret)
 	serverID := c.ID()
 	cfg.PasswordKey, err = proto.PasswordKey(password, serverID[:])
 	if err != nil {
-		return dedicatedInitResult{}, err
+		return InitResult{}, err
 	}
 	raw, err := cfg.MarshalTOML()
 	if err != nil {
-		return dedicatedInitResult{}, err
+		return InitResult{}, err
 	}
 	if err := os.WriteFile(filepath.Join(tmp, dedicatedConfigName), raw, 0o600); err != nil {
-		return dedicatedInitResult{}, err
+		return InitResult{}, err
 	}
 	if err := os.WriteFile(filepath.Join(tmp, "history.jsonl"), nil, 0o600); err != nil {
-		return dedicatedInitResult{}, err
+		return InitResult{}, err
 	}
 	for _, name := range []string{"hermec-server.key", "chain.jsonl", "history.jsonl", dedicatedConfigName} {
 		if err := os.Chmod(filepath.Join(tmp, name), 0o600); err != nil {
-			return dedicatedInitResult{}, err
+			return InitResult{}, err
 		}
 	}
 	if existing {
 		if err := moveDirContents(tmp, abs); err != nil {
-			return dedicatedInitResult{}, err
+			return InitResult{}, err
 		}
 		_ = os.Remove(tmp)
 	} else if err := os.Rename(tmp, abs); err != nil {
-		return dedicatedInitResult{}, err
+		return InitResult{}, err
 	}
 	keep = true
-	return dedicatedInitResult{Dir: abs, Config: filepath.Join(abs, dedicatedConfigName), ServerID: c.ID().String(), Password: password}, nil
+	return InitResult{Dir: abs, Config: filepath.Join(abs, dedicatedConfigName), ServerID: c.ID().String(), Password: password}, nil
 }
 
 func requireEmptyPrivateDir(path string, info os.FileInfo) error {
@@ -173,7 +164,7 @@ func moveDirContents(from, to string) error {
 	return nil
 }
 
-func checkDedicatedState(cfg server.Config, keyPath, chainPath, historyPath string, out io.Writer) error {
+func CheckDedicatedState(cfg server.Config, keyPath, chainPath, historyPath string, out io.Writer) error {
 	if err := validateListenAddress(cfg); err != nil {
 		return err
 	}
@@ -185,7 +176,7 @@ func checkDedicatedState(cfg server.Config, keyPath, chainPath, historyPath stri
 	if err != nil {
 		return fmt.Errorf("signed chain: %w", err)
 	}
-	if err := checkHostKey(keyPath, c, key); err != nil {
+	if err := CheckHostKey(keyPath, c, key); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(historyPath, os.O_RDWR|os.O_APPEND, 0)
@@ -198,7 +189,7 @@ func checkDedicatedState(cfg server.Config, keyPath, chainPath, historyPath stri
 			return err
 		}
 	}
-	transitionPath := dedicatedTransitionPath(chainPath)
+	transitionPath := dedicated.TransitionPath(chainPath)
 	if _, err := os.Lstat(transitionPath); err == nil {
 		r, err := dedicated.Load(transitionPath)
 		if err == nil {
@@ -281,10 +272,10 @@ func validateListenAddress(cfg server.Config) error {
 	return nil
 }
 
-// publicListener reports whether addr can accept internet traffic. Explicit
+// PublicListener reports whether addr can accept internet traffic. Explicit
 // loopback, RFC1918/ULA, and link-local bindings retain the LAN development
 // behavior; wildcard, named, and globally-routable bindings are public.
-func publicListener(addr string) bool {
+func PublicListener(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil || host == "" {
 		return true
@@ -296,11 +287,11 @@ func publicListener(addr string) bool {
 	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast())
 }
 
-func validatePublicConfig(cfg server.Config, unsafe bool) error {
+func ValidatePublicConfig(cfg server.Config, unsafe bool) error {
 	if err := validateListenAddress(cfg); err != nil {
 		return err
 	}
-	if !cfg.PublicMode && !publicListener(cfg.Addr) {
+	if !cfg.PublicMode && !PublicListener(cfg.Addr) {
 		return nil
 	}
 	if unsafe {

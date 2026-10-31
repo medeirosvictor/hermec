@@ -1,4 +1,4 @@
-package main
+package serverctl
 
 import (
 	"path/filepath"
@@ -22,14 +22,14 @@ func TestCheckHostKeyNamesTheKeyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	keyPath := filepath.Join(dir, "hermec-server.key")
-	if err := checkHostKey(keyPath, c, founder); err != nil {
+	if err := CheckHostKey(keyPath, c, founder); err != nil {
 		t.Fatalf("founder: %v", err)
 	}
 	lost, err := identity.Generate()
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = checkHostKey(keyPath, c, lost)
+	err = CheckHostKey(keyPath, c, lost)
 	if err == nil {
 		t.Fatal("a key outside the host list was accepted")
 	}

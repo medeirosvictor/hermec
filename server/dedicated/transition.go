@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -326,4 +327,13 @@ func Load(path string) (Record, error) {
 
 func SameReadiness(a, b proto.DedicatedReadiness) bool {
 	return a.ServerID == b.ServerID && a.DestinationFingerprint == b.DestinationFingerprint && a.ChainHead == b.ChainHead && string(a.ChainHeadHash) == string(b.ChainHeadHash) && a.HistoryLastID == b.HistoryLastID && a.HistoryLastUnixMilli == b.HistoryLastUnixMilli && a.HistoryCount == b.HistoryCount && string(a.HistoryHash) == string(b.HistoryHash) && string(a.TransitionNonce) == string(b.TransitionNonce)
+}
+
+// TransitionPath is the sole journal location. It follows the chain, not
+// -config, so every workflow addresses identical persistent state.
+func TransitionPath(chainPath string) string {
+	if abs, err := filepath.Abs(chainPath); err == nil {
+		chainPath = abs
+	}
+	return filepath.Join(filepath.Dir(filepath.Clean(chainPath)), TransitionFile)
 }

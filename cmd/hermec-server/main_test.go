@@ -41,22 +41,6 @@ func TestFailedNewPublicStartupLeavesNoState(t *testing.T) {
 	}
 }
 
-func TestCheckNotRunningRefusesBusyPort(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	err = checkNotRunning(addr)
-	if err == nil || !strings.Contains(err.Error(), "stop the running server") {
-		t.Fatalf("busy port: err = %v, want a refusal", err)
-	}
-	ln.Close()
-	if err := checkNotRunning(addr); err != nil {
-		t.Fatalf("free port: %v", err)
-	}
-}
-
 func TestFlagsAdvertiseHosts(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "server.toml")
@@ -127,13 +111,5 @@ func TestDefaultAdvertise(t *testing.T) {
 	}
 	if got := defaultAdvertise("127.0.0.1:7777", false, ips); !slices.Equal(got, []string{"ws://127.0.0.1:7777/"}) {
 		t.Errorf("bound host: %v", got)
-	}
-}
-
-func TestCheckNotRunningSkipsUnboundPorts(t *testing.T) {
-	for _, addr := range []string{"", "127.0.0.1:0", ":0", "nonsense"} {
-		if err := checkNotRunning(addr); err != nil {
-			t.Errorf("checkNotRunning(%q) = %v, want nil", addr, err)
-		}
 	}
 }

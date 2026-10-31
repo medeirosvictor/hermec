@@ -1,4 +1,4 @@
-package main
+package serverctl
 
 import (
 	"context"
@@ -17,9 +17,9 @@ import (
 	"github.com/medeirosvictor/hermec/server/history"
 )
 
-// dedicatedHostPublic writes only public identity material. In particular it
+// DedicatedHostPublic writes only public identity material. In particular it
 // never reads or prints the seed stored in keyPath.
-func dedicatedHostPublic(keyPath string, out io.Writer) error {
+func DedicatedHostPublic(keyPath string, out io.Writer) error {
 	key, err := identity.Load(keyPath)
 	if err != nil {
 		return fmt.Errorf("host identity: %w", err)
@@ -29,11 +29,11 @@ func dedicatedHostPublic(keyPath string, out io.Writer) error {
 	return nil
 }
 
-// dedicatedAttestationStatus and dedicatedAttestationReset operate on the
+// DedicatedAttestationStatus and dedicatedAttestationReset operate on the
 // active source sidecar. The local authorized host key is the operator credential;
 // server-side checks also refuse any source that is prepared, fenced, or has a
 // durable cutover certificate.
-func dedicatedAttestationStatus(keyPath, chainPath string, reset bool, out io.Writer) error {
+func DedicatedAttestationStatus(keyPath, chainPath string, reset bool, out io.Writer) error {
 	if err := requirePrivateFile(keyPath); err != nil {
 		return fmt.Errorf("host identity: %w", err)
 	}
@@ -48,10 +48,10 @@ func dedicatedAttestationStatus(keyPath, chainPath string, reset bool, out io.Wr
 	if err != nil {
 		return fmt.Errorf("signed chain: %w", err)
 	}
-	s := server.New(server.Config{HostKey: key, Chain: c, DedicatedTransitionPath: dedicatedTransitionPath(chainPath)})
+	s := server.New(server.Config{HostKey: key, Chain: c, DedicatedTransitionPath: dedicated.TransitionPath(chainPath)})
 	operator := identity.Fingerprint(key.PublicKey())
 	if reset {
-		lock, err := dedicated.AcquireReadinessLock(dedicatedTransitionPath(chainPath))
+		lock, err := dedicated.AcquireReadinessLock(dedicated.TransitionPath(chainPath))
 		if err != nil {
 			return err
 		}
@@ -76,8 +76,8 @@ func dedicatedAttestationStatus(keyPath, chainPath string, reset bool, out io.Wr
 	return nil
 }
 
-func dedicatedStatus(_ string, keyPath, chainPath, historyPath string, out io.Writer) error {
-	r, err := dedicated.Load(dedicatedTransitionPath(chainPath))
+func DedicatedStatus(keyPath, chainPath, historyPath string, out io.Writer) error {
+	r, err := dedicated.Load(dedicated.TransitionPath(chainPath))
 	if errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintln(out, "dedicated status: none\nrecovery: Keep the current host active; retry preparation.")
 		return nil
@@ -120,16 +120,16 @@ func validateDedicatedRecord(r dedicated.Record, keyPath, chainPath, historyPath
 	}
 }
 
-// runDedicatedPreparation performs one bounded, passive preparation attempt.
+// RunDedicatedPreparation performs one bounded, passive preparation attempt.
 // It is deliberately not a service: after the durable record is written the
 // normal service can be started in prepared mode to receive a later commit.
-func runDedicatedPreparation(ctx context.Context, cfg server.Config, keyPath, chainPath, historyPath, activeURL, serverID string, retry bool, out io.Writer) error {
+func RunDedicatedPreparation(ctx context.Context, cfg server.Config, keyPath, chainPath, historyPath, activeURL, serverID string, retry bool, out io.Writer) error {
 	if !retry {
 		if err := validateDedicatedPrepareInputs(activeURL, serverID); err != nil {
 			return err
 		}
 	} else {
-		r, err := dedicated.Load(dedicatedTransitionPath(chainPath))
+		r, err := dedicated.Load(dedicated.TransitionPath(chainPath))
 		if err != nil {
 			return fmt.Errorf("dedicated retry requires an existing transition: %w", err)
 		}
@@ -161,7 +161,7 @@ func runDedicatedPreparation(ctx context.Context, cfg server.Config, keyPath, ch
 	if err != nil {
 		return fmt.Errorf("signed chain: %w", err)
 	}
-	transitionPath := dedicatedTransitionPath(chainPath)
+	transitionPath := dedicated.TransitionPath(chainPath)
 	if !retry {
 		if _, err := os.Lstat(transitionPath); err == nil {
 			return errors.New("dedicated preparation refuses existing transition state; inspect it with -dedicated-status or use -dedicated-retry")

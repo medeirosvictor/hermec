@@ -1,4 +1,4 @@
-package main
+package serverctl
 
 import (
 	"bytes"
@@ -59,13 +59,13 @@ func TestApplyConfigToAppHostedChain(t *testing.T) {
 
 	// While the app still listens on the port, the apply is refused.
 	var out bytes.Buffer
-	if err := applyConfigFile(tomlPath, keyPath, chainPath, cfg, &out); err == nil || !strings.Contains(err.Error(), "in use") {
+	if err := ApplyConfigFile(tomlPath, keyPath, chainPath, cfg, &out); err == nil || !strings.Contains(err.Error(), "in use") {
 		t.Fatalf("apply with the port busy: err = %v", err)
 	}
 	ln.Close()
 
 	out.Reset()
-	if err := applyConfigFile(tomlPath, keyPath, chainPath, cfg, &out); err != nil {
+	if err := ApplyConfigFile(tomlPath, keyPath, chainPath, cfg, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "appended 1 entries") {
