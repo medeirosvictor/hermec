@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/names"
 	"github.com/medeirosvictor/hermec/core/proto"
@@ -318,65 +319,104 @@ func (c *conn) joinLive(seq uint64) error {
 // nonces and the server ID, then the client authenticates (auth). On failure
 // it queues an error and returns it; the connection is then closed.
 func (c *conn) authenticate() error {
+	// Pre-auth bucket: fixed, small, never disabled. The handshake reads two
+	// messages (host_proof_req, auth); it bounds the exchange and a flood is
+	// otherwise cut by auth_failed.
 	pre := ratelimit.NewBucket(preAuthMsgRate, preAuthMsgBurst, c.srv.clock())
-	nonce := make([]byte, nonceSize)
-	if _, err := rand.Read(nonce); err != nil {
+	nonce, err := c.sendChallenge()
+	if err != nil {
 		return err
-	}
-	chRaw, err := proto.Encode(proto.TypeChallenge, proto.Challenge{Nonce: nonce, Build: version.Version})
-	if err != nil || !c.enqueue(chRaw) {
-		return errAuthFailed
 	}
 
 	_ = c.ws.SetReadDeadline(time.Now().Add(authTimeout))
 
-	// Pre-auth bucket: fixed, small, never disabled. The handshake reads two
-	// messages (host_proof_req, auth); it bounds the exchange and a flood is
-	// otherwise cut by auth_failed.
-	readPre := func() (proto.Envelope, error) {
-		_, raw, err := c.ws.ReadMessage()
-		if err != nil {
-			return proto.Envelope{}, err
-		}
-		if !pre.Allow(c.srv.clock()) {
-			c.sendError("rate_limited", "too many messages; slow down")
-			return proto.Envelope{}, errAuthFailed
-		}
-		env, err := proto.Decode(raw)
-		if err != nil {
-			return proto.Envelope{}, errBadHandshake
-		}
-		return env, nil
+	req, err := c.readHostProofReq(pre)
+	if err != nil {
+		return err
 	}
-
-	fail := func() error {
-		c.srv.noteAuthFailure(c.ip) // blocks further connects from this IP; the reply is not delayed
-		c.sendError("auth_failed", "authentication failed")
-		return errAuthFailed
+	id, sentSeq, err := c.proveHost(nonce, req)
+	if err != nil {
+		return err
 	}
+	auth, pub, err := c.readAuth(pre, nonce, req, id)
+	if err != nil {
+		return err
+	}
+	fp, err := c.admit(auth, pub, nonce, req.Nonce, id)
+	if err != nil {
+		return err
+	}
+	if err := c.reserveSlot(auth.Warm); err != nil {
+		return err
+	}
+	return c.register(auth, pub, fp, id, sentSeq)
+}
 
-	env, err := readPre()
+// readPreAuth reads one handshake message, charged to the pre-auth bucket.
+func (c *conn) readPreAuth(pre *ratelimit.Bucket) (proto.Envelope, error) {
+	_, raw, err := c.ws.ReadMessage()
+	if err != nil {
+		return proto.Envelope{}, err
+	}
+	if !pre.Allow(c.srv.clock()) {
+		c.sendError("rate_limited", "too many messages; slow down")
+		return proto.Envelope{}, errAuthFailed
+	}
+	env, err := proto.Decode(raw)
+	if err != nil {
+		return proto.Envelope{}, errBadHandshake
+	}
+	return env, nil
+}
+
+func (c *conn) failAuth() error {
+	c.srv.noteAuthFailure(c.ip) // blocks further connects from this IP; the reply is not delayed
+	c.sendError("auth_failed", "authentication failed")
+	return errAuthFailed
+}
+
+// sendChallenge queues the challenge and returns its nonce.
+func (c *conn) sendChallenge() ([]byte, error) {
+	nonce := make([]byte, nonceSize)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	chRaw, err := proto.Encode(proto.TypeChallenge, proto.Challenge{Nonce: nonce, Build: version.Version})
+	if err != nil || !c.enqueue(chRaw) {
+		return nil, errAuthFailed
+	}
+	return nonce, nil
+}
+
+// readHostProofReq reads the client's request that this host prove itself.
+func (c *conn) readHostProofReq(pre *ratelimit.Bucket) (proto.HostProofReq, error) {
+	var req proto.HostProofReq
+	env, err := c.readPreAuth(pre)
 	if errors.Is(err, errBadHandshake) {
-		return fail()
+		return req, c.failAuth()
 	}
 	if err != nil {
-		return err // read error, or rate limited (already answered)
+		return req, err // read error, or rate limited (already answered)
 	}
 	if env.Type != proto.TypeHostProofReq {
-		return fail()
+		return req, c.failAuth()
 	}
-	var req proto.HostProofReq
 	if err := json.Unmarshal(env.Data, &req); err != nil || len(req.Nonce) != nonceSize {
-		return fail()
+		return req, c.failAuth()
 	}
+	return req, nil
+}
 
-	// Prove this host to the client before it sends anything secret.
+// proveHost proves this host to the client before it sends anything secret:
+// the chain, then a signature over both nonces and the server ID. It returns
+// the server ID and the head sequence of the chain it sent.
+func (c *conn) proveHost(nonce []byte, req proto.HostProofReq) (chain.ID, uint64, error) {
 	id := c.srv.chain.ID()
 	sent := c.srv.chain.Entries()
 	sentSeq := sent[len(sent)-1].Seq
 	frames, err := chainFrames(sent)
 	if err != nil {
-		return err
+		return id, 0, err
 	}
 	size := 0
 	for _, f := range frames {
@@ -384,70 +424,86 @@ func (c *conn) authenticate() error {
 	}
 	if !c.srv.chargeChain(c.ip, size) {
 		c.sendError(proto.CodeServerBusy, "server busy")
-		return errAuthFailed
+		return id, 0, errAuthFailed
 	}
 	for _, f := range frames {
 		if !c.enqueue(f) {
-			return errAuthFailed
+			return id, 0, errAuthFailed
 		}
 	}
 	if !c.sendMsg(proto.TypeHostProof, proto.HostProof{
 		PubKey: c.srv.cfg.HostKey.PublicKey(),
 		Sig:    c.srv.cfg.HostKey.Sign(proto.HostProofBytes(req.Nonce, nonce, id[:])),
 	}) {
-		return errAuthFailed
+		return id, 0, errAuthFailed
 	}
+	return id, sentSeq, nil
+}
 
-	env, err = readPre()
+// readAuth reads the client's auth message and checks its build, shape and
+// signature over both nonces and the server ID.
+func (c *conn) readAuth(pre *ratelimit.Bucket, nonce []byte, req proto.HostProofReq, id chain.ID) (proto.Auth, ed25519.PublicKey, error) {
+	var auth proto.Auth
+	env, err := c.readPreAuth(pre)
 	if errors.Is(err, errBadHandshake) {
-		return fail()
+		return auth, nil, c.failAuth()
 	}
 	if err != nil {
-		return err
+		return auth, nil, err
 	}
 	if env.V != proto.Version || env.Type != proto.TypeAuth {
-		return fail()
+		return auth, nil, c.failAuth()
 	}
-	var auth proto.Auth
 	if err := json.Unmarshal(env.Data, &auth); err != nil {
-		return fail()
+		return auth, nil, c.failAuth()
 	}
 	if c.refuseBuild(auth.Build) {
-		return errAuthFailed
+		return auth, nil, errAuthFailed
 	}
 	if !proto.ValidAuth(auth) {
-		return fail()
+		return auth, nil, c.failAuth()
 	}
 	pub := ed25519.PublicKey(auth.PubKey)
 	if !identity.Verify(pub, proto.ClientAuthBytes(nonce, req.Nonce, id[:]), auth.Sig) {
-		return fail()
+		return auth, nil, c.failAuth()
 	}
+	return auth, pub, nil
+}
+
+// admit applies the ban, password, allowlist and standby checks to a client
+// whose key is proven, and returns its fingerprint.
+func (c *conn) admit(auth proto.Auth, pub ed25519.PublicKey, nonce, reqNonce []byte, id chain.ID) (string, error) {
 	if c.srv.banned(identity.Fingerprint(pub)) {
 		// The key is proven, so telling it is safe; not an auth failure.
 		c.sendError(proto.CodeBanned, "you are banned from this server")
-		return errAuthFailed
+		return "", errAuthFailed
 	}
 	// Hosts reach each other warm and without the password: the chain already
 	// vouches for their keys.
 	st := c.srv.chain.State()
 	hostWarm := auth.Warm && st.IsHost(pub)
-	if !hostWarm && !c.srv.checkPassword(auth, nonce, req.Nonce, id[:]) {
-		return fail()
+	if !hostWarm && !c.srv.checkPassword(auth, nonce, reqNonce, id[:]) {
+		return "", c.failAuth()
 	}
 	fp := identity.Fingerprint(pub)
 	if !c.srv.keyAllowed(fp) {
-		return fail()
+		return "", c.failAuth()
 	}
 
 	c.srv.noteAuthSuccess(c.ip)
 	if !auth.Warm && c.srv.Mode() != ModeActive {
 		c.sendMsg(proto.TypeHosts, c.srv.hostsInfo())
 		c.sendError(proto.CodeNotActive, "this host is on standby")
-		return errAuthFailed
+		return "", errAuthFailed
 	}
+	return fp, nil
+}
+
+// reserveSlot takes a warm or a live client slot.
+func (c *conn) reserveSlot(warm bool) error {
 	// Warm sessions are capped by their own counter at the same max_clients;
 	// promotion takes a real slot.
-	if auth.Warm {
+	if warm {
 		if !c.srv.reserveWarmSlot() {
 			c.sendError(proto.CodeServerFull, "server is full")
 			return errAuthFailed
@@ -460,7 +516,12 @@ func (c *conn) authenticate() error {
 		}
 		c.counted.Store(true)
 	}
+	return nil
+}
 
+// register records the authenticated identity, queues auth_ok and the
+// initial frames, and joins the connection to the live set.
+func (c *conn) register(auth proto.Auth, pub ed25519.PublicKey, fp string, id chain.ID, sentSeq uint64) error {
 	c.warm = auth.Warm
 	c.pub = pub
 	c.fingerprint = fp
@@ -487,7 +548,7 @@ func (c *conn) authenticate() error {
 	if err := c.joinLive(sentSeq); err != nil {
 		return err
 	}
-	// A ban appended between the check above and markAuthed missed this
+	// A ban appended between the admission check and markAuthed missed this
 	// connection (kick only reaches authed ones).
 	if c.srv.banned(fp) {
 		c.sendError(proto.CodeBanned, "you are banned from this server")
