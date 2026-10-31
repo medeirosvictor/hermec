@@ -8,11 +8,13 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 func (h *hs) sendProofAuth(t *testing.T, c *websocket.Conn, id *identity.Identity, key []byte) {
 	t.Helper()
 	sendEnv(t, c, proto.TypeAuth, proto.Auth{
+		Build:  version.Version,
 		PubKey: id.PublicKey(), Name: "tester",
 		Proof: proto.PasswordProof(key, h.serverNonce, h.clientNonce, h.serverID[:]),
 		Sig:   id.Sign(proto.ClientAuthBytes(h.serverNonce, h.clientNonce, h.serverID[:])),

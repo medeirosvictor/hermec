@@ -16,6 +16,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 func startServer(t *testing.T, cfg Config) string {
@@ -187,6 +188,7 @@ func hello(t *testing.T, c *websocket.Conn) *hs {
 func (h *hs) sendAuth(t *testing.T, c *websocket.Conn, id *identity.Identity, name, password string) {
 	t.Helper()
 	sendEnv(t, c, proto.TypeAuth, proto.Auth{
+		Build:  version.Version,
 		PubKey: id.PublicKey(), Name: name,
 		Sig:   id.Sign(proto.ClientAuthBytes(h.serverNonce, h.clientNonce, h.serverID[:])),
 		Proof: passwordProof(t, password, h.serverNonce, h.clientNonce, h.serverID),
@@ -251,7 +253,7 @@ func TestClientSigBoundToServerID(t *testing.T) {
 	id := mustID(t)
 	c := dial(t, url)
 	h := hello(t, c)
-	sendEnv(t, c, proto.TypeAuth, proto.Auth{PubKey: id.PublicKey(), Name: "x", Sig: id.Sign(h.serverNonce)})
+	sendEnv(t, c, proto.TypeAuth, proto.Auth{Build: version.Version, PubKey: id.PublicKey(), Name: "x", Sig: id.Sign(h.serverNonce)})
 	requireAuthFailed(t, c, readEnv(t, c))
 
 	// Signed for another server ID: also refused.
@@ -259,7 +261,7 @@ func TestClientSigBoundToServerID(t *testing.T) {
 	h = hello(t, c)
 	other := h.serverID
 	other[0] ^= 1
-	sendEnv(t, c, proto.TypeAuth, proto.Auth{PubKey: id.PublicKey(), Name: "x",
+	sendEnv(t, c, proto.TypeAuth, proto.Auth{Build: version.Version, PubKey: id.PublicKey(), Name: "x",
 		Sig: id.Sign(proto.ClientAuthBytes(h.serverNonce, h.clientNonce, other[:]))})
 	requireAuthFailed(t, c, readEnv(t, c))
 }
@@ -411,6 +413,7 @@ func TestAuthBadSignature(t *testing.T) {
 	c := dial(t, url)
 	_ = hello(t, c)
 	sendEnv(t, c, proto.TypeAuth, proto.Auth{
+		Build:  version.Version,
 		PubKey: id.PublicKey(), Name: "x", Sig: id.Sign([]byte("not the nonce")),
 	})
 	requireAuthFailed(t, c, readEnv(t, c))
@@ -449,6 +452,7 @@ func TestAuthNonceReplayRejected(t *testing.T) {
 	hb := hello(t, b)
 	// A signature made for connection a's nonces, replayed on b.
 	sendEnv(t, b, proto.TypeAuth, proto.Auth{
+		Build:  version.Version,
 		PubKey: id.PublicKey(), Name: "x",
 		Sig: id.Sign(proto.ClientAuthBytes(ha.serverNonce, ha.clientNonce, hb.serverID[:])),
 	})
@@ -468,5 +472,47 @@ func TestOversizedFrameCloses(t *testing.T) {
 	_, env := authAs(t, url, mustID(t), "")
 	if env.Type != proto.TypeAuthOK {
 		t.Fatalf("server not alive after oversized frame: type = %q", env.Type)
+	}
+}
+
+func TestAuthBuildMismatchRejected(t *testing.T) {
+	url := startServer(t, Config{})
+	id := mustID(t)
+	c := dial(t, url)
+	h := hello(t, c)
+	sendEnv(t, c, proto.TypeAuth, proto.Auth{
+		Build:  "v0.0.0-other",
+		PubKey: id.PublicKey(), Name: "x",
+		Sig: id.Sign(proto.ClientAuthBytes(h.serverNonce, h.clientNonce, h.serverID[:])),
+	})
+	env := readEnv(t, c)
+	if env.Type != proto.TypeError {
+		t.Fatalf("type = %q, want error", env.Type)
+	}
+	var em proto.ErrorMsg
+	if err := json.Unmarshal(env.Data, &em); err != nil {
+		t.Fatal(err)
+	}
+	if em.Code != proto.CodeVersionMismatch || em.Message != proto.VersionMismatchMessage(version.Version, "v0.0.0-other") {
+		t.Fatalf("error = %+v, want version_mismatch naming both builds", em)
+	}
+	if _, _, err := c.ReadMessage(); err == nil {
+		t.Fatal("connection still open after version_mismatch")
+	}
+}
+
+func TestChallengeCarriesBuild(t *testing.T) {
+	c := dial(t, startServer(t, Config{}))
+	_, raw, err := c.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := proto.Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ch proto.Challenge
+	if err := json.Unmarshal(env.Data, &ch); err != nil || ch.Build != version.Version {
+		t.Fatalf("challenge build = %q (%v), want %q", ch.Build, err, version.Version)
 	}
 }

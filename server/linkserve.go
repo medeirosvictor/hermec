@@ -181,6 +181,9 @@ func (c *conn) handleLinkHello(env proto.Envelope) {
 		c.sendError(proto.CodeBadRequest, "malformed link_hello")
 		return
 	}
+	if c.refuseBuild(h.Build) {
+		return
+	}
 	if code, msg := s.registerLink(c, h); code != "" {
 		c.sendError(code, msg)
 		return

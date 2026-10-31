@@ -1,6 +1,6 @@
 package proto
 
-// Signature domains of the version 2 handshake. Each message starts with a
+// Signature domains of the handshake. Each message starts with a
 // distinct prefix so a signature made for one purpose cannot be replayed as
 // another.
 const (

@@ -16,6 +16,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/names"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/discover"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 const nonceSize = 32
@@ -266,6 +267,17 @@ func (c *conn) drainInbound() {
 
 const rateLimitDrain = 200 * time.Millisecond
 
+// refuseBuild answers a peer running another build with version_mismatch and
+// reports whether it did; every peer must run this server's build.
+func (c *conn) refuseBuild(build string) bool {
+	if build == version.Version {
+		return false
+	}
+	c.srv.logf("server: refused %s: runs build %q, this server runs %q", c.ip, build, version.Version)
+	c.sendError(proto.CodeVersionMismatch, proto.VersionMismatchMessage(version.Version, build))
+	return true
+}
+
 var (
 	errAuthFailed   = errors.New("auth failed")
 	errBadHandshake = errors.New("malformed handshake message")
@@ -300,7 +312,7 @@ func (c *conn) joinLive(seq uint64) error {
 	return nil
 }
 
-// authenticate runs the v2 mutual handshake: the client asks the host to prove
+// authenticate runs the mutual handshake: the client asks the host to prove
 // itself (host_proof_req), the host sends its chain and a signature over both
 // nonces and the server ID, then the client authenticates (auth). On failure
 // it queues an error and returns it; the connection is then closed.
@@ -310,7 +322,7 @@ func (c *conn) authenticate() error {
 	if _, err := rand.Read(nonce); err != nil {
 		return err
 	}
-	chRaw, err := proto.Encode(proto.TypeChallenge, proto.Challenge{Nonce: nonce})
+	chRaw, err := proto.Encode(proto.TypeChallenge, proto.Challenge{Nonce: nonce, Build: version.Version})
 	if err != nil || !c.enqueue(chRaw) {
 		return errAuthFailed
 	}
@@ -398,6 +410,9 @@ func (c *conn) authenticate() error {
 	var auth proto.Auth
 	if err := json.Unmarshal(env.Data, &auth); err != nil {
 		return fail()
+	}
+	if c.refuseBuild(auth.Build) {
+		return errAuthFailed
 	}
 	if !proto.ValidAuth(auth) {
 		return fail()

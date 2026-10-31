@@ -11,6 +11,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/hshake"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 // mergePace spaces the history pages sent to the winner of a split brain, so
@@ -42,6 +43,7 @@ func dialMerge(ctx context.Context, url string, s *Server) (*websocket.Conn, []c
 	defer stop()
 	voice, clients := s.load()
 	hello := proto.LinkHello{
+		Build:         version.Version,
 		Addrs:         s.advertise(),
 		Name:          s.cfg.HostName,
 		HistoryLastTS: noHistory(),

@@ -38,6 +38,8 @@ func DialErrorText(err error) string {
 			return "the server sent an invalid chain"
 		case proto.CodeBanned:
 			return "you are banned from this server"
+		case proto.CodeVersionMismatch:
+			return "update required: " + se.Message
 		}
 	}
 	return err.Error()

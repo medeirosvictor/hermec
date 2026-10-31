@@ -40,7 +40,6 @@ const (
 	TypePresence      = "presence"
 	TypeChatSend      = "chat_send"
 	TypeChatMessage   = "chat_message"
-	TypeChannelList   = "channel_list"
 	TypeHistory       = "history"
 	TypeHistoryBefore = "history_before"
 	TypeRoster        = "roster"
@@ -53,7 +52,7 @@ const (
 	TypeRTCAnswer    = "rtc_answer"
 	TypeRTCCandidate = "rtc_candidate"
 
-	// Handshake and signed server chain (protocol version 2).
+	// Handshake and signed server chain.
 	TypeHostProofReq = "host_proof_req"
 	TypeHostProof    = "host_proof"
 	TypeChain        = "chain"
@@ -110,7 +109,7 @@ const CodeServerFull = "server_full"
 // signature, wrong password, banned key). Retrying cannot succeed.
 const CodeAuthFailed = "auth_failed"
 
-// Error codes added with protocol version 2.
+// Error codes of the handshake and the signed server chain.
 const (
 	CodeServerBusy        = "server_busy" // also the HTTP 503 refusal, which the client synthesizes
 	CodeServerIDMismatch  = "server_id_mismatch"
@@ -119,6 +118,9 @@ const (
 	CodeChainConflict     = "chain_conflict"
 	CodeChainFull         = "chain_full"
 	CodeBanned            = "banned"
+	// CodeVersionMismatch refuses a peer running another build. All peers run
+	// the same build, so retrying cannot succeed.
+	CodeVersionMismatch = "version_mismatch"
 )
 
 // Error codes added with the host failover messages.
@@ -155,12 +157,6 @@ type ChainAppend struct {
 	Ref   string          `json:"ref,omitempty"`
 }
 
-// Reserved for future end-to-end encryption. They have no handler yet.
-const (
-	TypeE2EEKeyExchange = "e2ee_key_exchange"
-	TypeE2EEFrame       = "e2ee_frame"
-)
-
 // Envelope is the single wire message shape.
 type Envelope struct {
 	V    int             `json:"v"`
@@ -171,12 +167,18 @@ type Envelope struct {
 // Challenge carries the server nonce the client must sign.
 type Challenge struct {
 	Nonce []byte `json:"nonce"`
+	// Build is the server's build (version.Version); the client refuses a
+	// server running another one before sending anything.
+	Build string `json:"build"`
 }
 
 // Auth is the client's reply to a Challenge. Sig is over the nonce.
 const MaxAuthNameBytes = 4096
 
 type Auth struct {
+	// Build is the client's build (version.Version); the server refuses
+	// another one before doing any auth work.
+	Build  string `json:"build"`
 	PubKey []byte `json:"pubkey"`
 	Name   string `json:"name"`
 	Sig    []byte `json:"sig"`
@@ -272,7 +274,7 @@ type (
 // "bad_request", "not_joined", "rate_limited", "voice_full",
 // "server_full", "server_id_mismatch",
 // "host_not_authorized", "bad_chain", "chain_conflict", "chain_full", "banned",
-// "not_active", "active_alive", "not_standby", "chain_lost".
+// "not_active", "active_alive", "not_standby", "chain_lost", "version_mismatch".
 type ErrorMsg struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -312,6 +314,9 @@ type Move struct {
 // LinkHello opens a host-to-host link: the sender's chain position, the ID and
 // time of its newest stored chat line, and how to dial it.
 type LinkHello struct {
+	// Build is the sender's build (version.Version); a host refuses a link
+	// from another one.
+	Build         string    `json:"build"`
 	ChainSeq      uint64    `json:"chain_seq"`
 	HistoryLastID string    `json:"history_last_id"`
 	HistoryLastTS time.Time `json:"history_last_ts"`
@@ -485,4 +490,16 @@ func decode(raw []byte) (Envelope, error) {
 		return Envelope{}, errors.New("proto: empty message type")
 	}
 	return env, nil
+}
+
+// VersionMismatchMessage is the text of a version_mismatch error: both builds,
+// so either side can show it. An empty build is a peer too old to send one.
+func VersionMismatchMessage(server, client string) string {
+	if server == "" {
+		server = "an unknown build"
+	}
+	if client == "" {
+		client = "an unknown build"
+	}
+	return "server runs " + server + ", you run " + client
 }

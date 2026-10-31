@@ -1,4 +1,4 @@
-// Package hshake is the client side of the version 2 mutual handshake. The
+// Package hshake is the client side of the mutual handshake. The
 // client package builds on it, and so does a host dialing another host; it
 // lives apart so the server can use it without importing client.
 package hshake
@@ -17,6 +17,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 const (
@@ -108,7 +109,7 @@ func Run(ctx context.Context, ws *websocket.Conn, id *identity.Identity, name, p
 	return res, nil
 }
 
-// handshake runs the version 2 mutual handshake: the host proves itself with
+// handshake runs the mutual handshake: the host proves itself with
 // the signed chain before the client sends a password proof, then the client
 // authenticates with a signature bound to the server ID.
 func handshake(ws *websocket.Conn, id *identity.Identity, name, password string, o Opts) (*Result, error) {
@@ -122,6 +123,9 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 	var ch proto.Challenge
 	if err := json.Unmarshal(env.Data, &ch); err != nil || len(ch.Nonce) == 0 {
 		return nil, fmt.Errorf("client: bad challenge")
+	}
+	if ch.Build != version.Version {
+		return nil, fmt.Errorf("client: %w", &ServerError{Code: proto.CodeVersionMismatch, Message: proto.VersionMismatchMessage(ch.Build, version.Version)})
 	}
 	clientNonce := make([]byte, nonceSize)
 	if _, err := rand.Read(clientNonce); err != nil {
@@ -195,6 +199,7 @@ func handshake(ws *websocket.Conn, id *identity.Identity, name, password string,
 		}
 	}
 	a := proto.Auth{
+		Build:  version.Version,
 		PubKey: id.PublicKey(), Name: name, Warm: o.Warm,
 		Sig: id.Sign(proto.ClientAuthBytes(ch.Nonce, clientNonce, sid[:])),
 	}

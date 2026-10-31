@@ -14,6 +14,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 // hostChain is a chain founded by a with a host_add for each of others, at
@@ -114,6 +115,9 @@ func linkUp(t *testing.T, url string, id *identity.Identity, hello proto.LinkHel
 	c, env := authWarm(t, url, id, "")
 	if env.Type != proto.TypeAuthOK {
 		t.Fatalf("warm auth: %q", env.Type)
+	}
+	if hello.Build == "" {
+		hello.Build = version.Version
 	}
 	sendEnv(t, c, proto.TypeLinkHello, hello)
 	return c
@@ -476,4 +480,13 @@ func TestStandbyRecomputedWhenClientsJoin(t *testing.T) {
 	fullClient(t, url)
 	fullClient(t, url)
 	hostsUntil(t, first, func(h proto.Hosts) bool { return h.Standby != nil && h.Standby.Fingerprint == fpB })
+}
+
+func TestLinkRefusesOtherBuild(t *testing.T) {
+	c, a, b := twoHostChain(t)
+	_, url := startLinkServer(t, c, a, "pw")
+	lk := linkUp(t, url, b, proto.LinkHello{Build: "v0.0.0-other"})
+	if code := errCode(readType(t, lk, proto.TypeError)); code != proto.CodeVersionMismatch {
+		t.Fatalf("code = %q, want version_mismatch", code)
+	}
 }

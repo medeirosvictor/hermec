@@ -11,6 +11,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 func modeCfg() Config {
@@ -42,6 +43,7 @@ func authWarm(t *testing.T, url string, id *identity.Identity, password string) 
 	c := dial(t, url)
 	h := hello(t, c)
 	sendEnv(t, c, proto.TypeAuth, proto.Auth{
+		Build:  version.Version,
 		PubKey: id.PublicKey(), Name: "warm", Warm: true,
 		Sig:   id.Sign(proto.ClientAuthBytes(h.serverNonce, h.clientNonce, h.serverID[:])),
 		Proof: passwordProof(t, password, h.serverNonce, h.clientNonce, h.serverID),

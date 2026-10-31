@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -471,7 +472,9 @@ func (c *Client) readLoop() {
 				c.emit(Event{Err: se})
 			}
 		default:
-			// Unknown types (e.g. channel_list, future e2ee) are ignored.
+			// Every peer runs this build, so an unknown type is a bad server.
+			log.Printf("client: unknown message type %q", env.Type)
+			c.emit(Event{Err: fmt.Errorf("client: unknown message type %q", env.Type)})
 		}
 	}
 }

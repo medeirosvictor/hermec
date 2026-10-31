@@ -55,3 +55,15 @@ func TestServerBusyKeepsAutoRetry(t *testing.T) {
 		t.Fatal("server_busy must keep retrying with backoff")
 	}
 }
+
+func TestVersionMismatchStopsAutoRetryWithUpdateText(t *testing.T) {
+	msg := proto.VersionMismatchMessage("v0.8.0", "v0.7.0")
+	err := fmt.Errorf("client: %w", &client.ServerError{Code: proto.CodeVersionMismatch, Message: msg})
+	_, s := failedDial(t, err)
+	if !s.retryAt.IsZero() {
+		t.Fatalf("version_mismatch scheduled an automatic retry at %v", s.retryAt)
+	}
+	if want := "update required: server runs v0.8.0, you run v0.7.0"; s.lastErr != want {
+		t.Fatalf("lastErr = %q, want %q", s.lastErr, want)
+	}
+}

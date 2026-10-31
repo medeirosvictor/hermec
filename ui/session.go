@@ -412,7 +412,7 @@ func (g *game) pumpSessions() {
 func noRetryCode(code string) bool {
 	switch code {
 	case proto.CodeAuthFailed, proto.CodeServerIDMismatch, proto.CodeHostNotAuthorized,
-		proto.CodeBadChain, proto.CodeBanned:
+		proto.CodeBadChain, proto.CodeBanned, proto.CodeVersionMismatch:
 		return true
 	}
 	return false

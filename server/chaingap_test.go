@@ -11,6 +11,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 // An entry appended while a client is between host_proof and auth must still
@@ -60,7 +61,7 @@ func TestChainAppendDuringHandshakeIsCaughtUp(t *testing.T) {
 	readChainEntry(t, a)
 
 	id := f.ch.ID()
-	r, _ = proto.Encode(proto.TypeAuth, proto.Auth{PubKey: b.PublicKey(), Name: "b",
+	r, _ = proto.Encode(proto.TypeAuth, proto.Auth{Build: version.Version, PubKey: b.PublicKey(), Name: "b",
 		Sig: b.Sign(proto.ClientAuthBytes(chl.Nonce, cn, id[:]))})
 	_ = ws.WriteMessage(websocket.TextMessage, r)
 	if env := readEnv(t, ws); env.Type != proto.TypeAuthOK {

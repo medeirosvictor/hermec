@@ -17,6 +17,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/hshake"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 // Link is this host's connection to the active host: it mirrors the active
@@ -111,6 +112,7 @@ func dialLinkOpts(ctx context.Context, url string, s *Server, full bool, dedicat
 	l := &Link{s: s, ws: ws, peerFingerprint: peerFingerprint, activeWSSURL: url, done: make(chan struct{}), roleCh: make(chan struct{}, 1), handover: make(chan struct{}, 1), prepareAck: make(chan error, 1)}
 	l.lastBeat.Store(time.Now().UnixNano())
 	hello := proto.LinkHello{
+		Build:     version.Version,
 		ChainSeq:  s.chain.Head().Seq,
 		Addrs:     s.advertise(),
 		Name:      s.cfg.HostName,

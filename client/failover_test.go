@@ -16,6 +16,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 func mustIdent(t *testing.T) *identity.Identity {
@@ -327,7 +328,7 @@ func TestDialServerBusyFrame(t *testing.T) {
 			return
 		}
 		defer ws.Close()
-		ch, _ := proto.Encode(proto.TypeChallenge, proto.Challenge{Nonce: make([]byte, 32)})
+		ch, _ := proto.Encode(proto.TypeChallenge, proto.Challenge{Nonce: make([]byte, 32), Build: version.Version})
 		_ = ws.WriteMessage(websocket.TextMessage, ch)
 		_, _, _ = ws.ReadMessage() // host_proof_req
 		busy, _ := proto.Encode(proto.TypeError, proto.ErrorMsg{Code: proto.CodeServerBusy, Message: "server busy"})
@@ -390,5 +391,57 @@ func TestTakeoverIgnoresRefError(t *testing.T) {
 	var se *ServerError
 	if !errors.As(err, &se) || se.Code != proto.CodeActiveAlive {
 		t.Fatalf("err = %v, want active_alive, not the ref'd banned", err)
+	}
+}
+
+// A server running another build is refused from its challenge, before the
+// client sends anything.
+func TestDialRefusesOtherBuild(t *testing.T) {
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer ws.Close()
+		ch, _ := proto.Encode(proto.TypeChallenge, proto.Challenge{Nonce: make([]byte, 32), Build: "v0.0.0-other"})
+		_ = ws.WriteMessage(websocket.TextMessage, ch)
+		if _, _, err := ws.ReadMessage(); err == nil {
+			t.Error("client sent a message to a server running another build")
+		}
+	}))
+	t.Cleanup(srv.Close)
+	_, err := Dial(testCtx(t), "ws"+strings.TrimPrefix(srv.URL, "http")+"/", mustIdent(t), "alice", "")
+	var se *ServerError
+	if !errors.As(err, &se) || se.Code != proto.CodeVersionMismatch || se.Message != proto.VersionMismatchMessage("v0.0.0-other", version.Version) {
+		t.Fatalf("err = %v, want version_mismatch naming both builds", err)
+	}
+}
+
+// A frame type the client does not know is a bad server, not silence.
+func TestUnknownMessageTypeIsErrEvent(t *testing.T) {
+	p := newPair(t)
+	stray, _ := proto.Encode("channel_list", struct{}{})
+	url := proxy(t, p.aURL, func(raw []byte, env proto.Envelope) [][]byte {
+		if env.Type == proto.TypeRoster {
+			return [][]byte{stray, raw}
+		}
+		return [][]byte{raw}
+	})
+	c, err := Dial(testCtx(t), url, mustIdent(t), "alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-c.Events():
+			if ev.Err != nil && strings.Contains(ev.Err.Error(), "unknown message type") {
+				return
+			}
+		case <-deadline:
+			t.Fatal("no error event for an unknown message type")
+		}
 	}
 }

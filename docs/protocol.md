@@ -1,6 +1,6 @@
-# Hermec Wire Protocol, version 2
+# Hermec Wire Protocol
 
-This document specifies the Hermec signaling/chat protocol, version 2. It
+This document specifies the Hermec signaling/chat protocol. It
 covers the mutual handshake, the server chain (section 9), channels, presence,
 text chat and its history (sections 4.9 and 4.9a), the server roster, voice
 signaling (section 4.12), camera and screen media (section 4.15), and host
@@ -37,7 +37,7 @@ them; please report it.
 
 | Field  | Type    | Description                                              |
 |--------|---------|----------------------------------------------------------|
-| `v`    | integer | Protocol version. Must be `2`; every other version is rejected. |
+| `v`    | integer | Must equal `proto.Version` (`2`); every other value is rejected. |
 | `type` | string  | Message type, non-empty. See section 4.                  |
 | `data` | object  | Type-specific payload. Omitted when the payload is empty. |
 
@@ -49,7 +49,10 @@ Conventions:
 - `[]byte` fields (`nonce`, `pubkey`, `sig`) are encoded as standard base64
   JSON strings.
 - Timestamps are RFC 3339 (UTC from the server).
-- Unknown fields inside `data` are ignored.
+
+All peers run the same build. `v` must equal `proto.Version`, the build
+(`version.Version`, `dev` for an unstamped build) must match exactly
+(section 3), and an unknown message type is a protocol error.
 
 ## 3. Connection flow
 
@@ -78,11 +81,11 @@ Nonces are 32 random bytes. The whole handshake must finish within **10
 seconds** of the upgrade. `server_id` is the raw 32 bytes of the server ID
 (section 9.1) in both signed strings. Each signed string starts with its own
 domain prefix, ending in a NUL byte (`\x00`), so a signature made for one
-purpose cannot be replayed as another. Pre-1.0 builds are unsupported and
-rejected; there is no version bridge.
+purpose cannot be replayed as another.
 
 1. **`challenge`** (S). Right after the upgrade the server sends a fresh server
-   nonce in a version 2 envelope.
+   nonce and its build. A client running another build ends the connection
+   with `version_mismatch` before sending anything.
 2. **`host_proof_req`** (C), carrying the client's own nonce.
 3. **`chain`** and **`host_proof`** (S). The server sends its whole chain as
    one or more `chain` frames (section 4.2a), then `host_proof`: the host key
@@ -114,8 +117,9 @@ rejected; there is no version bridge.
    with one or more `chain` frames holding exactly those entries, so the
    client's copy has no gap before the first live frame (section 4.14a).
 
-The server checks `auth` in this order: it is a well-formed version 2 `auth`
-with a 32-byte `pubkey`; the signature is valid; the key is not banned; the
+The server checks `auth` in this order: its `build` equals the server's, else
+`error` `version_mismatch` (no further auth work) and a close; it is a
+well-formed `auth` with a 32-byte `pubkey`; the signature is valid; the key is not banned; the
 password proof if a password is configured (a warm `auth` from a key on the
 chain's host list skips this check, see section 4.17); the key's fingerprint
 is on the allow list if one is configured (the founder and every listed host
@@ -154,7 +158,7 @@ key to each other over the host link (section 4.18), never the password.
 **Pre-auth chain budget.** Sending the chain costs the host far more than the
 `host_proof_req` costs the client. A host therefore sends at most 2 MiB of
 chain frames per minute to one remote IP before it authenticates. When an IP is
-over that budget, the host sends one version 2 `error` `server_busy` instead
+over that budget, the host sends one `error` `server_busy` instead
 of the chain, and closes. A client
 that gets it retries later and does not count the host as dead. HTTP 503
 refusals (section 3.3) are mapped to the same code on the client side.
@@ -201,11 +205,13 @@ Direction: C is client to server, S is server to client.
 | Field   | Type   | Description                        |
 |---------|--------|------------------------------------|
 | `nonce` | base64 | The 32-byte server nonce. |
+| `build` | string | The server's build. |
 
 ### 4.2 `auth` (C)
 
 | Field      | Type   | Required | Description                               |
 |------------|--------|----------|-------------------------------------------|
+| `build`    | string | yes      | The client's build; must equal the server's. |
 | `pubkey`   | base64 | yes      | 32-byte Ed25519 public key.               |
 | `name`     | string | yes      | Display name, cleaned and capped by the server (see 3.3). |
 | `sig`      | base64 | yes      | Ed25519 signature over the client-auth string of section 3.1. |
@@ -382,18 +388,6 @@ Semantics:
   would pass it, the oldest leave the host's memory (and so every page) at
   once, and the file is rewritten whenever it has grown past twice
   `history_mb`. `history_days` 0 keeps nothing.
-
-### 4.10 `channel_list`
-
-Defined in `core/proto` but not used: the channel list is delivered in
-`auth_ok`. Reserved for dynamic channel lists. Servers must not send it, and a
-server that receives it treats it as an unsupported type (`bad_request`).
-
-### 4.11 Reserved: `e2ee_key_exchange` and `e2ee_frame`
-
-Reserved for future end-to-end encryption. These types are **reserved and
-servers must reject them**: a server answers with `error` `bad_request` and
-does not relay them. Clients never send them.
 
 ### 4.12 Voice messages
 
@@ -690,6 +684,7 @@ available.
 
 | Field             | Type     | Description                                    |
 |-------------------|----------|------------------------------------------------|
+| `build`           | string   | The sender's build; the active host refuses another with `version_mismatch`. |
 | `chain_seq`       | integer  | Seq of the sender's chain head.                |
 | `history_last_id` | string   | ID of the sender's newest stored chat line.    |
 | `history_last_ts` | string   | Its `ts`. Both empty for a full history.       |
@@ -780,6 +775,7 @@ join the channel.
 | `server_id_mismatch` | Raised by a client when the host's genesis hash is not the server ID it has pinned, or `auth_ok.server_id` differs from the verified one. Never sent on the wire. |
 | `host_not_authorized` | Raised by a client when the host's key is not on the chain's host list or its proof signature is invalid. A host also sends it in answer to `takeover` when its own key is no longer on the chain (section 4.17). |
 | `bad_chain` | Raised by a client when the chain it received does not verify (handshake or a live frame). An active host also sends it to a `link_hello` whose `chain_seq` is ahead of its own (section 4.18). |
+| `version_mismatch` | The peer runs another build: sent by a server to an `auth` or `link_hello` whose `build` differs, and raised by a client from a challenge whose `build` differs. The message names both builds (`server runs X, you run Y`); the connection is closed. |
 | `forbidden`   | The role lacks the required permission (`join_channel`, `send_chat`). |
 | `bad_request` | Malformed message, unknown channel, unsupported message type, or chat text over 4096 bytes (`message too long`). |
 | `not_joined`  | The operation needs channel membership the client does not have (`leave`, `chat_send`, `history_before`, voice messages). |
@@ -797,9 +793,9 @@ join the channel.
 | `chain_lost`  | A split-brain merge dropped a chain entry the receiver authored: "your change was lost during a network split; please redo it". Sent just before `move` (section 4.16). |
 | `rate_limited`| The client is sending too fast; the connection is closed after this message. |
 
-Except for `auth_failed`, `banned`, `server_full`,
+Except for `auth_failed`, `version_mismatch`, `banned`, `server_full`,
 `server_busy` and `rate_limited`, errors do not close the connection (a
-`not_active` at login does). `server_outdated`,
+`not_active` at login does). `version_mismatch`,
 `server_id_mismatch`, `host_not_authorized` and `bad_chain` end the attempt on
 the client side; clients do not retry them automatically.
 
@@ -828,15 +824,7 @@ each request. Unknown role names grant nothing.
 
 ## 7. Versioning
 
-The envelope carries `v`. The current version is 2. A server that
-receives an unsupported version treats the message as malformed
-(`bad_request`). Within a version, new optional fields may be added to payloads
-and receivers must ignore unknown fields and unknown message types. An
-incompatible change needs a new version number.
-
-Only version 2 is supported. Pre-1.0 builds and configurations are rejected;
-there is no handshake or authentication bridge. Every member of a group must
-use a current release that speaks version 2.
+All peers run the same build; see section 2.
 
 ## 8. Discovery
 

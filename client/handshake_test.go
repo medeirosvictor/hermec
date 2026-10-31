@@ -18,6 +18,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 // fakeHost is a small ws handler that speaks the host side of the version 2
@@ -138,7 +139,7 @@ func (f *fakeHost) handshake(ws *websocket.Conn) *proto.Auth {
 	}
 	nonce := make([]byte, 32)
 	_, _ = rand.Read(nonce)
-	send(proto.Version, proto.TypeChallenge, proto.Challenge{Nonce: nonce})
+	send(proto.Version, proto.TypeChallenge, proto.Challenge{Nonce: nonce, Build: version.Version})
 	env, ok := read()
 	if !ok || env.Type != proto.TypeHostProofReq {
 		return nil
@@ -195,7 +196,7 @@ func (f *fakeHost) handshake(ws *websocket.Conn) *proto.Auth {
 }
 
 // stubHandshake is the shared first half of the hand-rolled stub servers in
-// other tests: a valid v2 handshake from a throwaway host. It returns the
+// other tests: a valid handshake from a throwaway host. It returns the
 // client's auth and the server ID to put in auth_ok.
 func stubHandshake(t *testing.T, ws *websocket.Conn) (*proto.Auth, string) {
 	t.Helper()
