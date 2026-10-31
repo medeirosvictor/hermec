@@ -16,7 +16,36 @@ Roadmap: [PLAN.md](PLAN.md).
   are bounds-checked on every append and replay; plaintext-password auth (the
   scrypt exhaustion path) is gone; `update.sh` validates a staged copy as the
   service user in a `systemd-run` sandbox and never runs a candidate as root.
-- **Next work: Task 6 — remote acceptance/release.** Victor is setting up the
+- **Top priority (Victor, 2026-10-31): code organization.** Break the biggest
+  files and god types into modular, feature-sized parts where it makes sense.
+  Report first, agree the design with Victor, then refactor in small commits
+  that each build and pass. Measured offenders (production code only; 35k
+  lines in 179 files, plus 36k test lines):
+  - `ui.game`: 126 fields, 385 methods spread over 36 files of one flat
+    package (`ui` is 11.5k lines in 44 files). Heaviest: `video.go` 33,
+    `main_scene.go` 30, `settings.go` 22, `hosts.go`/`callbar.go`/`addpage.go`
+    20 each.
+  - `server.Server`: 49 fields, 135 methods over 22 files; `server` is 9.8k
+    lines in 39 files. `server/sfu.go` (1,026 lines, five types) is the
+    largest file in the repo.
+  - `client.Client`: 58 fields, 100 methods over 11 files; `client/voice.go`
+    (901 lines) and `client/share.go` (776 lines, six types) mix call
+    signalling, publishing, receiving and subscription state.
+  - Longest functions: `cmd/hermec-server` `main()` 271 lines,
+    `conn.authenticate` 177, `hermec-verify` `run` 158, `hshake.handshake` 136,
+    `Client.readLoop` 129, `chain.State.Apply` 128, `Server.registerLink` 127.
+  - Dedicated lifecycle and config logic lives in `cmd/hermec-server` instead
+    of a library package; nine separate temp-file+rename writers.
+  - Opus review proposals: extract `server/history`, `internal/ratelimit`,
+    `server/dedicated` (records), `server/host`, later `server/sfu`; in `ui`
+    move pure logic into `ui/state` and pull out `ui/crt`; one
+    `internal/fsutil.WriteFileAtomic`.
+- **Then the regular-use musts, first wave** (PLAN item 3): per-person
+  volume and mic gain; mid-call audio device switching; auto-rejoin voice after
+  a reconnect plus an in-app updater (now required: builds must match exactly).
+  Second wave: moderation UI, invite links, push-to-talk then echo
+  cancellation. Nice to have: pixel-art low-bandwidth video (PLAN.md).
+- **In parallel: Task 6 — remote acceptance/release.** Victor is setting up the
   AWS account and disposable EC2 instance following
   [docs/aws-ec2-from-zero.md](docs/aws-ec2-from-zero.md); run the
   disposable-VPS and AWS rows with him. Do not claim remote hosting is
