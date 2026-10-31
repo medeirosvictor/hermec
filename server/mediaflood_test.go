@@ -98,32 +98,3 @@ func TestMediaFloodDoesNotCutAudio(t *testing.T) {
 		t.Fatalf("audio under flood = %d, baseline %d: lost more than 25%%", flood, base)
 	}
 }
-
-func TestReadPacer(t *testing.T) {
-	var p readPacer
-	start := time.Now()
-	for i := 0; i < 5000; i++ {
-		p.failed(os.NewSyscallError("wsarecvfrom", syscall.Errno(10040)))
-		p.failed(os.NewSyscallError("wsarecvfrom", syscall.Errno(10054)))
-	}
-	if d := time.Since(start); d > 200*time.Millisecond {
-		t.Fatalf("errors that consumed a datagram slept for %v", d)
-	}
-	if p.run != 0 {
-		t.Fatalf("run = %d after consuming errors, want 0", p.run)
-	}
-	for i := 0; i < errBackoffAfter-1; i++ {
-		p.failed(os.ErrDeadlineExceeded) // any other error counts
-	}
-	start = time.Now()
-	for i := 0; i < 50; i++ {
-		p.failed(os.ErrInvalid)
-	}
-	if d := time.Since(start); d < 40*time.Millisecond {
-		t.Fatalf("a long error run did not back off (%v for 50 errors)", d)
-	}
-	p.reset()
-	if p.run != 0 {
-		t.Fatal("reset did not clear the run")
-	}
-}

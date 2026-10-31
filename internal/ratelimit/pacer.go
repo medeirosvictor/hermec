@@ -1,4 +1,4 @@
-package server
+package ratelimit
 
 import (
 	"errors"
@@ -19,17 +19,17 @@ func consumedDatagram(err error) bool {
 	return errors.Is(err, syscall.Errno(10040)) || errors.Is(err, syscall.Errno(10054))
 }
 
-// readPacer keeps a UDP read loop that swallows errors from hot-spinning on a
+// Pacer keeps a UDP read loop that swallows errors from hot-spinning on a
 // socket that is persistently broken, without ever delaying the reads of a
 // working one. Single goroutine only.
-type readPacer struct{ run int }
+type Pacer struct{ run int }
 
-// reset forgets the error run (a good read or a timeout happened).
-func (p *readPacer) reset() { p.run = 0 }
+// Reset forgets the error run (a good read or a timeout happened).
+func (p *Pacer) Reset() { p.run = 0 }
 
-// failed records a swallowed read error, sleeping 1 ms once errBackoffAfter
+// Failed records a swallowed read error, sleeping 1 ms once errBackoffAfter
 // of them came in a row.
-func (p *readPacer) failed(err error) {
+func (p *Pacer) Failed(err error) {
 	if consumedDatagram(err) {
 		p.run = 0
 		return

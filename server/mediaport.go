@@ -9,6 +9,8 @@ import (
 	"strconv"
 
 	"github.com/pion/ice/v4"
+
+	"github.com/medeirosvictor/hermec/internal/ratelimit"
 )
 
 // ErrMediaBind marks a failure to bind the UDP media port.
@@ -20,14 +22,14 @@ var ErrMediaBind = errors.New("media port bind failed")
 // could kill media for good. ReadFrom therefore swallows every error except
 // close and timeouts. It never sleeps on an error that consumed a datagram
 // (sleeping lets the socket buffer overflow under a flood); only a long run of
-// other errors earns a short backoff (readPacer). When d
+// other errors earns a short backoff (ratelimit.Pacer). When d
 // is set (shared discovery+media socket) discovery probes are answered inline
 // and never reach the mux. ReadFrom is only called from the mux's single
 // reader goroutine, which is what makes the lock-free state safe.
 type mediaConn struct {
 	net.PacketConn
 	d    *discoverer
-	pace readPacer
+	pace ratelimit.Pacer
 }
 
 func (c *mediaConn) ReadFrom(p []byte) (int, net.Addr, error) {
@@ -39,13 +41,13 @@ func (c *mediaConn) ReadFrom(p []byte) (int, net.Addr, error) {
 				return n, from, err
 			}
 			if errors.As(err, &ne) && ne.Timeout() {
-				c.pace.reset()
+				c.pace.Reset()
 				return n, from, err
 			}
-			c.pace.failed(err)
+			c.pace.Failed(err)
 			continue
 		}
-		c.pace.reset()
+		c.pace.Reset()
 		if c.d != nil && c.d.handle(c.PacketConn, p[:n], from) {
 			continue
 		}

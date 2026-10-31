@@ -16,6 +16,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/names"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/discover"
+	"github.com/medeirosvictor/hermec/internal/ratelimit"
 	"github.com/medeirosvictor/hermec/version"
 )
 
@@ -218,7 +219,7 @@ func (c *conn) readLoop() {
 		return
 	}
 	_ = c.ws.SetReadDeadline(time.Time{})
-	limit := newBucket(c.srv.cfg.MsgRate, c.srv.cfg.MsgBurst, c.srv.clock())
+	limit := ratelimit.NewBucket(c.srv.cfg.MsgRate, c.srv.cfg.MsgBurst, c.srv.clock())
 
 	var missed atomic.Int32
 	c.ws.SetPongHandler(func(string) error { missed.Store(0); return nil })
@@ -237,7 +238,7 @@ func (c *conn) readLoop() {
 		}
 		// Only data messages reach here; ping/pong/close are control frames
 		// handled inside gorilla and are not counted.
-		if !limit.allow(c.srv.clock()) {
+		if !limit.Allow(c.srv.clock()) {
 			c.sendError("rate_limited", "too many messages; slow down")
 			c.drainInbound()
 			return
@@ -317,7 +318,7 @@ func (c *conn) joinLive(seq uint64) error {
 // nonces and the server ID, then the client authenticates (auth). On failure
 // it queues an error and returns it; the connection is then closed.
 func (c *conn) authenticate() error {
-	pre := newBucket(preAuthMsgRate, preAuthMsgBurst, c.srv.clock())
+	pre := ratelimit.NewBucket(preAuthMsgRate, preAuthMsgBurst, c.srv.clock())
 	nonce := make([]byte, nonceSize)
 	if _, err := rand.Read(nonce); err != nil {
 		return err
@@ -337,7 +338,7 @@ func (c *conn) authenticate() error {
 		if err != nil {
 			return proto.Envelope{}, err
 		}
-		if !pre.allow(c.srv.clock()) {
+		if !pre.Allow(c.srv.clock()) {
 			c.sendError("rate_limited", "too many messages; slow down")
 			return proto.Envelope{}, errAuthFailed
 		}

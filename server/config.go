@@ -20,6 +20,20 @@ const DefaultAddr = ":7697"
 // MaxVoiceLimit is the largest accepted max_voice (see LoadConfig).
 const MaxVoiceLimit = 50
 
+// Default inbound message limits. Post-auth limits are configurable
+// (Config.MsgRate / Config.MsgBurst); the pre-auth bucket is fixed and only
+// has to cover the auth exchange.
+const (
+	DefaultMsgRate  = 30
+	DefaultMsgBurst = 60
+
+	// DefaultMaxVoice is the per-channel voice participant cap when none is set.
+	DefaultMaxVoice = 25
+
+	preAuthMsgRate  = 5
+	preAuthMsgBurst = 10
+)
+
 // Chat history defaults and ceilings (see Config.HistoryLimits).
 const (
 	DefaultHistoryDays = 30

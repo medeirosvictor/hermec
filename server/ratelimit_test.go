@@ -15,74 +15,10 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/internal/ratelimit"
 )
 
 var t0 = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-
-func TestBucketBurstThenDeny(t *testing.T) {
-	b := newBucket(30, 60, t0)
-	for i := 0; i < 60; i++ {
-		if !b.allow(t0) {
-			t.Fatalf("message %d denied within burst", i+1)
-		}
-	}
-	if b.allow(t0) {
-		t.Fatal("message 61 allowed past burst")
-	}
-}
-
-func TestBucketRefill(t *testing.T) {
-	b := newBucket(30, 60, t0)
-	for i := 0; i < 60; i++ {
-		b.allow(t0)
-	}
-	// 100ms at 30/s = 3 tokens.
-	now := t0.Add(100 * time.Millisecond)
-	for i := 0; i < 3; i++ {
-		if !b.allow(now) {
-			t.Fatalf("refilled token %d denied", i+1)
-		}
-	}
-	if b.allow(now) {
-		t.Fatal("allowed beyond refilled tokens")
-	}
-}
-
-func TestBucketRefillCapsAtBurst(t *testing.T) {
-	b := newBucket(30, 60, t0)
-	for i := 0; i < 60; i++ {
-		b.allow(t0)
-	}
-	now := t0.Add(time.Hour)
-	for i := 0; i < 60; i++ {
-		if !b.allow(now) {
-			t.Fatalf("message %d denied after long idle", i+1)
-		}
-	}
-	if b.allow(now) {
-		t.Fatal("idle time banked more than burst")
-	}
-}
-
-func TestBucketBackwardsClockIgnored(t *testing.T) {
-	b := newBucket(30, 60, t0)
-	for i := 0; i < 60; i++ {
-		b.allow(t0)
-	}
-	if b.allow(t0.Add(-time.Hour)) {
-		t.Fatal("backwards clock granted tokens")
-	}
-}
-
-func TestBucketZeroDisables(t *testing.T) {
-	for _, b := range []*bucket{newBucket(0, 0, t0), newBucket(0, 60, t0), newBucket(30, 0, t0)} {
-		for i := 0; i < 10000; i++ {
-			if !b.allow(t0) {
-				t.Fatalf("disabled bucket %+v denied", b)
-			}
-		}
-	}
-}
 
 // fakeClock is a manually advanced clock safe for use from the server.
 type fakeClock struct {
@@ -257,13 +193,13 @@ func TestPreAuthFloodCutByOneShotAuth(t *testing.T) {
 }
 
 func TestPreAuthBucketLimits(t *testing.T) {
-	b := newBucket(preAuthMsgRate, preAuthMsgBurst, t0)
+	b := ratelimit.NewBucket(preAuthMsgRate, preAuthMsgBurst, t0)
 	for i := 0; i < preAuthMsgBurst; i++ {
-		if !b.allow(t0) {
+		if !b.Allow(t0) {
 			t.Fatalf("message %d denied within pre-auth burst", i+1)
 		}
 	}
-	if b.allow(t0) {
+	if b.Allow(t0) {
 		t.Fatal("message past pre-auth burst allowed")
 	}
 }

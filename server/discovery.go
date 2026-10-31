@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/medeirosvictor/hermec/discover"
+	"github.com/medeirosvictor/hermec/internal/ratelimit"
 	"github.com/medeirosvictor/hermec/version"
 )
 
@@ -27,7 +28,7 @@ var listenUDP = net.ListenPacket
 var ErrDiscoveryBind = errors.New("udp bind failed")
 
 type discoverSource struct {
-	b    *bucket
+	b    *ratelimit.Bucket
 	seen time.Time
 }
 
@@ -91,11 +92,11 @@ func (d *discoverer) handle(pc net.PacketConn, pkt []byte, from net.Addr) bool {
 				return true // table full of active sources: drop
 			}
 		}
-		src = &discoverSource{b: newBucket(discoverRate, discoverBurst, now)}
+		src = &discoverSource{b: ratelimit.NewBucket(discoverRate, discoverBurst, now)}
 		d.sources[key] = src
 	}
 	src.seen = now
-	if src.b.allow(now) {
+	if src.b.Allow(now) {
 		_, _ = pc.WriteTo(d.reply, from)
 	}
 	return true
@@ -105,7 +106,7 @@ func (d *discoverer) handle(pc net.PacketConn, pkt []byte, from net.Addr) bool {
 // exactly the probe magic (including oversized datagrams) is dropped silently.
 func (s *Server) discoverLoop(pc net.PacketConn, d *discoverer) {
 	buf := make([]byte, discover.MaxPacket+1)
-	var pace readPacer
+	var pace ratelimit.Pacer
 	for {
 		n, from, err := pc.ReadFrom(buf)
 		if err != nil {
@@ -116,10 +117,10 @@ func (s *Server) discoverLoop(pc net.PacketConn, d *discoverer) {
 			// an error); drop that datagram and keep serving. Back off if
 			// a long run of errors persists so a broken socket cannot
 			// hot-spin (never for ones that consumed a datagram).
-			pace.failed(err)
+			pace.Failed(err)
 			continue
 		}
-		pace.reset()
+		pace.Reset()
 		d.handle(pc, buf[:n], from)
 	}
 }
