@@ -8,6 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"strconv"
+	"strings"
+	"unicode"
 
 	"github.com/medeirosvictor/hermec/core/identity"
 )
@@ -313,4 +318,35 @@ func (p DedicatedReadinessProof) Validate() error {
 		return errors.New("proto: invalid dedicated readiness signature")
 	}
 	return nil
+}
+
+// CanonicalDedicatedWSS accepts only the one safe spelling of a pinned
+// dedicated endpoint: a root wss:// URL. Dedicated endpoints are WSS-only; LAN
+// and friend joining use their own, more permissive path. Credentials and URL
+// components that can carry secrets are never retained in a transition record.
+func CanonicalDedicatedWSS(raw string) (string, error) {
+	if raw == "" || len(raw) > 2048 || strings.IndexFunc(raw, func(r rune) bool { return r <= ' ' || r == 0x7f || unicode.IsSpace(r) }) >= 0 {
+		return "", errors.New("dedicated server URL must be a canonical root wss:// URL")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "wss" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery || u.Opaque != "" || u.Path != "/" || u.RawPath != "" || u.Hostname() == "" {
+		return "", errors.New("dedicated server URL must be a canonical root wss:// URL")
+	}
+	// A URL with an invalid port is otherwise accepted by url.Parse.
+	if p := u.Port(); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 {
+			return "", errors.New("invalid dedicated server URL port")
+		}
+		if strconv.Itoa(n) != p {
+			return "", errors.New("dedicated server URL is not canonical")
+		}
+	}
+	// URL.String is part of the contract: it stops escaped or mixed-case host
+	// spellings from changing an endpoint before its pin is checked.
+	host := u.Hostname()
+	if u.String() != raw || strings.ToLower(host) != host || strings.HasSuffix(host, ".") || (strings.Contains(host, ":") && (net.ParseIP(host) == nil || net.ParseIP(host).String() != host)) {
+		return "", errors.New("dedicated server URL is not canonical")
+	}
+	return raw, nil
 }

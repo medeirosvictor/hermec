@@ -233,7 +233,7 @@ func (r DedicatedTransitionRecord) validate() error {
 		return errors.New("server: preparing transition has no pinned source URL")
 	}
 	if r.ActiveWSSURL != "" {
-		canonical, err := CanonicalDedicatedWSS(r.ActiveWSSURL)
+		canonical, err := proto.CanonicalDedicatedWSS(r.ActiveWSSURL)
 		if err != nil || canonical != r.ActiveWSSURL {
 			return errors.New("server: invalid dedicated active URL")
 		}

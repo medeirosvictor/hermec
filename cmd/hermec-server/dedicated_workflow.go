@@ -207,7 +207,7 @@ func runDedicatedPreparation(ctx context.Context, cfg server.Config, keyPath, ch
 // authenticates as this VPS host identity; passwords and founder/member keys
 // are neither accepted nor read by this command.
 func validateDedicatedPrepareInputs(rawURL, serverID string) error {
-	if _, err := server.CanonicalDedicatedWSS(rawURL); err != nil {
+	if _, err := proto.CanonicalDedicatedWSS(rawURL); err != nil {
 		return fmt.Errorf("dedicated preparation requires a pinned canonical wss:// active-host URL: %w", err)
 	}
 	id, err := chain.ParseID(serverID)

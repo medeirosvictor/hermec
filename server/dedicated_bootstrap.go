@@ -9,6 +9,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/hshake"
 	"github.com/medeirosvictor/hermec/core/identity"
+	"github.com/medeirosvictor/hermec/core/proto"
 )
 
 // AuthenticateDedicatedBootstrap fetches an active host's signed chain using
@@ -16,7 +17,7 @@ import (
 // and server ID. It never sends a password. The returned chain may replace
 // only a fresh local bootstrap through InstallDedicatedBootstrap.
 func AuthenticateDedicatedBootstrap(ctx context.Context, activeWSSURL, pinnedServerID string, bootstrap *chain.Chain, local *identity.Identity, chainPath string) (*chain.Chain, error) {
-	canonicalURL, err := CanonicalDedicatedWSS(activeWSSURL)
+	canonicalURL, err := proto.CanonicalDedicatedWSS(activeWSSURL)
 	if err != nil {
 		return nil, errors.New("server: dedicated active URL must be a canonical root wss URL")
 	}

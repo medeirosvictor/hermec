@@ -22,11 +22,11 @@ func TestDedicatedDetailsStrictWSSAndServerID(t *testing.T) {
 
 func TestDedicatedImportRequiresSameBuild(t *testing.T) {
 	id := (chain.ID{1}).String()
-	data := []byte(`{"format_version":1,"build_version":"other-build","wss_url":"wss://example.test/","server_id":"` + id + `"}`)
+	data := []byte(`{"build_version":"other-build","wss_url":"wss://example.test/","server_id":"` + id + `"}`)
 	if _, err := UnmarshalDedicatedDetails(data); err == nil {
 		t.Fatal("accepted details from another build")
 	}
-	data = []byte(`{"format_version":1,"build_version":"` + version.Version + `","wss_url":"wss://example.test/","server_id":"` + id + `"}`)
+	data = []byte(`{"build_version":"` + version.Version + `","wss_url":"wss://example.test/","server_id":"` + id + `"}`)
 	if _, err := UnmarshalDedicatedDetails(data); err != nil {
 		t.Fatalf("rejected same-build details: %v", err)
 	}
