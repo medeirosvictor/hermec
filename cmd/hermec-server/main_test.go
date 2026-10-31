@@ -113,3 +113,38 @@ func TestDefaultAdvertise(t *testing.T) {
 		t.Errorf("bound host: %v", got)
 	}
 }
+
+func TestDefaultStatePathsFollowConfig(t *testing.T) {
+	f := flags{config: filepath.Join("etc", "hermec", "server.toml"), chain: "custom.jsonl"}
+	if dir := defaultStatePaths(&f); dir != filepath.Join("etc", "hermec") {
+		t.Errorf("dir = %q", dir)
+	}
+	if f.key != filepath.Join("etc", "hermec", "hermec-server.key") || f.chain != "custom.jsonl" || f.history != filepath.Join("etc", "hermec", "history.jsonl") {
+		t.Errorf("paths = %q %q %q", f.key, f.chain, f.history)
+	}
+	g := flags{}
+	if dir := defaultStatePaths(&g); dir != "." || g.chain != "chain.jsonl" {
+		t.Errorf("no config: dir %q chain %q", dir, g.chain)
+	}
+}
+
+func TestRunRejectsConflictingFlags(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-init-dedicated", t.TempDir(), "-check"}, "-init-dedicated cannot be combined"},
+		{[]string{"-apply-config"}, "-apply-config requires -config"},
+		{[]string{"-dedicated-host-key", "-dedicated-status"}, "-dedicated-host-key cannot be combined"},
+		{[]string{"-dedicated-status", "-dedicated-retry"}, "-dedicated-status cannot be combined"},
+		{[]string{"-dedicated-attestation-status", "-dedicated-status"}, "cannot be combined with another dedicated workflow flag"},
+	} {
+		f, err := parseFlags(tc.args)
+		if err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		if err := run(f); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%v: err = %v, want %q", tc.args, err, tc.want)
+		}
+	}
+}
