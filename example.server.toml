@@ -19,9 +19,8 @@
 # discoverable = false (or the explicitly unsafe development override).
 addr = "127.0.0.1:7697"
 
-# If set, every client must prove it knows the password behind this 64-character
-# hex key. Generate it during server setup; plaintext `password` configuration
-# is unsupported and rejected.
+# If set, every client must prove it knows the password behind this key.
+# Configure `password_key` (hex).
 # password_key = ""
 
 # Other hosts of this server, as ws:// or wss:// URLs. They are merged with the

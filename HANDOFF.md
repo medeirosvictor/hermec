@@ -16,10 +16,6 @@ Roadmap: [PLAN.md](PLAN.md).
   are bounds-checked on every append and replay; plaintext-password auth (the
   scrypt exhaustion path) is gone; `update.sh` validates a staged copy as the
   service user in a `systemd-run` sandbox and never runs a candidate as root.
-- All pre-1.0 compatibility code is removed (protocol v1, plaintext passwords,
-  the old share/watch media plane and capability negotiation, the pre-v0.7
-  heartbeat grace, UDP port ranges, the pre-chain `hosted.toml` migration and
-  settings shims). The modern camera/screen lanes are the only media path.
 - **Next work: Task 6 — remote acceptance/release.** Victor is setting up the
   AWS account and disposable EC2 instance following
   [docs/aws-ec2-from-zero.md](docs/aws-ec2-from-zero.md); run the
@@ -44,8 +40,8 @@ and [noise trial](docs/superpowers/plans/2026-10-27-noise-suppression-trial.md).
 
 - No backward compatibility before 1.0.0 (Victor, 2026-10-30): no code, config
   key, protocol path or test exists to support an earlier HERMEC build. Every
-  client and host in a group runs the same build; anything older is rejected,
-  not bridged.
+  client and host in a group runs the same build; anything older or different
+  is rejected (`version_mismatch`), not bridged.
 - Anyone can self-host; no project servers, in-app cloud provisioning, cloud
   credentials, or claim that public hosting is safe without TLS and admission.
 - The host is trusted; Ed25519 keys, not names, are identity. Never transfer

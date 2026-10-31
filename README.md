@@ -119,7 +119,7 @@ from the server's name.
 
 ## Status
 
-Current release: v0.7.0. This repository ships a Go server with Ed25519
+Current release: see GitHub Releases. This repository ships a Go server with Ed25519
 key-based authentication, roles, channels, presence and text chat, a headless
 client library, a desktop GUI client, and integration tests. Voice, the
 multi-participant call view, Windows webcam publishing, and screen share work;
@@ -462,11 +462,7 @@ Entries that an admin's app sends to a running server with `chain_append`
 other limits from a later config apply at the next start. The founder always
 keeps every permission and always passes `allowed_keys`, as does every approved
 host. The password key, port, TLS and the other machine settings stay in the
-TOML and never go into the chain. Configure only `password_key` (hex);
-plaintext `password` configuration is rejected.
-
-Pre-1.0 builds and configurations are unsupported and rejected. There is no
-protocol or plaintext-password compatibility bridge.
+TOML and never go into the chain. Configure `password_key` (hex).
 
 Servers announce themselves on the LAN and on Tailscale (if the `tailscale` CLI
 is on PATH), so friends see them in the app's DISCOVERED list. To label your
@@ -611,8 +607,7 @@ and group settings, with you as founder) is kept in a `chains` folder next to
 `hosted.toml`. Its chat history is kept in a `history` folder there too, one
 `<server-id>.jsonl` file per server.
 
-The app has no settings page for the group yet, and keys you add to
-`hosted.toml` are ignored (the app says so when it starts). To change
+The app has no settings page for the group yet. To change
 `history_days` or `history_mb` of a server you host from the app, close the app,
 write a small TOML with the keys to change and `addr` set to the server's port,
 and run `hermec-server` with your app key and the server's chain file. With

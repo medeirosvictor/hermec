@@ -19,8 +19,7 @@ trap restart EXIT HUP INT TERM
 mkdir -p "$(dirname "$DEST")"
 tmp="$DEST.tmp.$$"
 set -- server.toml hermec-server.key chain.jsonl history.jsonl
-# Transition records are created only while dedicated cutover is in progress.
-# Old state directories therefore legitimately do not have either file.
+# Transition records exist only while a cutover is in progress.
 for record in transition.json readiness.json; do
   if [ -f "$STATE/$record" ]; then
     set -- "$@" "$record"

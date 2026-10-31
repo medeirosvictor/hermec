@@ -1,4 +1,4 @@
-# Footprint
+# Footprint, measured 2026-10 on v0.5-era builds
 
 Historical measurements only, not current requirements or performance claims.
 Each section records when and against which older build it was measured; re-measure

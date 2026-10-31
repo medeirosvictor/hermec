@@ -12,7 +12,7 @@ Hermec is a self-hosted voice, screen-share and text-chat app. See
 - Identity is an Ed25519 key file; names are not identity.
 - Keep the codebase and downloads small; Go/Pion/Ebiten remain the foundation.
 
-## Delivered (v0.7.0)
+## Delivered
 
 Chat, roles, channels, desktop UI, app hosting, LAN/Tailscale discovery, SFU
 voice, screen sharing, Windows camera publishing, signed group configuration,
