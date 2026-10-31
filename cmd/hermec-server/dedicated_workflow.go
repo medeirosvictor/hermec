@@ -13,6 +13,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/history"
 )
 
 // dedicatedHostPublic writes only public identity material. In particular it
@@ -99,7 +100,7 @@ func validateDedicatedRecord(r server.DedicatedTransitionRecord, keyPath, chainP
 	if err != nil {
 		return fmt.Errorf("signed chain: %w", err)
 	}
-	h, err := server.OpenHistory(historyPath)
+	h, err := history.Open(historyPath)
 	if err != nil {
 		return fmt.Errorf("history: %w", err)
 	}

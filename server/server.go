@@ -26,6 +26,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/netpath"
+	"github.com/medeirosvictor/hermec/server/history"
 )
 
 // Config configures a Server. Programmatic embedders should start from DefaultConfig().
@@ -192,7 +193,7 @@ type Server struct {
 
 	// hist is the chat history store; nil until Start opens it (New runs
 	// refreshGroup first), so every user must tolerate nil.
-	hist     *History
+	hist     *history.Store
 	stopHist chan struct{} // closed by Shutdown to stop the trimmer
 	stopOnce sync.Once
 
@@ -272,7 +273,7 @@ func (s *Server) Start() (err error) {
 	initialMode, initialPrepared := s.Mode(), s.Prepared()
 	initialLastChatTS := s.lastChatTS
 	initialLimitSet, initialLimitDays, initialLimitMB := s.limitSet, s.limitDays, s.limitMB
-	var openedHistory *History
+	var openedHistory *history.Store
 	defer func() {
 		if err == nil || openedHistory == nil {
 			return
@@ -305,7 +306,7 @@ func (s *Server) Start() (err error) {
 		return err
 	}
 	if s.hist == nil {
-		h, err := OpenHistory(s.cfg.HistoryPath)
+		h, err := history.Open(s.cfg.HistoryPath)
 		if err != nil {
 			return fmt.Errorf("server: open history: %w", err)
 		}

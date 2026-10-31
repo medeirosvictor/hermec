@@ -13,6 +13,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
+	"github.com/medeirosvictor/hermec/server/history"
 )
 
 func testDedicatedTransition() DedicatedTransitionRecord {
@@ -113,7 +114,7 @@ func TestDedicatedTransitionRejectsSymlinkAndOversizedRecord(t *testing.T) {
 
 func TestValidateDedicatedPreparedChecksLocalBoundary(t *testing.T) {
 	c, _, destination := twoHostChain(t)
-	h, err := OpenHistory("")
+	h, err := history.Open("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +177,7 @@ func TestStartRetryRevalidatesInvalidDedicatedJournal(t *testing.T) {
 
 func TestRestorePreparingTransitionRemainsPassiveAndExact(t *testing.T) {
 	c, _, destination := twoHostChain(t)
-	h, err := OpenHistory("")
+	h, err := history.Open("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +206,7 @@ func TestRestorePreparingTransitionRemainsPassiveAndExact(t *testing.T) {
 
 func TestTerminalTransitionVerifiesAuthorizedSourceSignature(t *testing.T) {
 	c, source, destination := twoHostChain(t)
-	h, err := OpenHistory("")
+	h, err := history.Open("")
 	if err != nil {
 		t.Fatal(err)
 	}

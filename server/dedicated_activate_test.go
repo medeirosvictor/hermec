@@ -8,6 +8,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/server/history"
 )
 
 func TestDedicatedActivateRequiresFounderThenFencesExactReadyBoundary(t *testing.T) {
@@ -58,7 +59,7 @@ func TestDedicatedActivateFencedResultIsDurableAndFounderOnly(t *testing.T) {
 	ch, sourceKey, destinationKey := twoHostChain(t)
 	path := filepath.Join(t.TempDir(), "transition.json")
 	s := New(Config{HostKey: sourceKey, Chain: ch, DedicatedTransitionPath: path, HostName: "source"})
-	h, err := OpenHistory("")
+	h, err := history.Open("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestDedicatedActivateFencedResultIsDurableAndFounderOnly(t *testing.T) {
 	// A new process restores fenced mode from the journal and returns the same
 	// result, rather than requiring the founder to create another transition.
 	restarted := New(Config{HostKey: sourceKey, Chain: ch, DedicatedTransitionPath: path, HostName: "source"})
-	restartedHistory, err := OpenHistory("")
+	restartedHistory, err := history.Open("")
 	if err != nil {
 		t.Fatal(err)
 	}

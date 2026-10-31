@@ -17,6 +17,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
+	"github.com/medeirosvictor/hermec/server/history"
 )
 
 func TestInstallDedicatedBootstrapRejectsUnrelatedOrUnauthorizedState(t *testing.T) {
@@ -87,7 +88,7 @@ func TestPreparedLinkAttestsCompleteMultipageHistoryBeforePersistence(t *testing
 func TestDedicatedMutationLeaseSerializesAppendChatTrimAndDemote(t *testing.T) {
 	c, sourceKey, destinationKey := twoHostChain(t)
 	s := New(Config{HostKey: sourceKey, Chain: c, Channels: []string{"general"}, Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}})
-	h, err := OpenHistory("")
+	h, err := history.Open("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestDedicatedMutationLeaseSerializesAppendChatTrimAndDemote(t *testing.T) {
 func TestFencedServerRejectsMergeMutationsAndFollowerRoleChanges(t *testing.T) {
 	c, sourceKey, _ := twoHostChain(t)
 	s := New(Config{HostKey: sourceKey, Chain: c, Channels: []string{"general"}, Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}})
-	h, err := OpenHistory("")
+	h, err := history.Open("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +178,7 @@ func TestDedicatedVoiceJoinCannotCrossFence(t *testing.T) {
 func TestDedicatedReadinessLeaseAlsoSerializesPromotionSystemAndMerge(t *testing.T) {
 	c, sourceKey, _ := twoHostChain(t)
 	s := New(Config{HostKey: sourceKey, Chain: c, Channels: []string{"general"}, Roles: roles.Config{Roles: roles.Builtin(), DefaultRoles: []string{"user"}}})
-	h, err := OpenHistory("")
+	h, err := history.Open("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +306,7 @@ func TestDedicatedCommitReleasesCutoverLocksBeforeTakeover(t *testing.T) {
 }
 
 func TestDedicatedHistorySnapshotSurvivesTrimAndConcurrentAppend(t *testing.T) {
-	h, err := OpenHistory("")
+	h, err := history.Open("")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,4 @@
-package server
+package history
 
 import (
 	"bytes"
@@ -14,9 +14,15 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 )
 
-// History is the host's chat history store: per-channel messages kept in
+// Retention applied until SetLimits says otherwise.
+const (
+	DefaultDays = 30
+	DefaultMB   = 8
+)
+
+// Store is the host's chat history store: per-channel messages kept in
 // memory, mirrored to an append-only JSON-lines file. Safe for concurrent use.
-type History struct {
+type Store struct {
 	mu      sync.Mutex
 	path    string // "" = memory only
 	days    int
@@ -55,7 +61,7 @@ type lineMeta struct {
 }
 
 // Newest returns the newest stored timestamp across channels; zero if empty.
-func (h *History) Newest() time.Time {
+func (h *Store) Newest() time.Time {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var t time.Time
@@ -89,13 +95,13 @@ func removeStaleTemps(path string) {
 	}
 }
 
-// OpenHistory loads the store at path. "" keeps history in memory only. A
+// Open loads the store at path. "" keeps history in memory only. A
 // missing file is empty; malformed lines are skipped and counted.
-func OpenHistory(path string) (*History, error) {
-	h := &History{
+func Open(path string) (*Store, error) {
+	h := &Store{
 		path:  path,
-		days:  DefaultHistoryDays,
-		mb:    DefaultHistoryMB,
+		days:  DefaultDays,
+		mb:    DefaultMB,
 		chans: map[string][]proto.ChatMessage{},
 		ids:   map[string]lineMeta{},
 	}
@@ -144,7 +150,7 @@ func histLess(a, b proto.ChatMessage) bool {
 }
 
 // insert places m in its channel in order. Caller holds mu (or is Open).
-func (h *History) insert(m proto.ChatMessage, n int) {
+func (h *Store) insert(m proto.ChatMessage, n int) {
 	s := h.chans[m.Channel]
 	i := sort.Search(len(s), func(i int) bool { return histLess(m, s[i]) })
 	s = append(s, proto.ChatMessage{})
@@ -156,21 +162,21 @@ func (h *History) insert(m proto.ChatMessage, n int) {
 }
 
 // Skipped reports how many malformed lines Open ignored (cleared by a rewrite).
-func (h *History) Skipped() int {
+func (h *Store) Skipped() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.skipped
 }
 
 // SetLimits sets the day and megabyte caps applied by Add and Trim.
-func (h *History) SetLimits(days, mb int) {
+func (h *Store) SetLimits(days, mb int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.days, h.mb = days, mb
 }
 
 // Size is the number of bytes of stored lines, newlines included.
-func (h *History) Size() int {
+func (h *Store) Size() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.size
@@ -195,7 +201,7 @@ var errClosed = errors.New("history: store is closed")
 // day cap is 0, and ignores an id already stored. If m pushes the store past
 // the megabyte cap, the oldest messages leave memory at once; the file is
 // shortened by Compact.
-func (h *History) Add(m proto.ChatMessage) error {
+func (h *Store) Add(m proto.ChatMessage) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
@@ -226,7 +232,7 @@ func (h *History) Add(m proto.ChatMessage) error {
 
 // evict removes the first drop[ch] messages of each channel in place and sets
 // the stored size to size (what plan computed). Caller holds mu.
-func (h *History) evict(drop map[string]int, size int) {
+func (h *Store) evict(drop map[string]int, size int) {
 	for ch, k := range drop {
 		if k == 0 {
 			continue
@@ -246,7 +252,7 @@ func (h *History) evict(drop map[string]int, size int) {
 }
 
 // appendLocked appends line b to the store file through the open handle.
-func (h *History) appendLocked(b []byte) error {
+func (h *Store) appendLocked(b []byte) error {
 	if h.f == nil {
 		f, err := os.OpenFile(h.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
@@ -279,7 +285,7 @@ func (h *History) appendLocked(b []byte) error {
 }
 
 // closeFile closes the append handle; the next Add reopens it. Caller holds mu.
-func (h *History) closeFile() error {
+func (h *Store) closeFile() error {
 	if h.f == nil {
 		return nil
 	}
@@ -290,7 +296,7 @@ func (h *History) closeFile() error {
 
 // Close releases the store file for good: later Adds fail, and a rewrite in
 // flight is abandoned. Page still answers from memory.
-func (h *History) Close() error {
+func (h *Store) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.closed = true
@@ -302,7 +308,7 @@ func (h *History) Close() error {
 // order. A stored beforeID supplies its own TS; for one the store no longer
 // holds, beforeTS stands in when non-zero. more reports whether older
 // messages remain. An unknown beforeID without beforeTS yields nil, false.
-func (h *History) Page(channel, beforeID string, beforeTS time.Time, n int) (msgs []proto.ChatMessage, more bool) {
+func (h *Store) Page(channel, beforeID string, beforeTS time.Time, n int) (msgs []proto.ChatMessage, more bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	s := h.chans[channel]
@@ -332,7 +338,7 @@ func (h *History) Page(channel, beforeID string, beforeTS time.Time, n int) (msg
 // plan decides what to drop: messages older than cutoff, then the globally
 // oldest ones until the stored size fits limit. It returns the number of
 // leading messages to drop from each channel and the size that leaves.
-func (h *History) plan(cutoff time.Time, limit int) (drop map[string]int, size int) {
+func (h *Store) plan(cutoff time.Time, limit int) (drop map[string]int, size int) {
 	drop = make(map[string]int, len(h.chans))
 	size = h.size
 	for ch, s := range h.chans {
@@ -367,7 +373,7 @@ func (h *History) plan(cutoff time.Time, limit int) (drop map[string]int, size i
 // dropped or skipped. With a day cap of 0 it empties the store and removes the
 // file. Memory is trimmed first; if the rewrite fails the file keeps its old
 // lines until a later rewrite and the error is returned.
-func (h *History) Trim(now time.Time) error {
+func (h *Store) Trim(now time.Time) error {
 	h.rewriteMu.Lock()
 	defer h.rewriteMu.Unlock()
 	return h.trim(now, false)
@@ -377,7 +383,7 @@ func (h *History) Trim(now time.Time) error {
 // megabyte cap (Add drops lines from memory but only appends to the file) it
 // is rewritten down to the live messages. Otherwise, while another rewrite
 // runs, or for a minute after a failed one, it does nothing, cheaply.
-func (h *History) Compact(now time.Time) error {
+func (h *Store) Compact(now time.Time) error {
 	if !h.rewriteMu.TryLock() {
 		return nil
 	}
@@ -395,7 +401,7 @@ type snapLine struct {
 }
 
 // trim does Trim, or Compact when compact is set. Caller holds rewriteMu.
-func (h *History) trim(now time.Time, compact bool) error {
+func (h *Store) trim(now time.Time, compact bool) error {
 	h.mu.Lock()
 	if compact && (h.path == "" || h.closed || h.fileLen <= 2*h.mb<<20 || now.Before(h.retryAt)) {
 		h.mu.Unlock()
@@ -452,7 +458,7 @@ func (h *History) trim(now time.Time, compact bool) error {
 // meantime and rename the file over the store. The open append handle is
 // closed first (the rename fails over it on Windows); the next Add reopens
 // the new file. Caller holds rewriteMu, so only one rewrite runs at a time.
-func (h *History) rewrite(snap []snapLine, gen int, write func(*os.File, []byte) (int, error), now time.Time) error {
+func (h *Store) rewrite(snap []snapLine, gen int, write func(*os.File, []byte) (int, error), now time.Time) error {
 	sort.Slice(snap, func(i, j int) bool { return histLess(snap[i].m, snap[j].m) })
 	var buf bytes.Buffer
 	var resized []snapLine // lines whose re-encoded length differs
@@ -511,7 +517,7 @@ func (h *History) rewrite(snap []snapLine, gen int, write func(*os.File, []byte)
 
 // writeTemp writes data to a fresh synced temp file beside the store and
 // returns its name; on error the file is gone.
-func (h *History) writeTemp(data []byte, write func(*os.File, []byte) (int, error)) (string, error) {
+func (h *Store) writeTemp(data []byte, write func(*os.File, []byte) (int, error)) (string, error) {
 	f, err := os.CreateTemp(filepath.Dir(h.path), tempPattern(filepath.Base(h.path)))
 	if err != nil {
 		return "", err
@@ -552,7 +558,7 @@ func appendTemp(path string, data []byte) error {
 
 // NewestBefore returns the newest stored timestamp that is not after limit;
 // zero if there is none.
-func (h *History) NewestBefore(limit time.Time) time.Time {
+func (h *Store) NewestBefore(limit time.Time) time.Time {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var t time.Time
@@ -568,7 +574,7 @@ func (h *History) NewestBefore(limit time.Time) time.Time {
 // After returns up to max messages of every channel, ordered by (TS, ID),
 // strictly after (ts, id). A zero ts with an empty id means from the start.
 // more reports whether messages remain past the ones returned.
-func (h *History) After(ts time.Time, id string, max int) (msgs []proto.ChatMessage, more bool) {
+func (h *Store) After(ts time.Time, id string, max int) (msgs []proto.ChatMessage, more bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	key := proto.ChatMessage{ID: id, TS: ts}
@@ -605,7 +611,7 @@ func (h *History) After(ts time.Time, id string, max int) (msgs []proto.ChatMess
 
 // Snapshot returns a complete, globally ordered copy and its final watermark.
 // The copy remains valid while later Adds or Trim calls change the store.
-func (h *History) Snapshot() (msgs []proto.ChatMessage, ts time.Time, id string) {
+func (h *Store) Snapshot() (msgs []proto.ChatMessage, ts time.Time, id string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, s := range h.chans {
@@ -620,7 +626,7 @@ func (h *History) Snapshot() (msgs []proto.ChatMessage, ts time.Time, id string)
 }
 
 // Has reports whether the exact history watermark is still retained.
-func (h *History) Has(id string, ts time.Time) bool {
+func (h *Store) Has(id string, ts time.Time) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	m, ok := h.ids[id]
@@ -628,7 +634,7 @@ func (h *History) Has(id string, ts time.Time) bool {
 }
 
 // Last returns the (TS, ID) of the newest stored message; zero values if empty.
-func (h *History) Last() (ts time.Time, id string) {
+func (h *Store) Last() (ts time.Time, id string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var last proto.ChatMessage
@@ -644,7 +650,7 @@ func (h *History) Last() (ts time.Time, id string) {
 // one append to the file, then enforces the megabyte cap as Add does. Messages
 // with an empty id or channel (peer data) are skipped. It returns how many were new, before the cap
 // evicts anything. Like Add it is a no-op while the day cap is 0.
-func (h *History) Merge(msgs []proto.ChatMessage) (added int, err error) {
+func (h *Store) Merge(msgs []proto.ChatMessage) (added int, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {

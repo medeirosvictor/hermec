@@ -15,6 +15,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/server/history"
 )
 
 var hexID = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -241,7 +242,7 @@ func TestHistoryBeforeUnknownIDWithTS(t *testing.T) {
 }
 
 func TestHistoryFrameFitsLimit(t *testing.T) {
-	hs, err := OpenHistory("")
+	hs, err := history.Open("")
 	if err != nil {
 		t.Fatal(err)
 	}

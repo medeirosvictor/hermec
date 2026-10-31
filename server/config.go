@@ -12,6 +12,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/discover"
+	"github.com/medeirosvictor/hermec/server/history"
 )
 
 // DefaultAddr is the listen address used when none is configured.
@@ -34,11 +35,9 @@ const (
 	preAuthMsgBurst = 10
 )
 
-// Chat history defaults and ceilings (see Config.HistoryLimits).
+// Chat history ceilings (see Config.HistoryLimits).
 const (
-	DefaultHistoryDays = 30
-	DefaultHistoryMB   = 8
-	MaxHistoryDays     = 3650
+	MaxHistoryDays = 3650
 	// MaxHistoryMB stays small: the store is held fully in memory and
 	// rewritten under its lock on every trim.
 	MaxHistoryMB = 64
@@ -47,7 +46,7 @@ const (
 // HistoryLimits returns the effective retention: days (0 keeps nothing) and
 // megabytes, defaulted when unset and clamped to their ceilings.
 func (c Config) HistoryLimits() (days, mb int) {
-	days, mb = DefaultHistoryDays, DefaultHistoryMB
+	days, mb = history.DefaultDays, history.DefaultMB
 	if c.HistoryDays != nil {
 		days = *c.HistoryDays
 	}

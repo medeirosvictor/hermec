@@ -20,6 +20,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/history"
 )
 
 const dedicatedConfigName = "server.toml"
@@ -200,8 +201,8 @@ func checkDedicatedState(cfg server.Config, keyPath, chainPath, historyPath stri
 	if _, err := os.Lstat(transitionPath); err == nil {
 		r, err := server.LoadDedicatedTransition(transitionPath)
 		if err == nil {
-			var h *server.History
-			h, err = server.OpenHistory(historyPath)
+			var h *history.Store
+			h, err = history.Open(historyPath)
 			if err == nil {
 				switch r.State {
 				case server.DedicatedTransitionPreparing:

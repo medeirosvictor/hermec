@@ -1,4 +1,4 @@
-package server
+package history
 
 import (
 	"encoding/json"
@@ -25,9 +25,9 @@ func hmsg(ch string, i int, ts time.Time) proto.ChatMessage {
 	}
 }
 
-func openH(t *testing.T, path string) *History {
+func openH(t *testing.T, path string) *Store {
 	t.Helper()
-	h, err := OpenHistory(path)
+	h, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -634,7 +634,7 @@ func TestHistoryMergeDedup(t *testing.T) {
 	if err != nil || added != 2 {
 		t.Fatalf("added %d err %v", added, err)
 	}
-	check := func(h *History) {
+	check := func(h *Store) {
 		t.Helper()
 		got, _ := h.Page("a", "", time.Time{}, 10)
 		if len(got) != 4 {

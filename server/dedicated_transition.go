@@ -15,6 +15,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/internal/fsutil"
+	"github.com/medeirosvictor/hermec/server/history"
 )
 
 // DedicatedTransitionState records recovery-safe progress only. It never
@@ -91,7 +92,7 @@ const maxDedicatedTransitionBytes = 16 << 10
 // ValidateDedicatedPreparing verifies a pre-proof destination record. It has
 // the same local boundary requirements as Prepared, but is not acknowledgement
 // evidence and therefore must remain passive.
-func ValidateDedicatedPreparing(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *History) error {
+func ValidateDedicatedPreparing(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *history.Store) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
@@ -108,7 +109,7 @@ func ValidateDedicatedPreparing(r DedicatedTransitionRecord, local *identity.Ide
 // belongs to this local destination and that its captured boundary still
 // exists locally. It never activates the destination; callers must keep a
 // failed or stale record passive and show its fixed recovery guidance.
-func ValidateDedicatedPrepared(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *History) error {
+func ValidateDedicatedPrepared(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *history.Store) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
@@ -121,7 +122,7 @@ func ValidateDedicatedPrepared(r DedicatedTransitionRecord, local *identity.Iden
 // ValidateDedicatedCommitted validates the terminal destination state on
 // startup. Unlike Prepared, this must never be accepted merely by changing a
 // record's State in memory: its committed certificate is part of the state.
-func ValidateDedicatedCommitted(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *History) error {
+func ValidateDedicatedCommitted(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *history.Store) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
@@ -137,7 +138,7 @@ func ValidateDedicatedCommitted(r DedicatedTransitionRecord, local *identity.Ide
 // ValidateDedicatedFenced validates the terminal source state on startup.
 // The source intentionally is not the destination, so it is checked against
 // the certificate signer rather than DestinationFingerprint.
-func ValidateDedicatedFenced(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *History) error {
+func ValidateDedicatedFenced(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *history.Store) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
@@ -179,7 +180,7 @@ func validateDedicatedTerminalCertificate(r DedicatedTransitionRecord, c *chain.
 	return nil
 }
 
-func validateDedicatedDestination(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *History) error {
+func validateDedicatedDestination(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *history.Store) error {
 	if local == nil || r.DestinationFingerprint != identity.Fingerprint(local.PublicKey()) {
 		return errors.New("server: dedicated transition names another destination")
 	}
@@ -189,7 +190,7 @@ func validateDedicatedDestination(r DedicatedTransitionRecord, local *identity.I
 // validateDedicatedLocalBoundary verifies the exact chain and history snapshot
 // named by a transition. Fenced sources use it too: after fencing neither side
 // may silently continue from a different boundary.
-func validateDedicatedLocalBoundary(r DedicatedTransitionRecord, c *chain.Chain, h *History) error {
+func validateDedicatedLocalBoundary(r DedicatedTransitionRecord, c *chain.Chain, h *history.Store) error {
 	if c == nil || h == nil {
 		return errors.New("server: incomplete local dedicated state")
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/history"
 	"github.com/medeirosvictor/hermec/version"
 )
 
@@ -222,8 +223,8 @@ func main() {
 		cfg.Prepared, cfg.Mode = true, server.ModePrepared
 		r, loadErr := server.LoadDedicatedTransition(transitionPath)
 		if loadErr == nil {
-			var h *server.History
-			h, loadErr = server.OpenHistory(f.history)
+			var h *history.Store
+			h, loadErr = history.Open(f.history)
 			if loadErr == nil {
 				switch r.State {
 				case server.DedicatedTransitionPreparing:
