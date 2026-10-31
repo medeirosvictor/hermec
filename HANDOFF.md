@@ -41,7 +41,15 @@ Roadmap: [PLAN.md](PLAN.md).
     move pure logic into `ui/state` and pull out `ui/crt`; one
     `internal/fsutil.WriteFileAtomic`.
 - **Next steps, in order:**
-  1. Easy, low-risk extractions (PLAN item 1a): `server/history`,
+  1. DONE 2026-10-31 (PLAN 1a): `internal/fsutil`, `internal/ratelimit`,
+     `internal/knownhosts`, `server/history`, `server/dedicated`,
+     `server/serverctl`, `server/host`, `ui/crt`, `ui/internal/gfxtest`;
+     `hermec-server` `main()` and `conn.authenticate` split into steps (Opus
+     verified both splits are behavior-equivalent); dedicated manager state
+     machine and create/open helpers in `ui/state`. Follow-ups: `server`
+     gained ~19 exported methods for `server/host` (could shrink by moving the
+     yield sequence behind one call); `restoreTransition` in cmd and
+     `CheckDedicatedState` share near-duplicate state switches. Original list: `server/history`,
      `internal/ratelimit`, `server/dedicated` records, `server/host`,
      `internal/fsutil.WriteFileAtomic`, dedicated lifecycle out of
      `cmd/hermec-server` (and split its `main()`), split
