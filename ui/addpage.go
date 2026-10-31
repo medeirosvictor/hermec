@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -31,8 +30,6 @@ const firewallLine = "Windows will ask to allow HERMEC on your network — choos
 const (
 	defaultHostPort = 7697
 	maxPortDigits   = 5
-	portRangeMsg    = "port must be 1–65535"
-	nameRequiredMsg = "server name is required"
 	createFields    = 2 // name, port
 )
 
@@ -71,19 +68,6 @@ func (f *createForm) edit(k editKeys, rs []rune) {
 	f.name.edit(k, rs, maxFieldRunes, nil, false)
 }
 
-// validate checks the form; err is the user-facing reason it cannot submit.
-func (f *createForm) validate() (name string, port int, err string) {
-	name = strings.TrimSpace(f.name.String())
-	if name == "" {
-		return "", 0, nameRequiredMsg
-	}
-	port, e := strconv.Atoi(f.port.String())
-	if e != nil || port < 1 || port > 65535 {
-		return "", 0, portRangeMsg
-	}
-	return name, port, ""
-}
-
 // submitCreate validates the form and creates the hosted server. A failure
 // leaves the form up with the reason in err.
 func (g *game) submitCreate() {
@@ -91,7 +75,7 @@ func (g *game) submitCreate() {
 		g.cf.err = "already hosting " + g.hosted.name()
 		return
 	}
-	name, port, msg := g.cf.validate()
+	name, port, msg := state.ValidateCreate(g.cf.name.String(), g.cf.port.String())
 	if msg != "" {
 		g.cf.err = msg
 		return

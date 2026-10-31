@@ -219,7 +219,7 @@ func TestFingerprintTooltip(t *testing.T) {
 		!strings.HasSuffix(fingerprintTip, "compare it with a friend out loud.") {
 		t.Fatalf("copy changed: %q", fingerprintTip)
 	}
-	lines := tooltipLines(fingerprintTip, 30)
+	lines := state.Wrap(fingerprintTip, 30)
 	if len(lines) < 2 || strings.Join(lines, " ") != fingerprintTip {
 		t.Fatalf("lines = %q", lines)
 	}

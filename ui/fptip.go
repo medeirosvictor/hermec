@@ -15,9 +15,6 @@ const fingerprintTip = "Your fingerprint is a short code made from your identity
 // fpTipCols is the widest the fingerprint tooltip gets, in columns.
 const fpTipCols = 40
 
-// tooltipLines wraps s to cols runes per line (the font is monospace).
-func tooltipLines(s string, cols int) []string { return state.Wrap(s, cols) }
-
 // addFingerprintHit registers the "fingerprint: <fp>" line drawn at y by the
 // connect and settings scenes, as wide as its text.
 func (g *game) addFingerprintHit(y float64) {
@@ -33,7 +30,7 @@ func (g *game) addFingerprintHit(y float64) {
 func (g *game) drawFingerprintTip(screen *ebiten.Image, s string) {
 	adv, lh := g.glyphW(), g.lineH()
 	cols := max(10, min(fpTipCols, int((float64(g.w)-2*pad)/adv)-2))
-	lines := tooltipLines(s, cols)
+	lines := state.Wrap(s, cols)
 	w, h := float64(cols)*adv+pad, float64(len(lines))*lh+pad/2
 	a := g.tip.anchor
 	x, y := state.TooltipOrigin(a.X1, a.Y0, a.Y1, w, h, float64(g.w), float64(g.h))

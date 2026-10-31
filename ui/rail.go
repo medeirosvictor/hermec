@@ -321,7 +321,7 @@ func (g *game) drawTooltip(screen *ebiten.Image) {
 	lh := g.lineH()
 	lines := []string{s}
 	if name, rest, ok := strings.Cut(s, "\n"); ok { // a failed tile: name, then its wrapped error
-		lines = append([]string{name}, tooltipLines(rest, fpTipCols)...)
+		lines = append([]string{name}, state.Wrap(rest, fpTipCols)...)
 	}
 	var tw float64
 	for _, l := range lines {
