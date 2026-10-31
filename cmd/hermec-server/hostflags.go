@@ -199,15 +199,7 @@ func (k *knownHosts) list() []string {
 }
 
 func (k *knownHosts) merged(file []string) []string {
-	var out []string
-	for _, l := range [][]string{k.flagged, k.configured, file} {
-		for _, u := range l {
-			if !slices.Contains(out, u) {
-				out = append(out, u)
-			}
-		}
-	}
-	return out
+	return host.MergeURLs(host.MergeURLs(k.flagged, k.configured, 0), file, 0)
 }
 
 // save adds urls to known_hosts.txt (0600). Failures are not fatal: the host
@@ -215,12 +207,7 @@ func (k *knownHosts) merged(file []string) []string {
 func (k *knownHosts) save(urls []string) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	file := k.fileURLs()
-	for _, u := range cleanURLs(urls, "learned host") {
-		if !slices.Contains(file, u) {
-			file = append(file, u)
-		}
-	}
+	file := host.MergeURLs(k.fileURLs(), cleanURLs(urls, "learned host"), 0)
 	if err := fsutil.WriteFileAtomic(k.path, []byte(strings.Join(file, "\n")+"\n"), 0o600); err != nil && !k.saveFailed {
 		k.saveFailed = true
 		log.Printf("WARNING: saving %s: %v", k.path, err)

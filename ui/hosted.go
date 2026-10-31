@@ -7,10 +7,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -133,26 +131,14 @@ type hostedServer struct {
 	url   string
 	err   string // why it is not running
 
-	mu    sync.Mutex // guards known, which the host's goroutines read and grow
-	known []string   // the other hosts we know, mirrored in hosted.toml
+	known *host.Known // the other hosts we know, mirrored in hosted.toml
 	logf  func(format string, args ...any)
 }
 
-// knownHosts is host.Config.Known: the hosts hosted.toml remembers.
-func (h *hostedServer) knownHosts() []string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return slices.Clone(h.known)
-}
-
-// saveKnown is host.Config.SaveKnown: it adds urls to the known hosts and
-// rewrites hosted.toml.
+// saveKnown is the persistence of h.known: it rewrites hosted.toml with urls.
 func (h *hostedServer) saveKnown(urls []string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.known = state.MergeAddrs(h.known, urls, state.MaxHosts)
 	cfg := h.cfg
-	cfg.KnownHosts = slices.Clone(h.known)
+	cfg.KnownHosts = urls
 	if err := saveHostedLocal(h.path, cfg); err != nil { // best effort: the hosts are learned again
 		h.logf("save known hosts: %v", err)
 	}
@@ -318,9 +304,9 @@ func (g *game) startHosted() error {
 	cfg.HistoryPath = filepath.Join(dir, h.id+".jsonl")
 	cfg.HostName = g.defaultName()
 	h.logf = g.logf
-	h.known = slices.Clone(h.cfg.KnownHosts)
+	h.known = host.NewKnown(h.cfg.KnownHosts, h.saveKnown)
 	srv := host.New(host.Config{
-		Server: cfg, Known: h.knownHosts, SaveKnown: h.saveKnown,
+		Server: cfg, Known: h.known.List, SaveKnown: h.known.Add,
 		Notify: func(msg string) { g.logf("%s", msg) },
 	})
 	if err := srv.Start(); err != nil {

@@ -328,12 +328,12 @@ func TestHostedUsesOrchestrator(t *testing.T) {
 func TestHostedKnownHostsPersist(t *testing.T) {
 	g, path := hostedTestGame(t, "127.0.0.1:0", true)
 	g.bootHosted(path)
-	g.hosted.saveKnown([]string{"ws://10.0.0.5:7697/"})
+	g.hosted.known.Add([]string{"ws://10.0.0.5:7697/"})
 	cfg, ok, err := loadHosted(path)
 	if err != nil || !ok || len(cfg.KnownHosts) != 1 || cfg.KnownHosts[0] != "ws://10.0.0.5:7697/" {
 		t.Fatalf("cfg = %+v ok=%v err=%v", cfg.KnownHosts, ok, err)
 	}
-	if got := g.hosted.knownHosts(); len(got) != 1 {
+	if got := g.hosted.known.List(); len(got) != 1 {
 		t.Fatalf("knownHosts = %v", got)
 	}
 }

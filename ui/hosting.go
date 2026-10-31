@@ -19,7 +19,6 @@ import (
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/server/host"
-	"github.com/medeirosvictor/hermec/ui/state"
 )
 
 // A friend the founder granted hosting can let this PC host the server: a
@@ -56,9 +55,10 @@ type friendHost struct {
 	path string // the hosting file
 	port int
 
-	mu   sync.Mutex // guards file, which the host's goroutines grow
-	file hostingFile
-	logf func(format string, args ...any)
+	mu    sync.Mutex // guards file, which the host's goroutines grow
+	file  hostingFile
+	known *host.Known
+	logf  func(format string, args ...any)
 }
 
 // save writes the hosting file; f.mu is held.
@@ -77,23 +77,13 @@ func (f *friendHost) setKey(key []byte) {
 	f.save()
 }
 
-// knownHosts is host.Config.Known.
-func (f *friendHost) knownHosts() []string {
+// saveKnown is the persistence of f.known: it rewrites the hosting file with
+// urls.
+func (f *friendHost) saveKnown(urls []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Clone(f.file.KnownHosts)
-}
-
-// addKnown is host.Config.SaveKnown, and also what sessions feed it: it adds
-// urls to the known hosts and rewrites the hosting file when the set grew.
-func (f *friendHost) addKnown(urls []string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	merged := state.MergeAddrs(f.file.KnownHosts, urls, state.MaxHosts)
-	if len(merged) > len(f.file.KnownHosts) {
-		f.file.KnownHosts = merged
-		f.save() // best effort: the hosts are learned again
-	}
+	f.file.KnownHosts = urls
+	f.save() // best effort: the hosts are learned again
 }
 
 // friendStarted is the outcome of a background friend host start.
@@ -176,7 +166,7 @@ func (g *game) syncFriendHosting(s *session) {
 		return
 	}
 	if f := g.friends[id]; f != nil {
-		f.addKnown(g.sessionHosts(s))
+		f.known.Add(g.sessionHosts(s))
 		return
 	}
 	if time.Now().Before(g.friendBackoff[id]) { // a failed start is not repeated on every chain event
@@ -192,7 +182,7 @@ func (g *game) syncFriendHosting(s *session) {
 		return
 	}
 	hf.PasswordKey = hex.EncodeToString(s.c.PasswordKey())
-	hf.KnownHosts = state.MergeAddrs(hf.KnownHosts, g.sessionHosts(s), state.MaxHosts)
+	hf.KnownHosts = host.MergeURLs(hf.KnownHosts, g.sessionHosts(s), host.MaxKnown)
 	if !g.startFriend(id, c, hf) {
 		return
 	}
@@ -262,6 +252,7 @@ func (g *game) startFriend(id string, c *chain.Chain, hf hostingFile) bool {
 		return false
 	}
 	f := &friendHost{id: id, path: path, port: port, file: hf, logf: g.logf}
+	f.known = host.NewKnown(hf.KnownHosts, f.saveKnown)
 	if g.friends == nil {
 		g.friends = map[string]*friendHost{}
 	}
@@ -280,7 +271,7 @@ func (g *game) startFriend(id string, c *chain.Chain, hf hostingFile) bool {
 		}
 		cfg.Advertise = g.advertiseAddrs(port)
 		h := host.New(host.Config{
-			Server: cfg, Known: f.knownHosts, SaveKnown: f.addKnown, OnPasswordKey: f.setKey,
+			Server: cfg, Known: f.known.List, SaveKnown: f.known.Add, OnPasswordKey: f.setKey,
 			Notify: func(msg string) { g.logf("friend host %s: %s", shortID(id), msg) },
 		})
 		ch <- friendStarted{id: id, f: f, h: h, err: h.Start()}

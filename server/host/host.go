@@ -21,8 +21,7 @@ var (
 )
 
 const (
-	dialTimeout   = 5 * time.Second
-	maxKnownHosts = 16
+	dialTimeout = 5 * time.Second
 
 	// maxHandbackCheck caps how often an active host looks for a handback.
 	maxHandbackCheck = 5 * time.Second
@@ -313,7 +312,7 @@ func (h *Host) learn(addrs ...string) {
 	}
 	grew := false
 	for _, a := range addrs {
-		if a != "" && !own[a] && len(h.seen) < maxKnownHosts {
+		if a != "" && !own[a] && len(h.seen) < MaxKnown {
 			own[a] = true
 			h.seen = append(h.seen, a)
 			grew = true
