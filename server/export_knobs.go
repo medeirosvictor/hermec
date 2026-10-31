@@ -25,3 +25,11 @@ func (s *Server) SetLoadForTest(f func() (voice, clients int)) { s.load = f }
 
 // HistoryForTest returns the server's chat history store.
 func (s *Server) HistoryForTest() *history.Store { return s.hist }
+
+// AddVoiceMemberForTest puts a connectionless member in the voice channel, so
+// the server counts voice as occupied.
+func (s *Server) AddVoiceMemberForTest(channel string) {
+	s.chMu.Lock()
+	defer s.chMu.Unlock()
+	s.voice[channel] = map[*conn]bool{{srv: s, fingerprint: "synthetic"}: false}
+}

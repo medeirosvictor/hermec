@@ -442,7 +442,7 @@ func TestHandbackWhenVoiceEmpty(t *testing.T) {
 
 func TestNoHandbackDuringVoice(t *testing.T) {
 	ha, hb, _ := handbackFixture(t)
-	hb.Server().SetLoadForTest(func() (int, int) { return 1, 0 }) // one voice member
+	hb.Server().AddVoiceMemberForTest("voice")
 	time.Sleep(3 * handbackIdle)
 	if hb.Role() != RoleActive {
 		t.Fatalf("B is %q during voice, want active", hb.Role())
