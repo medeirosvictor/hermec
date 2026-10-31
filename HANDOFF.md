@@ -23,6 +23,15 @@ Roadmap: [PLAN.md](PLAN.md).
   available or provision cloud resources. The `systemd-run` validation branch
   of `update.sh` has no automated coverage; exercise it on the VPS
   (update/rollback row).
+- Flaky test: `server/host_fix_test.go` `TestYieldAbortsWhenHistoryFails` fails
+  occasionally under full-suite load (fixed `time.Sleep(2 * probeEvery)`); it
+  passes alone. Replace the sleep with an explicit wait for the probe/merge hook.
+- Package refactor proposals (Opus review, 2026-10-31), not started: extract
+  `server/history`, `internal/ratelimit`, dedicated records (`server/dedicated`)
+  and `server/host`; move dedicated lifecycle out of `cmd/hermec-server`; later
+  `server/sfu`. In `ui`, move pure logic into `ui/state` and pull `ui/crt` out.
+  One `internal/fsutil.WriteFileAtomic` should replace the nine temp+rename
+  writers (`cmd/hermec-server/hostflags.go` `writeFile0600` is the weakest).
 - Deferred audit suggestions: signed release manifests (Sigstore/cosign or an
   offline minisign key) for update provenance, and one shared secure
   atomic-file helper for the several private-file writers.
