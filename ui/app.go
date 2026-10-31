@@ -138,7 +138,8 @@ type game struct {
 	dedicatedProbe dedicatedMediaProbe
 	// dm is the founder-only VPS authorization/cutover draft. It is never
 	// persisted and has its own lifecycle from the end-user Dedicated Add page.
-	dm            dedicatedManager
+	dm            state.DedicatedManager
+	dmInput       field // the VPS public key being typed
 	dmKey         string
 	dmStop        context.CancelFunc
 	dmCh          chan dedicatedManageResult
