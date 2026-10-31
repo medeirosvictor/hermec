@@ -421,7 +421,7 @@ func TestDialRefusesOtherBuild(t *testing.T) {
 // A frame type the client does not know is a bad server, not silence.
 func TestUnknownMessageTypeIsErrEvent(t *testing.T) {
 	p := newPair(t)
-	stray, _ := proto.Encode("channel_list", struct{}{})
+	stray, _ := proto.Encode("no_such_type", struct{}{})
 	url := proxy(t, p.aURL, func(raw []byte, env proto.Envelope) [][]byte {
 		if env.Type == proto.TypeRoster {
 			return [][]byte{stray, raw}

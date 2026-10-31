@@ -39,7 +39,7 @@ func TestSelfLiveOpensPreviewWithoutWatch(t *testing.T) {
 	if len(rec.watches) != 0 {
 		t.Fatalf("Watch called for self: %v", rec.watches)
 	}
-	g.stopWatching() // closing the preview sends no Watch("") either
+	g.stopWatching() // closing the preview sends no SubscribeScreen("") either
 	settle(t, g)
 	if len(rec.watches) != 0 || g.videoActive() || !g.share.on {
 		t.Fatalf("close: watches=%v active=%v share=%v", rec.watches, g.videoActive(), g.share.on)

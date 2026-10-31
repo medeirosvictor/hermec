@@ -21,7 +21,7 @@ import (
 	"github.com/medeirosvictor/hermec/version"
 )
 
-// fakeHost is a small ws handler that speaks the host side of the version 2
+// fakeHost is a small ws handler that speaks the host side of the
 // handshake on top of core/chain and core/proto, with knobs to misbehave.
 type fakeHost struct {
 	t        *testing.T

@@ -130,7 +130,7 @@ func expectHosts(t *testing.T, c *websocket.Conn) {
 	}
 }
 
-// hs is the state of a version 2 handshake after the host has proven itself.
+// hs is the state of a handshake after the host has proven itself.
 type hs struct {
 	serverNonce, clientNonce []byte
 	serverID                 chain.ID

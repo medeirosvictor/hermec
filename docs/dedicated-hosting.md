@@ -7,8 +7,7 @@
 HERMEC can run as an operator-owned Linux systemd service. It does not create
 cloud resources, receive cloud credentials, or manage billing. The dedicated
 Linux amd64/arm64 archive contains both `hermec-server` and `hermec-verify`.
-Use the same released build for server and verifier: pre-v1 protocol
-compatibility between arbitrary builds is not promised.
+Use the same released build for server and verifier.
 
 For a beginner-oriented, click-by-click AWS EC2 disposable-test setup, see
 [From no AWS account to a disposable HERMEC VPS](aws-ec2-from-zero.md). It does
