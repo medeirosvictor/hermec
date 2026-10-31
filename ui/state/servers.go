@@ -12,7 +12,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/names"
 	"github.com/medeirosvictor/hermec/internal/fsutil"
-	"github.com/medeirosvictor/hermec/server/host"
+	"github.com/medeirosvictor/hermec/internal/knownhosts"
 )
 
 // MaxServers caps the saved server list.
@@ -235,13 +235,13 @@ func SetPasswordKey(entries []ServerEntry, url, key string) []ServerEntry {
 }
 
 // MaxHosts caps ServerEntry.Hosts.
-const MaxHosts = host.MaxKnown
+const MaxHosts = knownhosts.Max
 
 // SetHosts returns a copy of entries with the known hosts of url set to hosts,
 // without empty entries or duplicates, capped at MaxHosts.
 func SetHosts(entries []ServerEntry, url string, hosts []string) []ServerEntry {
 	out := append([]ServerEntry(nil), entries...)
-	clean := host.MergeURLs(nil, hosts, MaxHosts)
+	clean := knownhosts.Merge(nil, hosts, MaxHosts)
 	for i := range out {
 		if out[i].URL == url {
 			out[i].Hosts = clean

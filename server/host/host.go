@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/internal/knownhosts"
 	"github.com/medeirosvictor/hermec/server"
 )
 
@@ -312,7 +313,7 @@ func (h *Host) learn(addrs ...string) {
 	}
 	grew := false
 	for _, a := range addrs {
-		if a != "" && !own[a] && len(h.seen) < MaxKnown {
+		if a != "" && !own[a] && len(h.seen) < knownhosts.Max {
 			own[a] = true
 			h.seen = append(h.seen, a)
 			grew = true

@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/medeirosvictor/hermec/internal/fsutil"
+	"github.com/medeirosvictor/hermec/internal/knownhosts"
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/server/host"
 )
@@ -199,7 +200,7 @@ func (k *knownHosts) list() []string {
 }
 
 func (k *knownHosts) merged(file []string) []string {
-	return host.MergeURLs(host.MergeURLs(k.flagged, k.configured, 0), file, 0)
+	return knownhosts.Merge(knownhosts.Merge(k.flagged, k.configured, 0), file, 0)
 }
 
 // save adds urls to known_hosts.txt (0600). Failures are not fatal: the host
@@ -207,7 +208,7 @@ func (k *knownHosts) merged(file []string) []string {
 func (k *knownHosts) save(urls []string) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	file := host.MergeURLs(k.fileURLs(), cleanURLs(urls, "learned host"), 0)
+	file := knownhosts.Merge(k.fileURLs(), cleanURLs(urls, "learned host"), 0)
 	if err := fsutil.WriteFileAtomic(k.path, []byte(strings.Join(file, "\n")+"\n"), 0o600); err != nil && !k.saveFailed {
 		k.saveFailed = true
 		log.Printf("WARNING: saving %s: %v", k.path, err)

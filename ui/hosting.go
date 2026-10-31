@@ -17,6 +17,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/medeirosvictor/hermec/core/chain"
+	"github.com/medeirosvictor/hermec/internal/knownhosts"
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/server/host"
 )
@@ -57,7 +58,7 @@ type friendHost struct {
 
 	mu    sync.Mutex // guards file, which the host's goroutines grow
 	file  hostingFile
-	known *host.Known
+	known *knownhosts.Set
 	logf  func(format string, args ...any)
 }
 
@@ -182,7 +183,7 @@ func (g *game) syncFriendHosting(s *session) {
 		return
 	}
 	hf.PasswordKey = hex.EncodeToString(s.c.PasswordKey())
-	hf.KnownHosts = host.MergeURLs(hf.KnownHosts, g.sessionHosts(s), host.MaxKnown)
+	hf.KnownHosts = knownhosts.Merge(hf.KnownHosts, g.sessionHosts(s), knownhosts.Max)
 	if !g.startFriend(id, c, hf) {
 		return
 	}
@@ -252,7 +253,7 @@ func (g *game) startFriend(id string, c *chain.Chain, hf hostingFile) bool {
 		return false
 	}
 	f := &friendHost{id: id, path: path, port: port, file: hf, logf: g.logf}
-	f.known = host.NewKnown(hf.KnownHosts, f.saveKnown)
+	f.known = knownhosts.New(hf.KnownHosts, f.saveKnown)
 	if g.friends == nil {
 		g.friends = map[string]*friendHost{}
 	}

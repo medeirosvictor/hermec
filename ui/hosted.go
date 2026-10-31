@@ -19,6 +19,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/discover"
 	"github.com/medeirosvictor/hermec/internal/fsutil"
+	"github.com/medeirosvictor/hermec/internal/knownhosts"
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/server/host"
 	"github.com/medeirosvictor/hermec/ui/state"
@@ -131,7 +132,7 @@ type hostedServer struct {
 	url   string
 	err   string // why it is not running
 
-	known *host.Known // the other hosts we know, mirrored in hosted.toml
+	known *knownhosts.Set // the other hosts we know, mirrored in hosted.toml
 	logf  func(format string, args ...any)
 }
 
@@ -304,7 +305,7 @@ func (g *game) startHosted() error {
 	cfg.HistoryPath = filepath.Join(dir, h.id+".jsonl")
 	cfg.HostName = g.defaultName()
 	h.logf = g.logf
-	h.known = host.NewKnown(h.cfg.KnownHosts, h.saveKnown)
+	h.known = knownhosts.New(h.cfg.KnownHosts, h.saveKnown)
 	srv := host.New(host.Config{
 		Server: cfg, Known: h.known.List, SaveKnown: h.known.Add,
 		Notify: func(msg string) { g.logf("%s", msg) },

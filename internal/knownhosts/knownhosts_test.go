@@ -1,4 +1,4 @@
-package host
+package knownhosts
 
 import (
 	"slices"
@@ -7,21 +7,21 @@ import (
 
 func TestMergeURLs(t *testing.T) {
 	have := []string{"ws://a/", "ws://b/"}
-	got := MergeURLs(have, []string{"", "ws://b/", "ws://c/", "ws://c/"}, 0)
+	got := Merge(have, []string{"", "ws://b/", "ws://c/", "ws://c/"}, 0)
 	if want := []string{"ws://a/", "ws://b/", "ws://c/"}; !slices.Equal(got, want) {
 		t.Fatalf("merged %v, want %v", got, want)
 	}
 	if len(have) != 2 {
 		t.Fatalf("have was changed: %v", have)
 	}
-	if got := MergeURLs(have, []string{"ws://c/", "ws://d/"}, 3); len(got) != 3 {
+	if got := Merge(have, []string{"ws://c/", "ws://d/"}, 3); len(got) != 3 {
 		t.Fatalf("cap 3 kept %v", got)
 	}
 }
 
 func TestKnownAddPersistsGrowthOnly(t *testing.T) {
 	var saved [][]string
-	k := NewKnown([]string{"ws://a/"}, func(urls []string) { saved = append(saved, urls) })
+	k := New([]string{"ws://a/"}, func(urls []string) { saved = append(saved, urls) })
 	k.Add([]string{"ws://a/", ""})
 	if len(saved) != 0 {
 		t.Fatalf("persisted without growth: %v", saved)
@@ -41,11 +41,11 @@ func TestKnownAddPersistsGrowthOnly(t *testing.T) {
 }
 
 func TestKnownCapsAtMaxKnown(t *testing.T) {
-	k := NewKnown(nil, func([]string) {})
-	for i := 0; i < MaxKnown+4; i++ {
+	k := New(nil, func([]string) {})
+	for i := 0; i < Max+4; i++ {
 		k.Add([]string{string(rune('a'+i)) + "://x/"})
 	}
-	if n := len(k.List()); n != MaxKnown {
-		t.Fatalf("%d known, want %d", n, MaxKnown)
+	if n := len(k.List()); n != Max {
+		t.Fatalf("%d known, want %d", n, Max)
 	}
 }
