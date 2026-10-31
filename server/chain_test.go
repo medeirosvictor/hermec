@@ -308,11 +308,11 @@ func TestEffectiveConfigRejectsConfiglessOrIncompleteChain(t *testing.T) {
 	cfg.Channels = []string{"toml-must-not-win"}
 	for name, st := range map[string]chain.State{
 		"configless": {},
-		"incomplete": {HasConfig: true, Config: chain.ConfigBody{Name: "legacy"}},
+		"incomplete": {HasConfig: true, Config: chain.ConfigBody{Name: "incomplete"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := EffectiveConfig(cfg, st); err == nil {
-				t.Fatal("legacy chain resolved using TOML fields")
+				t.Fatal("incomplete chain resolved using TOML fields")
 			}
 		})
 	}

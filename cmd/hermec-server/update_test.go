@@ -15,6 +15,9 @@ func TestUpdateInstallsTheValidatedCopy(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("dedicated lifecycle scripts require POSIX shell")
 	}
+	if os.Geteuid() == 0 {
+		t.Skip("update.sh takes its systemd-run branch as root")
+	}
 	dir := t.TempDir()
 	bin, previous := filepath.Join(dir, "bin", "hermec-server"), filepath.Join(dir, "lib", "previous")
 	candidate := filepath.Join(dir, "new")

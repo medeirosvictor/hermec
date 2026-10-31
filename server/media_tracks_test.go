@@ -12,7 +12,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 )
 
-func TestServerRejectsExtraOrMisorderedVideoTracksWithoutDroppingVoice(t *testing.T) {
+func TestServerRejectsExtraOrMisorderedVideoTracks(t *testing.T) {
 	valid := []offeredMedia{
 		{kind: "audio", direction: "sendrecv"},
 		{kind: "video", direction: "sendonly", trackID: cameraPublishTrackID},
@@ -21,22 +21,22 @@ func TestServerRejectsExtraOrMisorderedVideoTracksWithoutDroppingVoice(t *testin
 	for i := 0; i < proto.MaxCameraSlots+1; i++ {
 		valid = append(valid, offeredMedia{kind: "video", direction: "recvonly"})
 	}
-	if layout := classifyModernOffer(valid); !layout.valid || !layout.audio {
+	if layout := classifyOffer(valid); !layout.valid || !layout.audio {
 		t.Fatalf("valid layout rejected: %+v", layout)
 	}
 
 	bad := append([]offeredMedia(nil), valid...)
 	bad[1], bad[2] = bad[2], bad[1]
-	layout := classifyModernOffer(bad)
+	layout := classifyOffer(bad)
 	if layout.valid || !layout.audio || len(layout.publish) != 0 {
-		t.Fatalf("misordered video layout = %+v, want audio-only acceptance", layout)
+		t.Fatalf("misordered video layout = %+v, want rejection", layout)
 	}
 
 	extra := append([]offeredMedia(nil), valid...)
 	extra = append(extra, offeredMedia{kind: "video", direction: "sendonly", trackID: "extra"})
-	layout = classifyModernOffer(extra)
+	layout = classifyOffer(extra)
 	if layout.valid || !layout.audio || len(layout.publish) != 0 {
-		t.Fatalf("extra video layout = %+v, want audio-only acceptance", layout)
+		t.Fatalf("extra video layout = %+v, want rejection", layout)
 	}
 
 	s, url := startServerS(t, shareCfg())
@@ -57,12 +57,14 @@ func TestServerRejectsExtraOrMisorderedVideoTracksWithoutDroppingVoice(t *testin
 			t.Fatal(err)
 		}
 	}
+	pub := newTestPeer(t, url)
 	listener := newTestPeer(t, url)
-	badPeer.join()
+	pub.join()
 	listener.join()
+	badPeer.join()
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
-	pumpAudio(stop, badPeer.audio)
+	pumpAudio(stop, pub.audio)
 	go func() {
 		tick := time.NewTicker(10 * time.Millisecond)
 		defer tick.Stop()
@@ -80,22 +82,33 @@ func TestServerRejectsExtraOrMisorderedVideoTracksWithoutDroppingVoice(t *testin
 		}
 	}()
 
+	select {
+	case got := <-badPeer.errs:
+		if !strings.HasPrefix(got, proto.CodeBadRequest+":") {
+			t.Fatalf("error = %q, want bad_request", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no error for the malformed video layout")
+	}
 	vs := waitSession(t, s, "lounge")
-	eventually(t, 10*time.Second, "audio survives malformed video layout", func() bool { return listener.apkts.Load() > 0 })
+	eventually(t, 10*time.Second, "well-formed listener hears the well-formed publisher", func() bool { return listener.apkts.Load() > 0 })
 	onActor(t, vs, func() {
 		p := peerByFP(vs, badPeer.fp)
 		if p == nil {
-			t.Fatal("modern peer missing")
+			t.Fatal("rejected peer missing")
+		}
+		if p.pc != nil {
+			t.Error("rejected peer kept its media")
 		}
 		for _, f := range p.fwds {
-			if f.video && !f.isDead() {
+			if f.kind != "" && !f.isDead() {
 				t.Fatal("malformed video layout created a publication")
 			}
 		}
 	})
 }
 
-func TestModernOfferFitsProtocolAtMaxVoice(t *testing.T) {
+func TestOfferFitsProtocolAtMaxVoice(t *testing.T) {
 	s := New(voiceCfg())
 	pc, err := s.newRTCAPI().NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
@@ -140,12 +153,12 @@ func TestModernOfferFitsProtocolAtMaxVoice(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(raw) > proto.MaxMessageSize {
-		t.Fatalf("modern max-voice offer = %d bytes, max = %d", len(raw), proto.MaxMessageSize)
+		t.Fatalf("max-voice offer = %d bytes, max = %d", len(raw), proto.MaxMessageSize)
 	}
 }
 
-func TestModernOfferAnswerHasStableReceiveSlotIDs(t *testing.T) {
-	clientPC, serverPC := modernOfferPair(t)
+func TestOfferAnswerHasStableReceiveSlotIDs(t *testing.T) {
+	clientPC, serverPC := offerPair(t)
 	offer, err := clientPC.CreateOffer(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -153,16 +166,16 @@ func TestModernOfferAnswerHasStableReceiveSlotIDs(t *testing.T) {
 	if err := clientPC.SetLocalDescription(offer); err != nil {
 		t.Fatal(err)
 	}
-	layout := classifyModernOffer(parseOfferedMedia(offer.SDP))
+	layout := classifyOffer(parseOfferedMedia(offer.SDP))
 	if !layout.valid {
-		t.Fatalf("generated modern offer rejected: %+v", layout)
+		t.Fatalf("generated offer rejected: %+v", layout)
 	}
 	if err := serverPC.SetRemoteDescription(offer); err != nil {
 		t.Fatal(err)
 	}
 	vs := &voiceSession{}
 	p := &peer{}
-	if err := vs.configureModernAnswer(p, serverPC, layout); err != nil {
+	if err := vs.configureAnswer(p, serverPC, layout); err != nil {
 		t.Fatal(err)
 	}
 	answer, err := serverPC.CreateAnswer(nil)
@@ -180,7 +193,7 @@ func TestModernOfferAnswerHasStableReceiveSlotIDs(t *testing.T) {
 	}
 }
 
-func modernOfferPair(t *testing.T) (*webrtc.PeerConnection, *webrtc.PeerConnection) {
+func offerPair(t *testing.T) (*webrtc.PeerConnection, *webrtc.PeerConnection) {
 	t.Helper()
 	s := New(voiceCfg())
 	clientPC, err := s.newRTCAPI().NewPeerConnection(webrtc.Configuration{})

@@ -22,6 +22,7 @@ cleanup() {
   [ -z "$STAGED" ] || rm -f "$STAGED"
 }
 trap cleanup EXIT
+trap 'exit 1' INT TERM HUP
 
 # stage_candidate copies the candidate once into a read-only file next to $BIN,
 # so the file that is validated is the file that is installed, whatever later
@@ -49,6 +50,8 @@ run_candidate() {
     -p User="$SERVICE_USER" -p Group="$SERVICE_USER" \
     -p NoNewPrivileges=yes -p PrivateTmp=yes -p ProtectHome=yes \
     -p ProtectSystem=strict -p ReadWritePaths="$STATE" \
+    -p UMask=0077 -p WorkingDirectory="$STATE" -p CapabilityBoundingSet= \
+    -p PrivateDevices=yes -p PrivateNetwork=yes \
     -p RuntimeMaxSec=30 -p MemoryMax=512M -p TasksMax=64 \
     -- "$STAGED" "$@"
 }

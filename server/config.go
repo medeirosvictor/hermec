@@ -235,8 +235,7 @@ func hexKey(k []byte) string {
 
 // MarshalTOML renders c in the same TOML shape LoadConfig reads. The limit keys
 // (max_voice, max_clients, max_per_ip) are written only when they differ from
-// their defaults, so a file that keeps the defaults has no keys an older app
-// (which rejects unknown keys) would not know.
+// their defaults, so a file that keeps the defaults stays free of limit keys.
 func (c Config) MarshalTOML() ([]byte, error) {
 	omitLimit := func(v, def int) *int {
 		if v <= 0 || v == def {

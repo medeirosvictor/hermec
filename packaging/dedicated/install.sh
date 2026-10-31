@@ -16,7 +16,12 @@ if ! id hermec >/dev/null 2>&1; then
 fi
 install -m 0755 "$HERE/hermec-server" "$BIN"
 if [ ! -e "$STATE" ]; then
-  "$BIN" -init-dedicated "$STATE"
+  install -d -o hermec -g hermec -m 0700 "$STATE"
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u hermec -- "$BIN" -init-dedicated "$STATE"
+  else
+    su -s /bin/sh hermec -c "exec '$BIN' -init-dedicated '$STATE'"
+  fi
 fi
 chown -R hermec:hermec "$STATE"
 chmod 0700 "$STATE" "$STATE/tls" "$STATE/logs" "$STATE/backups"

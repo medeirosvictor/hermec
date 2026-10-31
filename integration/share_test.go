@@ -110,8 +110,8 @@ func (v *voiceClient) sharing(fp string) bool {
 
 // watchOK calls Watch and tolerates ErrWatchTimeout: the server answers a
 // watch only once the sharer's own video track has been negotiated, which can
-// take longer than Watch waits on a loaded machine. Production carries on (the
-// late video_source is still honoured), so the tests do too and assert on
+// take longer than SubscribeScreen waits on a loaded machine. Production carries on (the
+// late media_source is still honoured), so the tests do too and assert on
 // labels and sizes instead.
 func watchOK(t *testing.T, v *voiceClient, fp string) {
 	t.Helper()

@@ -473,3 +473,25 @@ func TestVideoSuffix(t *testing.T) {
 		t.Fatalf("both = %q", got)
 	}
 }
+
+func TestLateNotPublishingEndsOnlyTheSubscriptionInForce(t *testing.T) {
+	g, s := shareGame(t)
+	g.shareOps.watch = func(*client.Client, string) {}
+	s.c.SetWatchGenForTest(7)
+	late := func(gen uint32) client.Event {
+		return client.Event{Err: &client.ServerError{Code: proto.CodeNotPublishing, Message: "not publishing", Gen: gen}}
+	}
+
+	g.watch = watchState{fp: "annfp"}
+	g.noteEvent(s, late(6))
+	if g.watch.fp != "annfp" {
+		t.Fatal("a refusal of an earlier subscription ended the view")
+	}
+	g.noteEvent(s, late(7))
+	if g.watch.fp != "" {
+		t.Fatalf("the refusal of the subscription in force left the view: %+v", g.watch)
+	}
+	if s.st.InCall != "voice" {
+		t.Fatal("the refusal ended voice")
+	}
+}

@@ -26,7 +26,7 @@ const (
 )
 
 // Validate reports whether b is a current, safely representable signed server
-// configuration. It intentionally has no legacy zero-value exceptions.
+// configuration. It intentionally has no zero-value exceptions.
 func (b ConfigBody) Validate() error {
 	if !utf8.ValidString(b.Name) || utf8.RuneCountInString(b.Name) > MaxServerNameRunes {
 		return fmt.Errorf("server name must be valid UTF-8 and at most %d characters", MaxServerNameRunes)

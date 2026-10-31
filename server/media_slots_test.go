@@ -10,7 +10,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 )
 
-func pumpModernVideo(stop <-chan struct{}, tag byte, tracks ...*webrtc.TrackLocalStaticRTP) {
+func pumpVideo(stop <-chan struct{}, tag byte, tracks ...*webrtc.TrackLocalStaticRTP) {
 	go func() {
 		tick := time.NewTicker(10 * time.Millisecond)
 		defer tick.Stop()
@@ -29,7 +29,7 @@ func pumpModernVideo(stop <-chan struct{}, tag byte, tracks ...*webrtc.TrackLoca
 	}()
 }
 
-func joinModernScene(t *testing.T, n int) (*Server, []*testPeer, chan struct{}) {
+func joinScene(t *testing.T, n int) (*Server, []*testPeer, chan struct{}) {
 	t.Helper()
 	s, url := startServerS(t, shareCfg())
 	peers := make([]*testPeer, n)
@@ -60,11 +60,11 @@ func waitMediaSources(t *testing.T, p *testPeer, kind proto.MediaKind, n int) []
 	return got
 }
 
-func TestCamerasAutoAssignStableSlotsForEveryModernViewer(t *testing.T) {
-	s, peers, stop := joinModernScene(t, 4)
+func TestCamerasAutoAssignStableSlotsForEveryViewer(t *testing.T) {
+	s, peers, stop := joinScene(t, 4)
 	for i := 0; i < 3; i++ {
 		peers[i].send(proto.TypeMediaStart, proto.MediaStart{Kind: proto.MediaCamera})
-		pumpModernVideo(stop, byte(0xA0+i), peers[i].camera)
+		pumpVideo(stop, byte(0xA0+i), peers[i].camera)
 	}
 	sources := waitMediaSources(t, peers[3], proto.MediaCamera, 3)
 	wantPublishers := map[string]bool{peers[0].fp: false, peers[1].fp: false, peers[2].fp: false}
@@ -120,15 +120,15 @@ func slotForFingerprint(sources []proto.MediaSource, fp string) int {
 }
 
 func TestSelectedScreenCoexistsWithCameraSlots(t *testing.T) {
-	_, peers, stop := joinModernScene(t, 4)
+	_, peers, stop := joinScene(t, 4)
 	for i := 0; i < 2; i++ {
 		peers[i].send(proto.TypeMediaStart, proto.MediaStart{Kind: proto.MediaCamera})
-		pumpModernVideo(stop, byte(0xA0+i), peers[i].camera)
+		pumpVideo(stop, byte(0xA0+i), peers[i].camera)
 	}
 	peers[2].send(proto.TypeMediaStart, proto.MediaStart{Kind: proto.MediaScreen})
 	peers[3].waitState(func(v proto.VoiceState) bool { return mediaOf(v, peers[2].fp, proto.MediaScreen) })
 	peers[3].send(proto.TypeMediaSubscribe, proto.MediaSubscribe{Kind: proto.MediaScreen, Fingerprint: peers[2].fp, Gen: 7})
-	pumpModernVideo(stop, 0xCC, peers[2].screen)
+	pumpVideo(stop, 0xCC, peers[2].screen)
 	cameras := 0
 	var screen proto.MediaSource
 	mediaDeadline := time.After(10 * time.Second)
@@ -175,9 +175,9 @@ func TestSelectedScreenCoexistsWithCameraSlots(t *testing.T) {
 }
 
 func TestSlotReuseAnnouncesBoundaryBeforeNewPackets(t *testing.T) {
-	_, peers, stop := joinModernScene(t, 3)
+	_, peers, stop := joinScene(t, 3)
 	peers[0].send(proto.TypeMediaStart, proto.MediaStart{Kind: proto.MediaCamera})
-	pumpModernVideo(stop, 0xA1, peers[0].camera)
+	pumpVideo(stop, 0xA1, peers[0].camera)
 	first := waitMediaSources(t, peers[2], proto.MediaCamera, 1)[0]
 	if first.Slot != 0 {
 		t.Fatalf("first camera slot = %d, want 0", first.Slot)
@@ -193,7 +193,7 @@ func TestSlotReuseAnnouncesBoundaryBeforeNewPackets(t *testing.T) {
 		}
 	}
 	peers[1].send(proto.TypeMediaStart, proto.MediaStart{Kind: proto.MediaCamera})
-	pumpModernVideo(stop, 0xB2, peers[1].camera)
+	pumpVideo(stop, 0xB2, peers[1].camera)
 	second := waitMediaSources(t, peers[2], proto.MediaCamera, 1)[0]
 	if second.Slot != 0 || second.Fingerprint != peers[1].fp {
 		t.Fatalf("reused source = %+v", second)

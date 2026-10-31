@@ -22,7 +22,7 @@ type videoSlot struct {
 
 func (p *peer) mediaForwarder(kind proto.MediaKind) *forwarder {
 	for _, f := range p.fwds {
-		if f.video && f.kind == kind && !f.isDead() {
+		if f.kind == kind && !f.isDead() {
 			return f
 		}
 	}
@@ -47,7 +47,7 @@ func (p *peer) freeCameraSlot() *videoSlot {
 	return nil
 }
 
-func (vs *voiceSession) startModernMedia(p *peer, kind proto.MediaKind) {
+func (vs *voiceSession) startMedia(p *peer, kind proto.MediaKind) {
 	if p.activeMedia == nil {
 		p.activeMedia = make(map[proto.MediaKind]bool)
 	}
@@ -60,12 +60,12 @@ func (vs *voiceSession) startModernMedia(p *peer, kind proto.MediaKind) {
 	}
 	for _, viewer := range vs.peers {
 		if viewer != p {
-			vs.syncModernViewer(viewer)
+			vs.syncViewer(viewer)
 		}
 	}
 }
 
-func (vs *voiceSession) stopModernMedia(p *peer, kind proto.MediaKind) {
+func (vs *voiceSession) stopMedia(p *peer, kind proto.MediaKind) {
 	if !p.activeMedia[kind] {
 		return
 	}
@@ -91,12 +91,12 @@ func (vs *voiceSession) stopModernMedia(p *peer, kind proto.MediaKind) {
 	}
 }
 
-func (vs *voiceSession) removeModernPublisher(p *peer) {
-	vs.stopModernMedia(p, proto.MediaCamera)
-	vs.stopModernMedia(p, proto.MediaScreen)
+func (vs *voiceSession) removePublisher(p *peer) {
+	vs.stopMedia(p, proto.MediaCamera)
+	vs.stopMedia(p, proto.MediaScreen)
 }
 
-func (vs *voiceSession) syncModernViewer(viewer *peer) {
+func (vs *voiceSession) syncViewer(viewer *peer) {
 	if viewer.pc == nil || len(viewer.slots) == 0 {
 		return
 	}
@@ -131,7 +131,7 @@ func (vs *voiceSession) syncModernViewer(viewer *peer) {
 	}
 }
 
-func (vs *voiceSession) setModernSubscription(viewer, publisher *peer, kind proto.MediaKind, gen uint32) {
+func (vs *voiceSession) setSubscription(viewer, publisher *peer, kind proto.MediaKind, gen uint32) {
 	slot := viewer.slots[slotKey{Kind: kind, Index: 0}]
 	viewer.screenTarget, viewer.screenGen = publisher, gen
 	if publisher == nil {
@@ -173,7 +173,7 @@ func (vs *voiceSession) attachSlot(viewer *peer, slot *videoSlot, fwd *forwarder
 	}
 	slot.fwd = fwd
 	slot.source = fwd.pub.c.fingerprint
-	slot.rw = slot.out.attach(nil)
+	slot.rw = slot.out.attach()
 	vs.sendMediaSource(viewer, slot, slot.rw.bseq)
 	fwd.addSink(viewer, slot.track, viewer.pc, slot.rw)
 	vs.requestForwarderKeyframe(fwd, true)

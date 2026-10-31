@@ -242,7 +242,7 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 			c.sendError(proto.CodeBadRequest, "malformed media_start")
 			return true
 		}
-		switch c.srv.mediaSet(c, m.Kind, true) {
+		switch c.srv.setMedia(c, m.Kind, true) {
 		case proto.CodeBadRequest:
 			c.sendError(proto.CodeBadRequest, "invalid media kind")
 		case proto.CodeMediaFull:
@@ -256,7 +256,7 @@ func (c *conn) routeVoice(env proto.Envelope) bool {
 			c.sendError(proto.CodeBadRequest, "malformed media_stop")
 			return true
 		}
-		switch c.srv.mediaSet(c, m.Kind, false) {
+		switch c.srv.setMedia(c, m.Kind, false) {
 		case proto.CodeBadRequest:
 			c.sendError(proto.CodeBadRequest, "invalid media kind")
 		case "not_joined":

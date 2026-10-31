@@ -25,11 +25,6 @@ func validMediaKind(kind proto.MediaKind) bool {
 	return kind == proto.MediaCamera || kind == proto.MediaScreen
 }
 
-// mediaSet applies a publisher declaration.
-func (s *Server) mediaSet(c *conn, kind proto.MediaKind, on bool) string {
-	return s.setMedia(c, kind, on)
-}
-
 func (s *Server) setMedia(c *conn, kind proto.MediaKind, on bool) string {
 	if !validMediaKind(kind) {
 		return proto.CodeBadRequest

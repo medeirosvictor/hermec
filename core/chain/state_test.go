@@ -26,7 +26,7 @@ func newBuilder(t *testing.T, founder *identity.Identity) *builder {
 }
 
 // validConfig makes a complete signed config body for tests that need one.
-// Builders deliberately preserve their literals so incomplete legacy bodies
+// Builders deliberately preserve their literals so incomplete bodies
 // exercise production validation rather than receiving hidden defaults.
 func validConfig(v ConfigBody) ConfigBody {
 	if len(v.Channels) == 0 {
@@ -132,12 +132,12 @@ func TestFounderCannotBeRevokedOrBanned(t *testing.T) {
 	}
 }
 
-func TestConfigLiteralRejectsIncompleteLegacyBody(t *testing.T) {
+func TestConfigLiteralRejectsIncompleteBody(t *testing.T) {
 	f := newID(t)
 	for name, body := range map[string]ConfigBody{
-		"name only":         {Name: "legacy"},
+		"name only":         {Name: "incomplete"},
 		"channels only":     {Channels: []string{"general"}},
-		"limits incomplete": {Name: "legacy", Channels: []string{"general"}, MaxVoice: 1},
+		"limits incomplete": {Name: "incomplete", Channels: []string{"general"}, MaxVoice: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			b := newBuilder(t, f)

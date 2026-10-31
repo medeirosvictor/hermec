@@ -108,7 +108,7 @@ func TestSecondAudioTrackIgnored(t *testing.T) {
 		onActor(t, vs, func() {
 			if p := peerByFP(vs, a.fp); p != nil {
 				for _, f := range p.fwds {
-					if !f.video && !f.isDead() {
+					if f.kind == "" && !f.isDead() {
 						n++
 					}
 				}

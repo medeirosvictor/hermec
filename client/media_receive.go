@@ -12,7 +12,7 @@ import (
 	"github.com/medeirosvictor/hermec/video"
 )
 
-// MediaFrame is one decoded frame from a stable modern media slot.
+// MediaFrame is one decoded frame from a stable media slot.
 type MediaFrame struct {
 	Kind        proto.MediaKind
 	Fingerprint string
@@ -21,7 +21,7 @@ type MediaFrame struct {
 	Frame       *video.Frame
 }
 
-// MediaSink receives decoded modern camera and screen frames. Calls from
+// MediaSink receives decoded camera and screen frames. Calls from
 // different slots may overlap; the sink owns each Frame.
 type MediaSink interface{ WriteMediaFrame(MediaFrame) }
 

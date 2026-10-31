@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -46,7 +47,7 @@ type offeredMedia struct {
 	trackID   string
 }
 
-type modernOfferLayout struct {
+type offerLayout struct {
 	valid   bool
 	audio   bool
 	publish map[string]proto.MediaKind
@@ -86,8 +87,8 @@ func parseOfferedMedia(raw string) []offeredMedia {
 	return media
 }
 
-func classifyModernOffer(media []offeredMedia) modernOfferLayout {
-	layout := modernOfferLayout{publish: make(map[string]proto.MediaKind), slots: make(map[string]slotKey)}
+func classifyOffer(media []offeredMedia) offerLayout {
+	layout := offerLayout{publish: make(map[string]proto.MediaKind), slots: make(map[string]slotKey)}
 	var video []offeredMedia
 	for _, m := range media {
 		if m.kind == "audio" && (m.direction == "sendrecv" || m.direction == "sendonly") {
@@ -122,13 +123,13 @@ func classifyModernOffer(media []offeredMedia) modernOfferLayout {
 	return layout
 }
 
-func (vs *voiceSession) configureModernAnswer(p *peer, pc *webrtc.PeerConnection, layout modernOfferLayout) error {
+func (vs *voiceSession) configureAnswer(p *peer, pc *webrtc.PeerConnection, layout offerLayout) error {
 	p.videoReceivers = make(map[*webrtc.RTPReceiver]proto.MediaKind)
 	if p.slots == nil {
 		p.slots = make(map[slotKey]*videoSlot)
 	}
 	if !layout.valid {
-		return nil
+		return errors.New("invalid media layout")
 	}
 	for _, tr := range pc.GetTransceivers() {
 		if tr.Kind() != webrtc.RTPCodecTypeVideo {

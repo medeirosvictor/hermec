@@ -48,13 +48,21 @@ func initDedicated(path string) (dedicatedInitResult, error) {
 	if err != nil {
 		return dedicatedInitResult{}, err
 	}
-	if _, err := os.Stat(abs); err == nil {
-		return dedicatedInitResult{}, fmt.Errorf("dedicated server directory already exists: %s", abs)
+	// An existing directory is accepted only when it is empty and private, so
+	// the installer can hand the service user a directory it cannot create.
+	existing := false
+	if info, err := os.Stat(abs); err == nil {
+		if err := requireEmptyPrivateDir(abs, info); err != nil {
+			return dedicatedInitResult{}, err
+		}
+		existing = true
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return dedicatedInitResult{}, err
 	}
 	parent := filepath.Dir(abs)
-	if err := os.MkdirAll(parent, 0o700); err != nil {
+	if existing {
+		parent = abs
+	} else if err := os.MkdirAll(parent, 0o700); err != nil {
 		return dedicatedInitResult{}, err
 	}
 	tmp, err := os.MkdirTemp(parent, ".hermec-dedicated-")
@@ -121,11 +129,46 @@ func initDedicated(path string) (dedicatedInitResult, error) {
 			return dedicatedInitResult{}, err
 		}
 	}
-	if err := os.Rename(tmp, abs); err != nil {
+	if existing {
+		if err := moveDirContents(tmp, abs); err != nil {
+			return dedicatedInitResult{}, err
+		}
+		_ = os.Remove(tmp)
+	} else if err := os.Rename(tmp, abs); err != nil {
 		return dedicatedInitResult{}, err
 	}
 	keep = true
 	return dedicatedInitResult{Dir: abs, Config: filepath.Join(abs, dedicatedConfigName), ServerID: c.ID().String(), Password: password}, nil
+}
+
+func requireEmptyPrivateDir(path string, info os.FileInfo) error {
+	if !info.IsDir() {
+		return fmt.Errorf("dedicated server path is not a directory: %s", path)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("%s permissions are %04o; want no group/other access", path, info.Mode().Perm())
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("dedicated server directory already exists: %s", path)
+	}
+	return nil
+}
+
+func moveDirContents(from, to string) error {
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if err := os.Rename(filepath.Join(from, e.Name()), filepath.Join(to, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func checkDedicatedState(cfg server.Config, keyPath, chainPath, historyPath string, out io.Writer) error {

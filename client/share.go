@@ -34,7 +34,7 @@ var ErrNoFrame = video.ErrNoFrame
 // from an internal goroutine (one per watched stream, which survives a switch
 // of the watched sharer) with the newest decoded frame only: older undelivered
 // frames are dropped. It must not block for long. Calls may overlap briefly
-// around a Watch change, so the sink must be safe for concurrent use. fp is
+// around a SubscribeScreen change, so the sink must be safe for concurrent use. fp is
 // the sharer being watched when the frame was decoded. The sink owns f.
 type VideoSink interface {
 	WriteVideoFrame(fp string, f *video.Frame)
@@ -82,12 +82,12 @@ func (r *videoRx) push(pkt *rtp.Packet) (frames [][]byte, lost bool) {
 	return frames, lost
 }
 
-// videoSourceWait is how long a viewer waits for the server's video_source
-// after Watch before falling back to starting on the first packet.
-const videoSourceWait = 3 * time.Second
+// screenSourceWait is how long a viewer waits for the server's media_source
+// after SubscribeScreen before falling back to starting on the first packet.
+const screenSourceWait = 3 * time.Second
 
 // srcGate sits in front of a videoRx and enforces the source boundary the
-// server announced with video_source: packets before the boundary belong to
+// server announced with media_source: packets before the boundary belong to
 // the previous source and are discarded, and no frame is released before the
 // first keyframe at or after the boundary, so the decoder never sees a stream
 // it has no reference for.
@@ -335,7 +335,7 @@ func (sl *videoPublisher) encodeLoop() {
 
 // StartShare begins sharing the screen supplied by src as a w x h VP8 stream
 // at fps frames per second and about kbps kilobits per second. The call must
-// be active (JoinVoice). Viewers pick the stream up with Watch.
+// be active (JoinVoice). Viewers pick the stream up with SubscribeScreen.
 func (c *Client) StartShare(src FrameSource, w, h, fps, kbps int) error {
 	cl := c.getCall()
 	if cl == nil {
@@ -442,7 +442,7 @@ func (c *Client) sendPublisherStop(kind proto.MediaKind) error {
 
 // SubscribeScreen selects whose screen fills our screen slot; "" clears it.
 // Decoded frames arrive at the MediaSink. SubscribeScreen("") returns at once.
-// Otherwise it waits (up to videoSourceWait) for the server's answer, so calls
+// Otherwise it waits (up to screenSourceWait) for the server's answer, so calls
 // never overlap: it returns nil when the server announced the source
 // (media_source), the server's error if it refused (not_publishing; the
 // previous subscription is then still in force and is restored here, the
@@ -466,7 +466,7 @@ func (c *Client) watchScreen(fp string, quiet bool) error {
 	if wait == nil {
 		return nil
 	}
-	timer := time.NewTimer(videoSourceWait)
+	timer := time.NewTimer(screenSourceWait)
 	defer timer.Stop()
 	select {
 	case err := <-wait:
@@ -486,7 +486,7 @@ func (c *Client) watchScreen(fp string, quiet bool) error {
 }
 
 // ErrWatchTimeout is returned by SubscribeScreen when the server did not answer in time.
-var ErrWatchTimeout = errors.New("client: no answer to watch")
+var ErrWatchTimeout = errors.New("client: no answer to screen subscription")
 
 // beginWatch switches the local screen target and returns the wire gen to send
 // and, when an answer is to be awaited, the channel it will arrive on. Calls

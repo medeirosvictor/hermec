@@ -48,7 +48,7 @@ func localOffer(t *testing.T, pc *webrtc.PeerConnection) string {
 	return pc.LocalDescription().SDP
 }
 
-func TestModernOfferHasTwoPublishTracksAndElevenReceiveSlots(t *testing.T) {
+func TestOfferHasTwoPublishTracksAndElevenReceiveSlots(t *testing.T) {
 	pc := mediaTestPC(t)
 	audio, video := mediaTestTracks(t)
 	senders, err := addInitialMediaTracks(pc, audio, video)

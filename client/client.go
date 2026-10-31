@@ -116,17 +116,17 @@ type Client struct {
 	mediaSources   map[slotKey]mediaSourceState
 	watchMu        sync.Mutex
 	watchFP        string // sharer we asked to watch ("" = none)
-	watchGen       uint64 // bumped by every Watch call
+	watchGen       uint64 // bumped by every SubscribeScreen call
 	watchAt        time.Time
-	watchWire      uint32      // gen sent with the latest effective Watch; video_source must echo it
-	prevWatch      *watchState // state before that Watch, restored if the server refuses it
+	watchWire      uint32      // gen sent with the latest effective SubscribeScreen; media_source must echo it
+	prevWatch      *watchState // state before that SubscribeScreen, restored if the server refuses it
 	wireCtr        uint32      // last gen handed out; watchWire may be restored below it
-	watchWait      chan error  // answer channel of the pending Watch, nil if none
+	watchWait      chan error  // answer channel of the pending SubscribeScreen, nil if none
 	watchQuiet     uint32      // adoption retry whose transient refusal is not user-visible
-	watchCallMu    sync.Mutex  // serializes Watch calls
-	srcHave        bool        // a video_source for watchFP arrived since the last Watch
+	watchCallMu    sync.Mutex  // serializes SubscribeScreen calls
+	srcHave        bool        // a media_source for watchFP arrived since the last SubscribeScreen
 	srcSeq         uint16      // first RTP sequence number of that source
-	srcID          uint64      // bumped by every accepted video_source
+	srcID          uint64      // bumped by every accepted media_source
 
 	evMu     sync.RWMutex // guards closing events against emitNB
 	evClosed bool

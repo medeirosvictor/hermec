@@ -320,8 +320,7 @@ func TestLoadConfigMsgRate(t *testing.T) {
 	}
 }
 
-// A config that keeps the limit defaults writes none of the limit keys, so an
-// older app that rejects unknown keys can still read it.
+// A config that keeps the limit defaults writes none of the limit keys.
 func TestMarshalTOMLOmitsDefaultLimits(t *testing.T) {
 	out, err := DefaultConfig().MarshalTOML()
 	if err != nil {

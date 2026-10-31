@@ -234,7 +234,7 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Click a voice channel in the pane**: Join it (moves your call if you are in another one). Clicking the channel you are already in opens the call view; leave with the call bar, call view, or the "voice connected" panel.
 - **Click share** (call bar or "voice connected" panel): Share a screen, see [Screen share](#screen-share). **Click LIVE** next to a person in the voice list to watch them. **Esc** goes back to chat (out of fullscreen first); **F11** or **double-click** the video toggles fullscreen.
 - **Title bar** (Windows): a Discord-style app bar replaces the default frame. Drag it to move the window (double-click to maximize or restore), use the buttons on the right to minimize, maximize and close, and drag the window edges and corners to resize.
-- **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, text size as a percentage, share quality (720p or 1080p), logs (open folder), update status, a help section; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono, and existing settings files keep VT323.
+- **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, text size as a percentage, share quality (720p or 1080p), logs (open folder), update status, a help section; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono.
 
 Bundled fonts (all monospace, under the SIL Open Font License 1.1, licences in `ui/theme/`): VT323, JetBrains Mono, IBM Plex Mono and Geist Mono.
 
@@ -355,7 +355,7 @@ cancellation is not implemented.
    ```
 
    Shared friends can then reach only TCP and UDP 7697 on your devices. This
-   needs HERMEC v0.5.0 or newer on the host. If you run on another port, use
+   needs the host to run this build. If you run on another port, use
    that port number instead of 7697; `media_port` in the server config picks a
    different media port if you need one.
 2. **Admission depends on how the server was created.** Standalone

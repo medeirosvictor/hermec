@@ -122,6 +122,9 @@ func TestUpdateAndRollbackPreserveState(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("dedicated lifecycle scripts require POSIX shell")
 	}
+	if os.Geteuid() == 0 {
+		t.Skip("update.sh takes its systemd-run branch as root")
+	}
 	dir := t.TempDir()
 	state := filepath.Join(dir, "state")
 	result, err := initDedicated(state)
@@ -193,6 +196,9 @@ func TestUpdateRejectsCandidateBeforeStoppingService(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("dedicated lifecycle scripts require POSIX shell")
 	}
+	if os.Geteuid() == 0 {
+		t.Skip("update.sh takes its systemd-run branch as root")
+	}
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "systemctl.log")
 	systemctl := filepath.Join(dir, "systemctl")
@@ -233,6 +239,9 @@ func TestUpdateRejectsCandidateBeforeStoppingService(t *testing.T) {
 func TestUpdateRollsBackAfterPostStartHealthFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("dedicated lifecycle scripts require POSIX shell")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("update.sh takes its systemd-run branch as root")
 	}
 	dir := t.TempDir()
 	bin, previous := filepath.Join(dir, "bin", "hermec-server"), filepath.Join(dir, "lib", "previous")
@@ -426,4 +435,52 @@ func testCertificate(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	return certPath, keyPath
+}
+
+func TestInitDedicatedAcceptsEmptyPrivateDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	result, err := initDedicated(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"hermec-server.key", "chain.jsonl", "history.jsonl", dedicatedConfigName, "tls", "logs", "backups"} {
+		if _, err := os.Stat(filepath.Join(result.Dir, name)); err != nil {
+			t.Errorf("missing %s: %v", name, err)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".hermec-dedicated-") {
+			t.Errorf("staging directory left behind: %s", e.Name())
+		}
+	}
+}
+
+func TestInitDedicatedRejectsUnsafeExistingDir(t *testing.T) {
+	full := filepath.Join(t.TempDir(), "full")
+	if err := os.Mkdir(full, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(full, "stray"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := initDedicated(full); err == nil {
+		t.Fatal("bootstrap accepted a non-empty directory")
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	open := filepath.Join(t.TempDir(), "open")
+	if err := os.Mkdir(open, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := initDedicated(open); err == nil {
+		t.Fatal("bootstrap accepted a group/other-accessible directory")
+	}
 }

@@ -206,6 +206,17 @@ func TestWarmPeerAdoptedOnVoiceJoin(t *testing.T) {
 	if _, err := w.pc.AddTrack(audio); err != nil {
 		t.Fatal(err)
 	}
+	for _, id := range []string{cameraPublishTrackID, screenPublishTrackID} {
+		track, _ := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000}, id, "w")
+		if _, err := w.pc.AddTransceiverFromTrack(track, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionSendonly}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < proto.MaxCameraSlots+1; i++ {
+		if _, err := w.pc.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	w.voice.Store(true)
 	w.send(proto.TypeVoiceJoin, proto.VoiceJoin{Channel: "lounge"})
 	off, err := w.pc.CreateOffer(nil)

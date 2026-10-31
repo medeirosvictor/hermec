@@ -137,15 +137,11 @@ type rewrite struct {
 	tsOff   uint32
 }
 
-// attach (re)starts the stream for a new source: it retires old (may be nil)
-// and returns the rewrite for the new source. Its first packet will be
-// numbered rw.bseq.
-func (o *outStream) attach(old *rewrite) *rewrite {
+// attach (re)starts the stream for a new source and returns its rewrite. Its
+// first packet will be numbered rw.bseq.
+func (o *outStream) attach() *rewrite {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if old != nil {
-		old.retired = true
-	}
 	if !o.started {
 		o.started = true
 		o.seq, o.ts = uint16(rand.Uint32()), rand.Uint32()
@@ -185,8 +181,7 @@ func (r *rewrite) apply(pkt *rtp.Packet) *rtp.Packet {
 type forwarder struct {
 	pub    *peer
 	remote *webrtc.TrackRemote
-	video  bool // VP8 camera or screen; fanned out through viewer slots
-	kind   proto.MediaKind
+	kind   proto.MediaKind // camera or screen for VP8 fanned out through viewer slots; "" for audio
 
 	mu    sync.Mutex
 	sinks map[*peer]sink
@@ -417,7 +412,7 @@ func (vs *voiceSession) removePeer(c *conn) {
 		if !ok {
 			return
 		}
-		vs.removeModernPublisher(p)
+		vs.removePublisher(p)
 		delete(vs.peers, c)
 		vs.releaseMedia(p)
 	})
@@ -426,7 +421,7 @@ func (vs *voiceSession) removePeer(c *conn) {
 func (vs *voiceSession) mediaStarted(c *conn, kind proto.MediaKind) {
 	vs.post(func() {
 		if p := vs.peers[c]; p != nil {
-			vs.startModernMedia(p, kind)
+			vs.startMedia(p, kind)
 		}
 	})
 }
@@ -434,7 +429,7 @@ func (vs *voiceSession) mediaStarted(c *conn, kind proto.MediaKind) {
 func (vs *voiceSession) mediaStopped(c *conn, kind proto.MediaKind) {
 	vs.post(func() {
 		if p := vs.peers[c]; p != nil {
-			vs.stopModernMedia(p, kind)
+			vs.stopMedia(p, kind)
 		}
 	})
 }
@@ -445,7 +440,7 @@ func (vs *voiceSession) setMediaSubscription(c, target *conn, kind proto.MediaKi
 		if viewer == nil {
 			return
 		}
-		vs.setModernSubscription(viewer, vs.peers[target], kind, gen)
+		vs.setSubscription(viewer, vs.peers[target], kind, gen)
 	})
 }
 
@@ -567,8 +562,7 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 				}
 			}
 			for _, g := range p.fwds {
-				sameLane := !isVideo || mediaKind == "" || g.kind == mediaKind
-				if g.video == isVideo && sameLane && !g.isDead() {
+				if g.kind == mediaKind && !g.isDead() {
 					// One audio track and one track per negotiated video lane; discard extras.
 					vs.srv.logf("voice %q: %s sent a second %s track; ignoring it", vs.channel, p.c.fingerprint, remote.Kind())
 					vs.wg.Add(1)
@@ -576,7 +570,7 @@ func (vs *voiceSession) newPC(p *peer) (*webrtc.PeerConnection, error) {
 					return
 				}
 			}
-			f := &forwarder{pub: p, remote: remote, video: isVideo, kind: mediaKind, sinks: make(map[*peer]sink)}
+			f := &forwarder{pub: p, remote: remote, kind: mediaKind, sinks: make(map[*peer]sink)}
 			p.fwds = append(p.fwds, f)
 			vs.wg.Add(1)
 			go vs.runForwarder(f)
@@ -629,12 +623,12 @@ func (vs *voiceSession) handleOffer(p *peer, sdp string) {
 		}
 	}
 	pc := p.pc
-	layout := classifyModernOffer(parseOfferedMedia(sdp))
+	layout := classifyOffer(parseOfferedMedia(sdp))
 	if err := pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}); err != nil {
 		fail("invalid rtc_offer")
 		return
 	}
-	if err := vs.configureModernAnswer(p, pc, layout); err != nil {
+	if err := vs.configureAnswer(p, pc, layout); err != nil {
 		fail("cannot bind media slots")
 		return
 	}
@@ -804,7 +798,7 @@ func (vs *voiceSession) syncTracks(q *peer) {
 			continue
 		}
 		for _, f := range r.fwds {
-			if f.video { // video goes through the viewer's slots
+			if f.kind != "" { // video goes through the viewer's slots
 				continue
 			}
 			if _, ok := q.senders[f]; ok || f.isDead() {
@@ -839,7 +833,7 @@ func (vs *voiceSession) syncTracks(q *peer) {
 		vs.releaseMedia(q)
 		return
 	}
-	vs.syncModernViewer(q)
+	vs.syncViewer(q)
 	if changed {
 		vs.renegotiate(q)
 	}
@@ -920,7 +914,7 @@ func (vs *voiceSession) runForwarder(f *forwarder) {
 				}
 				continue
 			}
-			if f.video {
+			if f.kind != "" {
 				vs.videoBytes.Add(uint64(len(pkt.Payload)))
 			} else {
 				vs.relayedBytes.Add(uint64(len(pkt.Payload)))
@@ -930,7 +924,7 @@ func (vs *voiceSession) runForwarder(f *forwarder) {
 }
 
 func (vs *voiceSession) pruneSender(sub *peer, f *forwarder) {
-	if f.video {
+	if f.kind != "" {
 		if slot := sub.slotForSource(f.kind, f.pub.c.fingerprint); slot != nil {
 			vs.attachSlot(sub, slot, nil, slot.gen)
 		}

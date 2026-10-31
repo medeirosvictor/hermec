@@ -269,7 +269,7 @@ type (
 )
 
 // ErrorMsg reports a failure. Codes: "auth_failed", "forbidden",
-// "bad_request", "not_joined", "rate_limited", "not_sharing", "voice_full",
+// "bad_request", "not_joined", "rate_limited", "voice_full",
 // "server_full", "server_id_mismatch",
 // "host_not_authorized", "bad_chain", "chain_conflict", "chain_full", "banned",
 // "not_active", "active_alive", "not_standby", "chain_lost".
