@@ -213,9 +213,13 @@ func TestUpdateRejectsCandidateBeforeStoppingService(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("sh", script, "update", candidate)
-			cmd.Env = append(os.Environ(), "HERMEC_ALLOW_NON_ROOT=1", "HERMEC_SYSTEMCTL="+systemctl, "HERMEC_TEST_LOG="+logPath)
+			binDir := t.TempDir()
+			cmd.Env = append(os.Environ(), "HERMEC_ALLOW_NON_ROOT=1", "HERMEC_BIN="+filepath.Join(binDir, "hermec-server"), "HERMEC_SYSTEMCTL="+systemctl, "HERMEC_TEST_LOG="+logPath)
 			if output, err := cmd.CombinedOutput(); err == nil {
 				t.Fatalf("bad candidate accepted: %s", output)
+			}
+			if left, _ := os.ReadDir(binDir); len(left) != 0 {
+				t.Fatalf("rejected candidate left files behind: %v", left)
 			}
 		})
 	}

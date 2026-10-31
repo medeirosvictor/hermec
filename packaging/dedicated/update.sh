@@ -13,18 +13,53 @@ SYSTEMCTL=${HERMEC_SYSTEMCTL:-systemctl}
 SERVICE=${HERMEC_SERVICE:-hermec-server}
 HEALTH_ATTEMPTS=${HERMEC_HEALTH_ATTEMPTS:-5}
 HEALTH_DELAY=${HERMEC_HEALTH_DELAY:-1}
+SERVICE_USER=${HERMEC_USER:-hermec}
 ACTION=${1:-}
 NEW=${2:-}
+STAGED=
+
+cleanup() {
+  [ -z "$STAGED" ] || rm -f "$STAGED"
+}
+trap cleanup EXIT
+
+# stage_candidate copies the candidate once into a read-only file next to $BIN,
+# so the file that is validated is the file that is installed, whatever later
+# happens at the caller's path.
+stage_candidate() {
+  source=$1
+  [ -f "$source" ] || { echo "candidate is not a file: $source" >&2; exit 1; }
+  mkdir -p "$(dirname "$BIN")"
+  STAGED=$(mktemp "$(dirname "$BIN")/.hermec-server.candidate.XXXXXX")
+  cat "$source" > "$STAGED"
+  if [ "$(id -u)" -eq 0 ]; then chown root:root "$STAGED"; fi
+  chmod 0555 "$STAGED"
+}
+
+# run_candidate runs the staged candidate. As root it never runs with root
+# privileges: it runs as the service user in a transient, resource-limited
+# systemd sandbox that can write only the state directory.
+run_candidate() {
+  if [ "$(id -u)" -ne 0 ]; then
+    "$STAGED" "$@"
+    return
+  fi
+  command -v systemd-run >/dev/null 2>&1 || { echo "systemd-run is required to validate a candidate" >&2; exit 1; }
+  systemd-run --quiet --wait --pipe --collect \
+    -p User="$SERVICE_USER" -p Group="$SERVICE_USER" \
+    -p NoNewPrivileges=yes -p PrivateTmp=yes -p ProtectHome=yes \
+    -p ProtectSystem=strict -p ReadWritePaths="$STATE" \
+    -p RuntimeMaxSec=30 -p MemoryMax=512M -p TasksMax=64 \
+    -- "$STAGED" "$@"
+}
 
 validate_candidate() {
-  source=$1
-  [ -f "$source" ] && [ -x "$source" ] || { echo "candidate is not an executable file: $source" >&2; exit 1; }
-  version=$("$source" -version) || { echo "candidate version check failed" >&2; exit 1; }
+  version=$(run_candidate -version) || { echo "candidate version check failed" >&2; exit 1; }
   case "$version" in
     hermec-server\ ?*) ;;
     *) echo "candidate did not report a HERMEC server version" >&2; exit 1 ;;
   esac
-  "$source" -config "$CONFIG" -check
+  run_candidate -config "$CONFIG" -check
 }
 
 wait_for_active() {
@@ -39,12 +74,10 @@ wait_for_active() {
   return 1
 }
 
-install_binary() {
-  source=$1
-  mkdir -p "$(dirname "$BIN")" "$(dirname "$PREVIOUS")"
-  tmp="$BIN.new.$$"
-  install -m 0755 "$source" "$tmp"
-  mv -f "$tmp" "$BIN"
+install_staged() {
+  chmod 0755 "$STAGED"
+  mv -f "$STAGED" "$BIN"
+  STAGED=
 }
 
 restore_previous() {
@@ -61,13 +94,15 @@ restore_previous() {
 case "$ACTION" in
   update)
     [ -n "$NEW" ] || { echo "usage: $0 update /path/to/hermec-server" >&2; exit 2; }
-    # Validate the downloaded HERMEC binary and its real persistent state before
+    # Validate the staged copy against the real persistent state before
     # disrupting a live service; this mirrors the unit's ExecStartPre check.
-    validate_candidate "$NEW"
+    stage_candidate "$NEW"
+    validate_candidate
     was_active=0
     if "$SYSTEMCTL" is-active --quiet "$SERVICE"; then was_active=1; "$SYSTEMCTL" stop "$SERVICE"; fi
+    mkdir -p "$(dirname "$PREVIOUS")"
     if [ -f "$BIN" ]; then install -m 0755 "$BIN" "$PREVIOUS"; fi
-    install_binary "$NEW"
+    install_staged
     if [ "$was_active" -eq 1 ]; then
       "$SYSTEMCTL" start "$SERVICE" || restore_previous
       wait_for_active || restore_previous

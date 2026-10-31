@@ -244,8 +244,12 @@ starting:
 Confirm the expected server ID from `-check` before starting. If the server ID
 changes, stop and restore the original key and chain together.
 
-Update with `sudo ./update.sh update ./hermec-server`; it validates the
-candidate while the service runs and rolls back on failure. Use
+Update with `sudo ./update.sh update ./hermec-server`. It copies the candidate
+once into a root-owned staging file, validates that copy while the service runs
+(as the `hermec` user in a time- and memory-limited `systemd-run` sandbox, never
+as root), installs exactly that copy, and rolls back on failure. Verify the
+archive checksum before running it: validation does not prove where the binary
+came from. Use
 `sudo ./update.sh rollback` for manual rollback. If text works but calls fail,
 check inbound/outbound UDP, guest/provider firewalls, NAT and `public_ip`. If
 the server ID changes, stop and restore the original key and chain together.
