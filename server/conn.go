@@ -161,7 +161,7 @@ func (c *conn) sendErrorRef(code, message, ref string) {
 	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message, Ref: ref})
 }
 
-// sendErrorGen is sendError for a refused watch: it echoes the request's gen.
+// sendErrorGen is sendError for a refused media request: it echoes the request's gen.
 func (c *conn) sendErrorGen(code, message string, gen uint32) {
 	c.sendMsg(proto.TypeError, proto.ErrorMsg{Code: code, Message: message, Gen: gen})
 }

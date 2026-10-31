@@ -95,7 +95,7 @@ func TestAdoptCallCarriesActivePublishersAndScreenSubscription(t *testing.T) {
 	if newCall.curPublisher(proto.MediaCamera) != camera || newCall.curPublisher(proto.MediaScreen) != screen {
 		t.Fatal("active publisher ownership was not transferred exactly once")
 	}
-	if got := newClient.watchSnapshot().fp; got != "screen-publisher" {
+	if got := newClient.screenSnapshot().fp; got != "screen-publisher" {
 		t.Fatalf("restored screen subscription = %q", got)
 	}
 }
@@ -174,7 +174,7 @@ func TestAdoptCallKeepsVoiceWhenSelectedScreenIsUnavailable(t *testing.T) {
 	if got := newClient.VoiceChannel(); got != "lobby" {
 		t.Fatalf("voice channel after failed screen restore = %q", got)
 	}
-	if got := newClient.watchSnapshot().fp; got != "" {
+	if got := newClient.screenSnapshot().fp; got != "" {
 		t.Fatalf("unavailable screen selection remained %q", got)
 	}
 }

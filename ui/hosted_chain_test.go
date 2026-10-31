@@ -37,16 +37,6 @@ func TestServerIDMenuRowCopies(t *testing.T) {
 	}
 }
 
-// saveHosted writes cfg in full, group fields included, without founding a
-// chain.
-func saveHosted(path string, cfg server.Config) error {
-	b, err := cfg.MarshalTOML()
-	if err != nil {
-		return err
-	}
-	return writeHosted(path, b)
-}
-
 func chainFileFor(path, id string) string {
 	return filepath.Join(filepath.Dir(path), "chains", id+".jsonl")
 }
@@ -56,7 +46,7 @@ func TestBootHostedRefusesMissingServerID(t *testing.T) {
 	g, path := hostedTestGame(t, "", false)
 	cfg := hostedConfig("Den", 0, g.fp)
 	cfg.Addr, cfg.Discoverable = "127.0.0.1:0", false
-	if err := saveHosted(path, cfg); err != nil {
+	if err := saveHostedLocal(path, cfg); err != nil {
 		t.Fatal(err)
 	}
 	g.bootHosted(path)
@@ -118,8 +108,8 @@ func TestHostedRestartKeepsServerID(t *testing.T) {
 	}
 }
 
-// Group keys in hosted.toml are inert once the chain exists; boot says so.
-func TestBootHostedWarnsOnGroupKeys(t *testing.T) {
+// The app writes only local keys, so a hosted.toml with a group key is refused.
+func TestBootHostedRejectsGroupKeys(t *testing.T) {
 	g, path := hostedTestGame(t, "127.0.0.1:0", true)
 	g.bootHosted(path)
 	if g.notice != "" {
@@ -140,14 +130,11 @@ func TestBootHostedWarnsOnGroupKeys(t *testing.T) {
 	withLayout(t, g2)
 	t.Cleanup(g2.stopHosted)
 	g2.bootHosted(path)
-	if g2.hosted == nil || g2.hosted.srv == nil {
-		t.Fatalf("second boot hosted = %+v", g2.hosted)
+	if g2.hosted != nil {
+		t.Fatalf("second boot hosted = %+v, want none", g2.hosted)
 	}
 	if !strings.Contains(g2.notice, "history_days") || !strings.Contains(g2.notice, "-apply-config") {
 		t.Errorf("notice = %q", g2.notice)
-	}
-	if d := g2.hosted.chain.State().Config.HistoryDays; d != nil {
-		t.Errorf("chain HistoryDays = %v, want unset", *d)
 	}
 }
 

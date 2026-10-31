@@ -115,19 +115,19 @@ type Client struct {
 	mediaSinkValue MediaSink
 	mediaMu        sync.RWMutex
 	mediaSources   map[slotKey]mediaSourceState
-	watchMu        sync.Mutex
-	watchFP        string // sharer we asked to watch ("" = none)
-	watchGen       uint64 // bumped by every SubscribeScreen call
-	watchAt        time.Time
-	watchWire      uint32      // gen sent with the latest effective SubscribeScreen; media_source must echo it
-	prevWatch      *watchState // state before that SubscribeScreen, restored if the server refuses it
-	wireCtr        uint32      // last gen handed out; watchWire may be restored below it
-	watchWait      chan error  // answer channel of the pending SubscribeScreen, nil if none
-	watchQuiet     uint32      // adoption retry whose transient refusal is not user-visible
-	watchCallMu    sync.Mutex  // serializes SubscribeScreen calls
-	srcHave        bool        // a media_source for watchFP arrived since the last SubscribeScreen
-	srcSeq         uint16      // first RTP sequence number of that source
-	srcID          uint64      // bumped by every accepted media_source
+	screenMu       sync.Mutex
+	screenFP       string // sharer we subscribed to ("" = none)
+	screenGen      uint64 // bumped by every SubscribeScreen call
+	screenAt       time.Time
+	screenWire     uint32       // gen sent with the latest effective SubscribeScreen; media_source must echo it
+	prevScreen     *screenState // state before that SubscribeScreen, restored if the server refuses it
+	wireCtr        uint32       // last gen handed out; screenWire may be restored below it
+	screenWait     chan error   // answer channel of the pending SubscribeScreen, nil if none
+	screenQuiet    uint32       // adoption retry whose transient refusal is not user-visible
+	screenCallMu   sync.Mutex   // serializes SubscribeScreen calls
+	srcHave        bool         // a media_source for screenFP arrived since the last SubscribeScreen
+	srcSeq         uint16       // first RTP sequence number of that source
+	srcID          uint64       // bumped by every accepted media_source
 
 	evMu     sync.RWMutex // guards closing events against emitNB
 	evClosed bool

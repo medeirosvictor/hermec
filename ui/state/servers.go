@@ -58,10 +58,14 @@ type serversFile struct {
 // LoadServers reads path. A missing file yields an empty list and no error.
 func LoadServers(path string) ([]ServerEntry, error) {
 	var f serversFile
-	if _, err := toml.DecodeFile(path, &f); err != nil {
+	md, err := toml.DecodeFile(path, &f)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}
+		return nil, err
+	}
+	if err := rejectUnknownKeys(md); err != nil {
 		return nil, err
 	}
 	return f.Servers, nil

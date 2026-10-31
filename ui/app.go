@@ -191,7 +191,7 @@ type game struct {
 	shareOps shareOps   // seams for capture, client and window; zero = real
 	share    shareState // our own screen share
 	watch    watchState // the stream being watched
-	// watchRefused is set by the media worker when the server refused a Watch
+	// watchRefused is set by the media worker when the server refused SubscribeScreen
 	// for that fingerprint; updateVideo (game goroutine) then leaves the view.
 	watchRefused atomic.Pointer[string]
 	vid          videoView   // newest frame for the watch view
@@ -200,7 +200,7 @@ type game struct {
 	mediaViews   map[mediaViewKey]*videoView
 	previewOn    atomic.Bool   // the self preview is in view: the capture tap feeds vsink
 	tapGen       atomic.Uint64 // bumped when a share starts or stops: older taps are dropped
-	media        mediaWorker   // serialized StartShare / StopShare / Watch
+	media        mediaWorker   // serialized StartShare / StopShare / SubscribeScreen
 	cameraOps    cameraOps
 	camera       cameraState
 	fullscreen   bool // window is fullscreen: no custom title bar

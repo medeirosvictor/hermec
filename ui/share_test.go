@@ -477,7 +477,7 @@ func TestVideoSuffix(t *testing.T) {
 func TestLateNotPublishingEndsOnlyTheSubscriptionInForce(t *testing.T) {
 	g, s := shareGame(t)
 	g.shareOps.watch = func(*client.Client, string) {}
-	s.c.SetWatchGenForTest(7)
+	s.c.SetScreenGenForTest(7)
 	late := func(gen uint32) client.Event {
 		return client.Event{Err: &client.ServerError{Code: proto.CodeNotPublishing, Message: "not publishing", Gen: gen}}
 	}

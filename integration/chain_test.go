@@ -15,10 +15,10 @@ import (
 	"github.com/medeirosvictor/hermec/server"
 )
 
-// TestChainHostedMigrationEndToEnd starts a server from an old-style config (group
-// fields in the config, no chain yet), lets the founder promote a member, has
-// that admin ban a third key, then restarts from the same chain file.
-func TestChainHostedMigrationEndToEnd(t *testing.T) {
+// TestChainFoundPromoteBanRestart founds a chain from a config's group fields,
+// lets the founder promote a member, has that admin ban a third key, then
+// restarts from the same chain file.
+func TestChainFoundPromoteBanRestart(t *testing.T) {
 	idA, idB, idC := newID(t), newID(t), newID(t)
 	fpB := identity.Fingerprint(idB.PublicKey())
 	fpC := identity.Fingerprint(idC.PublicKey())
@@ -27,7 +27,7 @@ func TestChainHostedMigrationEndToEnd(t *testing.T) {
 	start := func() (*server.Server, string) {
 		cfg := server.DefaultConfig()
 		cfg.Addr = "127.0.0.1:0"
-		cfg.ServerName = "Migrated"
+		cfg.ServerName = "Den"
 		c, _, err := server.OpenChain(chainPath, idA, cfg)
 		if err != nil {
 			t.Fatalf("OpenChain: %v", err)

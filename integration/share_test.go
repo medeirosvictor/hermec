@@ -108,16 +108,16 @@ func (v *voiceClient) sharing(fp string) bool {
 	return false
 }
 
-// watchOK calls Watch and tolerates ErrWatchTimeout: the server answers a
-// watch only once the sharer's own video track has been negotiated, which can
+// subscribeOK calls SubscribeScreen and tolerates ErrScreenSubscribeTimeout: the server answers a
+// subscription only once the sharer's own video track has been negotiated, which can
 // take longer than SubscribeScreen waits on a loaded machine. Production carries on (the
 // late media_source is still honoured), so the tests do too and assert on
 // labels and sizes instead.
-func watchOK(t *testing.T, v *voiceClient, fp string) {
+func subscribeOK(t *testing.T, v *voiceClient, fp string) {
 	t.Helper()
 	if err := v.c.SubscribeScreen(fp); err != nil {
-		if errors.Is(err, client.ErrWatchTimeout) {
-			t.Logf("Watch(%.8s): %v (continuing)", fp, err)
+		if errors.Is(err, client.ErrScreenSubscribeTimeout) {
+			t.Logf("SubscribeScreen(%.8s): %v (continuing)", fp, err)
 			return
 		}
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func warmUp(t *testing.T, viewer *voiceClient, rec *recVideo, sharers ...*voiceC
 	t.Helper()
 	for _, s := range sharers {
 		eventually(t, 10*time.Second, "viewer sees sharer sharing", func() bool { return viewer.sharing(s.fp) })
-		watchOK(t, viewer, s.fp)
+		subscribeOK(t, viewer, s.fp)
 		eventually(t, 20*time.Second, "warm-up frames", func() bool { return rec.n(s.fp) >= 2 })
 	}
 	if err := viewer.c.SubscribeScreen(""); err != nil {
@@ -139,7 +139,7 @@ func warmUp(t *testing.T, viewer *voiceClient, rec *recVideo, sharers ...*voiceC
 	}
 }
 
-func TestShareWatchEndToEnd(t *testing.T) {
+func TestShareScreenEndToEnd(t *testing.T) {
 	url := startVoiceServer(t)
 	a := newVoiceClient(t, url, "alice", 0xA1)
 	b := newVoiceClient(t, url, "bob", 0xB2)
@@ -262,10 +262,10 @@ func TestStopShareEndsWatch(t *testing.T) {
 	}
 }
 
-// A refused Watch is reported to its caller, leaves the previous stream (and
-// its labels) in force, and an immediately following Watch of a real sharer
+// A refused SubscribeScreen is reported to its caller, leaves the previous stream (and
+// its labels) in force, and an immediately following SubscribeScreen of a real sharer
 // ends up on that sharer with correct labels.
-func TestWatchRefusedThenSwitch(t *testing.T) {
+func TestSubscribeRefusedThenSwitch(t *testing.T) {
 	url := startVoiceServer(t)
 	a := newVoiceClient(t, url, "alice", 0xA1)
 	b := newVoiceClient(t, url, "bob", 0xB2)
@@ -288,17 +288,17 @@ func TestWatchRefusedThenSwitch(t *testing.T) {
 	eventually(t, 10*time.Second, "C sees both sharing", func() bool { return c.sharing(a.fp) && c.sharing(b.fp) })
 
 	warmUp(t, d, dv, a, b)
-	watchOK(t, c, a.fp)
+	subscribeOK(t, c, a.fp)
 	eventually(t, 15*time.Second, "frames from A", func() bool { return cv.n(a.fp) >= 3 })
 
 	var se *client.ServerError
 	if err := c.c.SubscribeScreen("nobody-is-sharing-this"); !errors.As(err, &se) || se.Code != proto.CodeNotPublishing {
-		t.Fatalf("refused Watch returned %v, want a not_publishing ServerError", err)
+		t.Fatalf("refused SubscribeScreen returned %v, want a not_publishing ServerError", err)
 	}
 	base := cv.n(a.fp)
 	eventually(t, 10*time.Second, "A frames continue after the refused watch", func() bool { return cv.n(a.fp) >= base+3 })
 
-	watchOK(t, c, b.fp)
+	subscribeOK(t, c, b.fp)
 	eventually(t, 10*time.Second, "frames labelled B", func() bool { return cv.n(b.fp) >= 3 })
 	if got := cv.sizesOf(b.fp); len(got) != 1 || got[sizeB] == 0 {
 		t.Errorf("frames labelled B have sizes %v, want only %v", got, sizeB)
@@ -308,7 +308,7 @@ func TestWatchRefusedThenSwitch(t *testing.T) {
 	}
 }
 
-func TestWatchSwitchRelabelsAndStops(t *testing.T) {
+func TestSubscribeSwitchRelabelsAndStops(t *testing.T) {
 	url := startVoiceServer(t)
 	a := newVoiceClient(t, url, "alice", 0xA1)
 	b := newVoiceClient(t, url, "bob", 0xB2)
@@ -332,7 +332,7 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 	eventually(t, 10*time.Second, "C sees both sharing", func() bool { return c.sharing(a.fp) && c.sharing(b.fp) })
 
 	warmUp(t, d, dv, a, b)
-	watchOK(t, c, a.fp)
+	subscribeOK(t, c, a.fp)
 	eventually(t, 15*time.Second, "frames from A", func() bool { return cv.n(a.fp) >= 5 })
 
 	// Dave flips between the sharers around Carol's switch. Every flip makes
@@ -363,7 +363,7 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 	defer func() { close(stopFlip); <-flipDone }()
 
 	start := time.Now()
-	watchOK(t, c, b.fp)
+	subscribeOK(t, c, b.fp)
 	eventually(t, 5*time.Second, "frames labelled B", func() bool { return cv.n(b.fp) >= 3 })
 	cv.mu.Lock()
 	lat := cv.first[b.fp].Sub(start)
@@ -385,6 +385,6 @@ func TestWatchSwitchRelabelsAndStops(t *testing.T) {
 	total := cv.total()
 	time.Sleep(900 * time.Millisecond)
 	if after := cv.total(); after != total {
-		t.Errorf("%d frames delivered after Watch(\"\")", after-total)
+		t.Errorf("%d frames delivered after SubscribeScreen(\"\")", after-total)
 	}
 }

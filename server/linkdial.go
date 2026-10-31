@@ -102,8 +102,8 @@ func DialDedicatedLink(ctx context.Context, url string, s *Server, r *proto.Dedi
 }
 
 // dialLinkOpts is DialLink; with full set it asks for the active host's whole
-// history, not just the lines after our newest (a merged host holds lines the
-// active host older than that lacks to us).
+// history, not just the lines after our newest, because after a merge the
+// active host may hold lines older than our newest that we lack.
 func dialLinkOpts(ctx context.Context, url string, s *Server, full bool, dedicated *proto.DedicatedReadiness) (*Link, error) {
 	ws, peerFingerprint, err := dialHost(ctx, url, s, s.chain.Head().Seq) // never follow a host behind our chain
 	if err != nil {

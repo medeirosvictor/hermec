@@ -446,21 +446,21 @@ func (c *Client) sendPublisherStop(kind proto.MediaKind) error {
 // never overlap: it returns nil when the server announced the source
 // (media_source), the server's error if it refused (not_publishing; the
 // previous subscription is then still in force and is restored here, the
-// error is also delivered as an Err event), or ErrWatchTimeout if no answer
+// error is also delivered as an Err event), or ErrScreenSubscribeTimeout if no answer
 // came. A subscription lasts until the publisher stops or you change it.
 // Concurrent callers are serialized.
-func (c *Client) SubscribeScreen(fp string) error { return c.watchScreen(fp, false) }
+func (c *Client) SubscribeScreen(fp string) error { return c.subscribeScreen(fp, false) }
 
-func (c *Client) watchScreen(fp string, quiet bool) error {
+func (c *Client) subscribeScreen(fp string, quiet bool) error {
 	if c.getCall() == nil {
 		return ErrNotInVoice
 	}
-	c.watchCallMu.Lock()
-	defer c.watchCallMu.Unlock()
-	wire, wait := c.beginWatch(fp, quiet)
+	c.screenCallMu.Lock()
+	defer c.screenCallMu.Unlock()
+	wire, wait := c.beginScreen(fp, quiet)
 	if err := c.send(proto.TypeMediaSubscribe, proto.MediaSubscribe{Kind: proto.MediaScreen, Fingerprint: fp, Gen: wire}); err != nil {
-		c.watchFailed(wire, err) // never sent: nothing changed server side
-		c.endWatch(wait)
+		c.screenFailed(wire, err) // never sent: nothing changed server side
+		c.endScreen(wait)
 		return err
 	}
 	if wait == nil {
@@ -472,93 +472,93 @@ func (c *Client) watchScreen(fp string, quiet bool) error {
 	case err := <-wait:
 		return err
 	case <-timer.C:
-		c.endWatch(wait)
+		c.endScreen(wait)
 		select { // an answer that raced the timer wins
 		case err := <-wait:
 			return err
 		default:
 		}
-		return ErrWatchTimeout
+		return ErrScreenSubscribeTimeout
 	case <-c.done:
-		c.endWatch(wait)
+		c.endScreen(wait)
 		return ErrClosed
 	}
 }
 
-// ErrWatchTimeout is returned by SubscribeScreen when the server did not answer in time.
-var ErrWatchTimeout = errors.New("client: no answer to screen subscription")
+// ErrScreenSubscribeTimeout is returned by SubscribeScreen when the server did not answer in time.
+var ErrScreenSubscribeTimeout = errors.New("client: no answer to screen subscription")
 
-// beginWatch switches the local screen target and returns the wire gen to send
+// beginScreen switches the local screen target and returns the wire gen to send
 // and, when an answer is to be awaited, the channel it will arrive on. Calls
-// are serialized by watchScreen, so at most one subscription is ever pending.
-func (c *Client) beginWatch(fp string, quiet bool) (wire uint32, wait chan error) {
-	c.watchMu.Lock()
-	defer c.watchMu.Unlock()
-	// Re-watching the sharer we already have a boundary for changes nothing;
+// are serialized by subscribeScreen, so at most one subscription is ever pending.
+func (c *Client) beginScreen(fp string, quiet bool) (wire uint32, wait chan error) {
+	c.screenMu.Lock()
+	defer c.screenMu.Unlock()
+	// Re-subscribing to the sharer we already have a boundary for changes nothing;
 	// the wire gen is unchanged, so the server stays silent too.
-	if fp == "" || fp != c.watchFP || !c.srcHave {
-		prev := c.watchStateLocked()
-		c.prevWatch = &prev
-		c.watchFP = fp
-		c.watchGen++
-		c.wireCtr++ // gens are never reused, even across a refused watch
-		c.watchWire = c.wireCtr
+	if fp == "" || fp != c.screenFP || !c.srcHave {
+		prev := c.screenStateLocked()
+		c.prevScreen = &prev
+		c.screenFP = fp
+		c.screenGen++
+		c.wireCtr++ // gens are never reused, even across a refused subscription
+		c.screenWire = c.wireCtr
 		if quiet {
-			c.watchQuiet = c.watchWire
+			c.screenQuiet = c.screenWire
 		} else {
-			c.watchQuiet = 0
+			c.screenQuiet = 0
 		}
-		c.watchAt = time.Now()
+		c.screenAt = time.Now()
 		c.srcHave = false
 		if fp != "" {
 			wait = make(chan error, 1)
 		}
-		c.watchWait = wait
+		c.screenWait = wait
 	}
-	return c.watchWire, wait
+	return c.screenWire, wait
 }
 
-// endWatch stops waiting on wait (no answer will be acted on any more).
-func (c *Client) endWatch(wait chan error) {
-	c.watchMu.Lock()
-	if wait != nil && c.watchWait == wait {
-		c.watchWait = nil
+// endScreen stops waiting on wait (no answer will be acted on any more).
+func (c *Client) endScreen(wait chan error) {
+	c.screenMu.Lock()
+	if wait != nil && c.screenWait == wait {
+		c.screenWait = nil
 	}
-	c.watchMu.Unlock()
+	c.screenMu.Unlock()
 }
 
-// watchAnsweredLocked completes the pending watch, if any, with err. Caller holds watchMu.
-func (c *Client) watchAnsweredLocked(err error) {
-	if c.watchWait != nil {
-		c.watchWait <- err // buffered, one answer per wait
-		c.watchWait = nil
+// screenAnsweredLocked completes the pending subscription, if any, with err. Caller holds screenMu.
+func (c *Client) screenAnsweredLocked(err error) {
+	if c.screenWait != nil {
+		c.screenWait <- err // buffered, one answer per wait
+		c.screenWait = nil
 	}
 }
 
-// watchFailed handles the refusal (not_publishing, not_joined) of the subscription with
+// screenFailed handles the refusal (not_publishing, not_joined) of the subscription with
 // the given gen, or a failure to send it: the server keeps streaming the
 // previous source, so we go back to it and frames stay labelled with it. The
 // reader is told (new gen/id) to restart on the restored boundary. The error
-// is acted on only if gen is the pending watch's own: a late answer to an
+// is acted on only if gen is the pending subscription's own: a late answer to an
 // earlier request (after a timeout) or an error without a gen is ignored.
-// watchWire goes back to the gen the server knows (the previous source's),
+// screenWire goes back to the gen the server knows (the previous source's),
 // while wireCtr keeps counting, so gens stay unique.
-func (c *Client) watchFailed(gen uint32, err error) bool {
-	c.watchMu.Lock()
-	defer c.watchMu.Unlock()
-	p := c.prevWatch
-	if p == nil || c.watchWait == nil || gen == 0 || gen != c.watchWire {
+func (c *Client) screenFailed(gen uint32, err error) bool {
+	c.screenMu.Lock()
+	defer c.screenMu.Unlock()
+	p := c.prevScreen
+	if p == nil || c.screenWait == nil || gen == 0 || gen != c.screenWire {
 		return false
 	}
-	quiet := c.watchQuiet == gen
-	c.watchQuiet = 0
-	c.prevWatch = nil
-	c.watchFP, c.watchWire = p.fp, p.wire
+	quiet := c.screenQuiet == gen
+	c.screenQuiet = 0
+	c.prevScreen = nil
+	c.screenFP, c.screenWire = p.fp, p.wire
 	c.srcHave, c.srcSeq = p.have, p.seq
-	c.watchGen++
+	c.screenGen++
 	c.srcID++
-	c.watchAt = time.Now()
-	c.watchAnsweredLocked(err)
+	c.screenAt = time.Now()
+	c.screenAnsweredLocked(err)
 	return quiet
 }
 
@@ -566,28 +566,28 @@ func (c *Client) watchFailed(gen uint32, err error) bool {
 // publisher we are not (or no longer) subscribed to are stale and ignored;
 // "" means the server detached our screen slot.
 func (c *Client) onScreenSource(fp string, seq uint16, gen uint32) bool {
-	c.watchMu.Lock()
-	defer c.watchMu.Unlock()
-	if gen != c.watchWire {
+	c.screenMu.Lock()
+	defer c.screenMu.Unlock()
+	if gen != c.screenWire {
 		return false
 	}
 	if fp == "" {
 		c.srcHave = false
 		return true
 	}
-	if fp != c.watchFP {
+	if fp != c.screenFP {
 		return false // not the publisher / not the request we are waiting on
 	}
 	c.srcHave, c.srcSeq = true, seq
-	c.watchQuiet = 0
+	c.screenQuiet = 0
 	c.srcID++
-	c.prevWatch = nil
-	c.watchAnsweredLocked(nil)
+	c.prevScreen = nil
+	c.screenAnsweredLocked(nil)
 	return true
 }
 
-// watchState is a consistent snapshot of the screen target and source boundary.
-type watchState struct {
+// screenState is a consistent snapshot of the screen target and source boundary.
+type screenState struct {
 	fp   string
 	gen  uint64 // changes on every subscription change
 	have bool   // the server announced the source (media_source)
@@ -597,23 +597,23 @@ type watchState struct {
 	wire uint32 // gen sent to the server with the subscription
 }
 
-func (c *Client) watchStateLocked() watchState {
-	return watchState{c.watchFP, c.watchGen, c.srcHave, c.srcSeq, c.srcID, c.watchAt, c.watchWire}
+func (c *Client) screenStateLocked() screenState {
+	return screenState{c.screenFP, c.screenGen, c.srcHave, c.srcSeq, c.srcID, c.screenAt, c.screenWire}
 }
 
-// watchSnapshot returns the screen subscription state.
-func (c *Client) watchSnapshot() watchState {
-	c.watchMu.Lock()
-	defer c.watchMu.Unlock()
-	return c.watchStateLocked()
+// screenSnapshot returns the screen subscription state.
+func (c *Client) screenSnapshot() screenState {
+	c.screenMu.Lock()
+	defer c.screenMu.Unlock()
+	return c.screenStateLocked()
 }
 
-// WatchGen returns the gen of the screen subscription currently in force (what
+// ScreenGen returns the gen of the screen subscription currently in force (what
 // a refused subscription's error.gen is compared with); 0 before any.
-func (c *Client) WatchGen() uint32 {
-	c.watchMu.Lock()
-	defer c.watchMu.Unlock()
-	return c.watchWire
+func (c *Client) ScreenGen() uint32 {
+	c.screenMu.Lock()
+	defer c.screenMu.Unlock()
+	return c.screenWire
 }
 
 // SetVideoSink sets the receiver of decoded video (nil discards video).

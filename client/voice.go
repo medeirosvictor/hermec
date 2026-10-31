@@ -394,7 +394,7 @@ func (c *Client) onError(em proto.ErrorMsg) bool {
 		return true
 	}
 	if em.Code == proto.CodeNotPublishing || em.Code == proto.CodeForbidden || em.Code == proto.CodeBadRequest || em.Code == "not_joined" {
-		quiet := c.watchFailed(em.Gen, &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen})
+		quiet := c.screenFailed(em.Gen, &ServerError{Code: em.Code, Message: em.Message, Gen: em.Gen})
 		if quiet && em.Code == proto.CodeNotPublishing {
 			return true
 		}

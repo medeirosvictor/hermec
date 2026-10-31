@@ -227,7 +227,7 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 	if w := c.takeReadyWarmPeer(); w != nil {
 		pc = w.pc
 	}
-	watch := from.watchSnapshot()
+	screen := from.screenSnapshot()
 	c.adoptMu.Lock()
 	from.adoptMu.Lock()
 	from.mu.Lock()
@@ -266,9 +266,9 @@ func (c *Client) AdoptCall(ctx context.Context, from *Client) error {
 	if err := c.finishAdoption(c.getCall(), false); err != nil {
 		return err
 	}
-	if watch.fp != "" {
-		if err := c.restoreScreen(ctx, watch.fp); err != nil {
-			_ = c.watchScreen("", true)
+	if screen.fp != "" {
+		if err := c.restoreScreen(ctx, screen.fp); err != nil {
+			_ = c.subscribeScreen("", true)
 			c.emitNB(Event{Err: fmt.Errorf("%w: %v", ErrScreenResume, err)})
 		}
 	}
@@ -296,7 +296,7 @@ func (c *Client) restoreScreen(ctx context.Context, fp string) error {
 	deadline := time.NewTimer(adoptSubscribeRetryFor)
 	defer deadline.Stop()
 	for {
-		err := c.watchScreen(fp, true)
+		err := c.subscribeScreen(fp, true)
 		var serverErr *ServerError
 		if err == nil || !errors.As(err, &serverErr) || serverErr.Code != proto.CodeNotPublishing {
 			return err

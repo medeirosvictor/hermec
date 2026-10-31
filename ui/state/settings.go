@@ -2,8 +2,10 @@ package state
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -72,13 +74,31 @@ func LoadOrInitSettings(path string) (Settings, error) {
 // LoadSettings reads path. A missing file yields zero Settings and no error.
 func LoadSettings(path string) (Settings, error) {
 	var s Settings
-	if _, err := toml.DecodeFile(path, &s); err != nil {
+	md, err := toml.DecodeFile(path, &s)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return Settings{}, nil
 		}
 		return Settings{}, err
 	}
+	if err := rejectUnknownKeys(md); err != nil {
+		return Settings{}, err
+	}
 	return s, nil
+}
+
+// rejectUnknownKeys fails on keys the file sets but the decoder did not take,
+// so a typo is not silently dropped.
+func rejectUnknownKeys(md toml.MetaData) error {
+	un := md.Undecoded()
+	if len(un) == 0 {
+		return nil
+	}
+	keys := make([]string, len(un))
+	for i, k := range un {
+		keys[i] = k.String()
+	}
+	return fmt.Errorf("unknown keys: %s", strings.Join(keys, ", "))
 }
 
 // SaveSettings writes s to path via a temp file and rename, creating the

@@ -208,9 +208,8 @@ func chainsDir(hostedPath string) string {
 	return filepath.Join(filepath.Dir(hostedPath), "chains")
 }
 
-// errHostedNoServerID reports a hosted.toml without the server_id every
-// supported build writes.
-var errHostedNoServerID = errors.New("hosted.toml has no server_id; leave this server and create it again")
+// errHostedNoServerID reports a hosted.toml without a server_id.
+var errHostedNoServerID = errors.New("hosted.toml has no server_id")
 
 // loadHostedChain loads chains/<server_id>.jsonl for the hosted config at path.
 func loadHostedChain(path string, cfg server.Config) (*chain.Chain, error) {
@@ -277,21 +276,20 @@ func (g *game) bootHosted(path string) {
 	if !ok {
 		return
 	}
-	var inert string
-	if set, err := server.GroupFieldsSet(path); err != nil {
-		g.logf("hosted.toml: %v", err)
-	} else if len(set) > 0 {
-		inert = fmt.Sprintf("hosted.toml: ignoring group keys %s; the chain holds them (close the app and use hermec-server -apply-config)",
-			strings.Join(set, ", "))
-		g.logf("WARNING: %s", inert)
+	// The app writes only machine-local keys; group keys live in the chain.
+	set, err := server.GroupFieldsSet(path)
+	if err != nil {
+		g.notice = fmt.Sprintf("hosted.toml unreadable: %v", err)
+		return
+	}
+	if len(set) > 0 {
+		g.notice = fmt.Sprintf("hosted.toml rejected: group keys %s belong in the chain (use hermec-server -apply-config)", strings.Join(set, ", "))
+		return
 	}
 	c, err := loadHostedChain(path, cfg)
 	if err != nil {
 		g.notice = fmt.Sprintf("hosted chain unreadable: %v", err)
 		return
-	}
-	if inert != "" {
-		g.notice = inert
 	}
 	if n := c.TornTail(); n > 0 { // the more urgent notice wins
 		g.logf("hosted chain ended in a torn entry; dropped %d bytes", n)

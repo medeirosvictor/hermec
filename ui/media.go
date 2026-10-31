@@ -2,7 +2,7 @@ package ui
 
 import "sync"
 
-// mediaWorker runs the client's media calls (StartShare, StopShare, Watch) one
+// mediaWorker runs the client's media calls (StartShare, StopShare, SubscribeScreen) one
 // at a time, in the order they were queued, off the game goroutine: they can
 // wait on the encoder or the network. Results go back to the game goroutine as
 // closures that pump applies during Update.

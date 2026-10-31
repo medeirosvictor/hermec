@@ -38,7 +38,7 @@ const (
 type ServerError struct {
 	Code    string
 	Message string
-	Gen     uint32 // gen of the refused watch request, 0 if none
+	Gen     uint32 // gen of the refused media request, 0 if none
 	// Hosts is the host list a standby sent just before refusing a full
 	// session with not_active; nil otherwise.
 	Hosts *proto.Hosts

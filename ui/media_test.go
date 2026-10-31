@@ -27,9 +27,9 @@ func settle(t *testing.T, g *game) {
 	g.media.pump()
 }
 
-// A slow first Watch must not let a later one overtake it: the target the
+// A slow first SubscribeScreen must not let a later one overtake it: the target the
 // client ends on is the last click.
-func TestWatchOpsAreSerialized(t *testing.T) {
+func TestScreenSubscribeOpsAreSerialized(t *testing.T) {
 	g, s := shareGame(t)
 	s.st.Voice["voice"][1].Media = []proto.MediaKind{proto.MediaScreen}
 	var mu sync.Mutex

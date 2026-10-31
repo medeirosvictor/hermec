@@ -43,7 +43,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 
 func TestLoadConfigRejectsPlaintextPassword(t *testing.T) {
 	_, err := LoadConfig(writeTOML(t, `password = "secret"`))
-	if err == nil || !strings.Contains(err.Error(), "plaintext password is unsupported") || !strings.Contains(err.Error(), "password_key") {
+	if err == nil || !strings.Contains(err.Error(), "unknown keys: password") {
 		t.Fatalf("LoadConfig plaintext password error = %v", err)
 	}
 }

@@ -21,25 +21,17 @@ import (
 
 func TestHostedConfigRoundTrip(t *testing.T) {
 	cfg := hostedConfig("  My\u202eServer ", 7697, "FP")
+	cfg.ServerID = "srv-x"
 	path := filepath.Join(t.TempDir(), "sub", "hosted.toml")
-	if err := saveHosted(path, cfg); err != nil {
+	if err := saveHostedLocal(path, cfg); err != nil {
 		t.Fatal(err)
 	}
 	got, ok, err := loadHosted(path)
 	if err != nil || !ok {
 		t.Fatalf("loadHosted ok=%v err=%v", ok, err)
 	}
-	if got.ServerName != "MyServer" || got.Addr != ":7697" {
-		t.Errorf("got name=%q addr=%q", got.ServerName, got.Addr)
-	}
-	if !slices.Equal(got.Channels, []string{"general"}) || !slices.Equal(got.VoiceChannels, []string{"voice"}) {
-		t.Errorf("channels=%v voice=%v", got.Channels, got.VoiceChannels)
-	}
-	if !slices.Contains(got.Roles.RolesFor("FP"), "admin") {
-		t.Errorf("FP roles = %v", got.Roles.RolesFor("FP"))
-	}
-	if r := got.Roles.RolesFor("other"); !slices.Equal(r, []string{"user"}) {
-		t.Errorf("other roles = %v", r)
+	if got.Addr != ":7697" || got.ServerID != "srv-x" {
+		t.Errorf("got addr=%q server_id=%q", got.Addr, got.ServerID)
 	}
 	if hostedPort(got) != 7697 {
 		t.Errorf("hostedPort = %d", hostedPort(got))

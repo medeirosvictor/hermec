@@ -134,7 +134,7 @@ func TestMembersRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out, err = LoadSettings(p); err != nil || !out.MembersShown() {
-		t.Fatalf("old file: %+v %v", out, err)
+		t.Fatalf("missing members key: %+v %v", out, err)
 	}
 }
 
@@ -172,5 +172,15 @@ func TestMalformedSettingsNotFirstRun(t *testing.T) {
 	}
 	if s.Palette != "" || s.Font != "" {
 		t.Fatalf("malformed file got first-run defaults: %+v", s)
+	}
+}
+
+func TestLoadSettingsRejectsUnknownKeys(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "settings.toml")
+	if err := os.WriteFile(p, []byte("name = \"a\"\npalete = \"slate\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadSettings(p); err == nil || !strings.Contains(err.Error(), "palete") {
+		t.Fatalf("LoadSettings err = %v, want unknown key palete", err)
 	}
 }

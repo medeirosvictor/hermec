@@ -19,7 +19,9 @@ func TestLoadServers(t *testing.T) {
 	}{
 		{"missing file", nil, false, 0},
 		{"corrupt", ptr("not [valid"), true, 0},
-		{"old format without name or nick", ptr("[[server]]\nurl = \"ws://a/\"\nlabel = \"a\"\nlast_channel = \"c\"\nlast_seen = 2023-11-14T22:13:20Z\n"), false, 1},
+		{"unknown key", ptr("[[server]]\nurl = \"ws://a/\"\nlabl = \"a\"\n"), true, 0},
+		{"unknown table", ptr("[other]\nx = 1\n"), true, 0},
+		{"minimal entry", ptr("[[server]]\nurl = \"ws://a/\"\nlabel = \"a\"\nlast_channel = \"c\"\nlast_seen = 2023-11-14T22:13:20Z\n"), false, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := filepath.Join(t.TempDir(), "sub", "servers.toml")
@@ -36,7 +38,7 @@ func TestLoadServers(t *testing.T) {
 				t.Fatalf("got %v, %v; want err=%v n=%d", got, err, tc.wantErr, tc.wantN)
 			}
 			if tc.wantN == 1 && (got[0].URL != "ws://a/" || got[0].Name != "" || got[0].Nick != "") {
-				t.Fatalf("old format: %+v", got[0])
+				t.Fatalf("minimal entry: %+v", got[0])
 			}
 		})
 	}

@@ -159,9 +159,9 @@ func TestReassignedSlotDropsOldAndPreKeyframePackets(t *testing.T) {
 
 func TestStaleMediaSourceGenerationCannotReplaceCurrentScreen(t *testing.T) {
 	c := &Client{}
-	aGen, aWait := c.beginWatch("A", false)
-	c.endWatch(aWait)
-	bGen, _ := c.beginWatch("B", false)
+	aGen, aWait := c.beginScreen("A", false)
+	c.endScreen(aWait)
+	bGen, _ := c.beginScreen("B", false)
 	c.onMediaSource(proto.MediaSource{Kind: proto.MediaScreen, Slot: 0, Fingerprint: "B", Seq: 200, Gen: bGen})
 	c.onMediaSource(proto.MediaSource{Kind: proto.MediaScreen, Slot: 0, Fingerprint: "A", Seq: 100, Gen: aGen})
 

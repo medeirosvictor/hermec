@@ -528,7 +528,7 @@ func (g *game) noteEvent(s *session, ev client.Event) {
 		s.st.Status = cameraNotice(se)
 	}
 	if errors.As(ev.Err, &se) && se.Code == proto.CodeNotPublishing && se.Gen != 0 &&
-		s.c != nil && se.Gen == s.c.WatchGen() && g.watch.fp != "" && g.callSess() == s {
+		s.c != nil && se.Gen == s.c.ScreenGen() && g.watch.fp != "" && g.callSess() == s {
 		g.stopWatching()
 	}
 }

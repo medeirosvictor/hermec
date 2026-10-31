@@ -107,9 +107,6 @@ func LoadConfig(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("server: load config: %w", err)
 	}
-	if md.IsDefined("password") {
-		return Config{}, errors.New("server: load config: plaintext password is unsupported; use password_key")
-	}
 	if un := md.Undecoded(); len(un) > 0 {
 		keys := make([]string, len(un))
 		for i, k := range un {
