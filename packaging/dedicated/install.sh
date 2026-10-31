@@ -17,10 +17,12 @@ fi
 install -m 0755 "$HERE/hermec-server" "$BIN"
 if [ ! -e "$STATE" ]; then
   install -d -o hermec -g hermec -m 0700 "$STATE"
+  # Bootstrap as the service user. On failure remove the directory created
+  # above, so a rerun bootstraps again instead of skipping an empty state.
   if command -v runuser >/dev/null 2>&1; then
-    runuser -u hermec -- "$BIN" -init-dedicated "$STATE"
+    runuser -u hermec -- "$BIN" -init-dedicated "$STATE" || { rm -rf "$STATE"; exit 1; }
   else
-    su -s /bin/sh hermec -c "exec '$BIN' -init-dedicated '$STATE'"
+    su -s /bin/sh hermec -c "exec '$BIN' -init-dedicated '$STATE'" || { rm -rf "$STATE"; exit 1; }
   fi
 fi
 chown -R hermec:hermec "$STATE"
