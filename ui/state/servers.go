@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"errors"
 	"net/url"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/medeirosvictor/hermec/core/names"
+	"github.com/medeirosvictor/hermec/internal/fsutil"
 )
 
 // MaxServers caps the saved server list.
@@ -74,32 +76,20 @@ func LoadServers(path string) ([]ServerEntry, error) {
 // SaveServers writes entries to path via a temp file and rename, creating the
 // parent directory.
 func SaveServers(path string, entries []ServerEntry) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".servers-*.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
 	var keep []ServerEntry
 	for _, e := range entries {
 		if !e.Pending {
 			keep = append(keep, e)
 		}
 	}
-	err = toml.NewEncoder(tmp).Encode(serversFile{Servers: keep})
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(serversFile{Servers: keep}); err != nil {
+		return err
 	}
-	if err == nil {
-		err = os.Rename(name, path)
-	}
-	if err != nil {
-		os.Remove(name)
-	}
-	return err
+	return fsutil.WriteFileAtomic(path, buf.Bytes(), 0o600)
 }
 
 // Touch upserts url and returns a new slice. An existing entry is updated in

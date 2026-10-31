@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/medeirosvictor/hermec/internal/fsutil"
 	"github.com/medeirosvictor/hermec/server"
 )
 
@@ -219,17 +220,8 @@ func (k *knownHosts) save(urls []string) {
 			file = append(file, u)
 		}
 	}
-	if err := writeFile0600(k.path, []byte(strings.Join(file, "\n")+"\n")); err != nil && !k.saveFailed {
+	if err := fsutil.WriteFileAtomic(k.path, []byte(strings.Join(file, "\n")+"\n"), 0o600); err != nil && !k.saveFailed {
 		k.saveFailed = true
 		log.Printf("WARNING: saving %s: %v", k.path, err)
 	}
-}
-
-// writeFile0600 replaces path through a temp file so a crash leaves the old one.
-func writeFile0600(path string, b []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
 }

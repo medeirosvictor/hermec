@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/medeirosvictor/hermec/internal/fsutil"
 )
 
 // Settings are the user's persisted choices. Zero values mean "unset".
@@ -104,26 +107,14 @@ func rejectUnknownKeys(md toml.MetaData) error {
 // SaveSettings writes s to path via a temp file and rename, creating the
 // parent directory.
 func SaveSettings(path string, s Settings) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".settings-*.tmp")
-	if err != nil {
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(s); err != nil {
 		return err
 	}
-	name := tmp.Name()
-	err = toml.NewEncoder(tmp).Encode(s)
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = os.Rename(name, path)
-	}
-	if err != nil {
-		os.Remove(name)
-	}
-	return err
+	return fsutil.WriteFileAtomic(path, buf.Bytes(), 0o600)
 }
 
 // FontScales are the selectable text sizes in percent, in cycle order.

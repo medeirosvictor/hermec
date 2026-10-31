@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime"
 	"time"
 
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/internal/fsutil"
 )
 
 // DedicatedTransitionState records recovery-safe progress only. It never
@@ -263,43 +263,8 @@ func SaveDedicatedTransition(path string, r DedicatedTransitionRecord) error {
 	if len(data) > maxDedicatedTransitionBytes {
 		return errors.New("server: dedicated transition is too large")
 	}
-	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, ".hermec-transition-")
-	if err != nil {
-		return fmt.Errorf("server: create dedicated transition: %w", err)
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if err := f.Chmod(0o600); err != nil {
-		f.Close()
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("server: replace dedicated transition: %w", err)
-	}
-	// Persist the directory entry too where the platform permits it.
-	d, err := os.Open(dir)
-	if err != nil {
-		if runtime.GOOS != "windows" {
-			return fmt.Errorf("server: open dedicated transition directory: %w", err)
-		}
-		return nil
-	}
-	err = d.Sync()
-	_ = d.Close()
-	if err != nil && runtime.GOOS != "windows" {
-		return fmt.Errorf("server: sync dedicated transition directory: %w", err)
+	if err := fsutil.WriteFileAtomic(path, data, 0o600); err != nil {
+		return fmt.Errorf("server: write dedicated transition: %w", err)
 	}
 	return nil
 }

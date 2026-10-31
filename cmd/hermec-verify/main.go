@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -22,6 +21,7 @@ import (
 	"github.com/medeirosvictor/hermec/client"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/internal/fsutil"
 	"github.com/medeirosvictor/hermec/version"
 )
 
@@ -299,26 +299,8 @@ func writeReport(path string, r report) error {
 		return err
 	}
 	data = append(data, '\n')
-	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, ".hermec-verify-")
-	if err != nil {
-		return errors.New("cannot create diagnostics")
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if err := f.Chmod(0o600); err != nil {
-		f.Close()
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return errors.New("cannot install diagnostics")
+	if err := fsutil.WriteFileAtomic(path, data, 0o600); err != nil {
+		return errors.New("cannot write diagnostics")
 	}
 	return nil
 }

@@ -1,15 +1,15 @@
 package chain
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
+
+	"github.com/medeirosvictor/hermec/internal/fsutil"
 )
 
 // Chain caps; variables so tests can lower them.
@@ -268,53 +268,15 @@ func (c *Chain) setPathLocked(path string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".chain-*.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	w := bufio.NewWriter(tmp)
+	var buf bytes.Buffer
 	for _, e := range c.entries {
-		var line []byte
-		if line, err = marshalLine(e); err != nil {
-			break
+		line, err := marshalLine(e)
+		if err != nil {
+			return err
 		}
-		if _, err = w.Write(line); err != nil {
-			break
-		}
+		buf.Write(line)
 	}
-	if err == nil {
-		err = w.Flush()
-	}
-	if err == nil {
-		err = tmp.Sync()
-	}
-	if cerr := tmp.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = os.Chmod(name, 0o600)
-	}
-	if err == nil {
-		err = os.Rename(name, path)
-	}
-	// Persist the rename itself, not just the replacement file's contents.
-	if err == nil {
-		d, derr := os.Open(dir)
-		if derr != nil {
-			if runtime.GOOS != "windows" {
-				err = derr
-			}
-		} else {
-			err = d.Sync()
-			_ = d.Close()
-			if err != nil && runtime.GOOS == "windows" {
-				err = nil
-			}
-		}
-	}
-	if err != nil {
-		os.Remove(name)
+	if err := fsutil.WriteFileAtomic(path, buf.Bytes(), 0o600); err != nil {
 		return err
 	}
 	c.path = path

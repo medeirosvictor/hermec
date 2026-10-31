@@ -20,6 +20,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/discover"
+	"github.com/medeirosvictor/hermec/internal/fsutil"
 	"github.com/medeirosvictor/hermec/server"
 	"github.com/medeirosvictor/hermec/ui/state"
 )
@@ -48,28 +49,10 @@ func saveHostedLocal(path string, cfg server.Config) error {
 }
 
 func writeHosted(path string, b []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".hosted-*.tmp")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	defer os.Remove(name) // no-op after a successful rename
-	if err := tmp.Chmod(0o600); err != nil && !errors.Is(err, os.ErrPermission) {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(b); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(name, path)
+	return fsutil.WriteFileAtomic(path, b, 0o600)
 }
 
 // loadHosted reads the hosted config; a missing file is ok=false, err=nil.
