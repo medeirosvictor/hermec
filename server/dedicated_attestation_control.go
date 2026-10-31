@@ -8,6 +8,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/server/dedicated"
 )
 
 // InspectDedicatedReadinessAttestation returns the source's durable Ready
@@ -107,8 +108,8 @@ func (s *Server) canManageDedicatedAttestationLocked(operator string) error {
 	if s.cfg.DedicatedTransitionPath == "" {
 		return errors.New("server: no dedicated transition journal")
 	}
-	if r, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath); err == nil {
-		if r.State == DedicatedTransitionFenced || r.Certificate != nil {
+	if r, err := dedicated.Load(s.cfg.DedicatedTransitionPath); err == nil {
+		if r.State == dedicated.Fenced || r.Certificate != nil {
 			return errors.New("server: cutover certificate or fence exists")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -117,17 +118,17 @@ func (s *Server) canManageDedicatedAttestationLocked(operator string) error {
 	return nil
 }
 
-func (s *Server) loadDedicatedReadinessAttestationLocked() (DedicatedTransitionRecord, error) {
+func (s *Server) loadDedicatedReadinessAttestationLocked() (dedicated.Record, error) {
 	path := s.readinessAttestationPath()
 	if path == "" {
-		return DedicatedTransitionRecord{}, os.ErrNotExist
+		return dedicated.Record{}, os.ErrNotExist
 	}
-	r, err := LoadDedicatedTransition(path)
+	r, err := dedicated.Load(path)
 	if err != nil {
-		return DedicatedTransitionRecord{}, err
+		return dedicated.Record{}, err
 	}
-	if r.State != DedicatedTransitionPrepared {
-		return DedicatedTransitionRecord{}, errors.New("server: invalid dedicated readiness attestation")
+	if r.State != dedicated.Prepared {
+		return dedicated.Record{}, errors.New("server: invalid dedicated readiness attestation")
 	}
 	return r, nil
 }

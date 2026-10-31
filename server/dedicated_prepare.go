@@ -3,63 +3,14 @@ package server
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/server/dedicated"
 )
-
-// InstallDedicatedBootstrap replaces only the freshly generated local
-// bootstrap chain with the verified active chain. It deliberately accepts no
-// existing group state: retrying against a partially prepared or unrelated
-// state must be an operator-visible error, not a merge.
-//
-// path may be empty for an in-memory destination. When present, SetPath uses
-// a same-directory temp file and rename, so the old bootstrap or the complete
-// authorized chain survives a crash.
-func InstallDedicatedBootstrap(bootstrap *chain.Chain, local *identity.Identity, entries []chain.Entry, path string) (*chain.Chain, error) {
-	if bootstrap == nil || local == nil {
-		return nil, errors.New("server: missing dedicated bootstrap identity")
-	}
-	if !isDedicatedBootstrap(bootstrap, local) {
-		return nil, errors.New("server: refusing to replace non-bootstrap chain")
-	}
-	next, err := chain.FromEntries(entries)
-	if err != nil {
-		return nil, fmt.Errorf("server: invalid authorized chain: %w", err)
-	}
-	nextState := next.State()
-	if !nextState.IsHost(local.PublicKey()) {
-		return nil, errors.New("server: authorized chain does not authorize this VPS key as a host")
-	}
-	if path != "" {
-		if err := next.SetPath(path); err != nil {
-			return nil, fmt.Errorf("server: install dedicated chain: %w", err)
-		}
-	}
-	return next, nil
-}
-
-func isDedicatedBootstrap(c *chain.Chain, local *identity.Identity) bool {
-	es := c.Entries()
-	st := c.State()
-	// OpenChain's fresh state is genesis/config/host_add. Be deliberately
-	// stricter than state alone: grants, bans, or any extra append mean this is
-	// already a real chain and must never be overwritten by preparation.
-	if len(es) > 3 || len(es) == 0 || es[0].Op != chain.OpGenesis || !st.IsHost(local.PublicKey()) || len(st.Hosts) != 1 || st.Founder != identity.Fingerprint(local.PublicKey()) {
-		return false
-	}
-	for _, e := range es {
-		if e.Op != chain.OpGenesis && e.Op != chain.OpConfig && e.Op != chain.OpHostAdd {
-			return false
-		}
-	}
-	return true
-}
 
 // handleDedicatedProof verifies a proof only for the prepared authenticated
 // link that received the source-captured boundary. A changed source head or
@@ -81,7 +32,7 @@ func (c *conn) handleDedicatedProof(env proto.Envelope) {
 	s.chMu.Lock()
 	defer s.chMu.Unlock()
 	want := c.link.dedicated
-	if want == nil || !c.link.hello.Prepared || !sameReadiness(*want, p.Readiness) {
+	if want == nil || !c.link.hello.Prepared || !dedicated.SameReadiness(*want, p.Readiness) {
 		c.sendError(proto.CodeForbidden, "unexpected dedicated readiness proof")
 		return
 	}
@@ -132,7 +83,7 @@ func (s *Server) readinessAttestationPath() string {
 	if s.cfg.DedicatedTransitionPath == "" {
 		return ""
 	}
-	return filepath.Join(filepath.Dir(s.cfg.DedicatedTransitionPath), DedicatedReadinessFile)
+	return filepath.Join(filepath.Dir(s.cfg.DedicatedTransitionPath), dedicated.ReadinessFile)
 }
 
 // checkDedicatedReadinessAttestation prevents a reconnecting destination from
@@ -143,14 +94,14 @@ func (s *Server) checkDedicatedReadinessAttestation(r proto.DedicatedReadiness, 
 	if path == "" {
 		return nil
 	}
-	old, err := LoadDedicatedTransition(path)
+	old, err := dedicated.Load(path)
 	if errors.Is(err, os.ErrNotExist) {
 		if resumed {
 			return errors.New("dedicated preparation was not attested by this source")
 		}
 		return nil
 	}
-	if err != nil || old.State != DedicatedTransitionPrepared || !sameReadiness(proto.DedicatedReadiness{ServerID: old.ServerID, DestinationFingerprint: old.DestinationFingerprint, ChainHead: old.ChainHead, ChainHeadHash: old.ChainHeadHash, HistoryLastID: old.HistoryLastID, HistoryLastUnixMilli: old.HistoryLastUnixMilli, HistoryCount: old.HistoryCount, HistoryHash: old.HistoryHash, TransitionNonce: old.TransitionNonce}, r) {
+	if err != nil || old.State != dedicated.Prepared || !dedicated.SameReadiness(proto.DedicatedReadiness{ServerID: old.ServerID, DestinationFingerprint: old.DestinationFingerprint, ChainHead: old.ChainHead, ChainHeadHash: old.ChainHeadHash, HistoryLastID: old.HistoryLastID, HistoryLastUnixMilli: old.HistoryLastUnixMilli, HistoryCount: old.HistoryCount, HistoryHash: old.HistoryHash, TransitionNonce: old.TransitionNonce}, r) {
 		return errors.New("dedicated preparation differs from durable source attestation")
 	}
 	return nil
@@ -164,9 +115,5 @@ func (s *Server) attestDedicatedReadiness(r proto.DedicatedReadiness) error {
 	if path == "" {
 		return nil
 	}
-	return SaveDedicatedTransition(path, DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionPrepared, ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: append([]byte(nil), r.ChainHeadHash...), HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: append([]byte(nil), r.HistoryHash...), TransitionNonce: append([]byte(nil), r.TransitionNonce...), Recovery: DedicatedRecoveryRetryPreparation})
-}
-
-func sameReadiness(a, b proto.DedicatedReadiness) bool {
-	return a.ServerID == b.ServerID && a.DestinationFingerprint == b.DestinationFingerprint && a.ChainHead == b.ChainHead && string(a.ChainHeadHash) == string(b.ChainHeadHash) && a.HistoryLastID == b.HistoryLastID && a.HistoryLastUnixMilli == b.HistoryLastUnixMilli && a.HistoryCount == b.HistoryCount && string(a.HistoryHash) == string(b.HistoryHash) && string(a.TransitionNonce) == string(b.TransitionNonce)
+	return dedicated.Save(path, dedicated.Record{Version: 1, State: dedicated.Prepared, ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: append([]byte(nil), r.ChainHeadHash...), HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: append([]byte(nil), r.HistoryHash...), TransitionNonce: append([]byte(nil), r.TransitionNonce...), Recovery: dedicated.RecoveryRetryPreparation})
 }

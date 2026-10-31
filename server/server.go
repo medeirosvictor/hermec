@@ -26,6 +26,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/netpath"
+	"github.com/medeirosvictor/hermec/server/dedicated"
 	"github.com/medeirosvictor/hermec/server/history"
 )
 
@@ -292,7 +293,7 @@ func (s *Server) Start() (err error) {
 		s.modeState.mode.Store(int32(initialMode))
 	}()
 	if s.cfg.DedicatedTransitionPath != "" && s.Mode() == ModeActive && !s.Prepared() && s.readinessLock == nil {
-		s.readinessLock, err = AcquireDedicatedReadinessLock(s.cfg.DedicatedTransitionPath)
+		s.readinessLock, err = dedicated.AcquireReadinessLock(s.cfg.DedicatedTransitionPath)
 		if err != nil {
 			return err
 		}

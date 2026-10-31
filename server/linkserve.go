@@ -10,6 +10,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/server/dedicated"
 )
 
 // maxSyncFrame is the most bytes of messages one history link_sync carries,
@@ -223,8 +224,8 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 	if s.Mode() == ModeFenced {
 		// Recovery is deliberately narrow: only the destination named by the
 		// durable certificate may reconnect, and it receives that exact object.
-		r, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath)
-		if err != nil || r.State != DedicatedTransitionFenced || r.Certificate == nil || r.Certificate.Destination.Fingerprint != c.fingerprint {
+		r, err := dedicated.Load(s.cfg.DedicatedTransitionPath)
+		if err != nil || r.State != dedicated.Fenced || r.Certificate == nil || r.Certificate.Destination.Fingerprint != c.fingerprint {
 			return proto.CodeNotActive, "this host is fenced"
 		}
 		s.chMu.Lock()
@@ -290,7 +291,7 @@ func (s *Server) registerLink(c *conn, h proto.LinkHello) (code, msg string) {
 				// A restart may only resume the exact boundary the source durably
 				// attested; it cannot nominate a replacement nonce.
 				readiness.TransitionNonce = append([]byte(nil), h.Dedicated.TransitionNonce...)
-				if h.Dedicated.Validate() != nil || !sameReadiness(*h.Dedicated, readiness) || s.checkDedicatedReadinessAttestation(readiness, true) != nil {
+				if h.Dedicated.Validate() != nil || !dedicated.SameReadiness(*h.Dedicated, readiness) || s.checkDedicatedReadinessAttestation(readiness, true) != nil {
 					return proto.CodeBadRequest, "dedicated preparation boundary changed"
 				}
 			} else {

@@ -1,4 +1,8 @@
-package server
+// Package dedicated holds the dedicated-hosting records layer: the transition
+// journal, its validation against local chain and history, the source
+// readiness lock, and bootstrap chain installation. It has no dependency on
+// the server, so the protocol and state machine in package server build on it.
+package dedicated
 
 import (
 	"bytes"
@@ -18,145 +22,145 @@ import (
 	"github.com/medeirosvictor/hermec/server/history"
 )
 
-// DedicatedTransitionState records recovery-safe progress only. It never
+// State records recovery-safe progress only. It never
 // contains credentials or private key material.
-type DedicatedTransitionState string
+type State string
 
 const (
 	// Preparing is the destination's durable pre-proof intent. It closes the
 	// source-attestation/Prepared crash window: only its exact readiness may
 	// be resumed, and it becomes Prepared only after the source ACK.
-	DedicatedTransitionPreparing DedicatedTransitionState = "preparing"
-	DedicatedTransitionPrepared  DedicatedTransitionState = "prepared"
-	DedicatedTransitionCommitted DedicatedTransitionState = "committed"
-	DedicatedTransitionFenced    DedicatedTransitionState = "fenced"
+	Preparing State = "preparing"
+	Prepared  State = "prepared"
+	Committed State = "committed"
+	Fenced    State = "fenced"
 )
 
-// DedicatedRecoveryCode selects fixed operator guidance. It is persisted
+// RecoveryCode selects fixed operator guidance. It is persisted
 // instead of caller-supplied text so transition records cannot leak secrets.
-type DedicatedRecoveryCode string
+type RecoveryCode string
 
 const (
-	DedicatedRecoveryRetryPreparation DedicatedRecoveryCode = "retry_preparation"
-	DedicatedRecoveryInspectCommit    DedicatedRecoveryCode = "inspect_commit"
+	RecoveryRetryPreparation RecoveryCode = "retry_preparation"
+	RecoveryInspectCommit    RecoveryCode = "inspect_commit"
 )
 
 // Guidance returns the fixed, safe operator instruction for this code.
-func (c DedicatedRecoveryCode) Guidance() string {
+func (c RecoveryCode) Guidance() string {
 	switch c {
-	case DedicatedRecoveryRetryPreparation:
+	case RecoveryRetryPreparation:
 		return "Keep the current host active; retry preparation."
-	case DedicatedRecoveryInspectCommit:
+	case RecoveryInspectCommit:
 		return "Keep the current host active; inspect the committed transition before retrying."
 	default:
 		return ""
 	}
 }
 
-// DedicatedTransitionRecord is the local, restart-safe record for a VPS
+// Record is the local, restart-safe record for a VPS
 // transition. All fields are public identifiers, transfer boundaries, state,
 // or a fixed recovery code. It intentionally has no credential or
 // filesystem-path fields.
-type DedicatedTransitionRecord struct {
-	Version                int                      `json:"version"`
-	State                  DedicatedTransitionState `json:"state"`
-	ServerID               string                   `json:"server_id"`
-	DestinationFingerprint string                   `json:"destination_fingerprint"`
-	ChainHead              uint64                   `json:"chain_head"`
-	ChainHeadHash          []byte                   `json:"chain_head_hash"`
-	HistoryLastID          string                   `json:"history_last_id,omitempty"`
-	HistoryLastUnixMilli   int64                    `json:"history_last_unix_milli,omitempty"`
-	HistoryCount           uint64                   `json:"history_count"`
-	HistoryHash            []byte                   `json:"history_hash"`
-	TransitionNonce        []byte                   `json:"transition_nonce"`
+type Record struct {
+	Version                int    `json:"version"`
+	State                  State  `json:"state"`
+	ServerID               string `json:"server_id"`
+	DestinationFingerprint string `json:"destination_fingerprint"`
+	ChainHead              uint64 `json:"chain_head"`
+	ChainHeadHash          []byte `json:"chain_head_hash"`
+	HistoryLastID          string `json:"history_last_id,omitempty"`
+	HistoryLastUnixMilli   int64  `json:"history_last_unix_milli,omitempty"`
+	HistoryCount           uint64 `json:"history_count"`
+	HistoryHash            []byte `json:"history_hash"`
+	TransitionNonce        []byte `json:"transition_nonce"`
 	// Certificate is retained by both sides. A fenced source retransmits this
 	// exact object after restart; it never generates another nonce or boundary.
 	Certificate *proto.DedicatedCertificate `json:"certificate,omitempty"`
-	Recovery    DedicatedRecoveryCode       `json:"recovery"`
+	Recovery    RecoveryCode                `json:"recovery"`
 	// ActiveWSSURL is local, non-secret retry metadata for a prepared
 	// destination. It is optional for records created before retry support.
 	ActiveWSSURL string `json:"active_wss_url,omitempty"`
 }
 
-// DedicatedTransitionFile is the restart record kept beside a dedicated
+// TransitionFile is the restart record kept beside a dedicated
 // server's chain and history.
-const DedicatedTransitionFile = "transition.json"
+const TransitionFile = "transition.json"
 
-// DedicatedReadinessFile is the active source's durable attestation. It is
+// ReadinessFile is the active source's durable attestation. It is
 // separate from the destination/fence journal so an active source remains
 // active while a destination retries the one acknowledged attempt.
-const DedicatedReadinessFile = "readiness.json"
+const ReadinessFile = "readiness.json"
 
-const maxDedicatedTransitionBytes = 16 << 10
+const maxTransitionBytes = 16 << 10
 
-// ValidateDedicatedPreparing verifies a pre-proof destination record. It has
+// ValidatePreparing verifies a pre-proof destination record. It has
 // the same local boundary requirements as Prepared, but is not acknowledgement
 // evidence and therefore must remain passive.
-func ValidateDedicatedPreparing(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *history.Store) error {
+func ValidatePreparing(r Record, local *identity.Identity, c *chain.Chain, h *history.Store) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
-	if r.State != DedicatedTransitionPreparing {
+	if r.State != Preparing {
 		return errors.New("server: dedicated transition is not preparing")
 	}
 	if r.ActiveWSSURL == "" {
 		return errors.New("server: preparing transition has no pinned source URL")
 	}
-	return validateDedicatedDestination(r, local, c, h)
+	return validateDestination(r, local, c, h)
 }
 
-// ValidateDedicatedPrepared verifies that a completed preparation record
+// ValidatePrepared verifies that a completed preparation record
 // belongs to this local destination and that its captured boundary still
 // exists locally. It never activates the destination; callers must keep a
 // failed or stale record passive and show its fixed recovery guidance.
-func ValidateDedicatedPrepared(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *history.Store) error {
+func ValidatePrepared(r Record, local *identity.Identity, c *chain.Chain, h *history.Store) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
-	if r.State != DedicatedTransitionPrepared {
+	if r.State != Prepared {
 		return errors.New("server: dedicated transition is not prepared")
 	}
-	return validateDedicatedDestination(r, local, c, h)
+	return validateDestination(r, local, c, h)
 }
 
-// ValidateDedicatedCommitted validates the terminal destination state on
+// ValidateCommitted validates the terminal destination state on
 // startup. Unlike Prepared, this must never be accepted merely by changing a
 // record's State in memory: its committed certificate is part of the state.
-func ValidateDedicatedCommitted(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *history.Store) error {
+func ValidateCommitted(r Record, local *identity.Identity, c *chain.Chain, h *history.Store) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
-	if r.State != DedicatedTransitionCommitted {
+	if r.State != Committed {
 		return errors.New("server: dedicated transition is not committed")
 	}
-	if err := validateDedicatedDestination(r, local, c, h); err != nil {
+	if err := validateDestination(r, local, c, h); err != nil {
 		return err
 	}
-	return validateDedicatedTerminalCertificate(r, c, local, false)
+	return validateTerminalCertificate(r, c, local, false)
 }
 
-// ValidateDedicatedFenced validates the terminal source state on startup.
+// ValidateFenced validates the terminal source state on startup.
 // The source intentionally is not the destination, so it is checked against
 // the certificate signer rather than DestinationFingerprint.
-func ValidateDedicatedFenced(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *history.Store) error {
+func ValidateFenced(r Record, local *identity.Identity, c *chain.Chain, h *history.Store) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
-	if r.State != DedicatedTransitionFenced {
+	if r.State != Fenced {
 		return errors.New("server: dedicated transition is not fenced")
 	}
 	if local == nil || r.Certificate == nil || r.Certificate.SourceFingerprint != identity.Fingerprint(local.PublicKey()) {
 		return errors.New("server: fenced transition names another source")
 	}
-	if err := validateDedicatedLocalBoundary(r, c, h); err != nil {
+	if err := validateLocalBoundary(r, c, h); err != nil {
 		return err
 	}
-	return validateDedicatedTerminalCertificate(r, c, local, true)
+	return validateTerminalCertificate(r, c, local, true)
 }
 
-// validateDedicatedTerminalCertificate verifies terminal authority against the
+// validateTerminalCertificate verifies terminal authority against the
 // source key currently authorized by the exact local chain.
-func validateDedicatedTerminalCertificate(r DedicatedTransitionRecord, c *chain.Chain, local *identity.Identity, fenced bool) error {
+func validateTerminalCertificate(r Record, c *chain.Chain, local *identity.Identity, fenced bool) error {
 	if r.Certificate == nil || c == nil || local == nil {
 		return errors.New("server: missing dedicated certificate")
 	}
@@ -180,17 +184,17 @@ func validateDedicatedTerminalCertificate(r DedicatedTransitionRecord, c *chain.
 	return nil
 }
 
-func validateDedicatedDestination(r DedicatedTransitionRecord, local *identity.Identity, c *chain.Chain, h *history.Store) error {
+func validateDestination(r Record, local *identity.Identity, c *chain.Chain, h *history.Store) error {
 	if local == nil || r.DestinationFingerprint != identity.Fingerprint(local.PublicKey()) {
 		return errors.New("server: dedicated transition names another destination")
 	}
-	return validateDedicatedLocalBoundary(r, c, h)
+	return validateLocalBoundary(r, c, h)
 }
 
-// validateDedicatedLocalBoundary verifies the exact chain and history snapshot
+// validateLocalBoundary verifies the exact chain and history snapshot
 // named by a transition. Fenced sources use it too: after fencing neither side
 // may silently continue from a different boundary.
-func validateDedicatedLocalBoundary(r DedicatedTransitionRecord, c *chain.Chain, h *history.Store) error {
+func validateLocalBoundary(r Record, c *chain.Chain, h *history.Store) error {
 	if c == nil || h == nil {
 		return errors.New("server: incomplete local dedicated state")
 	}
@@ -220,17 +224,17 @@ func validateDedicatedLocalBoundary(r DedicatedTransitionRecord, c *chain.Chain,
 	return nil
 }
 
-func (r DedicatedTransitionRecord) validate() error {
+func (r Record) validate() error {
 	if r.Version != 1 {
 		return errors.New("server: unsupported dedicated transition version")
 	}
-	if r.State != DedicatedTransitionPreparing && r.State != DedicatedTransitionPrepared && r.State != DedicatedTransitionCommitted && r.State != DedicatedTransitionFenced {
+	if r.State != Preparing && r.State != Prepared && r.State != Committed && r.State != Fenced {
 		return errors.New("server: invalid dedicated transition state")
 	}
 	if r.Recovery.Guidance() == "" {
 		return errors.New("server: invalid dedicated transition recovery code")
 	}
-	if r.State == DedicatedTransitionPreparing && r.ActiveWSSURL == "" {
+	if r.State == Preparing && r.ActiveWSSURL == "" {
 		return errors.New("server: preparing transition has no pinned source URL")
 	}
 	if r.ActiveWSSURL != "" {
@@ -242,18 +246,18 @@ func (r DedicatedTransitionRecord) validate() error {
 	if err := (proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}).Validate(); err != nil {
 		return err
 	}
-	if r.State == DedicatedTransitionCommitted || r.State == DedicatedTransitionFenced {
-		if r.Certificate == nil || !sameReadiness(r.Certificate.Readiness, proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}) || proto.ValidateDedicatedHostInfo(r.Certificate.Destination) != nil {
+	if r.State == Committed || r.State == Fenced {
+		if r.Certificate == nil || !SameReadiness(r.Certificate.Readiness, proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}) || proto.ValidateDedicatedHostInfo(r.Certificate.Destination) != nil {
 			return errors.New("server: missing or mismatched dedicated certificate")
 		}
 	}
 	return nil
 }
 
-// SaveDedicatedTransition atomically replaces path with a mode-0600 JSON
+// Save atomically replaces path with a mode-0600 JSON
 // record. The temporary file and rename are in the same directory, so a crash
 // leaves either the prior complete record or the new complete record.
-func SaveDedicatedTransition(path string, r DedicatedTransitionRecord) error {
+func Save(path string, r Record) error {
 	if err := r.validate(); err != nil {
 		return err
 	}
@@ -261,7 +265,7 @@ func SaveDedicatedTransition(path string, r DedicatedTransitionRecord) error {
 	if err != nil {
 		return fmt.Errorf("server: encode dedicated transition: %w", err)
 	}
-	if len(data) > maxDedicatedTransitionBytes {
+	if len(data) > maxTransitionBytes {
 		return errors.New("server: dedicated transition is too large")
 	}
 	if err := fsutil.WriteFileAtomic(path, data, 0o600); err != nil {
@@ -270,52 +274,56 @@ func SaveDedicatedTransition(path string, r DedicatedTransitionRecord) error {
 	return nil
 }
 
-// LoadDedicatedTransition loads a complete private transition record. On
+// Load loads a complete private transition record. On
 // POSIX it rejects a record readable by group or other users.
-func LoadDedicatedTransition(path string) (DedicatedTransitionRecord, error) {
+func Load(path string) (Record, error) {
 	// Lstat rejects the common symlink attack. Opening once and reading that
 	// descriptor avoids the stat/read replacement race; SameFile also rejects
 	// replacement between Lstat and Open where the platform can identify it.
 	before, err := os.Lstat(path)
 	if err != nil {
-		return DedicatedTransitionRecord{}, err
+		return Record{}, err
 	}
 	if !before.Mode().IsRegular() {
-		return DedicatedTransitionRecord{}, errors.New("server: dedicated transition is not a regular file")
+		return Record{}, errors.New("server: dedicated transition is not a regular file")
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return DedicatedTransitionRecord{}, err
+		return Record{}, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return DedicatedTransitionRecord{}, err
+		return Record{}, err
 	}
 	if !info.Mode().IsRegular() || !os.SameFile(before, info) {
-		return DedicatedTransitionRecord{}, errors.New("server: dedicated transition changed while opening")
+		return Record{}, errors.New("server: dedicated transition changed while opening")
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return DedicatedTransitionRecord{}, errors.New("server: dedicated transition is not private")
+		return Record{}, errors.New("server: dedicated transition is not private")
 	}
-	data, err := io.ReadAll(io.LimitReader(f, maxDedicatedTransitionBytes+1))
+	data, err := io.ReadAll(io.LimitReader(f, maxTransitionBytes+1))
 	if err != nil {
-		return DedicatedTransitionRecord{}, err
+		return Record{}, err
 	}
-	if len(data) > maxDedicatedTransitionBytes {
-		return DedicatedTransitionRecord{}, errors.New("server: dedicated transition is too large")
+	if len(data) > maxTransitionBytes {
+		return Record{}, errors.New("server: dedicated transition is too large")
 	}
-	var r DedicatedTransitionRecord
+	var r Record
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&r); err != nil || dec.Decode(&struct{}{}) != io.EOF {
 		if err == nil {
 			err = errors.New("trailing data")
 		}
-		return DedicatedTransitionRecord{}, fmt.Errorf("server: decode dedicated transition: %w", err)
+		return Record{}, fmt.Errorf("server: decode dedicated transition: %w", err)
 	}
 	if err := r.validate(); err != nil {
-		return DedicatedTransitionRecord{}, err
+		return Record{}, err
 	}
 	return r, nil
+}
+
+func SameReadiness(a, b proto.DedicatedReadiness) bool {
+	return a.ServerID == b.ServerID && a.DestinationFingerprint == b.DestinationFingerprint && a.ChainHead == b.ChainHead && string(a.ChainHeadHash) == string(b.ChainHeadHash) && a.HistoryLastID == b.HistoryLastID && a.HistoryLastUnixMilli == b.HistoryLastUnixMilli && a.HistoryCount == b.HistoryCount && string(a.HistoryHash) == string(b.HistoryHash) && string(a.TransitionNonce) == string(b.TransitionNonce)
 }

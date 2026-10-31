@@ -19,6 +19,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/chain"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/dedicated"
 	"github.com/medeirosvictor/hermec/server/history"
 	"github.com/medeirosvictor/hermec/version"
 )
@@ -221,20 +222,20 @@ func main() {
 	if _, err := os.Lstat(transitionPath); err == nil {
 		// Any unreadable or stale journal fails closed as a passive host.
 		cfg.Prepared, cfg.Mode = true, server.ModePrepared
-		r, loadErr := server.LoadDedicatedTransition(transitionPath)
+		r, loadErr := dedicated.Load(transitionPath)
 		if loadErr == nil {
 			var h *history.Store
 			h, loadErr = history.Open(f.history)
 			if loadErr == nil {
 				switch r.State {
-				case server.DedicatedTransitionPreparing:
-					loadErr = server.ValidateDedicatedPreparing(r, key, c, h)
+				case dedicated.Preparing:
+					loadErr = dedicated.ValidatePreparing(r, key, c, h)
 					cfg.Prepared, cfg.Mode = true, server.ModePrepared
 					if r.ActiveWSSURL != "" {
 						cfg.KnownHosts, f.hosts = []string{r.ActiveWSSURL}, nil
 					}
-				case server.DedicatedTransitionPrepared:
-					loadErr = server.ValidateDedicatedPrepared(r, key, c, h)
+				case dedicated.Prepared:
+					loadErr = dedicated.ValidatePrepared(r, key, c, h)
 					cfg.Prepared, cfg.Mode = true, server.ModePrepared
 					if r.ActiveWSSURL != "" {
 						// A prepared destination may resume only its durable pinned
@@ -242,17 +243,17 @@ func main() {
 						cfg.KnownHosts = []string{r.ActiveWSSURL}
 						f.hosts = nil
 					}
-				case server.DedicatedTransitionCommitted:
-					loadErr = server.ValidateDedicatedCommitted(r, key, c, h)
-				case server.DedicatedTransitionFenced:
-					loadErr = server.ValidateDedicatedFenced(r, key, c, h)
+				case dedicated.Committed:
+					loadErr = dedicated.ValidateCommitted(r, key, c, h)
+				case dedicated.Fenced:
+					loadErr = dedicated.ValidateFenced(r, key, c, h)
 					cfg.Prepared, cfg.Mode = false, server.ModeFenced
 				}
 				_ = h.Close()
 			}
 		}
 		if loadErr != nil {
-			guidance := server.DedicatedRecoveryRetryPreparation.Guidance()
+			guidance := dedicated.RecoveryRetryPreparation.Guidance()
 			if r.Recovery.Guidance() != "" {
 				guidance = r.Recovery.Guidance()
 			}

@@ -9,10 +9,11 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/server/dedicated"
 )
 
 func TestSourceReadinessAttestationOnlyAllowsExactReplay(t *testing.T) {
-	path := filepath.Join(t.TempDir(), DedicatedTransitionFile)
+	path := filepath.Join(t.TempDir(), dedicated.TransitionFile)
 	s := &Server{cfg: Config{DedicatedTransitionPath: path}}
 	r := recordReadiness(testDedicatedTransition())
 	if err := s.attestDedicatedReadiness(r); err != nil {
@@ -37,7 +38,7 @@ func TestSourceReadinessAttestationOnlyAllowsExactReplay(t *testing.T) {
 
 func TestResetObsoleteReadinessAttestationInvalidatesOldNonce(t *testing.T) {
 	c, source, _ := twoHostChain(t)
-	path := filepath.Join(t.TempDir(), DedicatedTransitionFile)
+	path := filepath.Join(t.TempDir(), dedicated.TransitionFile)
 	s := New(Config{HostKey: source, Chain: c, DedicatedTransitionPath: path})
 	r := recordReadiness(testDedicatedTransition())
 	if err := s.attestDedicatedReadiness(r); err != nil {
@@ -62,12 +63,12 @@ func TestResetObsoleteReadinessAttestationInvalidatesOldNonce(t *testing.T) {
 
 func TestSourceServiceReadinessLockBlocksOfflineResetUntilShutdown(t *testing.T) {
 	c, source, _ := twoHostChain(t)
-	path := filepath.Join(t.TempDir(), DedicatedTransitionFile)
+	path := filepath.Join(t.TempDir(), dedicated.TransitionFile)
 	s := New(Config{Addr: "127.0.0.1:0", HostKey: source, Chain: c, DedicatedTransitionPath: path})
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
-	if lock, err := AcquireDedicatedReadinessLock(path); !errors.Is(err, ErrDedicatedReadinessLocked) {
+	if lock, err := dedicated.AcquireReadinessLock(path); !errors.Is(err, dedicated.ErrReadinessLocked) {
 		if lock != nil {
 			_ = lock.Close()
 		}
@@ -78,7 +79,7 @@ func TestSourceServiceReadinessLockBlocksOfflineResetUntilShutdown(t *testing.T)
 	if err := s.Shutdown(ctx); err != nil {
 		t.Fatal(err)
 	}
-	lock, err := AcquireDedicatedReadinessLock(path)
+	lock, err := dedicated.AcquireReadinessLock(path)
 	if err != nil {
 		t.Fatalf("offline reset lock after shutdown: %v", err)
 	}
@@ -89,7 +90,7 @@ func TestSourceServiceReadinessLockBlocksOfflineResetUntilShutdown(t *testing.T)
 
 func TestResetReadinessAttestationDropsPreparedLinks(t *testing.T) {
 	c, source, _ := twoHostChain(t)
-	path := filepath.Join(t.TempDir(), DedicatedTransitionFile)
+	path := filepath.Join(t.TempDir(), dedicated.TransitionFile)
 	s := New(Config{HostKey: source, Chain: c, DedicatedTransitionPath: path})
 	r := recordReadiness(testDedicatedTransition())
 	if err := s.attestDedicatedReadiness(r); err != nil {
@@ -107,7 +108,7 @@ func TestResetReadinessAttestationDropsPreparedLinks(t *testing.T) {
 
 func TestResetReadinessAttestationRefusesFencedSource(t *testing.T) {
 	c, source, _ := twoHostChain(t)
-	s := New(Config{HostKey: source, Chain: c, DedicatedTransitionPath: filepath.Join(t.TempDir(), DedicatedTransitionFile)})
+	s := New(Config{HostKey: source, Chain: c, DedicatedTransitionPath: filepath.Join(t.TempDir(), dedicated.TransitionFile)})
 	s.SetMode(ModeFenced)
 	if err := s.ResetDedicatedReadinessAttestation(identity.Fingerprint(source.PublicKey())); err == nil {
 		t.Fatal("fenced source reset accepted")

@@ -7,6 +7,7 @@ import (
 	"reflect"
 
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/server/dedicated"
 )
 
 // emptyVoiceLocked reports the dedicated cutover gate while chMu is held.
@@ -16,7 +17,7 @@ func (s *Server) restoreDedicatedTransition() error {
 	if s.cfg.DedicatedTransitionPath == "" {
 		return nil
 	}
-	r, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath)
+	r, err := dedicated.Load(s.cfg.DedicatedTransitionPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -24,25 +25,25 @@ func (s *Server) restoreDedicatedTransition() error {
 		return err
 	}
 	switch r.State {
-	case DedicatedTransitionPreparing:
+	case dedicated.Preparing:
 		// A pre-proof crash is still a durable, exact destination intent. It
 		// must validate the same local boundary as a completed preparation and
 		// remain passive; link retry is restricted to its pinned URL/nonce.
-		if err := ValidateDedicatedPreparing(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
+		if err := dedicated.ValidatePreparing(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
 			return err
 		}
 		s.prepared.Store(true)
 		s.modeState.mode.Store(int32(ModePrepared))
 		return nil
-	case DedicatedTransitionPrepared:
-		if err := ValidateDedicatedPrepared(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
+	case dedicated.Prepared:
+		if err := dedicated.ValidatePrepared(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
 			return err
 		}
 		s.prepared.Store(true)
 		s.modeState.mode.Store(int32(ModePrepared))
 		return nil
-	case DedicatedTransitionCommitted:
-		if err := ValidateDedicatedCommitted(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
+	case dedicated.Committed:
+		if err := dedicated.ValidateCommitted(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
 			return err
 		}
 		if err := s.validateDedicatedCertificate(r, false); err != nil {
@@ -51,8 +52,8 @@ func (s *Server) restoreDedicatedTransition() error {
 		s.prepared.Store(false)
 		s.modeState.mode.Store(int32(ModeActive))
 		return nil
-	case DedicatedTransitionFenced:
-		if err := ValidateDedicatedFenced(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
+	case dedicated.Fenced:
+		if err := dedicated.ValidateFenced(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
 			return err
 		}
 		if err := s.validateDedicatedCertificate(r, true); err != nil {
@@ -69,7 +70,7 @@ func (s *Server) restoreDedicatedTransition() error {
 // validateDedicatedCertificate validates the signed decision against this
 // server's current chain. fenced means this local server must be the signer;
 // otherwise it must be the exact destination.
-func (s *Server) validateDedicatedCertificate(r DedicatedTransitionRecord, fenced bool) error {
+func (s *Server) validateDedicatedCertificate(r dedicated.Record, fenced bool) error {
 	if r.Certificate == nil || r.Certificate.Destination.Fingerprint != r.DestinationFingerprint {
 		return errors.New("server: invalid dedicated certificate")
 	}
@@ -124,8 +125,8 @@ func (c *conn) fenceDedicatedLocked(p proto.DedicatedReadinessProof) (proto.Dedi
 		return proto.DedicatedCertificate{}, err
 	}
 	cert := proto.DedicatedCertificate{Readiness: p.Readiness, SourceFingerprint: s.selfInfo().Fingerprint, Destination: dst, Signature: sig}
-	r := DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionFenced, ServerID: p.Readiness.ServerID, DestinationFingerprint: p.Readiness.DestinationFingerprint, ChainHead: p.Readiness.ChainHead, ChainHeadHash: append([]byte(nil), p.Readiness.ChainHeadHash...), HistoryLastID: p.Readiness.HistoryLastID, HistoryLastUnixMilli: p.Readiness.HistoryLastUnixMilli, HistoryCount: p.Readiness.HistoryCount, HistoryHash: append([]byte(nil), p.Readiness.HistoryHash...), TransitionNonce: append([]byte(nil), p.Readiness.TransitionNonce...), Certificate: &cert, Recovery: DedicatedRecoveryInspectCommit}
-	if err := SaveDedicatedTransition(s.cfg.DedicatedTransitionPath, r); err != nil {
+	r := dedicated.Record{Version: 1, State: dedicated.Fenced, ServerID: p.Readiness.ServerID, DestinationFingerprint: p.Readiness.DestinationFingerprint, ChainHead: p.Readiness.ChainHead, ChainHeadHash: append([]byte(nil), p.Readiness.ChainHeadHash...), HistoryLastID: p.Readiness.HistoryLastID, HistoryLastUnixMilli: p.Readiness.HistoryLastUnixMilli, HistoryCount: p.Readiness.HistoryCount, HistoryHash: append([]byte(nil), p.Readiness.HistoryHash...), TransitionNonce: append([]byte(nil), p.Readiness.TransitionNonce...), Certificate: &cert, Recovery: dedicated.RecoveryInspectCommit}
+	if err := dedicated.Save(s.cfg.DedicatedTransitionPath, r); err != nil {
 		return proto.DedicatedCertificate{}, err
 	}
 	s.setModeLocked(ModeFenced)
@@ -160,7 +161,7 @@ func (l *Link) handleDedicatedCommit(env proto.Envelope) error {
 		if s.cfg.DedicatedTransitionPath == "" {
 			return errors.New("server: link: unexpected dedicated commit")
 		}
-		if old, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath); err == nil && old.State == DedicatedTransitionCommitted {
+		if old, err := dedicated.Load(s.cfg.DedicatedTransitionPath); err == nil && old.State == dedicated.Committed {
 			if old.Certificate != nil && reflect.DeepEqual(*old.Certificate, c) {
 				return nil
 			}
@@ -191,16 +192,16 @@ func (l *Link) handleDedicatedCommit(env proto.Envelope) error {
 		l.prepareMu.Lock()
 		prepared := l.prepared
 		l.prepareMu.Unlock()
-		if prepared == nil || !sameReadiness(c.Readiness, *prepared) {
+		if prepared == nil || !dedicated.SameReadiness(c.Readiness, *prepared) {
 			return errors.New("server: link: cutover certificate differs from preparation")
 		}
 		// Revalidate exact local readiness immediately before the durable commit.
-		r := DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionPrepared, ServerID: c.Readiness.ServerID, DestinationFingerprint: c.Readiness.DestinationFingerprint, ChainHead: c.Readiness.ChainHead, ChainHeadHash: append([]byte(nil), c.Readiness.ChainHeadHash...), HistoryLastID: c.Readiness.HistoryLastID, HistoryLastUnixMilli: c.Readiness.HistoryLastUnixMilli, HistoryCount: c.Readiness.HistoryCount, HistoryHash: append([]byte(nil), c.Readiness.HistoryHash...), TransitionNonce: append([]byte(nil), c.Readiness.TransitionNonce...), Recovery: DedicatedRecoveryRetryPreparation}
-		if err := ValidateDedicatedPrepared(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
+		r := dedicated.Record{Version: 1, State: dedicated.Prepared, ServerID: c.Readiness.ServerID, DestinationFingerprint: c.Readiness.DestinationFingerprint, ChainHead: c.Readiness.ChainHead, ChainHeadHash: append([]byte(nil), c.Readiness.ChainHeadHash...), HistoryLastID: c.Readiness.HistoryLastID, HistoryLastUnixMilli: c.Readiness.HistoryLastUnixMilli, HistoryCount: c.Readiness.HistoryCount, HistoryHash: append([]byte(nil), c.Readiness.HistoryHash...), TransitionNonce: append([]byte(nil), c.Readiness.TransitionNonce...), Recovery: dedicated.RecoveryRetryPreparation}
+		if err := dedicated.ValidatePrepared(r, s.cfg.HostKey, s.chain, s.hist); err != nil {
 			return err
 		}
-		r.State, r.Certificate, r.Recovery = DedicatedTransitionCommitted, &c, DedicatedRecoveryInspectCommit
-		if err := SaveDedicatedTransition(s.cfg.DedicatedTransitionPath, r); err != nil {
+		r.State, r.Certificate, r.Recovery = dedicated.Committed, &c, dedicated.RecoveryInspectCommit
+		if err := dedicated.Save(s.cfg.DedicatedTransitionPath, r); err != nil {
 			return err
 		}
 		s.prepared.Store(false)

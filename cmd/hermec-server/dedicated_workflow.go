@@ -13,6 +13,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/dedicated"
 	"github.com/medeirosvictor/hermec/server/history"
 )
 
@@ -50,7 +51,7 @@ func dedicatedAttestationStatus(keyPath, chainPath string, reset bool, out io.Wr
 	s := server.New(server.Config{HostKey: key, Chain: c, DedicatedTransitionPath: dedicatedTransitionPath(chainPath)})
 	operator := identity.Fingerprint(key.PublicKey())
 	if reset {
-		lock, err := server.AcquireDedicatedReadinessLock(dedicatedTransitionPath(chainPath))
+		lock, err := dedicated.AcquireReadinessLock(dedicatedTransitionPath(chainPath))
 		if err != nil {
 			return err
 		}
@@ -59,7 +60,7 @@ func dedicatedAttestationStatus(keyPath, chainPath string, reset bool, out io.Wr
 			return err
 		}
 		fmt.Fprintln(out, "dedicated readiness attestation: reset")
-		fmt.Fprintf(out, "recovery: %s\n", server.DedicatedRecoveryRetryPreparation.Guidance())
+		fmt.Fprintf(out, "recovery: %s\n", dedicated.RecoveryRetryPreparation.Guidance())
 		return nil
 	}
 	ready, err := s.InspectDedicatedReadinessAttestation(operator)
@@ -71,12 +72,12 @@ func dedicatedAttestationStatus(keyPath, chainPath string, reset bool, out io.Wr
 	} else {
 		fmt.Fprintf(out, "dedicated readiness attestation: present\ndestination fingerprint: %s\ntransition nonce: %x\n", ready.DestinationFingerprint, ready.TransitionNonce)
 	}
-	fmt.Fprintf(out, "recovery: %s\n", server.DedicatedRecoveryRetryPreparation.Guidance())
+	fmt.Fprintf(out, "recovery: %s\n", dedicated.RecoveryRetryPreparation.Guidance())
 	return nil
 }
 
 func dedicatedStatus(_ string, keyPath, chainPath, historyPath string, out io.Writer) error {
-	r, err := server.LoadDedicatedTransition(dedicatedTransitionPath(chainPath))
+	r, err := dedicated.Load(dedicatedTransitionPath(chainPath))
 	if errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintln(out, "dedicated status: none\nrecovery: Keep the current host active; retry preparation.")
 		return nil
@@ -91,7 +92,7 @@ func dedicatedStatus(_ string, keyPath, chainPath, historyPath string, out io.Wr
 	return nil
 }
 
-func validateDedicatedRecord(r server.DedicatedTransitionRecord, keyPath, chainPath, historyPath string) error {
+func validateDedicatedRecord(r dedicated.Record, keyPath, chainPath, historyPath string) error {
 	key, err := identity.Load(keyPath)
 	if err != nil {
 		return fmt.Errorf("host identity: %w", err)
@@ -106,14 +107,14 @@ func validateDedicatedRecord(r server.DedicatedTransitionRecord, keyPath, chainP
 	}
 	defer h.Close()
 	switch r.State {
-	case server.DedicatedTransitionPreparing:
-		return server.ValidateDedicatedPreparing(r, key, c, h)
-	case server.DedicatedTransitionPrepared:
-		return server.ValidateDedicatedPrepared(r, key, c, h)
-	case server.DedicatedTransitionCommitted:
-		return server.ValidateDedicatedCommitted(r, key, c, h)
-	case server.DedicatedTransitionFenced:
-		return server.ValidateDedicatedFenced(r, key, c, h)
+	case dedicated.Preparing:
+		return dedicated.ValidatePreparing(r, key, c, h)
+	case dedicated.Prepared:
+		return dedicated.ValidatePrepared(r, key, c, h)
+	case dedicated.Committed:
+		return dedicated.ValidateCommitted(r, key, c, h)
+	case dedicated.Fenced:
+		return dedicated.ValidateFenced(r, key, c, h)
 	default:
 		return errors.New("unknown dedicated transition state")
 	}
@@ -128,11 +129,11 @@ func runDedicatedPreparation(ctx context.Context, cfg server.Config, keyPath, ch
 			return err
 		}
 	} else {
-		r, err := server.LoadDedicatedTransition(dedicatedTransitionPath(chainPath))
+		r, err := dedicated.Load(dedicatedTransitionPath(chainPath))
 		if err != nil {
 			return fmt.Errorf("dedicated retry requires an existing transition: %w", err)
 		}
-		if r.State != server.DedicatedTransitionPreparing && r.State != server.DedicatedTransitionPrepared {
+		if r.State != dedicated.Preparing && r.State != dedicated.Prepared {
 			return fmt.Errorf("dedicated retry refuses %s transition", r.State)
 		}
 		if err := validateDedicatedRecord(r, keyPath, chainPath, historyPath); err != nil {
@@ -167,7 +168,7 @@ func runDedicatedPreparation(ctx context.Context, cfg server.Config, keyPath, ch
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("dedicated transition record: %w", err)
 		}
-		bootstrap, err = server.AuthenticateDedicatedBootstrap(ctx, activeURL, serverID, bootstrap, key, chainPath)
+		bootstrap, err = dedicated.AuthenticateBootstrap(ctx, activeURL, serverID, bootstrap, key, chainPath)
 		if err != nil {
 			return err
 		}
@@ -186,7 +187,7 @@ func runDedicatedPreparation(ctx context.Context, cfg server.Config, keyPath, ch
 	}()
 	var readiness *proto.DedicatedReadiness
 	if retry {
-		r, _ := server.LoadDedicatedTransition(cfg.DedicatedTransitionPath)
+		r, _ := dedicated.Load(cfg.DedicatedTransitionPath)
 		readiness = &proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}
 	}
 	link, err := server.DialDedicatedLink(ctx, activeURL, dst, readiness)

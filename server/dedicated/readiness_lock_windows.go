@@ -1,6 +1,6 @@
 //go:build windows
 
-package server
+package dedicated
 
 import (
 	"errors"
@@ -8,9 +8,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-type dedicatedReadinessLock struct{ handle windows.Handle }
+type readinessLock struct{ handle windows.Handle }
 
-func acquireDedicatedReadinessLock(path string) (*dedicatedReadinessLock, error) {
+func acquireReadinessLock(path string) (*readinessLock, error) {
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
@@ -19,18 +19,18 @@ func acquireDedicatedReadinessLock(path string) (*dedicatedReadinessLock, error)
 	if err != nil {
 		return nil, err
 	}
-	l := &dedicatedReadinessLock{handle: h}
+	l := &readinessLock{handle: h}
 	if err := windows.LockFileEx(h, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &windows.Overlapped{}); err != nil {
 		_ = windows.CloseHandle(h)
 		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
-			return nil, ErrDedicatedReadinessLocked
+			return nil, ErrReadinessLocked
 		}
 		return nil, err
 	}
 	return l, nil
 }
 
-func (l *dedicatedReadinessLock) Close() error {
+func (l *readinessLock) Close() error {
 	if l.handle == windows.InvalidHandle {
 		return nil
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/server/dedicated"
 	"github.com/medeirosvictor/hermec/server/history"
 )
 
@@ -31,7 +32,7 @@ func dedicatedTransitionPath(chainPath string) string {
 	if abs, err := filepath.Abs(chainPath); err == nil {
 		chainPath = abs
 	}
-	return filepath.Join(filepath.Dir(filepath.Clean(chainPath)), server.DedicatedTransitionFile)
+	return filepath.Join(filepath.Dir(filepath.Clean(chainPath)), dedicated.TransitionFile)
 }
 
 type dedicatedInitResult struct {
@@ -199,26 +200,26 @@ func checkDedicatedState(cfg server.Config, keyPath, chainPath, historyPath stri
 	}
 	transitionPath := dedicatedTransitionPath(chainPath)
 	if _, err := os.Lstat(transitionPath); err == nil {
-		r, err := server.LoadDedicatedTransition(transitionPath)
+		r, err := dedicated.Load(transitionPath)
 		if err == nil {
 			var h *history.Store
 			h, err = history.Open(historyPath)
 			if err == nil {
 				switch r.State {
-				case server.DedicatedTransitionPreparing:
-					err = server.ValidateDedicatedPreparing(r, key, c, h)
-				case server.DedicatedTransitionPrepared:
-					err = server.ValidateDedicatedPrepared(r, key, c, h)
-				case server.DedicatedTransitionCommitted:
-					err = server.ValidateDedicatedCommitted(r, key, c, h)
-				case server.DedicatedTransitionFenced:
-					err = server.ValidateDedicatedFenced(r, key, c, h)
+				case dedicated.Preparing:
+					err = dedicated.ValidatePreparing(r, key, c, h)
+				case dedicated.Prepared:
+					err = dedicated.ValidatePrepared(r, key, c, h)
+				case dedicated.Committed:
+					err = dedicated.ValidateCommitted(r, key, c, h)
+				case dedicated.Fenced:
+					err = dedicated.ValidateFenced(r, key, c, h)
 				}
 				_ = h.Close()
 			}
 		}
 		if err != nil {
-			guidance := server.DedicatedRecoveryRetryPreparation.Guidance()
+			guidance := dedicated.RecoveryRetryPreparation.Guidance()
 			if r.Recovery.Guidance() != "" {
 				guidance = r.Recovery.Guidance()
 			}

@@ -17,36 +17,9 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/core/roles"
+	"github.com/medeirosvictor/hermec/server/dedicated"
 	"github.com/medeirosvictor/hermec/server/history"
 )
-
-func TestInstallDedicatedBootstrapRejectsUnrelatedOrUnauthorizedState(t *testing.T) {
-	local := mustID(t)
-	bootstrap, err := newChain(local, DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	other := mustID(t)
-	unrelated, err := newChain(other, DefaultConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := InstallDedicatedBootstrap(bootstrap, local, unrelated.Entries(), ""); err == nil {
-		t.Fatal("accepted chain which does not authorize VPS key")
-	}
-	// A bootstrap that has acquired any non-bootstrap state is never replaced.
-	head := bootstrap.Head()
-	e, err := chain.NewEntry(local, &head, chain.OpGrant, chain.GrantBody{Fingerprint: identity.Fingerprint(other.PublicKey()), Roles: []string{"user"}}, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := bootstrap.Append(e); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := InstallDedicatedBootstrap(bootstrap, local, bootstrap.Entries(), ""); err == nil {
-		t.Fatal("replaced non-bootstrap chain")
-	}
-}
 
 func TestPreparedLinkAttestsCompleteMultipageHistoryBeforePersistence(t *testing.T) {
 	fastHostTimers(t)
@@ -73,11 +46,11 @@ func TestPreparedLinkAttestsCompleteMultipageHistoryBeforePersistence(t *testing
 	if got, _ := dest.hist.After(time.Time{}, "", historyPage*3); len(got) != historyPage*2+7 {
 		t.Fatalf("history count = %d", len(got))
 	}
-	r, err := LoadDedicatedTransition(path)
+	r, err := dedicated.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.State != DedicatedTransitionPrepared || r.ChainHead != c.Head().Seq {
+	if r.State != dedicated.Prepared || r.ChainHead != c.Head().Seq {
 		t.Fatalf("transition = %+v", r)
 	}
 	if source.Mode() != ModeActive {
@@ -226,12 +199,12 @@ func TestDedicatedCommitReleasesCutoverLocksBeforeTakeover(t *testing.T) {
 		ChainHead: head.Seq, ChainHeadHash: headHash[:], HistoryCount: historyCount,
 		HistoryHash: historyHash, TransitionNonce: make([]byte, proto.DedicatedTransitionNonceSize),
 	}
-	record := DedicatedTransitionRecord{Version: 1, State: DedicatedTransitionPrepared,
+	record := dedicated.Record{Version: 1, State: dedicated.Prepared,
 		ServerID: readiness.ServerID, DestinationFingerprint: readiness.DestinationFingerprint,
 		ChainHead: readiness.ChainHead, ChainHeadHash: readiness.ChainHeadHash,
 		HistoryCount: readiness.HistoryCount, HistoryHash: readiness.HistoryHash,
-		TransitionNonce: readiness.TransitionNonce, Recovery: DedicatedRecoveryRetryPreparation}
-	if err := SaveDedicatedTransition(path, record); err != nil {
+		TransitionNonce: readiness.TransitionNonce, Recovery: dedicated.RecoveryRetryPreparation}
+	if err := dedicated.Save(path, record); err != nil {
 		t.Fatal(err)
 	}
 	destination, destinationURL := startModeServer(t, Config{
@@ -337,7 +310,7 @@ func TestDedicatedProofRejectsReplayAndSourceMovement(t *testing.T) {
 	b := a
 	b.TransitionNonce = append([]byte(nil), nonce...)
 	b.TransitionNonce[0] = 1
-	if sameReadiness(a, b) {
+	if dedicated.SameReadiness(a, b) {
 		t.Fatal("different nonce accepted as replay-safe readiness")
 	}
 }

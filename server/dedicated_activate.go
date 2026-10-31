@@ -7,6 +7,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/server/dedicated"
 )
 
 // handleDedicatedActivate is the only path from Ready to fenced. A nonce-less
@@ -38,8 +39,8 @@ func (c *conn) handleDedicatedActivate(env proto.Envelope) {
 			// The journal is the authority after the source fences. It makes a
 			// lost result or a source restart retryable, but only for precisely
 			// the decision already made -- never a fresh activation.
-			record, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath)
-			if err != nil || record.State != DedicatedTransitionFenced || record.Certificate == nil || ValidateDedicatedFenced(record, s.cfg.HostKey, s.chain, s.hist) != nil || s.validateDedicatedCertificate(record, true) != nil {
+			record, err := dedicated.Load(s.cfg.DedicatedTransitionPath)
+			if err != nil || record.State != dedicated.Fenced || record.Certificate == nil || dedicated.ValidateFenced(record, s.cfg.HostKey, s.chain, s.hist) != nil || s.validateDedicatedCertificate(record, true) != nil {
 				r.Status, r.Message = "error", "fenced transition record is unavailable"
 				return r
 			}

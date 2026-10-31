@@ -17,6 +17,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/hshake"
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/proto"
+	"github.com/medeirosvictor/hermec/server/dedicated"
 	"github.com/medeirosvictor/hermec/version"
 )
 
@@ -84,7 +85,7 @@ func DialLink(ctx context.Context, url string, s *Server) (*Link, error) {
 	// silently asking the source for a fresh nonce.
 	var readiness *proto.DedicatedReadiness
 	if s.Prepared() && s.cfg.DedicatedTransitionPath != "" {
-		if r, err := LoadDedicatedTransition(s.cfg.DedicatedTransitionPath); err == nil && (r.State == DedicatedTransitionPreparing || r.State == DedicatedTransitionPrepared) {
+		if r, err := dedicated.Load(s.cfg.DedicatedTransitionPath); err == nil && (r.State == dedicated.Preparing || r.State == dedicated.Prepared) {
 			readiness = &proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}
 		}
 	}
@@ -413,16 +414,16 @@ func (l *Link) persistDedicatedPreparation(ctx context.Context, path, activeWSSU
 	if path == "" {
 		path = l.s.cfg.DedicatedTransitionPath
 	}
-	return l.savePreparation(path, DedicatedTransitionPrepared, *r, activeWSSURL)
+	return l.savePreparation(path, dedicated.Prepared, *r, activeWSSURL)
 }
 
 func (l *Link) persistPreparing(r proto.DedicatedReadiness) error {
 	if l.s.cfg.DedicatedTransitionPath == "" {
 		return nil
 	} // in-memory tests
-	old, err := LoadDedicatedTransition(l.s.cfg.DedicatedTransitionPath)
+	old, err := dedicated.Load(l.s.cfg.DedicatedTransitionPath)
 	if err == nil {
-		if (old.State != DedicatedTransitionPreparing && old.State != DedicatedTransitionPrepared) || old.ActiveWSSURL != l.activeWSSURL || !sameReadiness(recordReadiness(old), r) {
+		if (old.State != dedicated.Preparing && old.State != dedicated.Prepared) || old.ActiveWSSURL != l.activeWSSURL || !dedicated.SameReadiness(recordReadiness(old), r) {
 			return errors.New("server: dedicated preparation differs from durable destination intent")
 		}
 		return nil
@@ -430,31 +431,31 @@ func (l *Link) persistPreparing(r proto.DedicatedReadiness) error {
 	if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return l.savePreparation(l.s.cfg.DedicatedTransitionPath, DedicatedTransitionPreparing, r, l.activeWSSURL)
+	return l.savePreparation(l.s.cfg.DedicatedTransitionPath, dedicated.Preparing, r, l.activeWSSURL)
 }
 
 func (l *Link) promoteDedicatedPreparation(r proto.DedicatedReadiness) error {
 	if l.s.cfg.DedicatedTransitionPath == "" {
 		return nil
 	}
-	old, err := LoadDedicatedTransition(l.s.cfg.DedicatedTransitionPath)
-	if err != nil || old.ActiveWSSURL != l.activeWSSURL || !sameReadiness(recordReadiness(old), r) {
+	old, err := dedicated.Load(l.s.cfg.DedicatedTransitionPath)
+	if err != nil || old.ActiveWSSURL != l.activeWSSURL || !dedicated.SameReadiness(recordReadiness(old), r) {
 		return errors.New("server: dedicated acknowledgement differs from durable preparation")
 	}
-	if old.State == DedicatedTransitionPrepared {
+	if old.State == dedicated.Prepared {
 		return nil
 	}
-	if old.State != DedicatedTransitionPreparing {
+	if old.State != dedicated.Preparing {
 		return errors.New("server: dedicated acknowledgement without preparing state")
 	}
-	return l.savePreparation(l.s.cfg.DedicatedTransitionPath, DedicatedTransitionPrepared, r, l.activeWSSURL)
+	return l.savePreparation(l.s.cfg.DedicatedTransitionPath, dedicated.Prepared, r, l.activeWSSURL)
 }
 
-func recordReadiness(r DedicatedTransitionRecord) proto.DedicatedReadiness {
+func recordReadiness(r dedicated.Record) proto.DedicatedReadiness {
 	return proto.DedicatedReadiness{ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: r.ChainHeadHash, HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: r.HistoryHash, TransitionNonce: r.TransitionNonce}
 }
-func (l *Link) savePreparation(path string, state DedicatedTransitionState, r proto.DedicatedReadiness, activeURL string) error {
-	return SaveDedicatedTransition(path, DedicatedTransitionRecord{Version: 1, State: state, ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: append([]byte(nil), r.ChainHeadHash...), HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: append([]byte(nil), r.HistoryHash...), TransitionNonce: append([]byte(nil), r.TransitionNonce...), Recovery: DedicatedRecoveryRetryPreparation, ActiveWSSURL: activeURL})
+func (l *Link) savePreparation(path string, state dedicated.State, r proto.DedicatedReadiness, activeURL string) error {
+	return dedicated.Save(path, dedicated.Record{Version: 1, State: state, ServerID: r.ServerID, DestinationFingerprint: r.DestinationFingerprint, ChainHead: r.ChainHead, ChainHeadHash: append([]byte(nil), r.ChainHeadHash...), HistoryLastID: r.HistoryLastID, HistoryLastUnixMilli: r.HistoryLastUnixMilli, HistoryCount: r.HistoryCount, HistoryHash: append([]byte(nil), r.HistoryHash...), TransitionNonce: append([]byte(nil), r.TransitionNonce...), Recovery: dedicated.RecoveryRetryPreparation, ActiveWSSURL: activeURL})
 }
 
 // Hosts is the newest host list the active host sent, if any.
