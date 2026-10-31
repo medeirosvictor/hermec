@@ -1,5 +1,5 @@
 //go:build !race
 
-package ui
+package crt
 
 const raceBuild = false

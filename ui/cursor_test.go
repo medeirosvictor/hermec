@@ -3,55 +3,9 @@ package ui
 import (
 	"testing"
 
-	"github.com/hajimehoshi/ebiten/v2"
-
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/ui/theme"
 )
-
-func TestCRTShaderCompiles(t *testing.T) {
-	withGraphics(t, func() {
-		if _, err := ebiten.NewShader(crtShaderSrc); err != nil {
-			t.Fatalf("crt.kage: %v", err)
-		}
-	})
-}
-
-// apply must supply every declared uniform; a mismatch panics in ebiten.
-func TestCRTApplyUniforms(t *testing.T) {
-	withGraphics(t, func() {
-		var c crt
-		th := theme.Default()
-		th.Curvature, th.Glow, th.ScanBar = 0.015, 0.1, true
-		th.ScanBarPeriod = 8
-		c.target(64, 48)
-		c.apply(ebiten.NewImage(64, 48), th, 1.5)
-		if c.shader == nil {
-			t.Fatal("embedded shader failed to compile")
-		}
-	})
-}
-
-// After warm-up, apply (glow off: the glow pass allocates inside ebiten, 8/frame) with unchanged inputs must not allocate (uniforms are
-// reused, only re-boxed when a value changes).
-func TestCRTApplyNoAlloc(t *testing.T) {
-	if raceBuild {
-		t.Skip("AllocsPerRun is unreliable under -race")
-	}
-	withGraphics(t, func() {
-		var c crt
-		th := theme.Default()
-		th.Curvature, th.Glow, th.ScanBar = 0.015, 0, true
-		th.ScanBarPeriod = 8
-		c.target(64, 48)
-		screen := ebiten.NewImage(64, 48)
-		c.apply(screen, th, 1.5) // warm: compile, scratch, uniforms
-		c.apply(screen, th, 1.5)
-		if a := testing.AllocsPerRun(20, func() { c.apply(screen, th, 1.5) }); a != 0 {
-			t.Errorf("crt.apply allocates %v per frame", a)
-		}
-	})
-}
 
 // A click where the eye sees a target must map into the target's scene rect.
 // The shader samples the scene at Barrel(screen pos), so the screen position

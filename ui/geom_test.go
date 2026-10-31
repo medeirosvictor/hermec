@@ -8,6 +8,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 
+	"github.com/medeirosvictor/hermec/ui/internal/gfxtest"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/ui/theme"
 )
@@ -145,7 +146,7 @@ func TestGeomPanelsDontOverlap(t *testing.T) {
 // The panel is opaque in its body, rounded at the corners and fades to
 // nothing outside the soft edge.
 func TestPanelDrawShape(t *testing.T) {
-	withGraphics(t, func() {
+	gfxtest.Run(t, func() {
 		g := &game{th: theme.Default()}
 		img := ebiten.NewImage(160, 120)
 		fill := color.RGBA{40, 60, 80, 255}
@@ -173,7 +174,7 @@ func TestPanelDrawShape(t *testing.T) {
 // After a warm-up draw, drawing a panel allocates nothing (uniform map and
 // slices are reused).
 func TestPanelDrawNoAllocs(t *testing.T) {
-	withGraphics(t, func() {
+	gfxtest.Run(t, func() {
 		g := &game{th: theme.Default()}
 		img := ebiten.NewImage(160, 120)
 		fill := color.RGBA{40, 60, 80, 255}
@@ -186,7 +187,7 @@ func TestPanelDrawNoAllocs(t *testing.T) {
 }
 
 func TestPanelShaderCompiles(t *testing.T) {
-	withGraphics(t, func() {
+	gfxtest.Run(t, func() {
 		var p panelShader
 		p.compile()
 		if p.shader == nil {

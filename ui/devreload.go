@@ -32,7 +32,7 @@ func newDevReload(g *game) *devReload {
 		read:     os.ReadFile,
 		handlers: map[string]func([]byte) error{},
 	}
-	d.register("ui/crt.kage", g.crt.setSource)
+	d.register("ui/crt/crt.kage", g.crt.SetSource)
 	d.register("ui/panel.kage", g.panel.setSource)
 	// Every preset is watched, but an edit applies only while it is the active
 	// one, so cycling palettes with F2 needs no re-registration.

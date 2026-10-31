@@ -1,4 +1,4 @@
-package ui
+package crt
 
 import (
 	"image"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 
+	"github.com/medeirosvictor/hermec/ui/internal/gfxtest"
 	"github.com/medeirosvictor/hermec/ui/theme"
 )
 
@@ -18,7 +19,7 @@ func pixelOf(img *ebiten.Image, x, y int) color.RGBA {
 	return color.RGBA{b[0], b[1], b[2], b[3]}
 }
 
-// flatTheme has every CRT effect off, so apply is a pure copy and any shift
+// flatTheme has every CRT effect off, so Apply is a pure copy and any shift
 // of the output is visible.
 func flatTheme() theme.Theme {
 	th := theme.Default()
@@ -35,7 +36,7 @@ func TestCRTOutputNotShifted(t *testing.T) {
 	glowy := flatTheme()
 	glowy.Glow = 0.1
 	runGlow := func(name string, dst *ebiten.Image) { runWith(t, name, dst, glowy) }
-	withGraphics(t, func() {
+	gfxtest.Run(t, func() {
 		run("small image", ebiten.NewImage(64, 48))
 		parent := ebiten.NewImage(64, 48+32)
 		run("sub-image", parent.SubImage(image.Rect(0, 32, 64, 80)).(*ebiten.Image))
@@ -49,11 +50,11 @@ func runWith(t *testing.T, name string, dst *ebiten.Image, th theme.Theme) {
 	t.Helper()
 	red := color.RGBA{255, 0, 0, 255}
 	blue := color.RGBA{0, 0, 255, 255}
-	var c crt
-	off := c.target(64, 48)
+	var c Pass
+	off := c.Target(64, 48)
 	off.Fill(blue)
 	off.SubImage(image.Rect(10, 10, 14, 14)).(*ebiten.Image).Fill(red)
-	c.apply(dst, th, 0)
+	c.Apply(dst, th, 0)
 	if c.shader == nil {
 		t.Fatal("shader did not compile")
 	}

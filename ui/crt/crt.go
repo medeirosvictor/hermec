@@ -1,4 +1,4 @@
-package ui
+package crt
 
 import (
 	_ "embed"
@@ -12,18 +12,18 @@ import (
 )
 
 //go:embed crt.kage
-var crtShaderSrc []byte
+var shaderSrc []byte
 
-// crt holds the post-process pipeline state: the offscreen scene target and
-// the lazily compiled CRT shader.
-type crt struct {
+// Pass holds the post-process pipeline state: the offscreen scene target and
+// the lazily compiled CRT shader. The zero value is ready to use.
+type Pass struct {
 	off    *ebiten.Image
 	tmp    *ebiten.Image // glow scratch
 	w, h   int
 	once   sync.Once
 	shader *ebiten.Shader
 
-	// Reused per frame so apply boxes a uniform only when it changes.
+	// Reused per frame so Apply boxes a uniform only when it changes.
 	op     ebiten.DrawRectShaderOptions
 	blitOp ebiten.DrawImageOptions
 	glowOp ebiten.DrawImageOptions
@@ -33,14 +33,14 @@ type crt struct {
 	primed bool
 }
 
-// crtScalars are the float uniforms apply keeps current, in cache order.
+// crtScalars are the float uniforms Apply keeps current, in cache order.
 var crtScalars = [...]string{"Curvature", "CornerRadius", "Vignette", "ScanlineStrength", "ScanBarStrength", "ScanBarPeriod", "Time", "ScanBar"}
 
 // compile builds the shader once; on failure it logs and leaves shader nil,
-// which makes apply fall back to a plain blit.
-func (c *crt) compile() {
+// which makes Apply fall back to a plain blit.
+func (c *Pass) compile() {
 	c.once.Do(func() {
-		s, err := ebiten.NewShader(crtShaderSrc)
+		s, err := ebiten.NewShader(shaderSrc)
 		if err != nil {
 			log.Printf("crt shader: %v", err)
 			return
@@ -49,12 +49,12 @@ func (c *crt) compile() {
 	})
 }
 
-// setSource compiles src and, only on success, replaces the active shader (the
+// SetSource compiles src and, only on success, replaces the active shader (the
 // previous one is deallocated). On error the current shader is left untouched
 // and the compile error is returned. It also retires the lazy embedded compile
-// so a later apply cannot overwrite the swapped-in shader. Used by dev
+// so a later Apply cannot overwrite the swapped-in shader. Used by dev
 // live-reload; call from the game goroutine only.
-func (c *crt) setSource(src []byte) error {
+func (c *Pass) SetSource(src []byte) error {
 	s, err := ebiten.NewShader(src)
 	if err != nil {
 		return err
@@ -67,9 +67,9 @@ func (c *crt) setSource(src []byte) error {
 	return nil
 }
 
-// target returns the offscreen image sized w x h, recreating it only when the
+// Target returns the offscreen image sized w x h, recreating it only when the
 // size changed.
-func (c *crt) target(w, h int) *ebiten.Image {
+func (c *Pass) Target(w, h int) *ebiten.Image {
 	if c.off == nil || c.w != w || c.h != h {
 		if c.off != nil {
 			c.off.Deallocate()
@@ -81,7 +81,7 @@ func (c *crt) target(w, h int) *ebiten.Image {
 }
 
 // post returns the scratch image used for the glow pass, sized w x h.
-func (c *crt) post(w, h int) *ebiten.Image {
+func (c *Pass) post(w, h int) *ebiten.Image {
 	if c.tmp == nil || c.tmp.Bounds().Dx() != w || c.tmp.Bounds().Dy() != h {
 		if c.tmp != nil {
 			c.tmp.Deallocate()
@@ -91,21 +91,21 @@ func (c *crt) post(w, h int) *ebiten.Image {
 	return c.tmp
 }
 
-// blit draws src at dst's own top-left corner. Drawing into a sub-image keeps
+// Blit draws src at dst's own top-left corner. Drawing into a sub-image keeps
 // the parent's coordinates, so the offset is applied explicitly.
-func blit(dst, src *ebiten.Image) {
+func Blit(dst, src *ebiten.Image) {
 	m := dst.Bounds().Min
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Translate(float64(m.X), float64(m.Y))
 	dst.DrawImage(src, op)
 }
 
-// apply post-processes the offscreen scene onto screen. t is seconds since
+// Apply post-processes the offscreen scene onto screen. t is seconds since
 // start (drives the scan bar). Tunables come from th.
-func (c *crt) apply(screen *ebiten.Image, th theme.Theme, t float64) {
+func (c *Pass) Apply(screen *ebiten.Image, th theme.Theme, t float64) {
 	c.compile()
 	if c.shader == nil {
-		blit(screen, c.off)
+		Blit(screen, c.off)
 		return
 	}
 	dst := screen

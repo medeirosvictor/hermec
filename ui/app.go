@@ -23,6 +23,7 @@ import (
 	"github.com/medeirosvictor/hermec/core/identity"
 	"github.com/medeirosvictor/hermec/core/roles"
 	"github.com/medeirosvictor/hermec/server"
+	"github.com/medeirosvictor/hermec/ui/crt"
 	"github.com/medeirosvictor/hermec/ui/icon"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/ui/theme"
@@ -173,7 +174,7 @@ type game struct {
 	speakEnv map[string]*state.Envelope // per-occupant speaking envelope, by fingerprint
 	rowHL    map[string]float64         // eased hover/active highlight per channel row
 
-	crt     crt
+	crt     crt.Pass
 	panel   panelShader
 	startAt time.Time  // first CRT frame; drives the scan bar
 	crtOn   bool       // starts from the theme, toggled with F1
@@ -524,7 +525,7 @@ func (g *game) Draw(screen *ebiten.Image) {
 	if sceneH < 1 {
 		sceneH = 1
 	}
-	off := g.crt.target(b.Dx(), sceneH)
+	off := g.crt.Target(b.Dx(), sceneH)
 	g.drawScene(off)
 	area := screen.SubImage(image.Rect(b.Min.X, b.Min.Y+bh, b.Max.X, b.Max.Y)).(*ebiten.Image)
 	if g.crtOn {
@@ -533,9 +534,9 @@ func (g *game) Draw(screen *ebiten.Image) {
 		}
 		th := g.th
 		th.Curvature = g.curvature()
-		g.crt.apply(area, th, time.Since(g.startAt).Seconds())
+		g.crt.Apply(area, th, time.Since(g.startAt).Seconds())
 	} else {
-		blit(area, off)
+		crt.Blit(area, off)
 	}
 	g.drawVideo(screen, image.Pt(b.Min.X, b.Min.Y+bh)) // flat, after the CRT pass
 	g.drawTitleBar(screen)

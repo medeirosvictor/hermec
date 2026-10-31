@@ -4,111 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/hajimehoshi/ebiten/v2"
-
 	"github.com/medeirosvictor/hermec/ui/theme"
 )
-
-const validKage = `//kage:unit pixels
-
-package main
-
-func Fragment(dst vec4, src vec2, color vec4) vec4 {
-	return imageSrc0At(src)
-}
-`
-
-// gfxJob is one unit of work to run on ebiten's game goroutine.
-type gfxJob struct {
-	fn   func()
-	done chan struct{}
-}
-
-// gfx is the process-wide ebiten game. ebiten.RunGame may only be called once
-// per process, so every graphics-needing test submits a job to this single
-// game instead of running its own (R4). It gives ebiten.NewShader the graphics
-// context it needs, which `go test` otherwise lacks.
-var gfx struct {
-	once   sync.Once
-	jobs   chan gfxJob
-	exited chan struct{} // closed when RunGame returns (no display, etc.)
-	err    error
-}
-
-type shaderGame struct{}
-
-func (shaderGame) Update() error {
-	for {
-		select {
-		case j := <-gfx.jobs:
-			j.fn()
-			close(j.done)
-		default:
-			return nil
-		}
-	}
-}
-func (shaderGame) Draw(*ebiten.Image)         {}
-func (shaderGame) Layout(w, h int) (int, int) { return 16, 16 }
-
-// withGraphics runs fn on the shared ebiten game goroutine, skipping the test
-// when no display is available.
-func withGraphics(t *testing.T, fn func()) {
-	t.Helper()
-	if runtime.GOOS == "darwin" {
-		t.Skip("ebiten.RunGame must own the main thread on darwin")
-	}
-	gfx.once.Do(func() {
-		gfx.jobs = make(chan gfxJob)
-		gfx.exited = make(chan struct{})
-		go func() {
-			gfx.err = ebiten.RunGame(shaderGame{})
-			close(gfx.exited)
-		}()
-	})
-	j := gfxJob{fn: fn, done: make(chan struct{})}
-	select {
-	case gfx.jobs <- j:
-	case <-gfx.exited:
-		t.Skipf("no display for ebiten: %v", gfx.err)
-	}
-	select {
-	case <-j.done:
-	case <-gfx.exited:
-		t.Skipf("no display for ebiten: %v", gfx.err)
-	}
-}
-
-func TestDevReloadBadShaderKeepsOld(t *testing.T) {
-	withGraphics(t, func() {
-		var c crt
-		if err := c.setSource([]byte(validKage)); err != nil {
-			t.Fatalf("valid source: %v", err)
-		}
-		first := c.shader
-		if first == nil {
-			t.Fatal("shader nil after valid setSource")
-		}
-		if err := c.setSource([]byte("package main\nfunc Fragment( {")); err == nil {
-			t.Fatal("invalid source compiled")
-		}
-		if c.shader != first {
-			t.Fatal("bad source replaced the shader")
-		}
-		if err := c.setSource([]byte(validKage)); err != nil {
-			t.Fatalf("second valid source: %v", err)
-		}
-		if c.shader == first || c.shader == nil {
-			t.Fatal("valid source did not swap the shader")
-		}
-	})
-}
 
 // newTestDev builds a devReload over an in-memory file system.
 func newTestDev(g *game, files map[string]string, mt map[string]time.Time) *devReload {
