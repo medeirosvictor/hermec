@@ -52,11 +52,12 @@ runs in parallel whenever the EC2 instance is ready.
    [dedicated plan](docs/superpowers/plans/2026-10-28-dedicated-hosting.md) and
    [AWS runbook](docs/aws-ec2-from-zero.md).
 3. **Regular-use musts, first wave:**
-   - Per-person volume (0–200%, saved per fingerprint) and mic gain, with a
-     soft limiter. Friends were too quiet; this closes the audio gate.
-   - Audio device switching mid-call (today capture/playback open once per
-     join, so a change applies only after leave and rejoin).
-   - Auto-rejoin voice after a reconnect, and an in-app auto-updater. Builds
+   - DONE (untested): per-person volume (0–200%, saved per fingerprint) and mic
+     gain, with a soft limiter. Friends were too quiet; this closes the audio
+     gate.
+   - DONE (untested): audio device switching mid-call.
+   - DONE (untested): auto-rejoin voice after a reconnect.
+   - TO DO: an in-app auto-updater. Builds
      must match exactly, so updating the host forces everyone to update;
      without an updater that is painful. Windows first: verified artifacts,
      explicit restart, atomic replacement and rollback without routine admin

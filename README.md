@@ -228,13 +228,14 @@ go run ./cmd/hermec -theme ~/.config/hermec/myTheme.toml
 - **Ctrl+R**: Refresh discovered servers (connect screen)
 - **Click rail tile**: Switch servers; every server you have opened stays connected, and switching keeps you in your voice call
 - **Right-click a rail tile**: Rename (a nickname only you see; empty resets to the server's name), Disconnect (when you have a session to that server; ends your call too if it is the call's server), Leave Server (asks first; removes the tile and ends a call on it). Esc or a click elsewhere closes the menu. Hover a tile to see its full name.
+- **Right-click a person** (member list, voice occupant row, call tile): playback volume 0-200% for that person (the founder also sees the host controls there).
 - **Members button** (top right of the chat): Show or hide the member list of everyone on the server. The list hides itself in narrow windows; your choice is saved in `settings.toml`
 - **Click "+" tile**: Add a server
 - **Click the signal bars** (status line, or the call bar in a call): Show connection quality (ping, jitter, per-participant concealment); Esc or a second click closes it
 - **Click a voice channel in the pane**: Join it (moves your call if you are in another one). Clicking the channel you are already in opens the call view; leave with the call bar, call view, or the "voice connected" panel.
 - **Click share** (call bar or "voice connected" panel): Share a screen, see [Screen share](#screen-share). **Click LIVE** next to a person in the voice list to watch them. **Esc** goes back to chat (out of fullscreen first); **F11** or **double-click** the video toggles fullscreen.
 - **Title bar** (Windows): a Discord-style app bar replaces the default frame. Drag it to move the window (double-click to maximize or restore), use the buttons on the right to minimize, maximize and close, and drag the window edges and corners to resize.
-- **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, text size as a percentage, share quality (720p or 1080p), logs (open folder), update status, a help section; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono.
+- **Click gear tile** or **F10**: Settings page (name, palette, font, scanlines, curvature, input/output audio device, mic gain, text size as a percentage, share quality (720p or 1080p), logs (open folder), update status, a help section; F10 works when the rail is hidden). Choices, including F1/F2/F3, persist to `<user config dir>/hermec/settings.toml`; `-name` and `-theme` flags override it. New installs start on the slate palette with JetBrains Mono; the font row cycles VT323, JetBrains Mono, IBM Plex Mono and Geist Mono.
 
 Bundled fonts (all monospace, under the SIL Open Font License 1.1, licences in `ui/theme/`): VT323, JetBrains Mono, IBM Plex Mono and Geist Mono.
 
@@ -494,6 +495,22 @@ pane under each voice channel; empty voice channels show only in the list.
 **Important: Hermec does not perform acoustic echo cancellation. Using speakers
 will feed other participants' audio back into your microphone; headsets are
 strongly recommended.**
+
+**Volume and gain.** Right-click a person (member list, a voice channel's
+occupant row, or a call tile) to set how loud they are for you: 0 to 200% in
+eight steps, current one marked. It applies at once, mid-call, and is saved per
+person in `settings.toml` (100% is not stored). The Settings row `mic gain`
+cycles your own microphone between 50% and 200%; your level meter and what
+others hear both reflect it. Boosted audio passes through a soft limiter, so
+loud peaks round off instead of crackling.
+
+**Switching devices and reconnecting.** The `input` and `output` rows in
+Settings take effect immediately during a call (a brief gap while the device
+reopens; if the new device fails, the old one stays and a status says so). If
+your connection to a server drops during a call and later comes back, Hermec
+rejoins the same voice channel, muted as you were, with camera and screen
+share off, and shows "rejoined voice". It does not rejoin if you left or
+disconnected yourself, if the channel is gone, or if the server refused you.
 
 For internet-facing servers, configure `public_ip` (your server's public IPv4)
 and, for firewall policy, note that all media uses one UDP port (the server's

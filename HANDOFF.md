@@ -56,12 +56,24 @@ Roadmap: [PLAN.md](PLAN.md).
      `conn.authenticate`, `ui/crt`, pure `ui` helpers into `ui/state`, one
      `ui/dedicated` feature. One commit each, no behavior change, full gate
      green per commit.
-  2. Regular-use musts, first wave (below).
+  2. DONE 2026-11-02, untested (PLAN item 3, no tests run by owner request;
+     only `go build` and `go vet` passed): per-person volume, mic gain,
+     mid-call device switching, auto-rejoin after reconnect. Still open from
+     the wave: the in-app updater. Hand test with a real call (two PCs or a
+     friend, real devices): (a) right-click a person, 0%/200% change what you
+     hear live, survive a restart, no crackle at 200%; (b) mic gain 50-200%
+     changes the meter and what the peer hears, live; (c) unplug or change
+     input and output rows mid-call: audio resumes on the new device, a bad
+     device keeps the old one with a status, a Bluetooth headset switch works;
+     (d) kill the server link (or the Wi-Fi) mid-call, reconnect: voice
+     rejoins muted as before, camera and share stay off, and a banned, left or
+     disconnected session does not; failover takeover still carries the call.
   3. Agree the `ui.game` / SFU / client split design with Victor (PLAN 1b),
      then execute it.
 - **Regular-use musts, first wave** (PLAN item 3): per-person
-  volume and mic gain; mid-call audio device switching; auto-rejoin voice after
-  a reconnect plus an in-app updater (now required: builds must match exactly).
+  volume and mic gain, mid-call audio device switching and auto-rejoin voice
+  after a reconnect are done but untested (see Next steps 2); the in-app
+  updater (now required: builds must match exactly) is still to do.
   Second wave: moderation UI, invite links, push-to-talk then echo
   cancellation. Nice to have: pixel-art low-bandwidth video (PLAN.md).
 - **In parallel: Task 6 — remote acceptance/release.** Victor is setting up the
