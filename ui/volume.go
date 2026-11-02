@@ -42,3 +42,14 @@ func applyVolumes(sink any, volumes map[string]int) {
 		}
 	}
 }
+
+// micGainSetter is the capture source's gain control.
+type micGainSetter interface{ SetGain(pct int) }
+
+// applyMicGain sets the mic gain on an open source; sources without gain
+// control are left alone.
+func applyMicGain(src any, pct int) {
+	if m, ok := src.(micGainSetter); ok {
+		m.SetGain(pct)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gen2brain/malgo"
@@ -56,6 +57,7 @@ type capture struct {
 	dev    *malgo.Device
 	enc    *gopus.Encoder
 	meter  *Meter
+	gain   atomic.Uint32 // mic gain percent
 	frames chan pcmFrame
 	done   chan struct{}
 	once   sync.Once
@@ -117,6 +119,7 @@ func Capture(deviceName string) (client.AudioSource, *Meter, error) {
 		obuf:   make([]byte, 1500),
 		clock:  time.Now,
 	}
+	c.gain.Store(100)
 	cfg := malgo.DefaultDeviceConfig(malgo.Capture)
 	cfg.Capture.Format = malgo.FormatS16
 	cfg.Capture.Channels = 1
@@ -150,6 +153,11 @@ func (c *capture) freeCtx() {
 	c.mctx.Free()
 }
 
+// SetGain sets the mic gain in percent (100 = unchanged); it applies from the
+// next captured frame, so it works mid-call. Gain is applied before the level
+// meter and the encoder, with the soft limiter (see ApplyGain).
+func (c *capture) SetGain(pct int) { c.gain.Store(uint32(pct)) }
+
 // onData runs on the audio thread: no blocking, no encoding.
 func (c *capture) onData(_, in []byte, _ uint32) {
 	for len(in) >= 2 {
@@ -161,6 +169,7 @@ func (c *capture) onData(_, in []byte, _ uint32) {
 		}
 		c.curN = 0
 		c.cur.at = time.Now()
+		ApplyGain(c.cur.pcm[:], float64(c.gain.Load())/100)
 		c.meter.Observe(RMS(c.cur.pcm[:]), c.cur.at)
 		c.push(c.cur)
 	}

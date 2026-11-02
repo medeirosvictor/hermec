@@ -66,3 +66,25 @@ func TestApplyVolumesOnOpenedSink(t *testing.T) {
 	}
 	applyVolumes(struct{}{}, map[string]int{"a": 1}) // a sink without volume control is left alone
 }
+
+type fakeGainSource struct {
+	io.Closer
+	pct int
+}
+
+func (f *fakeGainSource) SetGain(pct int) { f.pct = pct }
+
+func TestCycleMicGainAppliesLiveAndPersists(t *testing.T) {
+	g := newTestGame(t)
+	g.settingsPath = filepath.Join(t.TempDir(), "settings.toml")
+	src := &fakeGainSource{}
+	g.vc.src = src
+	g.cycleMicGain() // 100 -> 125
+	if src.pct != 125 || g.set.MicGainPct() != 125 {
+		t.Fatalf("live gain = %d, setting = %d", src.pct, g.set.MicGainPct())
+	}
+	got, err := state.LoadSettings(g.settingsPath)
+	if err != nil || got.MicGain != 125 {
+		t.Fatalf("saved = %+v, %v", got, err)
+	}
+}

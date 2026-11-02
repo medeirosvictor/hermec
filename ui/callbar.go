@@ -141,6 +141,7 @@ func (g *game) joinCall(ch string) {
 	oldSrc, oldSink := g.vc.src, g.vc.sink
 	savedIn, savedOut := g.set.InputDevice, g.set.OutputDevice // read here: g.set belongs to the update goroutine
 	volumes := maps.Clone(g.set.Volumes)
+	micGain := g.set.MicGainPct()
 	listDevices := g.listAudioDevices
 	if listDevices == nil {
 		listDevices = audio.ListDevices
@@ -172,6 +173,7 @@ func (g *game) joinCall(ch string) {
 			return
 		}
 		applyVolumes(sink, volumes)
+		applyMicGain(src, micGain)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := c.JoinVoice(ctx, ch, src, sink); err != nil {

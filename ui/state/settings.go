@@ -34,6 +34,8 @@ type Settings struct {
 	ShareQuality string `toml:"share_quality,omitempty"` // "720p" (default) or "1080p"; see ShareQualityID
 
 	Volumes map[string]int `toml:"volumes,omitempty"` // fingerprint -> playback percent; absent = 100 (see VolumePct)
+
+	MicGain int `toml:"mic_gain,omitempty"` // percent; 0 = 100 (see MicGainPct)
 }
 
 // CurvatureEnabled reports whether the CRT curvature is on; unset means on.

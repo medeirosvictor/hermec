@@ -29,6 +29,7 @@ const (
 	rowCurvature
 	rowInput
 	rowOutput
+	rowMicGain
 	rowCamera
 	rowShare
 	rowUpdate
@@ -319,6 +320,15 @@ func (g *game) cycleOutput() {
 	g.persistSettings()
 }
 
+// cycleMicGain advances the mic gain to the next step, persists it and applies
+// it to the running call.
+func (g *game) cycleMicGain() {
+	g.set.MicGain = state.NextMicGain(g.set.MicGain)
+	g.logf("mic gain: %d%%", g.set.MicGain)
+	g.persistSettings()
+	applyMicGain(g.vc.src, g.set.MicGainPct())
+}
+
 func (g *game) cameraDeviceLabel() string {
 	if !g.cameraSupported() {
 		return "unsupported"
@@ -444,6 +454,8 @@ func (g *game) activateSetting(row int) {
 		g.cycleInput()
 	case rowOutput:
 		g.cycleOutput()
+	case rowMicGain:
+		g.cycleMicGain()
 	case rowCamera:
 		g.cycleCameraDevice()
 	case rowSize:
@@ -499,6 +511,7 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 		"curvature: " + curv,
 		"input:     " + deviceLabel(g.set.InputDevice, g.devIn),
 		"output:    " + deviceLabel(g.set.OutputDevice, g.devOut),
+		"mic gain:  " + strconv.Itoa(g.set.MicGainPct()) + "%",
 		"camera:    " + g.cameraDeviceLabel(),
 		"share quality: " + g.set.ShareQualityID(),
 		updateRowLabel(g.updStatus, g.update, g.version()),

@@ -38,3 +38,29 @@ func validStep(steps []int, v int) bool {
 	}
 	return false
 }
+
+// MicGains are the selectable microphone gains in percent, in cycle order.
+var MicGains = []int{50, 75, 100, 125, 150, 200}
+
+// MicGainPct is the mic gain in percent; unset, or any value that is not a
+// step in MicGains, means 100.
+func (s Settings) MicGainPct() int {
+	if validStep(MicGains, s.MicGain) {
+		return s.MicGain
+	}
+	return 100
+}
+
+// NextMicGain is the step after cur, wrapping around. 0 counts as 100, and a
+// value that is not a step goes to 100.
+func NextMicGain(cur int) int {
+	if cur == 0 {
+		cur = 100
+	}
+	for i, v := range MicGains {
+		if v == cur {
+			return MicGains[(i+1)%len(MicGains)]
+		}
+	}
+	return 100
+}

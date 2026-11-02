@@ -50,3 +50,30 @@ func TestVolumesRoundTrip(t *testing.T) {
 		t.Fatalf("got %v want %v", got.Volumes, s.Volumes)
 	}
 }
+
+func TestMicGainPctAndNext(t *testing.T) {
+	var s Settings
+	if s.MicGainPct() != 100 {
+		t.Fatalf("unset = %d", s.MicGainPct())
+	}
+	s.MicGain = 130
+	if s.MicGainPct() != 100 {
+		t.Fatalf("bad step = %d", s.MicGainPct())
+	}
+	s.MicGain = 150
+	if s.MicGainPct() != 150 {
+		t.Fatalf("got %d", s.MicGainPct())
+	}
+	cur := 100
+	var seen []int
+	for range MicGains {
+		cur = NextMicGain(cur)
+		seen = append(seen, cur)
+	}
+	if want := []int{125, 150, 200, 50, 75, 100}; !reflect.DeepEqual(seen, want) {
+		t.Fatalf("cycle = %v, want %v", seen, want)
+	}
+	if NextMicGain(0) != 125 || NextMicGain(33) != 100 {
+		t.Fatal("unset and off-step must start from 100")
+	}
+}
