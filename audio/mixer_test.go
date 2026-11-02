@@ -31,6 +31,19 @@ func TestMixLimitsWithoutWrapping(t *testing.T) {
 	}
 }
 
+func TestMixKeepsInRangeSumsUntouched(t *testing.T) {
+	loud := []int16{30000, math.MinInt16, math.MaxInt16, 25000}
+	dst := make([]int16, len(loud))
+	Mix(dst, [][]int16{loud}, nil)
+	if !reflect.DeepEqual(dst, loud) {
+		t.Fatalf("lone speaker changed: %v want %v", dst, loud)
+	}
+	Mix(dst[:1], [][]int16{{30000}, {2000}}, nil) // sums to 32000: in range, above the knee
+	if dst[0] != 32000 {
+		t.Fatalf("in-range sum limited: %d", dst[0])
+	}
+}
+
 func TestMixShortAndEmpty(t *testing.T) {
 	dst := []int16{9, 9, 9}
 	Mix(dst, [][]int16{{4}}, nil)

@@ -44,23 +44,41 @@ func Decay(level float64, elapsed time.Duration) float64 {
 }
 
 // Mix sums streams sample by sample into dst, scaling stream i by gains[i]
-// (nil gains = unity), then soft-limits the sum. Streams shorter than dst
-// count as silence.
+// (nil gains = unity). Streams shorter than dst count as silence. A sum that
+// stays within full scale is written untouched, so a lone speaker at 100% is
+// bit-exact; if any sample overshoots, the whole slice is soft-limited.
 func Mix(dst []int16, streams [][]int16, gains []float64) {
+	over := false
 	for i := range dst {
-		var acc float64
-		for j, s := range streams {
-			if i >= len(s) {
-				continue
-			}
-			g := 1.0
-			if j < len(gains) {
-				g = gains[j]
-			}
-			acc += float64(s[i]) * g
+		if acc := mixSample(i, streams, gains); acc > math.MaxInt16 || acc < math.MinInt16 {
+			over = true
+			break
 		}
-		dst[i] = softLimit(acc)
 	}
+	for i := range dst {
+		acc := mixSample(i, streams, gains)
+		if over {
+			dst[i] = softLimit(acc)
+		} else {
+			dst[i] = int16(math.Round(acc))
+		}
+	}
+}
+
+// mixSample is sample i of the gain-scaled sum of streams.
+func mixSample(i int, streams [][]int16, gains []float64) float64 {
+	var acc float64
+	for j, s := range streams {
+		if i >= len(s) {
+			continue
+		}
+		g := 1.0
+		if j < len(gains) {
+			g = gains[j]
+		}
+		acc += float64(s[i]) * g
+	}
+	return acc
 }
 
 // ApplyGain scales pcm in place by gain and soft-limits it. Unity gain is a
