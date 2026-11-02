@@ -244,6 +244,7 @@ func (g *game) flushName() {
 
 func (g *game) closeSettings() {
 	g.flushName()
+	g.flushSwap()
 	g.helpOpen, g.helpScroll = false, 0
 	if g.settingsOpen {
 		g.settingsOpen = false
@@ -312,14 +313,14 @@ func (g *game) cycleInput() {
 	g.set.InputDevice = state.NextDevice(g.set.InputDevice, g.devIn)
 	g.logf("input device: %q", g.set.InputDevice)
 	g.persistSettings()
-	g.swapDevices()
+	g.queueSwap()
 }
 
 func (g *game) cycleOutput() {
 	g.set.OutputDevice = state.NextDevice(g.set.OutputDevice, g.devOut)
 	g.logf("output device: %q", g.set.OutputDevice)
 	g.persistSettings()
-	g.swapDevices()
+	g.queueSwap()
 }
 
 // cycleMicGain advances the mic gain to the next step, persists it and applies

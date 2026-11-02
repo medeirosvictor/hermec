@@ -23,6 +23,11 @@ func TestRememberCallOnlyForASettledCall(t *testing.T) {
 	if a.rejoin.Pending() {
 		t.Fatal("remembered a call mid-operation")
 	}
+	g.vc.joining, g.vc.opKey = "other", a.key // a join in flight: that is what to restore
+	g.rememberCall(a)
+	if !a.rejoin.Pending() {
+		t.Fatal("forgot a join in flight")
+	}
 }
 
 // The reconnect path itself: the call comes back as an automatic join on the

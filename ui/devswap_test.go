@@ -2,9 +2,13 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/medeirosvictor/hermec/audio"
 )
 
 type fakeSwapper struct {
@@ -27,7 +31,7 @@ func swapGame(t *testing.T) (g *game, src, sink *fakeSwapper, s *session) {
 	g.sess[s.key] = s
 	g.callKey = s.key
 	src, sink = &fakeSwapper{}, &fakeSwapper{}
-	g.vc = voiceCall{src: src, sink: sink, inDev: "old-mic", outDev: "old-spk"}
+	g.vc = voiceCall{src: src, sink: sink, inDev: "old-mic", outDev: "old-spk", reqIn: "old-mic", reqOut: "old-spk"}
 	return g, src, sink, s
 }
 
@@ -57,7 +61,7 @@ func TestSwapDevicesFailureKeepsOldAndReverts(t *testing.T) {
 	g.set.InputDevice = "usb-mic"
 	g.swapDevices()
 	settleSwap(g)
-	if g.vc.inDev != "old-mic" || g.set.InputDevice != "old-mic" {
+	if g.vc.reqIn != "old-mic" || g.set.InputDevice != "old-mic" {
 		t.Fatalf("inDev %q, setting %q", g.vc.inDev, g.set.InputDevice)
 	}
 	if s.st.Status != "couldn't switch microphone; keeping the previous one" {
@@ -107,5 +111,57 @@ func TestSwapResultForAnEndedCallIsIgnored(t *testing.T) {
 	g.applyDevSwap(r)
 	if g.vc.inDev != "x" {
 		t.Fatalf("stale result applied: %+v", g.vc)
+	}
+}
+
+// A fallback to the default device must not make the other side look changed,
+// and an output change must not touch the saved input.
+func TestSwapDevicesComparesAgainstRequestedNames(t *testing.T) {
+	g, src, sink, _ := swapGame(t)
+	g.vc.inDev, g.vc.reqIn = "", "gone-mic" // the saved mic was missing at join: fell back
+	g.set.InputDevice, g.set.OutputDevice = "gone-mic", "usb-spk"
+	sink.err = errors.New("device busy")
+	g.swapDevices()
+	settleSwap(g)
+	if len(src.calls) != 0 || len(sink.calls) != 1 {
+		t.Fatalf("src %v, sink %v", src.calls, sink.calls)
+	}
+	if g.set.InputDevice != "gone-mic" || g.set.OutputDevice != "old-spk" {
+		t.Fatalf("settings in %q out %q", g.set.InputDevice, g.set.OutputDevice)
+	}
+}
+
+func TestSwapDevicesDeviceLost(t *testing.T) {
+	g, src, _, s := swapGame(t)
+	src.err = fmt.Errorf("%w: boom", audio.ErrDeviceLost)
+	g.set.InputDevice = "usb-mic"
+	g.swapDevices()
+	settleSwap(g)
+	if s.st.Status != "audio device stopped; leave and rejoin the call" {
+		t.Fatalf("status = %q", s.st.Status)
+	}
+}
+
+func TestSwapDevicesDebounced(t *testing.T) {
+	g, src, _, _ := swapGame(t)
+	g.set.InputDevice = "a"
+	g.queueSwap()
+	g.set.InputDevice = "b"
+	g.queueSwap()
+	g.stepSwap(time.Now()) // not due yet
+	if g.vc.swapping {
+		t.Fatal("swapped before the debounce elapsed")
+	}
+	g.stepSwap(time.Now().Add(time.Second))
+	settleSwap(g)
+	if len(src.calls) != 1 || src.calls[0] != "b" || !g.vc.swapAt.IsZero() {
+		t.Fatalf("calls %v, swapAt %v", src.calls, g.vc.swapAt)
+	}
+	g.set.InputDevice = "c"
+	g.queueSwap()
+	g.flushSwap() // Settings closing applies it at once
+	settleSwap(g)
+	if len(src.calls) != 2 || src.calls[1] != "c" {
+		t.Fatalf("calls = %v", src.calls)
 	}
 }

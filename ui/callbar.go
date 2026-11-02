@@ -40,6 +40,7 @@ type voiceResult struct {
 	muted         bool   // the call starts muted
 	rejoin        bool   // an automatic rejoin after a reconnect
 	inDev, outDev string // the devices actually opened ("" = default)
+	reqIn, reqOut string // the devices Settings asked for at join (before any fallback)
 }
 
 // voiceCall is the GUI's side of the current call (the protocol side lives in
@@ -56,9 +57,11 @@ type voiceCall struct {
 	mic     *audio.Meter
 	spk     *audio.Meters
 
-	inDev, outDev string // devices the call is on ("" = default)
-	swapping      bool   // a device swap is in flight
-	swapAgain     bool   // Settings changed again meanwhile: swap once more after it
+	inDev, outDev string    // devices the call is on ("" = default)
+	reqIn, reqOut string    // devices last asked for in Settings (what a swap compares against)
+	swapAt        time.Time // a debounced swap is due then (zero = none)
+	swapping      bool      // a device swap is in flight
+	swapAgain     bool      // Settings changed again meanwhile: swap once more after it
 }
 
 // audioOpener opens the capture and playback devices for a call. g.openAudio
@@ -155,7 +158,8 @@ func (g *game) joinCallOn(s *session, ch string, muted, rejoin bool) {
 	}
 	oldSrc, oldSink := g.vc.src, g.vc.sink
 	savedIn, savedOut := g.set.InputDevice, g.set.OutputDevice // read here: g.set belongs to the update goroutine
-	volumes := maps.Clone(g.set.Volumes)
+	set := g.set
+	set.Volumes = maps.Clone(g.set.Volumes)
 	micGain := g.set.MicGainPct()
 	listDevices := g.listAudioDevices
 	if listDevices == nil {
@@ -165,7 +169,7 @@ func (g *game) joinCallOn(s *session, ch string, muted, rejoin bool) {
 	if open == nil {
 		open = openAudio
 	}
-	g.vc = voiceCall{busy: true, joining: ch, opKey: s.key}
+	g.vc = voiceCall{busy: true, joining: ch, opKey: s.key, muted: muted}
 	g.callKey = ""
 	s.st.SetInCall("")
 	s.st.Status = ""
@@ -187,7 +191,7 @@ func (g *game) joinCallOn(s *session, ch string, muted, rejoin bool) {
 			g.voiceCh <- res
 			return
 		}
-		applyVolumes(sink, volumes)
+		applyVolumes(sink, set)
 		applyMicGain(src, micGain)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -200,6 +204,7 @@ func (g *game) joinCallOn(s *session, ch string, muted, rejoin bool) {
 		res.src, res.sink, res.mic, res.spk = asCloser(src), asCloser(sink), mic, spk
 		res.notice = notice
 		res.inDev, res.outDev = inDev, outDev
+		res.reqIn, res.reqOut = savedIn, savedOut
 		g.voiceCh <- res
 	}(s.key, s)
 }
@@ -291,6 +296,7 @@ func (g *game) updateVoice() {
 		g.applyDevSwap(r)
 	default:
 	}
+	g.stepSwap(time.Now())
 	// Poll: the client reports a dead call as VoiceChannel() == "".
 	if s := g.callSess(); s != nil && s.c != nil && !g.vc.busy && s.st.InCall != "" && s.c.VoiceChannel() == "" {
 		g.logf("voice call on %s ended", s.url)
@@ -322,7 +328,7 @@ func (g *game) applyVoice(r voiceResult) {
 		}
 	default:
 		g.logf("joined voice %s on %s", r.channel, s.url)
-		g.vc = voiceCall{start: time.Now(), muted: r.muted, src: r.src, sink: r.sink, mic: r.mic, spk: r.spk, inDev: r.inDev, outDev: r.outDev}
+		g.vc = voiceCall{start: time.Now(), muted: r.muted, src: r.src, sink: r.sink, mic: r.mic, spk: r.spk, inDev: r.inDev, outDev: r.outDev, reqIn: r.reqIn, reqOut: r.reqOut}
 		g.callKey = s.key
 		s.st.SetInCall(r.channel)
 		status := r.notice
@@ -332,6 +338,7 @@ func (g *game) applyVoice(r voiceResult) {
 		if status != "" {
 			s.st.Status = status
 		}
+		g.swapDevices() // a device changed in Settings while the join was in flight
 	}
 }
 

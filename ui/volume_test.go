@@ -60,11 +60,11 @@ func TestSetVolumeAppliesLiveAndPersists(t *testing.T) {
 
 func TestApplyVolumesOnOpenedSink(t *testing.T) {
 	sink := &fakeVolumeSink{got: map[string]int{}}
-	applyVolumes(sink, map[string]int{"a": 50, "b": 200})
-	if sink.got["a"] != 50 || sink.got["b"] != 200 {
+	applyVolumes(sink, state.Settings{Volumes: map[string]int{"a": 50, "b": 200, "c": 130}})
+	if sink.got["a"] != 50 || sink.got["b"] != 200 || sink.got["c"] != 100 { // 130 is not a step
 		t.Fatalf("got %v", sink.got)
 	}
-	applyVolumes(struct{}{}, map[string]int{"a": 1}) // a sink without volume control is left alone
+	applyVolumes(struct{}{}, state.Settings{Volumes: map[string]int{"a": 1}}) // a sink without volume control is left alone
 }
 
 type fakeGainSource struct {

@@ -34,11 +34,12 @@ func (g *game) setVolume(fp string, pct int) {
 	}
 }
 
-// applyVolumes sets every saved volume on a freshly opened sink.
-func applyVolumes(sink any, volumes map[string]int) {
+// applyVolumes sets every saved volume on a freshly opened sink; a value that
+// is not a valid step counts as 100%.
+func applyVolumes(sink any, set state.Settings) {
 	if v, ok := sink.(volumeSetter); ok {
-		for fp, pct := range volumes {
-			v.SetVolume(fp, pct)
+		for fp := range set.Volumes {
+			v.SetVolume(fp, set.VolumePct(fp))
 		}
 	}
 }

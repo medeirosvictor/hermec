@@ -536,9 +536,7 @@ func (g *game) carryCall(s *session, nu, old *client.Client) bool {
 		mediaLost := err != nil
 		if mediaLost && src != nil && sink != nil { // an ordinary join instead
 			g.logf("adopt call: %v; joining %s again", err, ch)
-			if err = nu.JoinVoice(ctx, ch, src, sink); err == nil && muted {
-				_ = nu.SetMuted(true)
-			}
+			err = nu.JoinVoiceMuted(ctx, ch, src, sink, muted)
 		}
 		_ = old.Close()
 		hc <- hostResult{kind: hostAdopt, key: key, s: s, c: nu, err: err, mediaLost: mediaLost}

@@ -2,9 +2,13 @@ package ui
 
 import "github.com/medeirosvictor/hermec/ui/state"
 
-// rememberCall notes the settled call s is in, with its mute state, when its
+// rememberCall notes the call s is in, or is joining, with its mute state, when its
 // connection is lost, so rejoinVoice can restore it after the reconnect.
 func (g *game) rememberCall(s *session) {
+	if g.vc.busy && g.vc.opKey == s.key && g.vc.joining != "" { // a join (or auto-rejoin) was in flight
+		s.rejoin.Lost(g.vc.joining, g.vc.muted)
+		return
+	}
 	if g.callKey == s.key && !g.vc.busy {
 		s.rejoin.Lost(s.st.InCall, g.vc.muted)
 		return
