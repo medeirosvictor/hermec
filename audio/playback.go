@@ -2,6 +2,7 @@ package audio
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -355,12 +356,14 @@ func (ms *Meters) Level(fp string) float64 {
 // dropped) and Uninit()s the device, which stops it and waits for any
 // in-flight callback to return. Do not call Close from the callback.
 type playback struct {
-	mix    *mixer
-	mctx   *malgo.AllocatedContext
-	dev    *malgo.Device
-	closed chan struct{}
-	once   sync.Once
-	buf    []int16
+	mix     *mixer
+	mctx    *malgo.AllocatedContext
+	devMu   sync.Mutex // guards dev and devName; held across a device swap and Close
+	dev     *malgo.Device
+	devName string // name of the open device; "" = system default
+	closed  chan struct{}
+	once    sync.Once
+	buf     []int16
 }
 
 // Playback opens the output device named device (48kHz mono; "" = system
@@ -376,32 +379,18 @@ func Playback(device string) (client.AudioSink, *Meters, error) {
 		_ = mctx.Uninit()
 		mctx.Free()
 	}
-	cfg := malgo.DefaultDeviceConfig(malgo.Playback)
-	cfg.Playback.Format = malgo.FormatS16
-	cfg.Playback.Channels = 1
-	cfg.SampleRate = sampleRate
-	cfg.PeriodSizeInMilliseconds = frameMs
-	if device != "" {
-		// Opened by name once per voice join (see deviceID's leak note).
-		id, err := deviceID(mctx, malgo.Playback, device)
-		if err != nil {
-			free()
-			return nil, nil, fmt.Errorf("output %w", err)
-		}
-		cfg.Playback.DeviceID = id
-	}
 	p := &playback{
 		mix:    newMixer(),
 		mctx:   mctx,
 		closed: make(chan struct{}),
 		buf:    make([]int16, 4*frameSize),
 	}
-	dev, err := malgo.InitDevice(mctx.Context, cfg, malgo.DeviceCallbacks{Data: p.onData})
+	dev, err := p.initDevice(device)
 	if err != nil {
 		free()
 		return nil, nil, err
 	}
-	p.dev = dev
+	p.dev, p.devName = dev, device
 	if err := dev.Start(); err != nil {
 		dev.Uninit()
 		free()
@@ -411,6 +400,50 @@ func Playback(device string) (client.AudioSink, *Meters, error) {
 		go dbg.run(p.closed)
 	}
 	return p, &Meters{m: p.mix}, nil
+}
+
+// initDevice opens the named speaker (not started) on p's context.
+func (p *playback) initDevice(name string) (*malgo.Device, error) {
+	cfg := malgo.DefaultDeviceConfig(malgo.Playback)
+	cfg.Playback.Format = malgo.FormatS16
+	cfg.Playback.Channels = 1
+	cfg.SampleRate = sampleRate
+	cfg.PeriodSizeInMilliseconds = frameMs
+	if name != "" {
+		// Opened by name once per voice join or device change (see deviceID's leak note).
+		id, err := deviceID(p.mctx, malgo.Playback, name)
+		if err != nil {
+			return nil, fmt.Errorf("output %w", err)
+		}
+		cfg.Playback.DeviceID = id
+	}
+	return malgo.InitDevice(p.mctx.Context, cfg, malgo.DeviceCallbacks{Data: p.onData})
+}
+
+// SwapDevice moves playback to the device called name ("" = system default)
+// under the running sink: the mixer, decoders and jitter buffers are
+// untouched, so the call carries on after a short gap. On error the previous
+// device keeps running.
+func (p *playback) SwapDevice(name string) error {
+	p.devMu.Lock()
+	defer p.devMu.Unlock()
+	select {
+	case <-p.closed:
+		return errors.New("audio output is closed")
+	default:
+	}
+	if name == p.devName {
+		return nil
+	}
+	nd, err := p.initDevice(name)
+	if err != nil {
+		return err
+	}
+	if err := switchDevice(p.dev, nd, nil); err != nil {
+		return err
+	}
+	p.dev, p.devName = nd, name
+	return nil
 }
 
 // WriteOpusFrame implements client.AudioSink.
@@ -440,7 +473,9 @@ func (p *playback) onData(out, _ []byte, _ uint32) {
 func (p *playback) Close() error {
 	p.once.Do(func() {
 		close(p.closed)
+		p.devMu.Lock()
 		p.dev.Uninit() // stops the device and waits for the callback
+		p.devMu.Unlock()
 		_ = p.mctx.Uninit()
 		p.mctx.Free()
 	})

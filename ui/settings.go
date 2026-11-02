@@ -312,12 +312,14 @@ func (g *game) cycleInput() {
 	g.set.InputDevice = state.NextDevice(g.set.InputDevice, g.devIn)
 	g.logf("input device: %q", g.set.InputDevice)
 	g.persistSettings()
+	g.swapDevices()
 }
 
 func (g *game) cycleOutput() {
 	g.set.OutputDevice = state.NextDevice(g.set.OutputDevice, g.devOut)
 	g.logf("output device: %q", g.set.OutputDevice)
 	g.persistSettings()
+	g.swapDevices()
 }
 
 // cycleMicGain advances the mic gain to the next step, persists it and applies

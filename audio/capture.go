@@ -2,6 +2,7 @@ package audio
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -53,14 +54,16 @@ type pcmFrame struct {
 // Shutdown: the returned value also implements io.Closer. Close stops the
 // device and makes ReadOpusFrame return io.EOF (a blocked call is woken).
 type capture struct {
-	mctx   *malgo.AllocatedContext
-	dev    *malgo.Device
-	enc    *gopus.Encoder
-	meter  *Meter
-	gain   atomic.Uint32 // mic gain percent
-	frames chan pcmFrame
-	done   chan struct{}
-	once   sync.Once
+	mctx    *malgo.AllocatedContext
+	devMu   sync.Mutex // guards dev and devName; held across a device swap and Close
+	dev     *malgo.Device
+	devName string // name of the open device; "" = system default
+	enc     *gopus.Encoder
+	meter   *Meter
+	gain    atomic.Uint32 // mic gain percent
+	frames  chan pcmFrame
+	done    chan struct{}
+	once    sync.Once
 
 	// device-callback-owned
 	cur  pcmFrame
@@ -120,32 +123,63 @@ func Capture(deviceName string) (client.AudioSource, *Meter, error) {
 		clock:  time.Now,
 	}
 	c.gain.Store(100)
-	cfg := malgo.DefaultDeviceConfig(malgo.Capture)
-	cfg.Capture.Format = malgo.FormatS16
-	cfg.Capture.Channels = 1
-	cfg.SampleRate = sampleRate
-	cfg.PeriodSizeInMilliseconds = frameMs
-	if deviceName != "" {
-		// Opened by name once per voice join (see deviceID's leak note).
-		id, err := deviceID(mctx, malgo.Capture, deviceName)
-		if err != nil {
-			c.freeCtx()
-			return nil, nil, fmt.Errorf("input %w", err)
-		}
-		cfg.Capture.DeviceID = id
-	}
-	dev, err := malgo.InitDevice(mctx.Context, cfg, malgo.DeviceCallbacks{Data: c.onData})
+	dev, err := c.initDevice(deviceName)
 	if err != nil {
 		c.freeCtx()
 		return nil, nil, err
 	}
-	c.dev = dev
+	c.dev, c.devName = dev, deviceName
 	if err := dev.Start(); err != nil {
 		dev.Uninit()
 		c.freeCtx()
 		return nil, nil, err
 	}
 	return c, c.meter, nil
+}
+
+// initDevice opens the named microphone (not started) on c's context.
+func (c *capture) initDevice(name string) (*malgo.Device, error) {
+	cfg := malgo.DefaultDeviceConfig(malgo.Capture)
+	cfg.Capture.Format = malgo.FormatS16
+	cfg.Capture.Channels = 1
+	cfg.SampleRate = sampleRate
+	cfg.PeriodSizeInMilliseconds = frameMs
+	if name != "" {
+		// Opened by name once per voice join or device change (see deviceID's leak note).
+		id, err := deviceID(c.mctx, malgo.Capture, name)
+		if err != nil {
+			return nil, fmt.Errorf("input %w", err)
+		}
+		cfg.Capture.DeviceID = id
+	}
+	return malgo.InitDevice(c.mctx.Context, cfg, malgo.DeviceCallbacks{Data: c.onData})
+}
+
+// SwapDevice moves the microphone to the device called name ("" = system
+// default) under the running stream: the Opus encoder, the frame ring and the
+// reader are untouched, so the call carries on after a short gap. On error the
+// previous device keeps running.
+func (c *capture) SwapDevice(name string) error {
+	c.devMu.Lock()
+	defer c.devMu.Unlock()
+	select {
+	case <-c.done:
+		return errors.New("microphone is closed")
+	default:
+	}
+	if name == c.devName {
+		return nil
+	}
+	nd, err := c.initDevice(name)
+	if err != nil {
+		return err
+	}
+	// A partial frame from the old device must not be completed by the new one.
+	if err := switchDevice(c.dev, nd, func() { c.curN = 0 }); err != nil {
+		return err
+	}
+	c.dev, c.devName = nd, name
+	return nil
 }
 
 func (c *capture) freeCtx() {
@@ -271,7 +305,9 @@ func (c *capture) ReadOpusFrame() ([]byte, error) {
 func (c *capture) Close() error {
 	c.once.Do(func() {
 		close(c.done)
+		c.devMu.Lock()
 		c.dev.Uninit() // waits for the callback to finish
+		c.devMu.Unlock()
 		c.freeCtx()
 	})
 	return nil

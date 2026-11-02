@@ -55,3 +55,27 @@ func deviceID(mctx *malgo.AllocatedContext, t malgo.DeviceType, name string) (un
 	}
 	return nil, fmt.Errorf("device %q not found", name)
 }
+
+// switchDevice moves a running stream from old to nd (initialised, not
+// started): old is stopped, quiesced runs while neither device is running (nil
+// = nothing), nd is started, then old is freed. If nd cannot start, nd is
+// freed and old is restarted, so a failed switch keeps the previous device
+// running. The stream has a short gap while neither runs.
+func switchDevice(old, nd *malgo.Device, quiesced func()) error {
+	if err := old.Stop(); err != nil {
+		nd.Uninit()
+		return err
+	}
+	if quiesced != nil {
+		quiesced()
+	}
+	if err := nd.Start(); err != nil {
+		nd.Uninit()
+		if rerr := old.Start(); rerr != nil {
+			return fmt.Errorf("%w (previous device did not restart: %v)", err, rerr)
+		}
+		return err
+	}
+	old.Uninit() // waits for the old callback to finish
+	return nil
+}

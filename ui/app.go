@@ -73,6 +73,7 @@ type game struct {
 	joinCh   chan joinResult
 	sendCh   chan sendResult
 	voiceCh  chan voiceResult
+	swapCh   chan devSwapResult     // finished mid-call device swaps
 	hostCh   chan hostResult        // warm dials, failovers and moves; made on first use
 	friends  map[string]*friendHost // friend hosts running here, by server ID
 	friendCh chan friendStarted     // finished background friend host starts
@@ -301,7 +302,7 @@ func Run(opts Options) error {
 	g := &game{
 		opts: opts, th: th, face: face, faceS: faceS, faceT: faceT, id: id, fp: fp, keyAt: opts.KeyPath,
 		sess: map[string]*session{}, none: newSession("", "", ""),
-		dialCh: make(chan dialResult, 8), probeCh: make(chan []state.DiscoveredIn, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan sendResult, 8), voiceCh: make(chan voiceResult, 4), w: 960, h: 600, crtOn: crtOn,
+		dialCh: make(chan dialResult, 8), probeCh: make(chan []state.DiscoveredIn, 1), joinCh: make(chan joinResult, 8), sendCh: make(chan sendResult, 8), voiceCh: make(chan voiceResult, 4), swapCh: make(chan devSwapResult, 2), w: 960, h: 600, crtOn: crtOn,
 		settingsPath: boot.settingsPath, set: boot.set, notice: boot.notice, autoName: opts.Name,
 	}
 	if opts.LogFile != nil {

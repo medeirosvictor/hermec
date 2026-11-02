@@ -32,10 +32,11 @@ type voiceResult struct {
 	channel string
 	err     error
 	// On a successful join, the opened devices the game must own.
-	src, sink io.Closer
-	mic       *audio.Meter
-	spk       *audio.Meters
-	notice    string // device fallback notice, shown on a successful join
+	src, sink     io.Closer
+	mic           *audio.Meter
+	spk           *audio.Meters
+	notice        string // device fallback notice, shown on a successful join
+	inDev, outDev string // the devices actually opened ("" = default)
 }
 
 // voiceCall is the GUI's side of the current call (the protocol side lives in
@@ -51,6 +52,10 @@ type voiceCall struct {
 	sink    io.Closer
 	mic     *audio.Meter
 	spk     *audio.Meters
+
+	inDev, outDev string // devices the call is on ("" = default)
+	swapping      bool   // a device swap is in flight
+	swapAgain     bool   // Settings changed again meanwhile: swap once more after it
 }
 
 // audioOpener opens the capture and playback devices for a call. g.openAudio
@@ -184,6 +189,7 @@ func (g *game) joinCall(ch string) {
 		}
 		res.src, res.sink, res.mic, res.spk = asCloser(src), asCloser(sink), mic, spk
 		res.notice = notice
+		res.inDev, res.outDev = inDev, outDev
 		g.voiceCh <- res
 	}(s.key, s)
 }
@@ -270,6 +276,11 @@ func (g *game) updateVoice() {
 		g.applyVoice(r)
 	default:
 	}
+	select {
+	case r := <-g.swapCh:
+		g.applyDevSwap(r)
+	default:
+	}
 	// Poll: the client reports a dead call as VoiceChannel() == "".
 	if s := g.callSess(); s != nil && s.c != nil && !g.vc.busy && s.st.InCall != "" && s.c.VoiceChannel() == "" {
 		g.logf("voice call on %s ended", s.url)
@@ -298,7 +309,7 @@ func (g *game) applyVoice(r voiceResult) {
 		s.st.Status = state.VoiceJoinNotice(r.err)
 	default:
 		g.logf("joined voice %s on %s", r.channel, s.url)
-		g.vc = voiceCall{start: time.Now(), src: r.src, sink: r.sink, mic: r.mic, spk: r.spk}
+		g.vc = voiceCall{start: time.Now(), src: r.src, sink: r.sink, mic: r.mic, spk: r.spk, inDev: r.inDev, outDev: r.outDev}
 		g.callKey = s.key
 		s.st.SetInCall(r.channel)
 		if r.notice != "" {
