@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image/color"
 	"io"
+	"maps"
 	"math"
 	"time"
 	"unicode/utf8"
@@ -139,6 +140,7 @@ func (g *game) joinCall(ch string) {
 	}
 	oldSrc, oldSink := g.vc.src, g.vc.sink
 	savedIn, savedOut := g.set.InputDevice, g.set.OutputDevice // read here: g.set belongs to the update goroutine
+	volumes := maps.Clone(g.set.Volumes)
 	listDevices := g.listAudioDevices
 	if listDevices == nil {
 		listDevices = audio.ListDevices
@@ -169,6 +171,7 @@ func (g *game) joinCall(ch string) {
 			g.voiceCh <- res
 			return
 		}
+		applyVolumes(sink, volumes)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := c.JoinVoice(ctx, ch, src, sink); err != nil {

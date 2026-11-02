@@ -28,19 +28,47 @@ func (g *game) addMemberHits(gm geometry) {
 	}
 }
 
-// openMemberMenu opens the founder's host controls for the member fp at
-// (ax, ay): Allow hosting for a non-host, Stop hosting and Move up for a host
-// other than the founder (Move up only when the host above is not the
-// founder, whose priority 1 never swaps). Anyone but the founder gets no menu.
+// openMemberMenu opens the context menu for the person fp at (ax, ay): the
+// founder's host controls (see hostItems) and, for anyone but yourself, the
+// playback volume steps.
 func (g *game) openMemberMenu(fp string, ax, ay float64) {
 	g.closeMenu()
 	s := g.cur()
-	if s.c == nil {
+	items := g.hostItems(s, fp)
+	own := g.fp
+	if s.c != nil {
+		own = s.c.Fingerprint()
+	}
+	if fp != own {
+		vol := g.volumeItems(fp)
+		if len(items) > 0 {
+			vol[0].sep = true
+		}
+		items = append(items, vol...)
+	}
+	if len(items) == 0 {
 		return
+	}
+	for i := range items { // picking any item closes the menu first
+		act := items[i].act
+		items[i].act = func() { g.closeMenu(); act() }
+	}
+	w, h := g.menuSize(items)
+	x, y := state.MenuOrigin(ax, ay, w, h, float64(g.w), float64(g.h))
+	g.menu = ctxMenu{open: true, key: fp, x: x, y: y, items: items}
+}
+
+// hostItems are the founder's host controls for the member fp: Allow hosting
+// for a non-host, Stop hosting and Move up for a host other than the founder
+// (Move up only when the host above is not the founder, whose priority 1
+// never swaps). Anyone but the founder gets none.
+func (g *game) hostItems(s *session, fp string) []menuItem {
+	if s.c == nil {
+		return nil
 	}
 	cs := s.c.Chain().State()
 	if cs.Founder == "" || cs.Founder != s.c.Fingerprint() || fp == cs.Founder {
-		return
+		return nil
 	}
 	idx := -1
 	maxPrio := 1
@@ -59,7 +87,7 @@ func (g *game) openMemberMenu(fp string, ax, ay float64) {
 			}
 		}
 		if len(pub) == 0 {
-			return
+			return nil
 		}
 		items = append(items, menuItem{label: "Allow hosting", act: func() {
 			g.chainOp(s.key, chainStep{chain.OpHostAdd, chain.HostAddBody{PubKey: pub, Priority: maxPrio + 1}})
@@ -79,13 +107,7 @@ func (g *game) openMemberMenu(fp string, ax, ay float64) {
 			}})
 		}
 	}
-	for i := range items { // picking any item closes the menu first
-		act := items[i].act
-		items[i].act = func() { g.closeMenu(); act() }
-	}
-	w, h := g.menuSize(items)
-	x, y := state.MenuOrigin(ax, ay, w, h, float64(g.w), float64(g.h))
-	g.menu = ctxMenu{open: true, key: fp, x: x, y: y, items: items}
+	return items
 }
 
 // chainStep is one chain append of a host change.

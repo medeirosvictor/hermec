@@ -47,6 +47,7 @@ const (
 	HitDedicatedManageReady                   // query the exact Ready boundary
 	HitDedicatedManageActivate                // explicit activation of displayed nonce
 	HitDedicatedManageClose                   // close founder dedicated management
+	HitOccupant                               // voice occupant row in the channel list; Key is their fingerprint
 )
 
 // Hit is one click target: the half-open rect [X0,X1) x [Y0,Y1).

@@ -101,18 +101,34 @@ func (s *sender) push(pcm []int16) {
 type mixer struct {
 	mu      sync.Mutex
 	senders map[string]*sender
-	snap    []fpSender // Pull-owned scratch
-	scratch [][]int16  // Pull-owned scratch
+	gains   map[string]float64 // per-speaker gain factor; absent = 1. Outlives senders
+	snap    []fpSender         // Pull-owned scratch
+	scratch [][]int16          // Pull-owned scratch
+	factors []float64          // Pull-owned scratch, parallel to scratch
 	now     func() time.Time
 }
 
 type fpSender struct {
-	fp string
-	s  *sender
+	fp   string
+	s    *sender
+	gain float64
 }
 
 func newMixer() *mixer {
-	return &mixer{senders: map[string]*sender{}, now: time.Now}
+	return &mixer{senders: map[string]*sender{}, gains: map[string]float64{}, now: time.Now}
+}
+
+// SetVolume sets fp's playback volume in percent (100 = unchanged, 200 =
+// double). It applies from the next Pull and is remembered even while fp has
+// no sender, so a speaker who joins later is already at their level.
+func (m *mixer) SetVolume(fp string, pct int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if pct == 100 {
+		delete(m.gains, fp)
+		return
+	}
+	m.gains[fp] = float64(pct) / 100
 }
 
 // lookup returns fp's sender, creating it (decoder and ring are allocated
@@ -254,11 +270,16 @@ func (m *mixer) Pull(dst []int16) {
 	clear(m.snap) // drop references so forgotten senders can be freed
 	m.snap = m.snap[:0]
 	for fp, s := range m.senders {
-		m.snap = append(m.snap, fpSender{fp, s})
+		g, ok := m.gains[fp]
+		if !ok {
+			g = 1
+		}
+		m.snap = append(m.snap, fpSender{fp, s, g})
 	}
 	m.mu.Unlock()
 
 	m.scratch = m.scratch[:0]
+	m.factors = m.factors[:0]
 	anyIdle := false
 	for _, e := range m.snap {
 		s := e.s
@@ -270,13 +291,14 @@ func (m *mixer) Pull(dst []int16) {
 		if n := s.fill(out, now); n > 0 {
 			clear(out[n:])
 			m.scratch = append(m.scratch, out)
+			m.factors = append(m.factors, e.gain)
 		}
 		if s.idle(now) {
 			anyIdle = true
 		}
 		s.mu.Unlock()
 	}
-	Mix(dst, m.scratch...)
+	Mix(dst, m.scratch, m.factors)
 	if !anyIdle {
 		return
 	}
@@ -424,6 +446,10 @@ func (p *playback) Close() error {
 	})
 	return nil
 }
+
+// SetVolume implements the per-speaker volume control (percent, 100 =
+// unchanged); it takes effect immediately, mid-call.
+func (p *playback) SetVolume(fp string, pct int) { p.mix.SetVolume(fp, pct) }
 
 // Forget drops a sender's decoder and meter right away (otherwise they are
 // cleaned up after a few seconds of silence).

@@ -183,6 +183,7 @@ func (g *game) addMainHits(gm geometry) {
 		case state.RowVoice:
 			g.hits.Add(state.Hit{X0: gm.chanR.x0, Y0: y, X1: gm.chanR.x1, Y1: y + gm.lh, Kind: state.HitVoice, Key: r.Channel})
 		case state.RowOccupant:
+			g.hits.Add(state.Hit{X0: gm.chanR.x0, Y0: y, X1: gm.chanR.x1, Y1: y + gm.lh, Kind: state.HitOccupant, Key: r.FP})
 			if r.Sharing {
 				lr := g.liveRect(gm, y, r.Muted)
 				g.hits.Add(state.Hit{X0: lr.x0, Y0: lr.y0, X1: lr.x1, Y1: lr.y1, Kind: state.HitLive, Key: r.FP})

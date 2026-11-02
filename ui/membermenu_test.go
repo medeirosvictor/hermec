@@ -85,6 +85,14 @@ func waitHosts(t *testing.T, f *founderSrv, cond func(map[string]int) bool) {
 	}
 }
 
+// withVolume is host followed by the volume rows the menu adds for fp.
+func withVolume(g *game, fp string, host ...string) []string {
+	for _, it := range g.volumeItems(fp) {
+		host = append(host, it.label)
+	}
+	return host
+}
+
 func TestMemberMenuFounderItems(t *testing.T) {
 	f := startFounder(t, "")
 	m := mustIdentity(t)
@@ -93,7 +101,7 @@ func TestMemberMenuFounderItems(t *testing.T) {
 	if !rightClickMember(g, mfp) {
 		t.Fatal("no hit on the member row")
 	}
-	if want := []string{"Allow hosting"}; !reflect.DeepEqual(menuLabels(g), want) {
+	if want := withVolume(g, mfp, "Allow hosting"); !reflect.DeepEqual(menuLabels(g), want) {
 		t.Fatalf("items = %v, want %v", menuLabels(g), want)
 	}
 	menuAct(g, "Allow hosting")
@@ -113,7 +121,7 @@ func TestMemberMenuMoveUp(t *testing.T) {
 	if !rightClickMember(g, cfp) {
 		t.Fatal("no hit on the member row")
 	}
-	if want := []string{"Stop hosting", "Move up"}; !reflect.DeepEqual(menuLabels(g), want) {
+	if want := withVolume(g, cfp, "Stop hosting", "Move up"); !reflect.DeepEqual(menuLabels(g), want) {
 		t.Fatalf("items = %v, want %v", menuLabels(g), want)
 	}
 	menuAct(g, "Move up")
@@ -121,13 +129,13 @@ func TestMemberMenuMoveUp(t *testing.T) {
 	if !rightClickMember(g, bfp) {
 		t.Fatal("no hit on B")
 	}
-	if want := []string{"Stop hosting", "Move up"}; !reflect.DeepEqual(menuLabels(g), want) {
+	if want := withVolume(g, bfp, "Stop hosting", "Move up"); !reflect.DeepEqual(menuLabels(g), want) {
 		t.Errorf("B items = %v, want %v", menuLabels(g), want)
 	}
 	if !rightClickMember(g, cfp) { // C is now directly under the founder
 		t.Fatal("no hit on C")
 	}
-	if want := []string{"Stop hosting"}; !reflect.DeepEqual(menuLabels(g), want) {
+	if want := withVolume(g, cfp, "Stop hosting"); !reflect.DeepEqual(menuLabels(g), want) {
 		t.Errorf("C items = %v, want %v", menuLabels(g), want)
 	}
 }
@@ -138,10 +146,11 @@ func TestMemberMenuNoMoveUpUnderFounder(t *testing.T) {
 	c := mustIdentity(t)
 	appendHost(t, f, c, 3)
 	g := memberMenuGame(t, f, c)
-	if !rightClickMember(g, identity.Fingerprint(c.PublicKey())) {
+	cfp := identity.Fingerprint(c.PublicKey())
+	if !rightClickMember(g, cfp) {
 		t.Fatal("no hit on the member row")
 	}
-	if want := []string{"Stop hosting"}; !reflect.DeepEqual(menuLabels(g), want) {
+	if want := withVolume(g, cfp, "Stop hosting"); !reflect.DeepEqual(menuLabels(g), want) {
 		t.Errorf("items = %v, want %v", menuLabels(g), want)
 	}
 }
@@ -184,7 +193,7 @@ func TestMemberMenuNonFounderNone(t *testing.T) {
 	if !rightClickMember(g, identity.Fingerprint(m.PublicKey())) {
 		t.Fatal("no hit on the member row")
 	}
-	if g.menu.open {
-		t.Errorf("menu opened for a non-founder: %v", menuLabels(g))
+	if want := withVolume(g, identity.Fingerprint(m.PublicKey())); !reflect.DeepEqual(menuLabels(g), want) {
+		t.Errorf("non-founder menu = %v, want only the volume rows", menuLabels(g))
 	}
 }

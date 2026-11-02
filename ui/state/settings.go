@@ -32,6 +32,8 @@ type Settings struct {
 	CameraDevice string `toml:"camera_device,omitempty"` // "" = system default
 
 	ShareQuality string `toml:"share_quality,omitempty"` // "720p" (default) or "1080p"; see ShareQualityID
+
+	Volumes map[string]int `toml:"volumes,omitempty"` // fingerprint -> playback percent; absent = 100 (see VolumePct)
 }
 
 // CurvatureEnabled reports whether the CRT curvature is on; unset means on.

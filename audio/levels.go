@@ -43,28 +43,57 @@ func Decay(level float64, elapsed time.Duration) float64 {
 	return level * math.Pow(0.5, float64(elapsed)/float64(levelHalfLife))
 }
 
-// Mix sums streams sample by sample into dst with saturation clipping
-// (never wraps). Streams shorter than dst count as silence.
-func Mix(dst []int16, streams ...[]int16) {
+// Mix sums streams sample by sample into dst, scaling stream i by gains[i]
+// (nil gains = unity), then soft-limits the sum. Streams shorter than dst
+// count as silence.
+func Mix(dst []int16, streams [][]int16, gains []float64) {
 	for i := range dst {
-		var acc int32
-		for _, s := range streams {
-			if i < len(s) {
-				acc += int32(s[i])
+		var acc float64
+		for j, s := range streams {
+			if i >= len(s) {
+				continue
 			}
+			g := 1.0
+			if j < len(gains) {
+				g = gains[j]
+			}
+			acc += float64(s[i]) * g
 		}
-		dst[i] = clip(acc)
+		dst[i] = softLimit(acc)
 	}
 }
 
-func clip(v int32) int16 {
-	if v > math.MaxInt16 {
-		return math.MaxInt16
+// ApplyGain scales pcm in place by gain and soft-limits it. Unity gain is a
+// no-op, so an untouched stream stays bit-exact.
+func ApplyGain(pcm []int16, gain float64) {
+	if gain == 1 {
+		return
 	}
-	if v < math.MinInt16 {
-		return math.MinInt16
+	for i, s := range pcm {
+		pcm[i] = softLimit(float64(s) * gain)
 	}
-	return int16(v)
+}
+
+// limiterKnee is where the soft limiter starts to bend, as a fraction of
+// full scale.
+const limiterKnee = 0.75
+
+// softLimit maps a sample (int16 units, possibly far past full scale) into
+// int16 without hard clipping. Below limiterKnee of full scale it is the
+// identity; above, a tanh curve with matching slope at the knee approaches
+// full scale asymptotically, so gains over 100% and summed speakers round
+// off peaks instead of squaring them.
+func softLimit(v float64) int16 {
+	const top = math.MaxInt16
+	const knee = limiterKnee * top
+	a := math.Abs(v)
+	if a > knee {
+		a = knee + (top-knee)*math.Tanh((a-knee)/(top-knee))
+	}
+	if v < 0 {
+		a = -a
+	}
+	return int16(math.Round(a))
 }
 
 // Meter is a smoothed 0..1 level: it jumps up instantly and decays over

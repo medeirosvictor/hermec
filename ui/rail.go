@@ -216,7 +216,7 @@ func (g *game) updateRail() {
 // (x, y). A right press opens the tile menu; a left press acts on the target.
 func (g *game) clickRail(h state.Hit, ok, right bool, x, y float64) {
 	if right {
-		if ok && h.Kind == state.HitMember {
+		if ok && (h.Kind == state.HitMember || h.Kind == state.HitOccupant || h.Kind == state.HitLive || h.Kind == state.HitCallParticipant) {
 			g.openMemberMenu(h.Key, x, y)
 		}
 		if ok && (h.Kind == state.HitRailTile || h.Kind == state.HitRailRetry) && h.ID >= 0 && h.ID < len(g.servers) {
