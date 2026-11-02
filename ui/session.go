@@ -28,6 +28,8 @@ type session struct {
 	lastErr        string    // that dial's error, for the tooltip and the failed pane
 	activeOnly     bool      // the next dial tries only the active host (after active_alive)
 
+	rejoin state.Rejoin // the voice call to rejoin once reconnected (rejoin.go)
+
 	// Host failover (hosts.go). The host serving the session is st.HostedBy.
 	warm        *client.Client // warm session to the standby; nil = none
 	standby     proto.HostInfo // the standby as last announced; zero = none
@@ -294,6 +296,7 @@ func (g *game) disconnect(key string) {
 		return
 	}
 	viewed := g.curKey == key
+	s.rejoin.Cancel()
 	g.endVoiceFor(key) // closing the client ends its call server-side
 	g.dropWarm(s)
 	if s.c != nil {
@@ -458,6 +461,7 @@ func (g *game) applyDial(r dialResult) {
 		var se *client.ServerError
 		if errors.As(r.err, &se) && noRetryCode(se.Code) {
 			s.retryAt = time.Time{} // retrying cannot help; the tile's ↻ still can
+			s.rejoin.Cancel()
 			return
 		}
 		s.scheduleRetry(time.Now())
@@ -494,6 +498,9 @@ func (g *game) applyDial(r dialResult) {
 	s.restoreSendNotice()
 	if carried != "" {
 		s.st.SetInCall(carried) // SetConnected cleared it; the call moves with the dial
+	}
+	if carried == "" {
+		g.rejoinVoice(s)
 	}
 }
 

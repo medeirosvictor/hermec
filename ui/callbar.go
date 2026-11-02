@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"math"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -36,6 +37,8 @@ type voiceResult struct {
 	mic           *audio.Meter
 	spk           *audio.Meters
 	notice        string // device fallback notice, shown on a successful join
+	muted         bool   // the call starts muted
+	rejoin        bool   // an automatic rejoin after a reconnect
 	inDev, outDev string // the devices actually opened ("" = default)
 }
 
@@ -131,11 +134,18 @@ func (g *game) clickVoice(ch string) {
 	}
 }
 
-// joinCall leaves the current call (on whichever session holds it), then
-// opens the devices and joins ch on the viewed session, all in one goroutine;
-// the result arrives on voiceCh.
-func (g *game) joinCall(ch string) {
-	s := g.cur()
+// joinCall joins ch on the viewed session; see joinCallOn.
+func (g *game) joinCall(ch string) { g.joinCallOn(g.cur(), ch, false, false) }
+
+// joinCallOn leaves the current call (on whichever session holds it), then
+// opens the devices and joins ch on s, starting muted if muted, all in one
+// goroutine; the result arrives on voiceCh. rejoin marks an automatic rejoin
+// after a reconnect, which words its status differently. Any call joined
+// cancels the pending rejoins: the user's newest choice wins.
+func (g *game) joinCallOn(s *session, ch string, muted, rejoin bool) {
+	for _, o := range g.sess {
+		o.rejoin.Cancel()
+	}
 	c := s.c
 	g.endCallMedia()
 	var oldC *client.Client // the call to leave first, if any
@@ -161,7 +171,7 @@ func (g *game) joinCall(ch string) {
 	s.st.Status = ""
 	g.logf("joining voice %s on %s", ch, s.url)
 	go func(key string, s *session) { // reads no session field
-		res := voiceResult{key: key, s: s, c: c, channel: ch}
+		res := voiceResult{key: key, s: s, c: c, channel: ch, muted: muted, rejoin: rejoin}
 		if oldC != nil && oldC != c {
 			leaveVoice(oldC)
 		}
@@ -181,7 +191,7 @@ func (g *game) joinCall(ch string) {
 		applyMicGain(src, micGain)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if err := c.JoinVoice(ctx, ch, src, sink); err != nil {
+		if err := c.JoinVoiceMuted(ctx, ch, src, sink, muted); err != nil {
 			closeAll(asCloser(src), asCloser(sink))
 			res.err = err
 			g.voiceCh <- res
@@ -307,13 +317,20 @@ func (g *game) applyVoice(r voiceResult) {
 	case r.err != nil:
 		g.logf("voice join failed on %s: %v", s.url, r.err)
 		s.st.Status = state.VoiceJoinNotice(r.err)
+		if r.rejoin {
+			s.st.Status = state.RejoinFailNotice(r.err)
+		}
 	default:
 		g.logf("joined voice %s on %s", r.channel, s.url)
-		g.vc = voiceCall{start: time.Now(), src: r.src, sink: r.sink, mic: r.mic, spk: r.spk, inDev: r.inDev, outDev: r.outDev}
+		g.vc = voiceCall{start: time.Now(), muted: r.muted, src: r.src, sink: r.sink, mic: r.mic, spk: r.spk, inDev: r.inDev, outDev: r.outDev}
 		g.callKey = s.key
 		s.st.SetInCall(r.channel)
-		if r.notice != "" {
-			s.st.Status = r.notice
+		status := r.notice
+		if r.rejoin {
+			status = strings.TrimSuffix(state.RejoinedNotice+"; "+r.notice, "; ")
+		}
+		if status != "" {
+			s.st.Status = status
 		}
 	}
 }

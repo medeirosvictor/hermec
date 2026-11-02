@@ -474,6 +474,7 @@ func (g *game) onMove(s *session, m *proto.Move) {
 // reconnect.
 func (g *game) connLost(s *session) {
 	g.logf("connection to %s lost", s.url)
+	g.rememberCall(s) // before the call is torn down
 	g.dropWarm(s)
 	s.st.Apply(client.Event{}, false)
 	g.interruptChats(s, s.c, "connection lost before confirmation")

@@ -208,6 +208,13 @@ func (c *Client) JoinVoice(ctx context.Context, channel string, src AudioSource,
 	return c.joinCall(ctx, channel, src, sink, false, nil)
 }
 
+// JoinVoiceMuted is JoinVoice with the call starting muted (or not): the
+// server hears the mute before any audio flows, unlike JoinVoice followed by
+// SetMuted.
+func (c *Client) JoinVoiceMuted(ctx context.Context, channel string, src AudioSource, sink AudioSink, muted bool) error {
+	return c.joinCall(ctx, channel, src, sink, muted, nil)
+}
+
 // joinCall is JoinVoice with a call's carried-over state: muted starts the call
 // muted, vid puts a video sender on its PeerConnections, and warm, if set, is
 // an already-connected PeerConnection the call negotiates its media on.
