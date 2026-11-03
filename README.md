@@ -175,11 +175,14 @@ whether a newer version exists (development builds never make this request or
 download anything). It sends no identifiers beyond a normal HTTPS request. On
 Windows and Linux the app then downloads the new release in the background and
 verifies it: the release's `SHA256SUMS.txt` must carry a valid Ed25519
-signature (`SHA256SUMS.txt.sig`, key embedded in the app) and the download's
-SHA-256 must match it, otherwise nothing is installed. When it is ready the
+signature for that release's tag (`SHA256SUMS.txt.sig`, key embedded in the
+app), the tag must be newer than the running version, and the download's
+SHA-256 must match it, otherwise nothing is installed. Only one running copy
+downloads or installs at a time. When it is ready the
 banner and the "update" row in Settings (gear tile or F10) say "restart to
-update"; clicking (or Ctrl+U) swaps the new binary in, restarts into it, and the
-old one is removed on the next start. If the download or check fails, or the
+update"; clicking (or Ctrl+U) swaps the new binary in and restarts into it; the
+old one is kept as `hermec.exe.old` / `hermec.old` until the new build has
+started, then removed. If the download or check fails, or the
 install folder is not writable, you get the old behaviour: a link to the
 Releases page. If a server refuses you with a version mismatch and its build is
 newer than yours, the banner offers "update now" (Ctrl+U) to fetch it. See
@@ -187,7 +190,8 @@ newer than yours, the banner offers "update now" (Ctrl+U) to fetch it. See
 
 macOS builds never update themselves: the banner links to the Releases page and
 you rebuild with `scripts/build-mac.sh`. Dedicated servers are also updated by
-hand with `update.sh` (see [docs/dedicated-hosting.md](docs/dedicated-hosting.md)).
+hand with the installed `update.sh`, which verifies the signed release by default
+(see [docs/dedicated-hosting.md](docs/dedicated-hosting.md)).
 
 ## Development
 

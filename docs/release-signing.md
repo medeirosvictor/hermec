@@ -8,8 +8,14 @@ matching public key (`update.PublicKey`), and installs an update only when
 1. the signature of `SHA256SUMS.txt` verifies under that key, and
 2. the SHA-256 of the downloaded artifact equals its line in that file.
 
-The signature is base64 of `ed25519.Sign(priv, "hermec-release-sums-v1\x00" ||
-sums_bytes)`; the fixed prefix keeps it from being valid for anything else.
+The signature is base64 of `ed25519.Sign(priv, "hermec-release-v2\x00" || tag ||
+"\x00" || sums_bytes)`. The fixed prefix keeps it from being valid for
+anything else, and the release tag (for example `v0.3.0`) is part of the signed
+bytes, so a validly signed `SHA256SUMS.txt` of an older release cannot be
+replayed as a newer one: the app verifies against the tag it is installing,
+requires that tag to be a strict `vX.Y.Z` newer than the running build, and
+`update.sh` requires the tag to be newer than the installed server. The old
+`hermec-release-sums-v1` format (no tag) is never accepted.
 
 Until `update.PublicKey` is set to a real key the app fails closed: it never
 installs an update (it still shows the banner and links to the Releases page),
@@ -17,6 +23,14 @@ and the release workflow's "Verify signature against the embedded public key"
 step fails.
 
 ## One-time setup
+
+**Step 0, before the first release can ship: generate the key, set
+`update.PublicKey`, and add the `HERMEC_RELEASE_KEY` secret (steps 1 to 3
+below).** Until all three are done every tagged release fails at the "Verify
+signature against the embedded public key" step (or earlier, at "Sign
+checksums", if the secret is missing). That is intended: the workflow refuses
+to publish a release that no installed app could verify. No release has been
+signed yet, so nothing needs to stay compatible with an earlier format.
 
 1. Generate the key on a trusted machine (not in CI):
 
@@ -41,10 +55,11 @@ shipping updates nobody can install.
 
 ## Checking a release by hand
 
-    go run ./cmd/hermec-release verify SHA256SUMS.txt        # embedded key
-    go run ./cmd/hermec-release verify -pub <base64> SHA256SUMS.txt
+    go run ./cmd/hermec-release verify -tag v0.3.0 SHA256SUMS.txt        # embedded key
+    go run ./cmd/hermec-release verify -tag v0.3.0 -pub <base64> SHA256SUMS.txt
 
-`SHA256SUMS.txt.sig` must sit next to the sums file. Then `sha256sum -c
+`-tag` is required (CI signs with `sign -tag "$TAG"`) and `verify` prints the
+tag it checked. `SHA256SUMS.txt.sig` must sit next to the sums file. Then `sha256sum -c
 --ignore-missing SHA256SUMS.txt` checks the downloaded artifacts.
 
 ## Rotating the key
@@ -58,7 +73,7 @@ release that is still signed with the **old** key:
    old one). Apps running N-1 verify it, update, and now trust the new key.
    The workflow's verify step would fail here (it checks against the embedded
    new key), so run that one release with the verify step temporarily
-   pointing at the old public key (`verify -pub <old>`).
+   pointing at the old public key (`verify -tag "$TAG" -pub <old>`).
 3. Replace the `HERMEC_RELEASE_KEY` secret with the new key. Release N+1 and
    later are signed with it.
 
@@ -68,5 +83,7 @@ hand.
 
 ## Dedicated servers
 
-`update.sh` does not use the embedded key unless it is given the verifier; see
+`update.sh` verifies by default, using the `hermec-release` that `install.sh`
+put in the root-owned `/usr/local/lib/hermec/` (the key compiled into that
+tool), never a tool from the archive being verified; see
 [docs/dedicated-hosting.md](dedicated-hosting.md#updating-a-signed-release).

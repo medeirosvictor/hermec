@@ -73,17 +73,20 @@ Roadmap: [PLAN.md](PLAN.md).
   4. DONE 2026-11-03, untested on a real release (PLAN item 3 updater;
      unit tests and loopback httptest only): Windows/Linux auto-updater,
      `cmd/hermec-release` (keygen/sign/verify), signed `SHA256SUMS.txt`
-     in `release.yml`, `update.sh` signed-release check. To go live, Victor
-     must: run `hermec-release keygen`, set `update.PublicKey`
+     in `release.yml` (signature bound to the release tag, so replay of an
+     older release fails), `update.sh` verifying by default with the installed
+     root-owned tool. Security review fixes applied. To go live, Victor
+     must (step 0): run `hermec-release keygen`, set `update.PublicKey`
      (`update/verify.go`), add the `HERMEC_RELEASE_KEY` secret
      ([docs/release-signing.md](docs/release-signing.md)); until then the app
      fails closed (link only) and the release workflow's verify step fails.
      Hand test with two real releases: install vN on Windows (and Linux),
      publish vN+1, confirm background download, "restart to update", the
-     relaunch with the same args, `.old`/`.new` removal on the next start, a
+     relaunch with the same args, `.old` kept until the new build has started
+     and then removed, a
      read-only install folder falling back to the link, a version_mismatch
-     against a vN+1 server offering "update now", and `update.sh` with
-     `HERMEC_SUMS`. Not covered: macOS (manual by design), the real GitHub
+     against a vN+1 server offering "update now", and the installed `update.sh` with
+     `HERMEC_SUMS`/`HERMEC_ARCHIVE`/`HERMEC_TAG`. Not covered: macOS (manual by design), the real GitHub
      redirect host (`release-assets.githubusercontent.com` or
      `objects.githubusercontent.com`, both allowed), Windows Defender or
      SmartScreen reacting to a renamed/relaunched unsigned exe.

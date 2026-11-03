@@ -243,31 +243,61 @@ starting:
 Confirm the expected server ID from `-check` before starting. If the server ID
 changes, stop and restore the original key and chain together.
 
-Update with `sudo ./update.sh update ./hermec-server`. It copies the candidate
-once into a root-owned staging file, validates that copy while the service runs
-(as the `hermec` user in a time- and memory-limited `systemd-run` sandbox, never
-as root), installs exactly that copy, and rolls back on failure. Verify the
-archive checksum before running it: validation does not prove where the binary
-came from (see "Updating a signed release" below to have the script check it).
-Use `sudo ./update.sh rollback` for manual rollback. If text works but calls fail,
+Update with the installed script (see "Updating a signed release" below):
+`sudo /usr/local/lib/hermec/update.sh update`. It verifies the release first,
+then stages the new server binary into a root-owned file, validates that file
+while the service runs (as the `hermec` user in a time- and memory-limited
+`systemd-run` sandbox, never as root), installs exactly that file, and rolls
+back on failure. Use `sudo /usr/local/lib/hermec/update.sh rollback` for manual
+rollback. If text works but calls fail,
 check inbound/outbound UDP, guest/provider firewalls, NAT and `public_ip`. If
 the server ID changes, stop and restore the original key and chain together.
 
 ### Updating a signed release
 
+`install.sh` copies `hermec-release` and `update.sh` into
+`/usr/local/lib/hermec/` (root-owned, mode 0755). Those installed copies are
+the only ones to run: `update.sh` verifies with
+`/usr/local/lib/hermec/hermec-release` by absolute path and refuses to run it
+if that directory is writable by anyone but root. Never run a `hermec-release`
+or `update.sh` that came out of the archive you are about to verify.
+
 Each release carries `SHA256SUMS.txt` and a detached Ed25519 signature
-`SHA256SUMS.txt.sig` (see [release-signing.md](release-signing.md)). Download
-both next to the server archive, unpack the archive, and give `update.sh` the
-three paths; it then installs the candidate only if the signature verifies, the
-archive is listed in the signed sums with a matching SHA-256, and the candidate
-is byte-identical to the `hermec-server` inside that archive:
+`SHA256SUMS.txt.sig` (see [release-signing.md](release-signing.md)). The
+signature covers the release tag as well as the checksums, so an older release
+cannot be passed off as a newer one. To update to, say, `v0.3.0`:
 
-    sudo HERMEC_SUMS=./SHA256SUMS.txt          HERMEC_ARCHIVE=./hermec-server-linux-amd64.tar.gz          HERMEC_RELEASE_TOOL=./hermec-release          ./update.sh update ./hermec-server
+1. Download the server archive, `SHA256SUMS.txt` and `SHA256SUMS.txt.sig` from
+   that release into a fresh directory. Do not unpack the archive.
+2. Verify the signature with the **installed** tool:
 
-`hermec-release` ships in the server archive. It verifies against the public
-key compiled into it; the copy you just unpacked is only as trustworthy as that
-download, so for a firm guarantee use a copy from an earlier verified install
-or pin the key you recorded from the project with
-`HERMEC_RELEASE_PUB=<base64 public key>`. Without `HERMEC_SUMS` the script
-behaves as before (no signature check). Updating dedicated servers stays
-manual; the desktop app's auto-updater never touches them.
+       /usr/local/lib/hermec/hermec-release verify -tag v0.3.0 SHA256SUMS.txt
+       sha256sum -c --ignore-missing SHA256SUMS.txt
+
+   `verify` prints `signature ok for tag v0.3.0`; the second command checks
+   the archive you downloaded against the signed list.
+3. Run the **installed** update script with the three inputs (it repeats the
+   checks, then extracts `hermec-server` from its own private copy of the
+   archive, so nothing you unpack yourself is ever installed):
+
+       sudo HERMEC_SUMS=./SHA256SUMS.txt \
+            HERMEC_ARCHIVE=./hermec-server-linux-amd64.tar.gz \
+            HERMEC_TAG=v0.3.0 \
+            /usr/local/lib/hermec/update.sh update
+
+The script refuses unless the signature verifies for `HERMEC_TAG`, the archive
+is listed exactly once in the signed sums with a matching SHA-256, the archive
+has `hermec-server` at its root, the server reports `hermec-server v0.3.0`,
+and `v0.3.0` is newer than the installed server. To reinstall or go back on
+purpose (the older release must still be validly signed) set
+`HERMEC_ALLOW_DOWNGRADE=1`.
+
+`HERMEC_UNSIGNED=1 /usr/local/lib/hermec/update.sh update /path/to/hermec-server`
+skips all verification and prints a loud warning; use it only for a binary you
+built yourself.
+
+The very first install has no installed tool yet. Check the download against
+`hermec-release` built from this repository's source at the release tag
+(`go run ./cmd/hermec-release verify -tag <tag> SHA256SUMS.txt`) before
+running `install.sh`. Updating dedicated servers stays manual; the desktop
+app's auto-updater never touches them.

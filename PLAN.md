@@ -61,10 +61,11 @@ runs in parallel whenever the EC2 instance is ready.
      Linux. Builds must match exactly, so updating the host forces everyone
      to update. CI signs `SHA256SUMS.txt` (Ed25519, secret
      `HERMEC_RELEASE_KEY`); the app downloads in the background, verifies
-     signature then SHA-256, stages `<exe>.new`, and "Restart to update" swaps
-     it in (rolling back on failure). A version_mismatch from a newer server
+     signature (bound to the tag; the tag must be newer) then SHA-256, stages
+     `<exe>.new` under an update lock, and "Restart to update" re-hashes it and
+     swaps it in (rolling back on failure). A version_mismatch from a newer server
      offers "update now". macOS and dedicated servers stay manual
-     (`update.sh` verifies the signed sums when given them). Fails closed
+     (the installed, root-owned `update.sh` verifies the signed release by default). Fails closed
      until `update.PublicKey` is set; see docs/release-signing.md.
 4. **Regular-use musts, second wave:**
    - Moderation UI: kick, ban/unban and role grants (the chain and server
