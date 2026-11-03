@@ -28,6 +28,7 @@ import (
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/ui/theme"
 	"github.com/medeirosvictor/hermec/update"
+	"github.com/medeirosvictor/hermec/version"
 )
 
 // Options configures Run.
@@ -191,13 +192,16 @@ type game struct {
 	checkFn   func(context.Context, string) (update.Available, bool, error) // nil = update.Latest
 	openFn    func(string)                                                  // nil = openURL
 
-	dlCh        chan error                                    // result of the background update download
-	updCancel   context.CancelFunc                            // cancels that download
-	updOffer    string                                        // a newer server build refused us: the banner offers "update now"
-	restart     bool                                          // an update is installed: quit, then start the new binary
-	downloadFn  func(context.Context, update.Available) error // nil = update.Download at the running version
-	applyFn     func() error                                  // nil = update.Apply
-	supportedFn func() bool                                   // nil = update.Supported
+	dlCh        chan dlResult                                                     // result of the background update download
+	updCancel   context.CancelFunc                                                // cancels that download
+	updOffer    string                                                            // a newer server build refused us: the banner offers "update now"
+	updSum      [32]byte                                                          // SHA-256 of the downloaded binary; Apply re-checks it
+	restart     bool                                                              // an update is installed: quit, then start the new binary
+	relaunch    string                                                            // path Apply installed to; the new build is started from it
+	started     bool                                                              // the first Update ran; the previous binary may go
+	downloadFn  func(context.Context, update.Available, string) ([32]byte, error) // nil = update.Download
+	applyFn     func([32]byte) (string, error)                                    // nil = update.Apply
+	supportedFn func() bool                                                       // nil = update.Supported
 
 	shareOps shareOps   // seams for capture, client and window; zero = real
 	share    shareState // our own screen share
@@ -317,7 +321,7 @@ func Run(opts Options) error {
 		g.setLogWriter(opts.LogFile)
 	}
 	g.logStartup()
-	g.updateCh, g.dlCh = make(chan updateResult, 1), make(chan error, 1)
+	g.updateCh, g.dlCh = make(chan updateResult, 1), make(chan dlResult, 1)
 	g.startUpdateCheck()
 	g.muteCh, g.muteFailCh = make(chan muteReq, 1), make(chan muteFail, 4)
 	go g.muteWorker()
@@ -387,7 +391,7 @@ func Run(opts Options) error {
 	g.cancelDedicated()
 	g.closeSessions()
 	if g.restart {
-		if rerr := update.Relaunch(); rerr != nil {
+		if rerr := update.Relaunch(g.relaunch); rerr != nil {
 			g.logf("restart after update failed: %v", rerr)
 		}
 	}
@@ -408,6 +412,13 @@ func (g *game) closeSessions() {
 func (g *game) Update() error {
 	if g.restart {
 		return ebiten.Termination
+	}
+	if !g.started {
+		g.started = true
+		if version.Version != "dev" {
+			// This build came up: the previous binary kept for recovery can go.
+			go update.Started()
+		}
 	}
 	g.frame++
 	g.fullscreen = ebiten.IsFullscreen()

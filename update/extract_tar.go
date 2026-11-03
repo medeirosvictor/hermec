@@ -6,19 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path"
 )
 
 // extractTarGz is extractZip for a .tar.gz. The total inflated size is capped
 // so a compression bomb cannot fill the disk through the other entries.
-func extractTarGz(file, bin string, w io.Writer) error {
-	f, err := os.Open(file)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
+func extractTarGz(r io.Reader, bin string, w io.Writer) error {
+	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return err
 	}

@@ -37,14 +37,14 @@ func copyBinary(w io.Writer, r io.Reader) error {
 	return nil
 }
 
-// extractZip writes the entry named bin (at the archive root) of the zip at
-// file to w. Any unsafe or non-regular entry anywhere rejects the archive.
-func extractZip(file, bin string, w io.Writer) error {
-	zr, err := zip.OpenReader(file)
+// extractZip writes the entry named bin (at the archive root) of the zip in r
+// (size bytes) to w. Any unsafe or non-regular entry anywhere rejects the
+// archive.
+func extractZip(r io.ReaderAt, size int64, bin string, w io.Writer) error {
+	zr, err := zip.NewReader(r, size)
 	if err != nil {
 		return err
 	}
-	defer zr.Close()
 	var found *zip.File
 	for _, f := range zr.File {
 		if !safeName(f.Name) {

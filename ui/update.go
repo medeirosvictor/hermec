@@ -36,6 +36,13 @@ const (
 	updReady                           // the new binary is staged; acting on it restarts into it
 )
 
+// dlResult is what one background download sends back on g.dlCh: the SHA-256
+// of the staged binary, or why there is none.
+type dlResult struct {
+	sum [32]byte
+	err error
+}
+
 // updateResult is what one release check sends back on g.updateCh.
 type updateResult struct {
 	a     update.Available
@@ -137,10 +144,12 @@ func (g *game) pollUpdate() {
 	default:
 	}
 	select {
-	case err := <-g.dlCh:
+	case r := <-g.dlCh:
 		g.cancelUpdate()
+		err := r.err
 		switch {
 		case err == nil:
+			g.updSum = r.sum
 			g.updStatus = updReady
 			g.logf("update %s downloaded and verified", g.update.Version)
 		case errors.Is(err, update.ErrNotWritable):
@@ -170,13 +179,15 @@ func (g *game) startDownload() {
 	ctx, cancel := context.WithCancel(context.Background())
 	g.updCancel = cancel
 	g.updStatus = updDownloading
-	a, dl, ch := *g.update, g.downloadFn, g.dlCh
+	a, dl, ch, cur := *g.update, g.downloadFn, g.dlCh, g.version()
 	if dl == nil {
-		cur := g.version()
-		dl = func(ctx context.Context, a update.Available) error { return update.Download(ctx, a, cur) }
+		dl = update.Download
 	}
 	g.logf("downloading update %s", a.Version)
-	go func() { ch <- dl(ctx, a) }()
+	go func() {
+		sum, err := dl(ctx, a, cur)
+		ch <- dlResult{sum: sum, err: err}
+	}()
 }
 
 // cancelUpdate stops a download in flight and releases its context.
@@ -193,21 +204,30 @@ func (g *game) updateNote(msg string) {
 	g.cur().st.Status = msg
 }
 
-// applyUpdate swaps the staged binary in and quits so Run can start it. A
-// failed swap is rolled back by update.Apply; the releases page stays the
-// fallback.
+// applyUpdate swaps the staged binary in and quits so Run can start it from
+// the path Apply installed to. A failed swap is rolled back by update.Apply;
+// the releases page stays the fallback. If even the rollback failed the
+// program file is gone from its place, and the message says where the previous
+// one is.
 func (g *game) applyUpdate() {
 	apply := g.applyFn
 	if apply == nil {
 		apply = update.Apply
 	}
-	if err := apply(); err != nil {
+	path, err := apply(g.updSum)
+	if err != nil {
 		g.logf("update apply failed: %v", err)
 		g.updStatus = updAvailable
+		var missing *update.MissingError
+		if errors.As(err, &missing) {
+			g.updateNote("the update failed and hermec's program file is missing — rename " + missing.Old + " back to " + missing.Exe + " to recover")
+			return
+		}
 		g.updateNote("couldn't install the update — ctrl+u opens the releases page")
 		return
 	}
 	g.logf("update %s installed; restarting", g.update.Version)
+	g.relaunch = path
 	g.restart = true
 }
 

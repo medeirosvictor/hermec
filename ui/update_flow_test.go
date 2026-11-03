@@ -2,8 +2,10 @@ package ui
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +20,7 @@ func updGame(t *testing.T) *game {
 	t.Helper()
 	g := newTestGame(t)
 	g.ver = "v0.2.0"
-	g.updateCh, g.dlCh = make(chan updateResult, 1), make(chan error, 1)
+	g.updateCh, g.dlCh = make(chan updateResult, 1), make(chan dlResult, 1)
 	g.supportedFn = func() bool { return true }
 	g.openFn = func(string) {}
 	return g
@@ -44,13 +46,15 @@ func TestUpdateFlowDownloadThenRestart(t *testing.T) {
 	g.checkFn = func(context.Context, string) (update.Available, bool, error) {
 		return update.Available{Version: "v0.3.0", URL: "https://github.com/medeirosvictor/hermec/releases/tag/v0.3.0"}, true, nil
 	}
-	g.downloadFn = func(_ context.Context, a update.Available) error {
-		got = a
+	var gotCur string
+	g.downloadFn = func(_ context.Context, a update.Available, cur string) ([32]byte, error) {
+		got, gotCur = a, cur
 		<-release
-		return nil
+		return sha256.Sum256([]byte("NEW")), nil
 	}
 	applied := 0
-	g.applyFn = func() error { applied++; return nil }
+	var applyWant [32]byte
+	g.applyFn = func(want [32]byte) (string, error) { applied++; applyWant = want; return "/opt/hermec/hermec", nil }
 
 	g.startUpdateCheck()
 	if g.updStatus != updChecking {
@@ -70,8 +74,8 @@ func TestUpdateFlowDownloadThenRestart(t *testing.T) {
 
 	close(release)
 	pollUntil(t, g, func() bool { return g.updStatus == updReady })
-	if got.Version != "v0.3.0" {
-		t.Fatalf("download got %+v", got)
+	if got.Version != "v0.3.0" || gotCur != "v0.2.0" {
+		t.Fatalf("download got %+v at %q", got, gotCur)
 	}
 	if want := "update:    restart to update to v0.3.0 ›"; updateRowLabel(g.updStatus, g.update, g.version()) != want {
 		t.Fatalf("row = %q", updateRowLabel(g.updStatus, g.update, g.version()))
@@ -83,6 +87,11 @@ func TestUpdateFlowDownloadThenRestart(t *testing.T) {
 	if applied != 1 || !g.restart {
 		t.Fatalf("applied=%d restart=%v", applied, g.restart)
 	}
+	// Apply re-checks the hash Download reported, and the relaunch goes to the
+	// path Apply installed to.
+	if applyWant != sha256.Sum256([]byte("NEW")) || g.relaunch != "/opt/hermec/hermec" {
+		t.Fatalf("applyWant=%x relaunch=%q", applyWant, g.relaunch)
+	}
 	if err := g.Update(); err == nil {
 		t.Fatal("Update must end the game once an update is installed")
 	}
@@ -90,7 +99,9 @@ func TestUpdateFlowDownloadThenRestart(t *testing.T) {
 
 func TestUpdateDownloadFailureFallsBackToLink(t *testing.T) {
 	g := updGame(t)
-	g.downloadFn = func(context.Context, update.Available) error { return errors.New("signature does not match") }
+	g.downloadFn = func(context.Context, update.Available, string) ([32]byte, error) {
+		return [32]byte{}, errors.New("signature does not match")
+	}
 	var opened []string
 	g.openFn = func(u string) { opened = append(opened, u) }
 	g.updateCh <- updateResult{a: update.Available{Version: "v0.3.0", URL: "https://x/rel"}, found: true}
@@ -110,7 +121,9 @@ func TestUpdateDownloadFailureFallsBackToLink(t *testing.T) {
 
 func TestUpdateNotWritableExplains(t *testing.T) {
 	g := updGame(t)
-	g.downloadFn = func(context.Context, update.Available) error { return fmt.Errorf("x: %w", update.ErrNotWritable) }
+	g.downloadFn = func(context.Context, update.Available, string) ([32]byte, error) {
+		return [32]byte{}, fmt.Errorf("x: %w", update.ErrNotWritable)
+	}
 	g.updateCh <- updateResult{a: update.Available{Version: "v0.3.0"}, found: true}
 	pollUntil(t, g, func() bool { return g.updStatus == updDownloading })
 	pollUntil(t, g, func() bool { return g.updStatus == updAvailable })
@@ -122,10 +135,29 @@ func TestUpdateNotWritableExplains(t *testing.T) {
 func TestUpdateApplyFailureFallsBack(t *testing.T) {
 	g := updGame(t)
 	g.update, g.updStatus = &update.Available{Version: "v0.3.0", URL: "https://x/rel"}, updReady
-	g.applyFn = func() error { return errors.New("rename: access denied") }
+	g.applyFn = func([32]byte) (string, error) { return "", errors.New("rename: access denied") }
 	g.activateUpdate()
 	if g.restart || g.updStatus != updAvailable || g.notice == "" {
 		t.Fatalf("restart=%v status=%v notice=%q", g.restart, g.updStatus, g.notice)
+	}
+}
+
+// If the swap fails with the program file gone, the message says where the
+// previous build is and what to do.
+func TestUpdateApplyMissingExeExplainsRecovery(t *testing.T) {
+	g := updGame(t)
+	g.update, g.updStatus = &update.Available{Version: "v0.3.0", URL: "https://x/rel"}, updReady
+	g.applyFn = func([32]byte) (string, error) {
+		return "", &update.MissingError{Exe: `C:\hermec\hermec.exe`, Old: `C:\hermec\hermec.exe.old`, Err: errors.New("boom")}
+	}
+	g.activateUpdate()
+	if g.restart || g.relaunch != "" {
+		t.Fatalf("restart=%v relaunch=%q", g.restart, g.relaunch)
+	}
+	for _, want := range []string{"missing", `C:\hermec\hermec.exe.old`, `C:\hermec\hermec.exe`} {
+		if !strings.Contains(g.notice, want) {
+			t.Errorf("notice %q lacks %q", g.notice, want)
+		}
 	}
 }
 
@@ -136,9 +168,9 @@ func TestUpdateNoDownloadWhenUnsupportedOrDev(t *testing.T) {
 	} {
 		g := updGame(t)
 		set(g)
-		g.downloadFn = func(context.Context, update.Available) error {
+		g.downloadFn = func(context.Context, update.Available, string) ([32]byte, error) {
 			t.Errorf("%s: downloaded", name)
-			return nil
+			return [32]byte{}, nil
 		}
 		g.updateCh <- updateResult{a: update.Available{Version: "v0.3.0"}, found: true}
 		g.pollUpdate()
@@ -151,10 +183,10 @@ func TestUpdateNoDownloadWhenUnsupportedOrDev(t *testing.T) {
 func TestUpdateQuitCancelsDownload(t *testing.T) {
 	g := updGame(t)
 	ctxCh := make(chan context.Context, 1)
-	g.downloadFn = func(ctx context.Context, _ update.Available) error {
+	g.downloadFn = func(ctx context.Context, _ update.Available, _ string) ([32]byte, error) {
 		ctxCh <- ctx
 		<-ctx.Done()
-		return ctx.Err()
+		return [32]byte{}, ctx.Err()
 	}
 	g.updateCh <- updateResult{a: update.Available{Version: "v0.3.0"}, found: true}
 	g.pollUpdate()
@@ -206,7 +238,7 @@ func TestUpdateNowChecksAndDownloads(t *testing.T) {
 	g.checkFn = func(context.Context, string) (update.Available, bool, error) {
 		return update.Available{Version: "v0.3.0"}, true, nil
 	}
-	g.downloadFn = func(context.Context, update.Available) error { return nil }
+	g.downloadFn = func(context.Context, update.Available, string) ([32]byte, error) { return [32]byte{}, nil }
 	mismatchDial(t, g, "v0.3.0", "v0.2.0")
 	g.activateUpdate()
 	if g.bannerText() != "checking for v0.3.0…" {

@@ -5,9 +5,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"io"
 	"net/url"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -104,19 +103,18 @@ func tarOf(t *testing.T, hdrs []tar.Header, bodies []string) []byte {
 	return b.Bytes()
 }
 
-func writeTemp(t *testing.T, b []byte) string {
-	t.Helper()
-	p := filepath.Join(t.TempDir(), "a")
-	if err := os.WriteFile(p, b, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return p
+func zipExtract(b []byte, bin string, w io.Writer) error {
+	return extractZip(bytes.NewReader(b), int64(len(b)), bin, w)
+}
+
+func tarExtract(b []byte, bin string, w io.Writer) error {
+	return extractTarGz(bytes.NewReader(b), bin, w)
 }
 
 func TestExtractZip(t *testing.T) {
 	ok := zipOf(t, map[string]string{"hermec.exe": "BIN", "README.txt": "r"}, "hermec.exe", "README.txt")
 	var out bytes.Buffer
-	if err := extractZip(writeTemp(t, ok), "hermec.exe", &out); err != nil || out.String() != "BIN" {
+	if err := zipExtract(ok, "hermec.exe", &out); err != nil || out.String() != "BIN" {
 		t.Fatalf("ok: %q %v", out.String(), err)
 	}
 	bad := map[string][]byte{
@@ -130,14 +128,14 @@ func TestExtractZip(t *testing.T) {
 		"notzip":    []byte("hello"),
 	}
 	for name, b := range bad {
-		if err := extractZip(writeTemp(t, b), "hermec.exe", &bytes.Buffer{}); err == nil {
+		if err := zipExtract(b, "hermec.exe", &bytes.Buffer{}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
 	old := maxBinary
 	maxBinary = 2
 	defer func() { maxBinary = old }()
-	if err := extractZip(writeTemp(t, ok), "hermec.exe", &bytes.Buffer{}); err == nil {
+	if err := zipExtract(ok, "hermec.exe", &bytes.Buffer{}); err == nil {
 		t.Error("oversized entry accepted")
 	}
 }

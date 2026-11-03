@@ -10,12 +10,12 @@ func TestExtractTarGz(t *testing.T) {
 	reg := func(n string) tar.Header { return tar.Header{Name: n, Typeflag: tar.TypeReg, Mode: 0o755} }
 	ok := tarOf(t, []tar.Header{reg("hermec"), reg("README.txt")}, []string{"BIN", "r"})
 	var out bytes.Buffer
-	if err := extractTarGz(writeTemp(t, ok), "hermec", &out); err != nil || out.String() != "BIN" {
+	if err := tarExtract(ok, "hermec", &out); err != nil || out.String() != "BIN" {
 		t.Fatalf("ok: %q %v", out.String(), err)
 	}
 	dotSlash := tarOf(t, []tar.Header{reg("./hermec")}, []string{"BIN"})
 	out.Reset()
-	if err := extractTarGz(writeTemp(t, dotSlash), "hermec", &out); err != nil || out.String() != "BIN" {
+	if err := tarExtract(dotSlash, "hermec", &out); err != nil || out.String() != "BIN" {
 		t.Fatalf("./hermec: %q %v", out.String(), err)
 	}
 	sym := tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"}
@@ -32,14 +32,14 @@ func TestExtractTarGz(t *testing.T) {
 		"notgz":     []byte("hello"),
 	}
 	for name, b := range bad {
-		if err := extractTarGz(writeTemp(t, b), "hermec", &bytes.Buffer{}); err == nil {
+		if err := tarExtract(b, "hermec", &bytes.Buffer{}); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
 	old := maxBinary
 	maxBinary = 2
 	defer func() { maxBinary = old }()
-	if err := extractTarGz(writeTemp(t, ok), "hermec", &bytes.Buffer{}); err == nil {
+	if err := tarExtract(ok, "hermec", &bytes.Buffer{}); err == nil {
 		t.Error("oversized entry accepted")
 	}
 }

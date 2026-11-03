@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -86,14 +87,28 @@ func (r *rel) assertNothingStaged() {
 
 func TestDownloadStages(t *testing.T) {
 	r := newRel(t)
-	if err := Download(context.Background(), r.a, relCur); err != nil {
+	sum, err := Download(context.Background(), r.a, relCur)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if got := read(r.exe + ".new"); got != "NEW-BINARY" {
 		t.Fatalf("staged = %q", got)
 	}
+	if sum != sha256.Sum256([]byte("NEW-BINARY")) {
+		t.Fatalf("Download returned %x, not the hash of the extracted binary", sum)
+	}
 	if read(r.exe) != "OLD-BINARY" {
 		t.Fatal("download must not touch the running exe")
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(r.exe), ".hermec-*.part")); len(left) != 0 {
+		t.Fatalf("temp file left behind: %v", left)
+	}
+	// The hash it returned is what Apply wants.
+	if _, err := Apply(sum); err != nil {
+		t.Fatal(err)
+	}
+	if read(r.exe) != "NEW-BINARY" {
+		t.Fatalf("exe = %q", read(r.exe))
 	}
 }
 
@@ -121,7 +136,7 @@ func TestDownloadRefusals(t *testing.T) {
 		"oversized asset":         func(r *rel) { maxAsset = 10 },
 		"unsupported platform":    func(r *rel) { goos = "darwin" },
 		"bad tag":                 func(r *rel) { r.a.Version = "latest" },
-		"nul in tag":             func(r *rel) { r.a.Version = relTag + "\x00" },
+		"nul in tag":              func(r *rel) { r.a.Version = relTag + "\x00" },
 		// A validly signed older release served under the new release's URLs:
 		// its signature is bound to v1.9.0, not v2.0.0.
 		"signature for another tag": func(r *rel) {
@@ -146,7 +161,7 @@ func TestDownloadRefusals(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := newRel(t)
 			mod(r)
-			if err := Download(context.Background(), r.a, relCur); err == nil {
+			if _, err := Download(context.Background(), r.a, relCur); err == nil {
 				t.Fatal("accepted")
 			}
 			r.assertNothingStaged()
@@ -159,7 +174,7 @@ func TestDownloadRefusals(t *testing.T) {
 func TestDownloadRefusesNotNewer(t *testing.T) {
 	for _, cur := range []string{relTag, "v2.0.1", "v3.0.0", "dev", ""} {
 		r := newRel(t)
-		if err := Download(context.Background(), r.a, cur); err == nil {
+		if _, err := Download(context.Background(), r.a, cur); err == nil {
 			t.Errorf("current %q: accepted", cur)
 		}
 		r.assertNothingStaged()
@@ -178,21 +193,85 @@ func TestDownloadRefusesOffListRedirect(t *testing.T) {
 		}
 		inner.ServeHTTP(w, req)
 	})
-	if err := Download(context.Background(), r.a, relCur); err == nil {
+	if _, err := Download(context.Background(), r.a, relCur); err == nil {
 		t.Fatal("redirect to a host outside the allowlist was followed")
 	}
 	r.assertNothingStaged()
 }
 
+// A permission error creating the staging file is ErrNotWritable, and is found
+// out before any request is made.
 func TestDownloadUnwritableFolder(t *testing.T) {
 	r := newRel(t)
-	// A non-empty directory where the staged file belongs cannot be removed or
-	// replaced on any OS, standing in for a read-only install folder.
+	hits := 0
+	inner := r.srv.Config.Handler
+	r.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		hits++
+		inner.ServeHTTP(w, req)
+	})
+	old := createTemp
+	defer func() { createTemp = old }()
+	createTemp = func(string, string) (*os.File, error) {
+		return nil, &fs.PathError{Op: "open", Path: "x", Err: fs.ErrPermission}
+	}
+	if _, err := Download(context.Background(), r.a, relCur); !errors.Is(err, ErrNotWritable) {
+		t.Fatalf("err = %v, want ErrNotWritable", err)
+	}
+	if hits != 0 {
+		t.Fatalf("%d requests made before the folder was found unwritable", hits)
+	}
+	// Other failures are not "not writable".
+	createTemp = func(string, string) (*os.File, error) { return nil, errors.New("disk on fire") }
+	if _, err := Download(context.Background(), r.a, relCur); err == nil || errors.Is(err, ErrNotWritable) {
+		t.Fatalf("err = %v, want a plain error", err)
+	}
+}
+
+// A non-empty directory where the staged file belongs cannot be replaced on any
+// OS: the finished download is not staged, and nothing is left behind.
+func TestDownloadCannotStage(t *testing.T) {
+	r := newRel(t)
 	if err := os.MkdirAll(filepath.Join(r.exe+".new", "keep"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := Download(context.Background(), r.a, relCur); !errors.Is(err, ErrNotWritable) {
-		t.Fatalf("err = %v, want ErrNotWritable", err)
+	if _, err := Download(context.Background(), r.a, relCur); err == nil {
+		t.Fatal("staged over a directory")
+	}
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(r.exe), ".hermec-*.part")); len(left) != 0 {
+		t.Fatalf("temp file left behind: %v", left)
+	}
+}
+
+// Only one instance downloads at a time.
+func TestDownloadBusy(t *testing.T) {
+	r := newRel(t)
+	l, err := lockFile(lockPath(r.exe))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if _, err := Download(context.Background(), r.a, relCur); !errors.Is(err, ErrBusy) {
+		t.Fatalf("err = %v, want ErrBusy", err)
+	}
+	r.assertNothingStaged()
+}
+
+// The staged file appears under its final name only once it is complete: a
+// download that fails during extraction never shows a .new.
+func TestDownloadNeverStagesAPartialFile(t *testing.T) {
+	r := newRel(t)
+	name := "hermec-windows-amd64.zip"
+	r.files[name] = zipOf(t, map[string]string{"hermec.exe": "B", "../evil": "x"}, "hermec.exe", "../evil")
+	sum := sha256.Sum256(r.files[name])
+	priv, _ := testKey(t)
+	r.files[SumsName] = []byte(hex.EncodeToString(sum[:]) + "  " + name + "\n")
+	r.files[SigName] = Sign(priv, relTag, r.files[SumsName])
+	if _, err := Download(context.Background(), r.a, relCur); err == nil {
+		t.Fatal("unsafe archive accepted")
+	}
+	r.assertNothingStaged()
+	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(r.exe), ".hermec-*.part")); len(left) != 0 {
+		t.Fatalf("temp file left behind: %v", left)
 	}
 }
 
@@ -200,7 +279,7 @@ func TestDownloadCancelled(t *testing.T) {
 	r := newRel(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := Download(ctx, r.a, relCur); err == nil {
+	if _, err := Download(ctx, r.a, relCur); err == nil {
 		t.Fatal("cancelled download succeeded")
 	}
 	r.assertNothingStaged()

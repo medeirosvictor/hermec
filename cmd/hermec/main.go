@@ -49,7 +49,7 @@ func main() {
 	log.Printf("hermec %s", version.Version)
 
 	if version.Version != "dev" {
-		update.Cleanup() // leftovers of the update that started this build
+		update.Cleanup() // a staged update that was never installed, and half-written downloads
 	}
 
 	if err := ui.Run(ui.Options{
