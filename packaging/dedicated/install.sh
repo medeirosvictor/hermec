@@ -15,6 +15,13 @@ if ! id hermec >/dev/null 2>&1; then
   useradd --system --home-dir "$STATE" --shell /usr/sbin/nologin hermec
 fi
 install -m 0755 "$HERE/hermec-server" "$BIN"
+# The updater and the release verifier live in a root-owned directory and are
+# the only copies update.sh trusts: it never runs a tool from a freshly
+# downloaded archive. Keep LIB in step with LIBDIR in update.sh.
+LIB=/usr/local/lib/hermec
+install -d -o root -g root -m 0755 "$LIB"
+install -o root -g root -m 0755 "$HERE/hermec-release" "$LIB/hermec-release"
+install -o root -g root -m 0755 "$HERE/update.sh" "$LIB/update.sh"
 if [ ! -e "$STATE" ]; then
   install -d -o hermec -g hermec -m 0700 "$STATE"
   # Bootstrap as the service user. On failure remove the directory created
@@ -36,3 +43,5 @@ echo "  2. set public_dns to the certificate DNS name (and public_ip for 1:1 NAT
 echo "  3. check the installed version: $BIN -version"
 echo "  4. run: $BIN -config $STATE/server.toml -check"
 echo "  5. run: systemctl enable --now hermec-server"
+echo "To update later, verify the new release with $LIB/hermec-release and run $LIB/update.sh"
+echo "(see docs/dedicated-hosting.md, \"Updating a signed release\")."

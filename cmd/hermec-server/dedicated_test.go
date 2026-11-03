@@ -70,7 +70,7 @@ func TestUpdateAndRollbackPreserveState(t *testing.T) {
 	}
 	run := func(args ...string) {
 		cmd := exec.Command("sh", append([]string{script}, args...)...)
-		cmd.Env = append(os.Environ(), "HERMEC_ALLOW_NON_ROOT=1", "HERMEC_BIN="+bin, "HERMEC_PREVIOUS="+previous, "HERMEC_STATE="+state, "HERMEC_SYSTEMCTL="+systemctl, "HERMEC_HEALTH_DELAY=0")
+		cmd.Env = append(os.Environ(), "HERMEC_UNSIGNED=1", "HERMEC_ALLOW_NON_ROOT=1", "HERMEC_BIN="+bin, "HERMEC_PREVIOUS="+previous, "HERMEC_STATE="+state, "HERMEC_SYSTEMCTL="+systemctl, "HERMEC_HEALTH_DELAY=0")
 		if output, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%v: %v\n%s", args, err, output)
 		}
@@ -117,7 +117,7 @@ func TestUpdateRejectsCandidateBeforeStoppingService(t *testing.T) {
 			}
 			cmd := exec.Command("sh", script, "update", candidate)
 			binDir := t.TempDir()
-			cmd.Env = append(os.Environ(), "HERMEC_ALLOW_NON_ROOT=1", "HERMEC_BIN="+filepath.Join(binDir, "hermec-server"), "HERMEC_SYSTEMCTL="+systemctl, "HERMEC_TEST_LOG="+logPath)
+			cmd.Env = append(os.Environ(), "HERMEC_UNSIGNED=1", "HERMEC_ALLOW_NON_ROOT=1", "HERMEC_BIN="+filepath.Join(binDir, "hermec-server"), "HERMEC_SYSTEMCTL="+systemctl, "HERMEC_TEST_LOG="+logPath)
 			if output, err := cmd.CombinedOutput(); err == nil {
 				t.Fatalf("bad candidate accepted: %s", output)
 			}
@@ -163,7 +163,7 @@ func TestUpdateRollsBackAfterPostStartHealthFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("sh", script, "update", candidate)
-	cmd.Env = append(os.Environ(), "HERMEC_ALLOW_NON_ROOT=1", "HERMEC_BIN="+bin, "HERMEC_PREVIOUS="+previous, "HERMEC_SYSTEMCTL="+systemctl, "HERMEC_TEST_STARTS="+starts, "HERMEC_HEALTH_ATTEMPTS=1", "HERMEC_HEALTH_DELAY=0")
+	cmd.Env = append(os.Environ(), "HERMEC_UNSIGNED=1", "HERMEC_ALLOW_NON_ROOT=1", "HERMEC_BIN="+bin, "HERMEC_PREVIOUS="+previous, "HERMEC_SYSTEMCTL="+systemctl, "HERMEC_TEST_STARTS="+starts, "HERMEC_HEALTH_ATTEMPTS=1", "HERMEC_HEALTH_DELAY=0")
 	if output, err := cmd.CombinedOutput(); err == nil {
 		t.Fatalf("unhealthy candidate accepted: %s", output)
 	}

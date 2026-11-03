@@ -40,7 +40,7 @@ exit 0
 		t.Fatal(err)
 	}
 	cmd := exec.Command("sh", script, "update", candidate)
-	cmd.Env = append(os.Environ(), "HERMEC_ALLOW_NON_ROOT=1", "HERMEC_BIN="+bin, "HERMEC_PREVIOUS="+previous,
+	cmd.Env = append(os.Environ(), "HERMEC_UNSIGNED=1", "HERMEC_ALLOW_NON_ROOT=1", "HERMEC_BIN="+bin, "HERMEC_PREVIOUS="+previous,
 		"HERMEC_SYSTEMCTL="+systemctl, "HERMEC_TEST_SOURCE="+candidate)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("update: %v\n%s", err, output)
