@@ -32,6 +32,7 @@ func swapGame(t *testing.T) (g *game, src, sink *fakeSwapper, s *session) {
 	g.callKey = s.key
 	src, sink = &fakeSwapper{}, &fakeSwapper{}
 	g.vc = voiceCall{src: src, sink: sink, inDev: "old-mic", outDev: "old-spk", reqIn: "old-mic", reqOut: "old-spk"}
+	g.set.InputDevice, g.set.OutputDevice = "old-mic", "old-spk" // Settings match the call
 	return g, src, sink, s
 }
 
