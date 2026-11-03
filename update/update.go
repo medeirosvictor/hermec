@@ -21,15 +21,16 @@ var endpoint = "https://api.github.com/repos/medeirosvictor/hermec/releases/late
 var timeout = 3 * time.Second
 
 const (
-	maxBody     = 64 << 10
+	maxBody     = 256 << 10
 	devBuild    = "dev"
 	fallbackURL = "https://github.com/medeirosvictor/hermec/releases"
 )
 
 // Available describes a newer release.
 type Available struct {
-	Version string // tag, e.g. "v0.2.0"
-	URL     string // release page
+	Version string            // tag, e.g. "v0.2.0"
+	URL     string            // release page
+	Assets  map[string]string // asset name -> download URL, unvalidated; see Download
 }
 
 // Check reports whether a release newer than current exists. It returns false
@@ -68,19 +69,27 @@ func Latest(ctx context.Context, current string) (Available, bool, error) {
 		return Available{}, false, err
 	}
 	var rel struct {
-		Tag string `json:"tag_name"`
-		URL string `json:"html_url"`
+		Tag    string `json:"tag_name"`
+		URL    string `json:"html_url"`
+		Assets []struct {
+			Name string `json:"name"`
+			URL  string `json:"browser_download_url"`
+		} `json:"assets"`
 	}
 	if err := json.Unmarshal(body, &rel); err != nil {
 		return Available{}, false, err
 	}
-	if !newer(rel.Tag, current) {
+	if !Newer(rel.Tag, current) {
 		return Available{}, false, nil
 	}
 	// html_url is response data a caller will open in a browser, so only
 	// trust github.com https links; otherwise fall back to the releases page
 	// (the version info is still good).
-	return Available{Version: rel.Tag, URL: releaseURL(rel.URL)}, true, nil
+	assets := make(map[string]string, len(rel.Assets))
+	for _, a := range rel.Assets {
+		assets[a.Name] = a.URL
+	}
+	return Available{Version: rel.Tag, URL: releaseURL(rel.URL), Assets: assets}, true, nil
 }
 
 // releaseURLPrefix is the only place a release link may point.
@@ -136,9 +145,9 @@ func parse(v string) ([3]int, bool) {
 	return out, true
 }
 
-// newer reports whether remote is strictly greater than local. Malformed
-// input on either side yields false.
-func newer(remote, local string) bool {
+// Newer reports whether remote is strictly greater than local. Malformed
+// input on either side (including "dev") yields false.
+func Newer(remote, local string) bool {
 	r, ok := parse(remote)
 	if !ok {
 		return false

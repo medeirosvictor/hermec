@@ -33,8 +33,8 @@ func TestNewer(t *testing.T) {
 		{"v0.2.0", "dev", false},
 	}
 	for _, c := range cases {
-		if got := newer(c.remote, c.local); got != c.want {
-			t.Errorf("newer(%q,%q)=%v want %v", c.remote, c.local, got, c.want)
+		if got := Newer(c.remote, c.local); got != c.want {
+			t.Errorf("Newer(%q,%q)=%v want %v", c.remote, c.local, got, c.want)
 		}
 	}
 }
@@ -63,11 +63,11 @@ func TestCheck(t *testing.T) {
 		want    Available
 		wantOK  bool
 	}{
-		{"happy", ok(`{"tag_name":"v0.2.0","html_url":"https://github.com/medeirosvictor/hermec/releases/tag/v0.2.0","name":"ignored"}`), "v0.1.0", Available{"v0.2.0", "https://github.com/medeirosvictor/hermec/releases/tag/v0.2.0"}, true},
-		{"http url -> fallback", ok(`{"tag_name":"v0.2.0","html_url":"http://github.com/x"}`), "v0.1.0", Available{"v0.2.0", fallbackURL}, true},
-		{"other host -> fallback", ok(`{"tag_name":"v0.2.0","html_url":"https://github.com.evil.com/x"}`), "v0.1.0", Available{"v0.2.0", fallbackURL}, true},
-		{"javascript url -> fallback", ok(`{"tag_name":"v0.2.0","html_url":"javascript:alert(1)"}`), "v0.1.0", Available{"v0.2.0", fallbackURL}, true},
-		{"missing url -> fallback", ok(`{"tag_name":"v0.2.0"}`), "v0.1.0", Available{"v0.2.0", fallbackURL}, true},
+		{"happy", ok(`{"tag_name":"v0.2.0","html_url":"https://github.com/medeirosvictor/hermec/releases/tag/v0.2.0","name":"ignored"}`), "v0.1.0", Available{Version: "v0.2.0", URL: "https://github.com/medeirosvictor/hermec/releases/tag/v0.2.0"}, true},
+		{"http url -> fallback", ok(`{"tag_name":"v0.2.0","html_url":"http://github.com/x"}`), "v0.1.0", Available{Version: "v0.2.0", URL: fallbackURL}, true},
+		{"other host -> fallback", ok(`{"tag_name":"v0.2.0","html_url":"https://github.com.evil.com/x"}`), "v0.1.0", Available{Version: "v0.2.0", URL: fallbackURL}, true},
+		{"javascript url -> fallback", ok(`{"tag_name":"v0.2.0","html_url":"javascript:alert(1)"}`), "v0.1.0", Available{Version: "v0.2.0", URL: fallbackURL}, true},
+		{"missing url -> fallback", ok(`{"tag_name":"v0.2.0"}`), "v0.1.0", Available{Version: "v0.2.0", URL: fallbackURL}, true},
 		{"same", ok(`{"tag_name":"v0.1.0","html_url":"u"}`), "v0.1.0", Available{}, false},
 		{"older", ok(`{"tag_name":"v0.0.9","html_url":"u"}`), "v0.1.0", Available{}, false},
 		{"404", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }, "v0.1.0", Available{}, false},
@@ -79,13 +79,13 @@ func TestCheck(t *testing.T) {
 		{"malformed tag", ok(`{"tag_name":"nightly","html_url":"u"}`), "v0.1.0", Available{}, false},
 		{"prerelease tag rejected", ok(`{"tag_name":"v0.2.0-rc1","html_url":"u"}`), "v0.1.0", Available{}, false},
 		{"malformed current", ok(`{"tag_name":"v0.2.0","html_url":"u"}`), "garbage", Available{}, false},
-		{"oversize body capped", ok(`{"tag_name":"v0.2.0","html_url":"u","pad":"` + strings.Repeat("a", 70<<10) + `"}`), "v0.1.0", Available{}, false},
+		{"oversize body capped", ok(`{"tag_name":"v0.2.0","html_url":"u","pad":"` + strings.Repeat("a", 300<<10) + `"}`), "v0.1.0", Available{}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			stub(t, c.h)
 			got, ok := Check(context.Background(), c.current)
-			if ok != c.wantOK || got != c.want {
+			if ok != c.wantOK || got.Version != c.want.Version || got.URL != c.want.URL {
 				t.Fatalf("got %+v %v want %+v %v", got, ok, c.want, c.wantOK)
 			}
 		})
