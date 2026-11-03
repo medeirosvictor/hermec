@@ -13,7 +13,7 @@ import (
 // signed with (see docs/release-signing.md). While it is the placeholder below
 // it does not decode to a key, so every verification fails and no update is
 // ever installed: the app fails closed until the real key is set here.
-const PublicKey = "UNSET-run-hermec-release-keygen-and-paste-the-public-key-here"
+const PublicKey = "1jk/mpRarHQIn3BqzDtMK1KYwW4nLgm//NuuaWk4bPQ="
 
 // SigDomain prefixes the signed bytes so a signature over SHA256SUMS.txt cannot
 // be confused with a signature made for anything else with the same key. The
