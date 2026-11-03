@@ -248,7 +248,26 @@ once into a root-owned staging file, validates that copy while the service runs
 (as the `hermec` user in a time- and memory-limited `systemd-run` sandbox, never
 as root), installs exactly that copy, and rolls back on failure. Verify the
 archive checksum before running it: validation does not prove where the binary
-came from. Use
-`sudo ./update.sh rollback` for manual rollback. If text works but calls fail,
+came from (see "Updating a signed release" below to have the script check it).
+Use `sudo ./update.sh rollback` for manual rollback. If text works but calls fail,
 check inbound/outbound UDP, guest/provider firewalls, NAT and `public_ip`. If
 the server ID changes, stop and restore the original key and chain together.
+
+### Updating a signed release
+
+Each release carries `SHA256SUMS.txt` and a detached Ed25519 signature
+`SHA256SUMS.txt.sig` (see [release-signing.md](release-signing.md)). Download
+both next to the server archive, unpack the archive, and give `update.sh` the
+three paths; it then installs the candidate only if the signature verifies, the
+archive is listed in the signed sums with a matching SHA-256, and the candidate
+is byte-identical to the `hermec-server` inside that archive:
+
+    sudo HERMEC_SUMS=./SHA256SUMS.txt          HERMEC_ARCHIVE=./hermec-server-linux-amd64.tar.gz          HERMEC_RELEASE_TOOL=./hermec-release          ./update.sh update ./hermec-server
+
+`hermec-release` ships in the server archive. It verifies against the public
+key compiled into it; the copy you just unpacked is only as trustworthy as that
+download, so for a firm guarantee use a copy from an earlier verified install
+or pin the key you recorded from the project with
+`HERMEC_RELEASE_PUB=<base64 public key>`. Without `HERMEC_SUMS` the script
+behaves as before (no signature check). Updating dedicated servers stays
+manual; the desktop app's auto-updater never touches them.

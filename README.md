@@ -170,11 +170,24 @@ Copy and paste need one of `xclip`, `xsel` or `wl-clipboard` (for example,
 
 **Release notes** are generated from the commits in each release.
 
-**Update check:** on startup, release builds ask GitHub's public releases API
-whether a newer version exists (development builds never make this request) and, if so, show a banner linking to the Releases page.
-It sends no identifiers beyond a normal HTTPS request. The check always runs in
-release builds; the "update" row in Settings (gear tile or F10) shows its status
-and re-checks, or opens the Releases page when a newer version is available.
+**Updates:** on startup, release builds ask GitHub's public releases API
+whether a newer version exists (development builds never make this request or
+download anything). It sends no identifiers beyond a normal HTTPS request. On
+Windows and Linux the app then downloads the new release in the background and
+verifies it: the release's `SHA256SUMS.txt` must carry a valid Ed25519
+signature (`SHA256SUMS.txt.sig`, key embedded in the app) and the download's
+SHA-256 must match it, otherwise nothing is installed. When it is ready the
+banner and the "update" row in Settings (gear tile or F10) say "restart to
+update"; clicking (or Ctrl+U) swaps the new binary in, restarts into it, and the
+old one is removed on the next start. If the download or check fails, or the
+install folder is not writable, you get the old behaviour: a link to the
+Releases page. If a server refuses you with a version mismatch and its build is
+newer than yours, the banner offers "update now" (Ctrl+U) to fetch it. See
+[docs/release-signing.md](docs/release-signing.md) for how releases are signed.
+
+macOS builds never update themselves: the banner links to the Releases page and
+you rebuild with `scripts/build-mac.sh`. Dedicated servers are also updated by
+hand with `update.sh` (see [docs/dedicated-hosting.md](docs/dedicated-hosting.md)).
 
 ## Development
 

@@ -57,12 +57,15 @@ runs in parallel whenever the EC2 instance is ready.
      gate.
    - DONE (untested): audio device switching mid-call.
    - DONE (untested): auto-rejoin voice after a reconnect.
-   - TO DO: an in-app auto-updater. Builds
-     must match exactly, so updating the host forces everyone to update;
-     without an updater that is painful. Windows first: verified artifacts,
-     explicit restart, atomic replacement and rollback without routine admin
-     rights, then Linux/macOS. Settings shows the running version and each
-     release's changes and links only to official GitHub Release URLs.
+   - DONE (untested on a real release): in-app auto-updater for Windows and
+     Linux. Builds must match exactly, so updating the host forces everyone
+     to update. CI signs `SHA256SUMS.txt` (Ed25519, secret
+     `HERMEC_RELEASE_KEY`); the app downloads in the background, verifies
+     signature then SHA-256, stages `<exe>.new`, and "Restart to update" swaps
+     it in (rolling back on failure). A version_mismatch from a newer server
+     offers "update now". macOS and dedicated servers stay manual
+     (`update.sh` verifies the signed sums when given them). Fails closed
+     until `update.PublicKey` is set; see docs/release-signing.md.
 4. **Regular-use musts, second wave:**
    - Moderation UI: kick, ban/unban and role grants (the chain and server
      already enforce them; there is no UI).
