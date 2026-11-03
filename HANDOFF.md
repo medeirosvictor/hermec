@@ -90,6 +90,22 @@ Roadmap: [PLAN.md](PLAN.md).
      redirect host (`release-assets.githubusercontent.com` or
      `objects.githubusercontent.com`, both allowed), Windows Defender or
      SmartScreen reacting to a renamed/relaunched unsigned exe.
+- **Status 2026-11-03:** first wave is implemented and its unit tests pass:
+  per-person volume + soft limiter, mic gain, mid-call device switching,
+  auto-rejoin after reconnect, and the desktop auto-updater (signed,
+  tag-bound `SHA256SUMS.txt.sig`, background download, "Restart to update",
+  "update now" on a newer server's version_mismatch). The release public key
+  is embedded (`update/verify.go`); the private key was generated outside the
+  repo and must be added by Victor as GitHub secret `HERMEC_RELEASE_KEY` (see
+  `docs/release-signing.md`). Until then tagged releases fail at the verify
+  step. Dedicated servers stay manual: `update.sh` verifies the signed sums
+  with the installed `/usr/local/lib/hermec/hermec-release`.
+  Still needs real-device/real-release checks: volume 0/200%, mic gain heard
+  by a peer, device swap incl. Bluetooth/unplug, network drop rejoining muted,
+  failover still carrying the call, one full update cycle on Windows and Linux
+  (incl. SmartScreen/Defender), `update.sh` signed mode on the VPS.
+  Testing convention (Victor): run only the tests for code that changed, not
+  the full suite every time.
 - **Regular-use musts, first wave** (PLAN item 3): per-person
   volume and mic gain, mid-call audio device switching and auto-rejoin voice
   after a reconnect are done but untested (see Next steps 2); the in-app
