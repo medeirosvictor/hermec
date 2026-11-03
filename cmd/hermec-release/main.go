@@ -25,7 +25,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: hermec-release keygen -out <path> | sign -key-env <VAR> <sums> | verify -pub <base64> <sums>")
+		return errors.New("usage: hermec-release keygen -out <path> | sign -key-env <VAR> <sums> | verify [-pub <base64>] <sums>")
 	}
 	switch args[0] {
 	case "keygen":
@@ -91,15 +91,16 @@ func sign(args []string) error {
 	return os.WriteFile(fs.Arg(0)+".sig", update.Sign(ed25519.NewKeyFromSeed(seed), sums), 0o644)
 }
 
-// verify checks <sums>.sig against the base64 public key.
+// verify checks <sums>.sig against the base64 public key, by default the one
+// compiled into the app.
 func verify(args []string) error {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
-	pub := fs.String("pub", "", "base64 public key")
+	pub := fs.String("pub", update.PublicKey, "base64 public key (default: the key compiled into the app)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *pub == "" || fs.NArg() != 1 {
-		return errors.New("usage: hermec-release verify -pub <base64> <sums>")
+	if fs.NArg() != 1 {
+		return errors.New("usage: hermec-release verify [-pub <base64>] <sums>")
 	}
 	sums, err := os.ReadFile(fs.Arg(0))
 	if err != nil {

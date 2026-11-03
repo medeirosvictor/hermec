@@ -68,3 +68,12 @@ func TestSignRefusesMissingKey(t *testing.T) {
 		t.Fatal("wrote a signature without a key")
 	}
 }
+
+func TestVerifyDefaultsToEmbeddedKey(t *testing.T) {
+	sums := filepath.Join(t.TempDir(), "SHA256SUMS.txt")
+	os.WriteFile(sums, []byte("x\n"), 0o644)
+	os.WriteFile(sums+".sig", []byte("AAAA\n"), 0o644)
+	if err := run([]string{"verify", sums}); err == nil {
+		t.Fatal("verified against the placeholder key")
+	}
+}

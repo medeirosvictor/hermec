@@ -289,12 +289,14 @@ jobs:
               -o "$stage/hermec-server" ./cmd/hermec-server
             GOOS=linux GOARCH=$goarch go build -trimpath -ldflags "$ldflags" \
               -o "$stage/hermec-verify" ./cmd/hermec-verify
+            GOOS=linux GOARCH=$goarch go build -trimpath -ldflags "$ldflags" \
+              -o "$stage/hermec-release" ./cmd/hermec-release
             cp example.server.toml "$stage/"
             cp packaging/dedicated/hermec-server.service "$stage/"
             cp packaging/dedicated/install.sh packaging/dedicated/update.sh \
               packaging/dedicated/backup.sh "$stage/"
             cp docs/dedicated-hosting.md "$stage/README.md"
-            chmod 0755 "$stage/hermec-server" "$stage/hermec-verify" "$stage"/*.sh
+            chmod 0755 "$stage/hermec-server" "$stage/hermec-verify" "$stage/hermec-release" "$stage"/*.sh
             # The hosted runner is amd64; executing the arm64 artifact would
             # fail with Exec format error. Cross-build both, smoke-test native.
             if [ "$goarch" = "$(go env GOARCH)" ]; then
@@ -323,6 +325,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -333,6 +342,25 @@ jobs:
           rm -f SHA256SUMS.txt
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      # The signing tool is built before the key is in the environment; only
+      # the sign step sees the secret, and nothing prints it.
+      - name: Build release tool
+        run: go build -o "$RUNNER_TEMP/hermec-release" ./cmd/hermec-release
+      - name: Sign checksums
+        env:
+          HERMEC_RELEASE_KEY: ${{ secrets.HERMEC_RELEASE_KEY }}
+        run: |
+          if [ -z "$HERMEC_RELEASE_KEY" ]; then
+            echo "secret HERMEC_RELEASE_KEY is not set: refusing to publish an unsigned release" >&2
+            exit 1
+          fi
+          "$RUNNER_TEMP/hermec-release" sign -key-env HERMEC_RELEASE_KEY artifacts/SHA256SUMS.txt
+      # Checks the signature against the public key compiled into the app
+      # (update.PublicKey), so a key that does not match is caught here.
+      - name: Verify signature against the embedded public key
+        run: |
+          "$RUNNER_TEMP/hermec-release" verify artifacts/SHA256SUMS.txt
+          ls -l artifacts/SHA256SUMS.txt.sig
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
