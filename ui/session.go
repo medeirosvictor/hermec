@@ -454,6 +454,7 @@ func (g *game) applyDial(r dialResult) {
 			return
 		}
 		s.failed, s.lastErr = true, state.DialErrorText(r.err)
+		g.offerUpdateFor(r.err)
 		if !s.everUp {
 			return // keeps its tile and session; the user retries with the badge
 		}

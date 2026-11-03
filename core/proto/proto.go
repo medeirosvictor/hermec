@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -502,4 +503,25 @@ func VersionMismatchMessage(server, client string) string {
 		client = "an unknown build"
 	}
 	return "server runs " + server + ", you run " + client
+}
+
+// VersionMismatchBuilds is the inverse of VersionMismatchMessage: the server's
+// and the client's build, "" for an unknown one. ok is false when msg is not
+// in that form.
+func VersionMismatchBuilds(msg string) (server, client string, ok bool) {
+	rest, ok := strings.CutPrefix(msg, "server runs ")
+	if !ok {
+		return "", "", false
+	}
+	server, client, ok = strings.Cut(rest, ", you run ")
+	if !ok {
+		return "", "", false
+	}
+	if server == "an unknown build" {
+		server = ""
+	}
+	if client == "an unknown build" {
+		client = ""
+	}
+	return server, client, true
 }

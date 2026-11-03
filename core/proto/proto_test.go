@@ -279,3 +279,15 @@ func TestHistoryRoundTrip(t *testing.T) {
 		t.Errorf("HistoryBefore with ts = %s, %v", hb, err)
 	}
 }
+
+func TestVersionMismatchBuildsRoundTrips(t *testing.T) {
+	for _, c := range [][2]string{{"v0.3.0", "v0.2.0"}, {"", "v0.2.0"}, {"v0.3.0", ""}} {
+		s, cl, ok := VersionMismatchBuilds(VersionMismatchMessage(c[0], c[1]))
+		if !ok || s != c[0] || cl != c[1] {
+			t.Errorf("%q: got %q %q %v", c, s, cl, ok)
+		}
+	}
+	if _, _, ok := VersionMismatchBuilds("something else"); ok {
+		t.Error("accepted a foreign message")
+	}
+}

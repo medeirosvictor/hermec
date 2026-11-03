@@ -2,12 +2,15 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
+	"github.com/medeirosvictor/hermec/client"
+	"github.com/medeirosvictor/hermec/core/proto"
 	"github.com/medeirosvictor/hermec/ui/state"
 	"github.com/medeirosvictor/hermec/update"
 	"github.com/medeirosvictor/hermec/version"
@@ -25,10 +28,12 @@ const fakeUpdateEnv = "HERMEC_FAKE_UPDATE"
 type updateStatus int
 
 const (
-	updChecking  updateStatus = iota // a check is in flight (the zero value)
-	updUpToDate                      // checked, nothing newer (or a dev build)
-	updAvailable                     // g.update holds a newer release
-	updFailed                        // the check could not complete
+	updChecking    updateStatus = iota // a check is in flight (the zero value)
+	updUpToDate                        // checked, nothing newer (or a dev build)
+	updAvailable                       // g.update holds a newer release; acting on it opens the releases page
+	updFailed                          // the check could not complete
+	updDownloading                     // the release is downloading in the background
+	updReady                           // the new binary is staged; acting on it restarts into it
 )
 
 // updateResult is what one release check sends back on g.updateCh.
@@ -64,6 +69,16 @@ func updateRowLabel(st updateStatus, a *update.Available, cur string) string {
 			return p + a.Version + " available ›"
 		}
 		return p + "available ›"
+	case updDownloading:
+		if a != nil {
+			return p + "downloading " + a.Version + "…"
+		}
+		return p + "downloading…"
+	case updReady:
+		if a != nil {
+			return p + "restart to update to " + a.Version + " ›"
+		}
+		return p + "restart to update ›"
 	case updFailed:
 		return p + "check failed"
 	}
@@ -109,34 +124,139 @@ func (g *game) pollUpdate() {
 			g.logf("update check failed: %v", r.err)
 		case r.found:
 			a := r.a
-			g.update, g.updStatus = &a, updAvailable
+			g.update, g.updStatus, g.updOffer = &a, updAvailable, ""
 			g.logf("update %s available: %s", a.Version, a.URL)
+			g.startDownload()
 		default:
 			g.updStatus = updUpToDate
+			if g.updOffer != "" { // the server's build is not published (yet)
+				g.updOffer = ""
+				g.updateNote("no newer release is published yet")
+			}
+		}
+	default:
+	}
+	select {
+	case err := <-g.dlCh:
+		g.cancelUpdate()
+		switch {
+		case err == nil:
+			g.updStatus = updReady
+			g.logf("update %s downloaded and verified", g.update.Version)
+		case errors.Is(err, update.ErrNotWritable):
+			g.updStatus = updAvailable
+			g.logf("update download: %v", err)
+			g.updateNote("can't update in place (install folder is not writable) — ctrl+u opens the releases page")
+		default:
+			g.updStatus = updAvailable // the releases page is the fallback
+			g.logf("update download failed: %v", err)
 		}
 	default:
 	}
 }
 
+// startDownload fetches and verifies the release in g.update in the
+// background, if this build can update itself. The result arrives on g.dlCh.
+// Only one download runs at a time; a failure leaves the releases-page link.
+func (g *game) startDownload() {
+	supported := g.supportedFn
+	if supported == nil {
+		supported = update.Supported
+	}
+	if g.update == nil || g.updStatus == updDownloading || g.version() == "dev" ||
+		os.Getenv(fakeUpdateEnv) != "" || !supported() {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	g.updCancel = cancel
+	g.updStatus = updDownloading
+	a, dl, ch := *g.update, g.downloadFn, g.dlCh
+	if dl == nil {
+		dl = update.Download
+	}
+	g.logf("downloading update %s", a.Version)
+	go func() { ch <- dl(ctx, a) }()
+}
+
+// cancelUpdate stops a download in flight and releases its context.
+func (g *game) cancelUpdate() {
+	if g.updCancel != nil {
+		g.updCancel()
+		g.updCancel = nil
+	}
+}
+
+// updateNote shows msg on the connect screen and in the status line.
+func (g *game) updateNote(msg string) {
+	g.notice = msg
+	g.cur().st.Status = msg
+}
+
+// applyUpdate swaps the staged binary in and quits so Run can start it. A
+// failed swap is rolled back by update.Apply; the releases page stays the
+// fallback.
+func (g *game) applyUpdate() {
+	apply := g.applyFn
+	if apply == nil {
+		apply = update.Apply
+	}
+	if err := apply(); err != nil {
+		g.logf("update apply failed: %v", err)
+		g.updStatus = updAvailable
+		g.updateNote("couldn't install the update — ctrl+u opens the releases page")
+		return
+	}
+	g.logf("update %s installed; restarting", g.update.Version)
+	g.restart = true
+}
+
+// offerUpdateFor is called with a failed dial's error: a version_mismatch from
+// a server running a newer release than ours offers "update now" in the banner.
+// When ours is newer the plain message (telling the host to update) stands.
+func (g *game) offerUpdateFor(err error) {
+	var se *client.ServerError
+	if g.update != nil || !errors.As(err, &se) || se.Code != proto.CodeVersionMismatch {
+		return
+	}
+	if sv, _, ok := proto.VersionMismatchBuilds(se.Message); ok && update.Newer(sv, g.version()) {
+		g.updOffer = sv
+	}
+}
+
+// activateUpdate is what the banner, Ctrl+U and the settings row do: restart
+// into a staged update, wait for a download, open the releases page, or (for a
+// server's "update now" offer) check for the release and download it.
+func (g *game) activateUpdate() {
+	switch {
+	case g.updStatus == updReady && g.update != nil:
+		g.applyUpdate()
+	case g.updStatus == updDownloading:
+	case g.update != nil:
+		g.openUpdate()
+	case g.updOffer != "":
+		g.startUpdateCheck()
+	}
+}
+
 // activateUpdateRow is Enter or a click on the settings row: with an update
-// available it does what the banner and Ctrl+U do, otherwise it re-checks.
+// known it does what the banner does, otherwise it re-checks.
 func (g *game) activateUpdateRow() {
 	if g.update != nil {
-		g.openUpdate()
+		g.activateUpdate()
 		return
 	}
 	g.startUpdateCheck()
 }
 
-// updateKey opens the release page on Ctrl+U while the banner is showing.
+// updateKey acts on the banner on Ctrl+U while it is showing.
 // Plain U would be typed into the always-focused chat input (and the connect
 // fields), so, like Ctrl+M (mute) and Ctrl+R (refresh), it needs Ctrl.
 func (g *game) updateKey() {
-	if g.update == nil || !inpututil.IsKeyJustPressed(ebiten.KeyU) {
+	if g.bannerText() == "" || !inpututil.IsKeyJustPressed(ebiten.KeyU) {
 		return
 	}
 	if ebiten.IsKeyPressed(ebiten.KeyControlLeft) || ebiten.IsKeyPressed(ebiten.KeyControlRight) {
-		g.openUpdate()
+		g.activateUpdate()
 	}
 }
 
@@ -149,37 +269,55 @@ func (g *game) openUpdate() {
 	open(g.update.URL) // URL is validated upstream by update.Latest
 }
 
-// updateBanner opens the release page when the banner is clicked.
+// updateBanner acts on the banner when it is clicked.
 func (g *game) updateBanner() {
-	if g.update == nil || g.settingsOpen || !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+	if g.bannerText() == "" || g.settingsOpen || !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		return
 	}
 	if h, ok := g.hitAt(); ok && h.Kind == state.HitBanner {
-		g.openUpdate()
+		g.activateUpdate()
 	}
 }
 
 // addBannerHit registers the banner line (same rect the text is drawn in).
 func (g *game) addBannerHit() {
-	if g.update == nil {
+	if g.bannerText() == "" {
 		return
 	}
 	g.hits.Add(state.Hit{X0: g.railW(), Y0: 0, X1: float64(g.w), Y1: pad + g.lineH(), Kind: state.HitBanner})
 }
 
+// bannerText is the banner line, "" when there is nothing to say.
+func (g *game) bannerText() string {
+	switch {
+	case g.update != nil && g.updStatus == updReady:
+		return "update " + g.update.Version + " ready — click or ctrl+u to restart"
+	case g.update != nil && g.updStatus == updDownloading:
+		return "downloading update " + g.update.Version + "…"
+	case g.update != nil:
+		return "update " + g.update.Version + " available — ctrl+u to download"
+	case g.updOffer != "" && g.updBusy:
+		return "checking for " + g.updOffer + "…"
+	case g.updOffer != "":
+		return "server runs " + g.updOffer + " — ctrl+u to update now"
+	}
+	return ""
+}
+
 // bannerH is the height the banner takes at the top of the connect and main
-// scenes: one line when an update is available, otherwise nothing so the
+// scenes: one line when it has something to say, otherwise nothing so the
 // layout does not move.
 func (g *game) bannerH() float64 {
-	if g.update == nil {
+	if g.bannerText() == "" {
 		return 0
 	}
 	return g.lineH()
 }
 
 func (g *game) drawBanner(screen *ebiten.Image) {
-	if g.update == nil {
+	t := g.bannerText()
+	if t == "" {
 		return
 	}
-	g.drawTextF(screen, g.faceS, "update "+g.update.Version+" available — ctrl+u to download", g.railW()+pad, pad, g.th.Bright)
+	g.drawTextF(screen, g.faceS, t, g.railW()+pad, pad, g.th.Bright)
 }

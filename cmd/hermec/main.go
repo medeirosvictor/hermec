@@ -11,6 +11,7 @@ import (
 
 	"github.com/medeirosvictor/hermec/applog"
 	"github.com/medeirosvictor/hermec/ui"
+	"github.com/medeirosvictor/hermec/update"
 	"github.com/medeirosvictor/hermec/version"
 )
 
@@ -46,6 +47,10 @@ func main() {
 	}
 
 	log.Printf("hermec %s", version.Version)
+
+	if version.Version != "dev" {
+		update.Cleanup() // leftovers of the update that started this build
+	}
 
 	if err := ui.Run(ui.Options{
 		ServerURL: *server, Name: *name, KeyPath: *key, ThemePath: *themePath,

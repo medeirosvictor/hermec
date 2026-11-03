@@ -191,6 +191,14 @@ type game struct {
 	checkFn   func(context.Context, string) (update.Available, bool, error) // nil = update.Latest
 	openFn    func(string)                                                  // nil = openURL
 
+	dlCh        chan error                                    // result of the background update download
+	updCancel   context.CancelFunc                            // cancels that download
+	updOffer    string                                        // a newer server build refused us: the banner offers "update now"
+	restart     bool                                          // an update is installed: quit, then start the new binary
+	downloadFn  func(context.Context, update.Available) error // nil = update.Download
+	applyFn     func() error                                  // nil = update.Apply
+	supportedFn func() bool                                   // nil = update.Supported
+
 	shareOps shareOps   // seams for capture, client and window; zero = real
 	share    shareState // our own screen share
 	watch    watchState // the stream being watched
@@ -309,7 +317,7 @@ func Run(opts Options) error {
 		g.setLogWriter(opts.LogFile)
 	}
 	g.logStartup()
-	g.updateCh = make(chan updateResult, 1)
+	g.updateCh, g.dlCh = make(chan updateResult, 1), make(chan error, 1)
 	g.startUpdateCheck()
 	g.muteCh, g.muteFailCh = make(chan muteReq, 1), make(chan muteFail, 4)
 	go g.muteWorker()
@@ -363,6 +371,7 @@ func Run(opts Options) error {
 	}
 	ebiten.SetWindowIcon(icons)
 	err = ebiten.RunGame(g)
+	g.cancelUpdate()
 	g.flushName()
 	g.endCallMedia()
 	g.media.drain()
@@ -377,6 +386,11 @@ func Run(opts Options) error {
 	}
 	g.cancelDedicated()
 	g.closeSessions()
+	if g.restart {
+		if rerr := update.Relaunch(); rerr != nil {
+			g.logf("restart after update failed: %v", rerr)
+		}
+	}
 	return err
 }
 
@@ -392,6 +406,9 @@ func (g *game) closeSessions() {
 }
 
 func (g *game) Update() error {
+	if g.restart {
+		return ebiten.Termination
+	}
 	g.frame++
 	g.fullscreen = ebiten.IsFullscreen()
 	// The video view decides: no video, no fullscreen.
