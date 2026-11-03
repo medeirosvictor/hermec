@@ -93,15 +93,20 @@ var httpClient = &http.Client{
 // Download fetches the release's artifact for this platform, verifies it and
 // stages the new binary next to the running executable as <exe>.new. It
 // installs nothing unless the SHA256SUMS.txt signature verifies under
-// PublicKey and the artifact's SHA-256 is listed in that file. Any failure
-// leaves no staged file behind.
-func Download(ctx context.Context, a Available) (err error) {
+// PublicKey for a.Version (the tag is part of the signed bytes) and the
+// artifact's SHA-256 is listed in that file. a.Version must also be newer
+// than current, so a stale release cannot be replayed as an update. Any
+// failure leaves no staged file behind.
+func Download(ctx context.Context, a Available, current string) (err error) {
 	name, ok := AssetName(goos, goarch)
 	if !ok {
 		return ErrUnsupported
 	}
 	if _, ok := parse(a.Version); !ok {
 		return fmt.Errorf("update: bad release tag %q", a.Version)
+	}
+	if !Newer(a.Version, current) {
+		return fmt.Errorf("update: %s is not newer than %s", a.Version, current)
 	}
 	urls := map[string]string{}
 	for _, n := range []string{name, SumsName, SigName} {
@@ -120,7 +125,7 @@ func Download(ctx context.Context, a Available) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := VerifySums(pubKey, sums, sig); err != nil {
+	if err := VerifySums(pubKey, a.Version, sums, sig); err != nil {
 		return err
 	}
 	listed, err := ParseSums(sums)
@@ -181,9 +186,11 @@ func assetURL(a Available, name string) (string, error) {
 	if raw == "" || err != nil {
 		return "", fmt.Errorf("update: release has no usable %s", name)
 	}
-	// The path must be this release's: a signed checksums file from another
-	// release must not be served as this one's.
-	if !allowURL(u, false) || !strings.HasSuffix(u.Path, "/download/"+a.Version+"/"+name) {
+	// The path must be exactly this release's asset: a signed checksums file
+	// from another release must not be served as this one's. (The signature
+	// also binds the tag; this is the second layer.)
+	if !allowURL(u, false) || u.Path != downloadPath+a.Version+"/"+name ||
+		u.RawPath != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
 		return "", fmt.Errorf("update: refusing download URL for %s", name)
 	}
 	return raw, nil

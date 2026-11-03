@@ -195,7 +195,7 @@ type game struct {
 	updCancel   context.CancelFunc                            // cancels that download
 	updOffer    string                                        // a newer server build refused us: the banner offers "update now"
 	restart     bool                                          // an update is installed: quit, then start the new binary
-	downloadFn  func(context.Context, update.Available) error // nil = update.Download
+	downloadFn  func(context.Context, update.Available) error // nil = update.Download at the running version
 	applyFn     func() error                                  // nil = update.Apply
 	supportedFn func() bool                                   // nil = update.Supported
 

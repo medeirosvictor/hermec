@@ -331,7 +331,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -354,12 +354,12 @@ jobs:
             echo "secret HERMEC_RELEASE_KEY is not set: refusing to publish an unsigned release" >&2
             exit 1
           fi
-          "$RUNNER_TEMP/hermec-release" sign -key-env HERMEC_RELEASE_KEY artifacts/SHA256SUMS.txt
+          "$RUNNER_TEMP/hermec-release" sign -tag "$TAG" -key-env HERMEC_RELEASE_KEY artifacts/SHA256SUMS.txt
       # Checks the signature against the public key compiled into the app
       # (update.PublicKey), so a key that does not match is caught here.
       - name: Verify signature against the embedded public key
         run: |
-          "$RUNNER_TEMP/hermec-release" verify artifacts/SHA256SUMS.txt
+          "$RUNNER_TEMP/hermec-release" verify -tag "$TAG" artifacts/SHA256SUMS.txt
           ls -l artifacts/SHA256SUMS.txt.sig
       - name: Create release
         env:

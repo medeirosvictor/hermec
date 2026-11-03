@@ -172,7 +172,8 @@ func (g *game) startDownload() {
 	g.updStatus = updDownloading
 	a, dl, ch := *g.update, g.downloadFn, g.dlCh
 	if dl == nil {
-		dl = update.Download
+		cur := g.version()
+		dl = func(ctx context.Context, a update.Available) error { return update.Download(ctx, a, cur) }
 	}
 	g.logf("downloading update %s", a.Version)
 	go func() { ch <- dl(ctx, a) }()

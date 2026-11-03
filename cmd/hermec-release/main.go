@@ -25,7 +25,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: hermec-release keygen -out <path> | sign -key-env <VAR> <sums> | verify [-pub <base64>] <sums>")
+		return errors.New("usage: hermec-release keygen -out <path> | sign -tag <vX.Y.Z> -key-env <VAR> <sums> | verify -tag <vX.Y.Z> [-pub <base64>] <sums>")
 	}
 	switch args[0] {
 	case "keygen":
@@ -69,16 +69,29 @@ func keygen(args []string) error {
 	return nil
 }
 
+// checkTag rejects a -tag value that cannot be bound into a signature: empty,
+// or holding a NUL or a line break.
+func checkTag(tag string) error {
+	if tag == "" || strings.ContainsAny(tag, "\x00\r\n") {
+		return errors.New("-tag is required and must be a release tag such as v1.2.3")
+	}
+	return nil
+}
+
 // sign reads the base64 seed from the environment variable named by -key-env
-// and writes <sums>.sig next to the file.
+// and writes <sums>.sig next to the file. The signature covers the release tag.
 func sign(args []string) error {
 	fs := flag.NewFlagSet("sign", flag.ContinueOnError)
 	keyEnv := fs.String("key-env", "", "environment variable holding the base64 private seed")
+	tag := fs.String("tag", "", "release tag the signature is bound to (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *keyEnv == "" || fs.NArg() != 1 {
-		return errors.New("usage: hermec-release sign -key-env <VAR> <sums>")
+		return errors.New("usage: hermec-release sign -tag <vX.Y.Z> -key-env <VAR> <sums>")
+	}
+	if err := checkTag(*tag); err != nil {
+		return err
 	}
 	seed, err := base64.StdEncoding.DecodeString(strings.TrimSpace(os.Getenv(*keyEnv)))
 	if err != nil || len(seed) != ed25519.SeedSize {
@@ -88,19 +101,23 @@ func sign(args []string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(fs.Arg(0)+".sig", update.Sign(ed25519.NewKeyFromSeed(seed), sums), 0o644)
+	return os.WriteFile(fs.Arg(0)+".sig", update.Sign(ed25519.NewKeyFromSeed(seed), *tag, sums), 0o644)
 }
 
-// verify checks <sums>.sig against the base64 public key, by default the one
-// compiled into the app.
+// verify checks <sums>.sig for release -tag against the base64 public key, by
+// default the one compiled into the app, and prints the tag that was signed.
 func verify(args []string) error {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	pub := fs.String("pub", update.PublicKey, "base64 public key (default: the key compiled into the app)")
+	tag := fs.String("tag", "", "release tag the signature must be bound to (required)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: hermec-release verify [-pub <base64>] <sums>")
+		return errors.New("usage: hermec-release verify -tag <vX.Y.Z> [-pub <base64>] <sums>")
+	}
+	if err := checkTag(*tag); err != nil {
+		return err
 	}
 	sums, err := os.ReadFile(fs.Arg(0))
 	if err != nil {
@@ -110,9 +127,9 @@ func verify(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := update.VerifySums(*pub, sums, sig); err != nil {
+	if err := update.VerifySums(*pub, *tag, sums, sig); err != nil {
 		return err
 	}
-	fmt.Println("signature ok")
+	fmt.Println("signature ok for tag " + *tag)
 	return nil
 }

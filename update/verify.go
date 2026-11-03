@@ -16,8 +16,11 @@ import (
 const PublicKey = "UNSET-run-hermec-release-keygen-and-paste-the-public-key-here"
 
 // SigDomain prefixes the signed bytes so a signature over SHA256SUMS.txt cannot
-// be confused with a signature made for anything else with the same key.
-const SigDomain = "hermec-release-sums-v1\x00"
+// be confused with a signature made for anything else with the same key. The
+// release tag is signed too (SigDomain || tag || 0x00 || sums), so a validly
+// signed sums file of an older release cannot be served as a newer one. The
+// domain was bumped from v1 when the tag was added; v1 is never accepted.
+const SigDomain = "hermec-release-v2\x00"
 
 // SumsName and SigName are the release assets holding the checksums and their
 // detached signature.
@@ -26,16 +29,20 @@ const (
 	SigName  = SumsName + ".sig"
 )
 
-// Sign returns the detached signature file content for sums: base64 of
-// ed25519.Sign(priv, SigDomain || sums).
-func Sign(priv ed25519.PrivateKey, sums []byte) []byte {
-	sig := ed25519.Sign(priv, signedMessage(sums))
+// Sign returns the detached signature file content for the sums of release
+// tag: base64 of ed25519.Sign(priv, SigDomain || tag || 0x00 || sums).
+func Sign(priv ed25519.PrivateKey, tag string, sums []byte) []byte {
+	sig := ed25519.Sign(priv, signedMessage(tag, sums))
 	return []byte(base64.StdEncoding.EncodeToString(sig) + "\n")
 }
 
 // VerifySums checks that sig (the content of a .sig file) is a valid signature
-// of sums under the base64 public key pub.
-func VerifySums(pub string, sums, sig []byte) error {
+// of sums for release tag under the base64 public key pub. A tag that is empty
+// or contains a NUL (which would blur the tag/sums boundary) never verifies.
+func VerifySums(pub, tag string, sums, sig []byte) error {
+	if tag == "" || strings.ContainsRune(tag, 0) {
+		return errors.New("update: bad release tag")
+	}
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(pub))
 	if err != nil || len(raw) != ed25519.PublicKeySize {
 		return errors.New("update: no valid release public key is set")
@@ -44,14 +51,16 @@ func VerifySums(pub string, sums, sig []byte) error {
 	if err != nil || len(s) != ed25519.SignatureSize {
 		return errors.New("update: malformed signature")
 	}
-	if !ed25519.Verify(ed25519.PublicKey(raw), signedMessage(sums), s) {
+	if !ed25519.Verify(ed25519.PublicKey(raw), signedMessage(tag, sums), s) {
 		return errors.New("update: signature does not match")
 	}
 	return nil
 }
 
-func signedMessage(sums []byte) []byte {
-	return append([]byte(SigDomain), sums...)
+func signedMessage(tag string, sums []byte) []byte {
+	m := append([]byte(SigDomain), tag...)
+	m = append(m, 0)
+	return append(m, sums...)
 }
 
 // ParseSums reads sha256sum output ("<64 hex>  name" or "<64 hex> *name").

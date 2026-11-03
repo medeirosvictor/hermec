@@ -19,27 +19,46 @@ func testKey(t *testing.T) (ed25519.PrivateKey, string) {
 
 func TestVerifySums(t *testing.T) {
 	priv, pub := testKey(t)
+	const tag = "v1.2.3"
 	sums := []byte("abc  file\n")
-	sig := Sign(priv, sums)
-	if err := VerifySums(pub, sums, sig); err != nil {
+	sig := Sign(priv, tag, sums)
+	if err := VerifySums(pub, tag, sums, sig); err != nil {
 		t.Fatalf("good signature rejected: %v", err)
 	}
-	if err := VerifySums(pub, []byte("abc  file\nextra  x\n"), sig); err == nil {
+	if err := VerifySums(pub, tag, append(sums, "extra  x\n"...), sig); err == nil {
 		t.Error("tampered sums accepted")
+	}
+	// The signature is bound to the tag: another tag, however it is written,
+	// does not verify.
+	for _, other := range []string{"v1.2.4", "v1.2.2", "v1.2.3 ", "", "v1.2.3\x00"} {
+		if err := VerifySums(pub, other, sums, sig); err == nil {
+			t.Errorf("signature for %q accepted for tag %q", tag, other)
+		}
+	}
+	// A NUL in the tag could shift the tag/sums boundary: tag "a" + sums "b\x00c"
+	// must not be confusable with tag "a\x00b" + sums "c".
+	splitSig := Sign(priv, "a", []byte("b\x00c"))
+	if err := VerifySums(pub, "a\x00b", []byte("c"), splitSig); err == nil {
+		t.Error("tag containing NUL accepted")
+	}
+	// The v1 domain (no tag) must never verify.
+	v1 := ed25519.Sign(priv, append([]byte("hermec-release-sums-v1\x00"), sums...))
+	if err := VerifySums(pub, tag, sums, []byte(base64.StdEncoding.EncodeToString(v1))); err == nil {
+		t.Error("v1 signature accepted")
 	}
 	// A signature made without the domain prefix must not verify.
 	raw := ed25519.Sign(priv, sums)
 	bare := []byte(base64.StdEncoding.EncodeToString(raw))
-	if err := VerifySums(pub, sums, bare); err == nil {
+	if err := VerifySums(pub, tag, sums, bare); err == nil {
 		t.Error("signature without the domain accepted")
 	}
 	otherSeed := make([]byte, ed25519.SeedSize)
 	other := ed25519.NewKeyFromSeed(otherSeed)
-	if err := VerifySums(pub, sums, Sign(other, sums)); err == nil {
+	if err := VerifySums(pub, tag, sums, Sign(other, tag, sums)); err == nil {
 		t.Error("signature by another key accepted")
 	}
 	for _, bad := range []string{"", "not base64!", base64.StdEncoding.EncodeToString([]byte("short"))} {
-		if err := VerifySums(pub, sums, []byte(bad)); err == nil {
+		if err := VerifySums(pub, tag, sums, []byte(bad)); err == nil {
 			t.Errorf("malformed signature %q accepted", bad)
 		}
 	}
@@ -48,10 +67,10 @@ func TestVerifySums(t *testing.T) {
 func TestPlaceholderKeyFailsClosed(t *testing.T) {
 	priv, _ := testKey(t)
 	sums := []byte("abc  file\n")
-	if err := VerifySums(PublicKey, sums, Sign(priv, sums)); err == nil {
+	if err := VerifySums(PublicKey, "v1.2.3", sums, Sign(priv, "v1.2.3", sums)); err == nil {
 		t.Fatal("the placeholder public key must verify nothing")
 	}
-	if err := VerifySums("", sums, Sign(priv, sums)); err == nil {
+	if err := VerifySums("", "v1.2.3", sums, Sign(priv, "v1.2.3", sums)); err == nil {
 		t.Fatal("an empty public key must verify nothing")
 	}
 }

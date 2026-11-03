@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"net/http"
@@ -24,6 +25,7 @@ type rel struct {
 }
 
 const relTag = "v2.0.0"
+const relCur = "v1.0.0" // the running build
 const relPrefix = "/medeirosvictor/hermec/releases/download/" + relTag + "/"
 
 // newRel serves a release signed by the test key and points the updater at a
@@ -38,7 +40,7 @@ func newRel(t *testing.T) *rel {
 	sums := []byte(hex.EncodeToString(sum[:]) + "  " + name + "\n")
 	r.files[name] = asset
 	r.files[SumsName] = sums
-	r.files[SigName] = Sign(priv, sums)
+	r.files[SigName] = Sign(priv, relTag, sums)
 
 	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		b, ok := r.files[strings.TrimPrefix(req.URL.Path, relPrefix)]
@@ -84,7 +86,7 @@ func (r *rel) assertNothingStaged() {
 
 func TestDownloadStages(t *testing.T) {
 	r := newRel(t)
-	if err := Download(context.Background(), r.a); err != nil {
+	if err := Download(context.Background(), r.a, relCur); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(r.exe + ".new"); got != "NEW-BINARY" {
@@ -99,7 +101,7 @@ func TestDownloadRefusals(t *testing.T) {
 	cases := map[string]func(r *rel){
 		"placeholder key": func(r *rel) { pubKey = PublicKey },
 		"bad signature": func(r *rel) {
-			r.files[SigName] = Sign(ed25519.NewKeyFromSeed(make([]byte, 32)), r.files[SumsName])
+			r.files[SigName] = Sign(ed25519.NewKeyFromSeed(make([]byte, 32)), relTag, r.files[SumsName])
 		},
 		"tampered sums": func(r *rel) {
 			r.files[SumsName] = append(r.files[SumsName], []byte(strings.Repeat("0", 64)+"  x\n")...)
@@ -110,7 +112,7 @@ func TestDownloadRefusals(t *testing.T) {
 		"asset not listed": func(r *rel) {
 			priv, _ := testKey(r.t)
 			r.files[SumsName] = []byte(strings.Repeat("0", 64) + "  other.zip\n")
-			r.files[SigName] = Sign(priv, r.files[SumsName])
+			r.files[SigName] = Sign(priv, relTag, r.files[SumsName])
 		},
 		"missing sig asset":       func(r *rel) { delete(r.a.Assets, SigName) },
 		"url outside allowlist":   func(r *rel) { allowURL = func(*url.URL, bool) bool { return false } },
@@ -119,16 +121,48 @@ func TestDownloadRefusals(t *testing.T) {
 		"oversized asset":         func(r *rel) { maxAsset = 10 },
 		"unsupported platform":    func(r *rel) { goos = "darwin" },
 		"bad tag":                 func(r *rel) { r.a.Version = "latest" },
+		"nul in tag":             func(r *rel) { r.a.Version = relTag + "\x00" },
+		// A validly signed older release served under the new release's URLs:
+		// its signature is bound to v1.9.0, not v2.0.0.
+		"signature for another tag": func(r *rel) {
+			priv, _ := testKey(r.t)
+			r.files[SigName] = Sign(priv, "v1.9.0", r.files[SumsName])
+		},
+		"v1 domain signature": func(r *rel) {
+			priv, _ := testKey(r.t)
+			bare := ed25519.Sign(priv, append([]byte("hermec-release-sums-v1\x00"), r.files[SumsName]...))
+			r.files[SigName] = []byte(base64.StdEncoding.EncodeToString(bare))
+		},
+		"query on url":    func(r *rel) { r.a.Assets[SumsName] += "?x=1" },
+		"fragment on url": func(r *rel) { r.a.Assets[SumsName] += "#x" },
+		"encoded path": func(r *rel) {
+			r.a.Assets[SumsName] = strings.Replace(r.a.Assets[SumsName], "/download/", "/%64ownload/", 1)
+		},
+		"suffix-only url": func(r *rel) {
+			r.a.Assets[SumsName] = strings.Replace(r.a.Assets[SumsName], "/medeirosvictor/", "/medeirosvictor/x/../", 1)
+		},
 	}
 	for name, mod := range cases {
 		t.Run(name, func(t *testing.T) {
 			r := newRel(t)
 			mod(r)
-			if err := Download(context.Background(), r.a); err == nil {
+			if err := Download(context.Background(), r.a, relCur); err == nil {
 				t.Fatal("accepted")
 			}
 			r.assertNothingStaged()
 		})
+	}
+}
+
+// The release must be strictly newer than the running build: the same or an
+// older release, even validly signed, is never staged.
+func TestDownloadRefusesNotNewer(t *testing.T) {
+	for _, cur := range []string{relTag, "v2.0.1", "v3.0.0", "dev", ""} {
+		r := newRel(t)
+		if err := Download(context.Background(), r.a, cur); err == nil {
+			t.Errorf("current %q: accepted", cur)
+		}
+		r.assertNothingStaged()
 	}
 }
 
@@ -144,7 +178,7 @@ func TestDownloadRefusesOffListRedirect(t *testing.T) {
 		}
 		inner.ServeHTTP(w, req)
 	})
-	if err := Download(context.Background(), r.a); err == nil {
+	if err := Download(context.Background(), r.a, relCur); err == nil {
 		t.Fatal("redirect to a host outside the allowlist was followed")
 	}
 	r.assertNothingStaged()
@@ -157,7 +191,7 @@ func TestDownloadUnwritableFolder(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(r.exe+".new", "keep"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := Download(context.Background(), r.a); !errors.Is(err, ErrNotWritable) {
+	if err := Download(context.Background(), r.a, relCur); !errors.Is(err, ErrNotWritable) {
 		t.Fatalf("err = %v, want ErrNotWritable", err)
 	}
 }
@@ -166,7 +200,7 @@ func TestDownloadCancelled(t *testing.T) {
 	r := newRel(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := Download(ctx, r.a); err == nil {
+	if err := Download(ctx, r.a, relCur); err == nil {
 		t.Fatal("cancelled download succeeded")
 	}
 	r.assertNothingStaged()
