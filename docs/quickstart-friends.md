@@ -1,8 +1,8 @@
 # Chat with friends in 5 minutes
 
-This is the canonical onboarding guide for released LAN/Tailscale hosting.
-Dedicated/public hosting is unreleased; do not use its development guide for
-public onboarding until its release gate passes.
+This is the onboarding guide for LAN and Tailscale hosting. Public dedicated
+hosting is not covered here; its remote acceptance has not been run (see the
+[dedicated guide](dedicated-hosting.md)).
 
 ## Choose how friends reach the host
 
@@ -39,8 +39,10 @@ security details, and source builds, see the [README](../README.md#chat-with-fri
    voice channel.
 
 The first run creates `<user config dir>/hermec/identity.key`. Back it up: it is
-your identity. The app checks GitHub for updates in release builds and links to
-the Releases page; replacement remains manual.
+your identity. Release builds on Windows and Linux download updates in the
+background and offer **Restart to update**; every friend and host must run the
+same build, so update together. macOS users rebuild with
+`scripts/build-mac.sh`.
 
 ## Friend-host standby (optional)
 

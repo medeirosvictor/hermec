@@ -119,14 +119,13 @@ from the server's name.
 
 ## Status
 
-Current release: see GitHub Releases. This repository ships a Go server with Ed25519
-key-based authentication, roles, channels, presence and text chat, a headless
-client library, a desktop GUI client, and integration tests. Voice, the
-multi-participant call view, Windows webcam publishing, and screen share work;
-watching works on Windows, macOS and Linux. The channel sidebar scrolls, mute
-send failures remain safely muted, and media/hosting failures show friendly
-status text while technical details stay in session logs. Direct peer-to-peer
-media is not built. The wire protocol is specified in
+This repository ships a Go server with Ed25519 key-based authentication, roles,
+channels, presence and text chat, a headless client library, a desktop GUI
+client, and integration tests. Voice, the multi-participant call view, Windows
+webcam publishing, and screen share work; watching works on Windows, macOS and
+Linux. Direct peer-to-peer media is not built. Releases and their notes are on
+the [Releases page](https://github.com/medeirosvictor/hermec/releases); the
+roadmap is [PLAN.md](PLAN.md) and the wire protocol is specified in
 [docs/protocol.md](docs/protocol.md).
 
 ## Install
@@ -168,8 +167,6 @@ You need a desktop with X11 or Wayland, and PulseAudio or PipeWire for sound.
 Copy and paste need one of `xclip`, `xsel` or `wl-clipboard` (for example,
 `sudo apt install xclip`).
 
-**Release notes** are generated from the commits in each release.
-
 **Updates:** on startup, release builds ask GitHub's public releases API
 whether a newer version exists (development builds never make this request or
 download anything). It sends no identifiers beyond a normal HTTPS request. On
@@ -183,8 +180,7 @@ banner and the "update" row in Settings (gear tile or F10) say "restart to
 update"; clicking (or Ctrl+U) swaps the new binary in and restarts into it; the
 old one is kept as `hermec.exe.old` / `hermec.old` until the new build has
 started, then removed. If the download or check fails, or the
-install folder is not writable, you get the old behaviour: a link to the
-Releases page. If a server refuses you with a version mismatch and its build is
+install folder is not writable, the banner links to the Releases page instead. If a server refuses you with a version mismatch and its build is
 newer than yours, the banner offers "update now" (Ctrl+U) to fetch it. See
 [docs/release-signing.md](docs/release-signing.md) for how releases are signed.
 
@@ -316,9 +312,10 @@ back to the development branch, run `git checkout main`.
 
 ## Join a friend's server
 
-Use the canonical [friends quickstart](docs/quickstart-friends.md) for LAN,
-Tailscale, download, and friend-host onboarding. Put on headphones: echo
-cancellation is not implemented.
+Use the [friends quickstart](docs/quickstart-friends.md) for LAN, Tailscale,
+download, and friend-host onboarding. Put on headphones: echo cancellation is
+not implemented. To join an operator-run VPS, choose **+ → Dedicated server**
+([dedicated hosting](docs/dedicated-hosting.md)).
 
 ## How safe is this? (Tailscale)
 
@@ -333,7 +330,7 @@ cancellation is not implemented.
   Revoke invite.
 - **Keys, not passwords.** Every person has a key file. The server checks a
   signature from that key when they connect.
-- **Proof-capable clients do not send the password.** The server keeps only a
+- **Clients do not send the password.** The server keeps only a
   key made from the password with scrypt (a slow, memory-hungry function, so
   guessing is expensive). They send an HMAC proof over both sides' random
   numbers and the server ID, so a recorded proof cannot be reused. Plaintext
@@ -357,7 +354,7 @@ cancellation is not implemented.
 
 1. **A shared friend can reach every port on your PC, not just HERMEC.**
    Tailscale's default policy allows all ports. You can narrow it to HERMEC,
-   because all voice and video media now uses one UDP port, the same number
+   because all voice and video media uses one UDP port, the same number
    as the server's port (UDP 7697 next to TCP 7697). In the Tailscale admin
    console, open **Access controls**. The default grant lets everyone reach
    everything. Do not delete it (that would lock out your own devices).
@@ -372,9 +369,8 @@ cancellation is not implemented.
    ]
    ```
 
-   Shared friends can then reach only TCP and UDP 7697 on your devices. This
-   needs the host to run this build. If you run on another port, use
-   that port number instead of 7697; `media_port` in the server config picks a
+   Shared friends can then reach only TCP and UDP 7697 on your devices. If you
+   run on another port, use that port number instead of 7697; `media_port` in the server config picks a
    different media port if you need one.
 2. **Admission depends on how the server was created.** Standalone
    configuration supports `password_key` and `allowed_keys` (see
@@ -544,8 +540,8 @@ about 300 kbps. Up to ten cameras can be active in one room.
 
 Camera, microphone and screen share have independent controls and can all run
 at once. Audio is the highest semantic priority, then the selected screen,
-then cameras; this release records that ordering but does not yet adapt bitrate
-or packet scheduling from it. Leaving the call, disabling camera, closing the
+then cameras; that ordering is metadata only and does not adapt bitrate
+or packet scheduling. Leaving the call, disabling camera, closing the
 app, or losing the device stops camera capture. Camera publishing from macOS
 and Linux is not implemented yet, though those clients can view cameras.
 
@@ -624,11 +620,9 @@ to a message.
 
 ## Chat with friends
 
-Want to try Hermec with a few friends? Use the
-[canonical friends quickstart](docs/quickstart-friends.md) for private LAN or
-Tailscale setup, downloads, and friend-host standby.
-
-You can also host from the app itself: click the **+** tile, choose
+Use the [friends quickstart](docs/quickstart-friends.md) for private LAN or
+Tailscale setup, downloads, and friend-host standby. You can host from the app
+itself: click the **+** tile, choose
 **Create my own**, and give the server a name and a port (7697 by default).
 Servers made this way have no password setup UI. The app starts the server on
 your computer, opens it as a tile, and shows an invite address (your Tailscale address if you have one,
@@ -689,16 +683,14 @@ for ev := range c.Events() {
   network or a trusted LAN, as in the
   [friends quickstart](docs/quickstart-friends.md)). Plain `ws://` over the
   public internet means an on-path observer can read everything, including chat.
-- **The handshake does not bind the connection.** On plain `ws://`, someone on
-  the network path could relay a real host's proof and read your chat. Use
-  TLS (`wss://`) or an encrypted network such as Tailscale.
+- **Plain `ws://` is relayable.** See known gap 6 in
+  [How safe is this?](#how-safe-is-this-tailscale).
 - **The host is trusted by design.** The room host can read all chat and
   relayed traffic, the same way a TeamSpeak host can. Choose hosts like you
   choose group admins. The host also sees who connects and when.
 - **End-to-end encryption is not built.** Voice is encrypted between you and the
   host (WebRTC), and chat is encrypted only if the server uses TLS or the
-  network layer does. The protocol reserves message types for end-to-end
-  encryption later.
+  network layer does.
 
 ## Troubleshooting
 

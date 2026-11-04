@@ -1,13 +1,14 @@
 # Dedicated server hosting
 
-> **Unreleased development documentation.** Dedicated hosting is not available
-> in current releases. Do not use this guide for public onboarding until Task 6
-> passes and the work is merged and released.
+> **Remote acceptance has not been run.** The tooling below ships in the Linux
+> server archive, but no dedicated server has passed the disposable-VPS and AWS
+> checklist yet. Do not use this guide for public onboarding or claim remote
+> hosting is available until it does.
 
 HERMEC can run as an operator-owned Linux systemd service. It does not create
 cloud resources, receive cloud credentials, or manage billing. The dedicated
 Linux amd64/arm64 archive contains both `hermec-server` and `hermec-verify`.
-Use the same released build for server and verifier.
+Every peer, including the verifier, runs the same build.
 
 For a beginner-oriented, click-by-click AWS EC2 disposable-test setup, see
 [From no AWS account to a disposable HERMEC VPS](aws-ec2-from-zero.md). It does
@@ -265,16 +266,16 @@ or `update.sh` that came out of the archive you are about to verify.
 Each release carries `SHA256SUMS.txt` and a detached Ed25519 signature
 `SHA256SUMS.txt.sig` (see [release-signing.md](release-signing.md)). The
 signature covers the release tag as well as the checksums, so an older release
-cannot be passed off as a newer one. To update to, say, `v0.3.0`:
+cannot be passed off as a newer one. To update to, say, `v0.8.1`:
 
 1. Download the server archive, `SHA256SUMS.txt` and `SHA256SUMS.txt.sig` from
    that release into a fresh directory. Do not unpack the archive.
 2. Verify the signature with the **installed** tool:
 
-       /usr/local/lib/hermec/hermec-release verify -tag v0.3.0 SHA256SUMS.txt
+       /usr/local/lib/hermec/hermec-release verify -tag v0.8.1 SHA256SUMS.txt
        sha256sum -c --ignore-missing SHA256SUMS.txt
 
-   `verify` prints `signature ok for tag v0.3.0`; the second command checks
+   `verify` prints `signature ok for tag v0.8.1`; the second command checks
    the archive you downloaded against the signed list.
 3. Run the **installed** update script with the three inputs (it repeats the
    checks, then extracts `hermec-server` from its own private copy of the
@@ -282,13 +283,13 @@ cannot be passed off as a newer one. To update to, say, `v0.3.0`:
 
        sudo HERMEC_SUMS=./SHA256SUMS.txt \
             HERMEC_ARCHIVE=./hermec-server-linux-amd64.tar.gz \
-            HERMEC_TAG=v0.3.0 \
+            HERMEC_TAG=v0.8.1 \
             /usr/local/lib/hermec/update.sh update
 
 The script refuses unless the signature verifies for `HERMEC_TAG`, the archive
 is listed exactly once in the signed sums with a matching SHA-256, the archive
-has `hermec-server` at its root, the server reports `hermec-server v0.3.0`,
-and `v0.3.0` is newer than the installed server. To reinstall or go back on
+has `hermec-server` at its root, the server reports `hermec-server v0.8.1`,
+and `v0.8.1` is newer than the installed server. To reinstall or go back on
 purpose (the older release must still be validly signed) set
 `HERMEC_ALLOW_DOWNGRADE=1`.
 

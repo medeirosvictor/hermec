@@ -1,9 +1,9 @@
 # Hosting readiness: approved architecture decisions
 
-**Approved 2026-10-26.** This is durable design guidance, not an implementation
-claim. Active execution lives in the [private-network plan](../plans/2026-10-28-private-network-lifecycle.md),
-[hosting-method migration plan](../plans/2026-10-28-hosting-method-migration.md),
-and [dedicated-hosting plan](../plans/2026-10-28-dedicated-hosting.md).
+**Approved 2026-10-26.** Design guidance for the open work: the
+[private-network plan](../plans/2026-10-28-private-network-lifecycle.md) and the
+[hosting-method migration plan](../plans/2026-10-28-hosting-method-migration.md).
+Dedicated hosting is built; see the [dedicated guide](../../dedicated-hosting.md).
 
 ## Boundaries and security
 
@@ -17,8 +17,8 @@ HERMEC membership or hosting authority.
 Public dedicated hosting requires trusted `wss://`, separately reachable media
 UDP, and admission (password proof or allowlist). Do not present open public
 hosting as safe. The host is still trusted; embedded networking is not an
-end-to-end-encryption promise. Same-build peers are expected before v1; no
-mixed-version call/media bridge, direct peer media, federation, or
+end-to-end-encryption promise. Every peer runs the same build; no
+mixed-version bridge, direct peer media, federation, or
 project-operated service is in scope.
 
 ## Private-network architecture

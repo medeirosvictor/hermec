@@ -1,11 +1,8 @@
 # Noise-suppression research
 
-Historical hosting/UI discussion was superseded by the approved
-[hosting-readiness design](../superpowers/specs/2026-10-26-hosting-readiness-design.md)
-and its active [dedicated-hosting plan](../superpowers/plans/2026-10-28-dedicated-hosting.md).
-Current operator instructions are in [the dedicated guide](../dedicated-hosting.md).
-This note retains durable noise-suppression research only; it does not claim an
-implementation or benchmark.
+Dated research (2026-10) for the noise-suppression trial in
+[its plan](../superpowers/plans/2026-10-27-noise-suppression-trial.md). It does
+not claim an implementation or benchmark.
 
 ## Candidates
 
@@ -38,4 +35,4 @@ and coloration. Measure CPU, memory, processing time, added latency and binary
 size across supported releases. Exercise toggle, mute, device changes,
 leave/rejoin and failover. Do not make quality or performance claims until this
 passes. Echo cancellation needs playback-reference timing and remains separate;
-headphones remain recommended.
+headphones remain recommended. Hermec has neither feature today.

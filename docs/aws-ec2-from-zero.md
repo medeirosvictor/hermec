@@ -1,8 +1,8 @@
 # From no AWS account to a disposable HERMEC VPS
 
-> **Unreleased dedicated hosting.** This is a test-runbook, not a statement that
-> public dedicated hosting is available. Task 6 remote acceptance has **not**
-> passed; do not use this for public onboarding or claim the remote gate passed.
+> **Test runbook.** Public dedicated hosting is not available until the Task 6
+> remote acceptance below passes. Do not use this for public onboarding or
+> claim the remote gate passed.
 >
 > Never paste AWS access keys, SSH private keys, TLS private keys, join/bootstrap
 > passwords, or founder/member private keys into HERMEC, chat, tickets, logs, or
@@ -124,12 +124,13 @@ and remove the security-group TCP 80 rule.
 
 ## 4. Obtain and install the test bundle safely
 
-There is no released dedicated-hosting bundle yet. Until one exists, obtain a
-reviewed archive from a trusted local build/release operator over a private
-transfer, then upload it from your own computer with `scp`. Do not download a
-random archive or execute a URL-piped installer. When a GitHub release exists,
-download the matching `hermec-server-linux-amd64.tar.gz` (or `arm64`) and its
-published `SHA256SUMS.txt` from that release, not from an untrusted mirror.
+Download the matching `hermec-server-linux-amd64.tar.gz` (or `arm64`) and the
+release's `SHA256SUMS.txt` and `SHA256SUMS.txt.sig` from the project's GitHub
+release on your own computer, not from a mirror, and upload the archive with
+`scp`. Do not execute a URL-piped installer. Check the signature with
+`hermec-release` built from this repository at the release tag
+(`go run ./cmd/hermec-release verify -tag <tag> SHA256SUMS.txt`) before
+trusting the checksum file.
 
 Verify the **exact archive you will extract** before extracting or uploading it.
 The following selects its named entry from the trusted checksum file; it fails
@@ -267,8 +268,8 @@ not a copied private key or a fresh bootstrap password.
 
 ## Task 6 remote checklist and evidence
 
-This is the exact outstanding remote gate. It is **unrun** as of this guide;
-do not mark any row passed without retained real-world evidence.
+This is the outstanding remote gate. It is unrun; do not mark any row passed
+without retained real-world evidence.
 
 - Fresh disposable-VPS install; DNS/TLS; join; two-way text/audio; camera and
   selected-screen sharing; restart persistence; backup/restore; update/rollback;
@@ -285,8 +286,7 @@ do not mark any row passed without retained real-world evidence.
   candidates in logs.
 - Confirm both verifier reports succeed and contain expected peer frames.
   CI, loopback tests, a healthy systemd unit, and `-check` do not prove internet
-  reachability. Preserve the evidence and only release after the plan's gates
-  are actually approved.
+  reachability. Preserve the evidence before claiming availability.
 
 ### Troubleshooting: TCP works but calls do not
 
@@ -299,21 +299,6 @@ Also check the client network/NAT permits UDP and outbound UDP replies. The
 verifier's `NEGOTIATION_UDP` is intentionally broad: it can indicate UDP,
 firewall, NAT, or media negotiation, not a certificate problem. DNS/certificate
 or trust failures are instead in the verifier's `URL_TLS` class.
-
-## Are app features missing?
-
-The backup defect is fixed. No newly identified dedicated-hosting feature blocks
-beginning remote acceptance after that fix. This is not a general reliability
-claim: known failover/media risks remain, including failover merge,
-call-transfer, warm-host race, cleanup, and recovery behavior. They are exactly
-why Task 6 requires real-device remote media and recovery/failover tests before
-any availability or release claim.
-
-Deliberately deferred features include private networking/Tailscale or
-Headscale release work, desktop distribution/updater, UI ban/grant controls,
-macOS/Linux camera/share publishing, window capture, shared-screen audio,
-simulcast, and echo cancellation. These are not reasons to claim the
-unreleased remote gate passed.
 
 ## Teardown: prevent surprise charges
 

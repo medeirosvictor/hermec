@@ -10,27 +10,24 @@ matching public key (`update.PublicKey`), and installs an update only when
 
 The signature is base64 of `ed25519.Sign(priv, "hermec-release-v2\x00" || tag ||
 "\x00" || sums_bytes)`. The fixed prefix keeps it from being valid for
-anything else, and the release tag (for example `v0.3.0`) is part of the signed
+anything else, and the release tag (for example `v0.8.0`) is part of the signed
 bytes, so a validly signed `SHA256SUMS.txt` of an older release cannot be
 replayed as a newer one: the app verifies against the tag it is installing,
 requires that tag to be a strict `vX.Y.Z` newer than the running build, and
-`update.sh` requires the tag to be newer than the installed server. The old
-`hermec-release-sums-v1` format (no tag) is never accepted.
+`update.sh` requires the tag to be newer than the installed server.
 
-Until `update.PublicKey` is set to a real key the app fails closed: it never
-installs an update (it still shows the banner and links to the Releases page),
-and the release workflow's "Verify signature against the embedded public key"
-step fails.
+The app fails closed: with no valid signature it never installs an update (it
+still shows the banner and links to the Releases page). The release workflow
+refuses to publish a release that no installed app could verify: a tagged
+release fails at "Sign checksums" if the `HERMEC_RELEASE_KEY` secret is missing,
+and at "Verify signature against the embedded public key" if the secret does
+not match `update.PublicKey`.
 
-## One-time setup
+## Key setup
 
-**Step 0, before the first release can ship: generate the key, set
-`update.PublicKey`, and add the `HERMEC_RELEASE_KEY` secret (steps 1 to 3
-below).** Until all three are done every tagged release fails at the "Verify
-signature against the embedded public key" step (or earlier, at "Sign
-checksums", if the secret is missing). That is intended: the workflow refuses
-to publish a release that no installed app could verify. No release has been
-signed yet, so nothing needs to stay compatible with an earlier format.
+The public key is embedded in `update/verify.go` and the private key is the
+repository's `HERMEC_RELEASE_KEY` Actions secret. To create a new key pair
+(first setup, or a rotation below):
 
 1. Generate the key on a trusted machine (not in CI):
 
@@ -48,15 +45,10 @@ signed yet, so nothing needs to stay compatible with an earlier format.
    delete the plaintext copy from the machine you generated it on. Losing it
    only means rotating (below); leaking it means anyone can sign an update.
 
-The release workflow refuses to publish when the secret is missing, and checks
-the fresh signature against the embedded public key before uploading, so a
-secret that does not match `update.PublicKey` fails the release instead of
-shipping updates nobody can install.
-
 ## Checking a release by hand
 
-    go run ./cmd/hermec-release verify -tag v0.3.0 SHA256SUMS.txt        # embedded key
-    go run ./cmd/hermec-release verify -tag v0.3.0 -pub <base64> SHA256SUMS.txt
+    go run ./cmd/hermec-release verify -tag v0.8.0 SHA256SUMS.txt        # embedded key
+    go run ./cmd/hermec-release verify -tag v0.8.0 -pub <base64> SHA256SUMS.txt
 
 `-tag` is required (CI signs with `sign -tag "$TAG"`) and `verify` prints the
 tag it checked. `SHA256SUMS.txt.sig` must sit next to the sums file. Then `sha256sum -c

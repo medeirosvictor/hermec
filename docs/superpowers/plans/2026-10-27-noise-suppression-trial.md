@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Draft for later review. The hosting design is approved; this separate
-audio plan has not been approved for execution. Transport work remains active.
+**Status:** Not started. Awaiting approval; it follows the second-wave
+regular-use features in [PLAN.md](../../../PLAN.md) (call quality).
 
 **Goal:** Evaluate a freely redistributable local denoiser and, if useful, expose
 it behind a default-off experimental toggle usable during calls.
@@ -25,7 +25,7 @@ the result requires Go 1.26 and is compatible with HERMEC's Go 1.27 floor.
 - Default off; switching works during a call without rejoining.
 - Process microphone PCM locally before Opus, never in the device callback.
 - No cloud processing, raw microphone logging or external runtime installation.
-- Keep mute semantics, bounded capture backlog and device teardown behavior.
+- Keep mute semantics, mic gain, bounded capture backlog and device teardown behavior.
 - Do not use Victor's real config or launch an agent GUI for the trial.
 - Initialization/failure disables filtering visibly and preserves the call.
 - Noise suppression does not implement acoustic echo cancellation.

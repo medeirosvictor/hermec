@@ -5,7 +5,7 @@ covers the mutual handshake, the server chain (section 9), channels, presence,
 text chat and its history (sections 4.9 and 4.9a), the server roster, voice
 signaling (section 4.12), camera and screen media (section 4.15), and host
 failover: the host list, warm standby sessions and the host-to-host link
-(sections 4.16 to 4.18).
+(sections 4.16 to 4.18) and the dedicated-server cutover (section 4.19).
 
 The reference implementation is `core/proto` (types and codec) and `server`
 (behavior). Where this document and the code disagree, that is a bug in one of
@@ -622,15 +622,7 @@ When a standby becomes active it sends `hosts` to its clients and adds a system
 line "host changed to `<name>`" to every text channel (`chat_message` with
 `system: true`).
 
-### 4.17 Dedicated cutover
-
-Dedicated preparation is a host-link exchange; it is not activation. The active source captures one exact chain head/hash and complete ordered history commitment, creates a random 32-byte nonce, and sends `dedicated_prepare {readiness}` to its prepared destination. The destination signs that readiness and returns `dedicated_proof`. The source verifies it and replies `dedicated_ack`, leaving both hosts unchanged: the destination is **Ready** and the source remains active.
-
-Only an authenticated client whose fingerprint is the current chain founder can request a transition. It first sends `dedicated_activate {destination_fingerprint,ref}` with no nonce to query readiness. The response is `dedicated_result {ref,status:"pending"|"ready"|"retry"|"error",readiness?,message?}`. The founder must explicitly confirm the returned fingerprint and exact nonce, then send `dedicated_activate {destination_fingerprint,transition_nonce,ref}`. The source rechecks that it is active, the requester remains founder, the destination is still the authorized Ready host, and the exact chain/history commitments and nonce remain unchanged. It checks voice emptiness under the same cutover gate, so a joining voice member cannot race activation. Pending, retry, and error results never fence or activate either host.
-
-Only after that recheck does the source write a durable `fenced` record and becomes non-electable. It signs and retransmits only the same `dedicated_commit`: `{certificate:{readiness, source_fingerprint, destination:HostInfo,signature}}`. The signature is domain-separated and covers source and destination fingerprints, server ID, nonce, all chain/history boundary fields, and every `HostInfo` field. A destination accepts it only from an authenticated chain host whose authorized public key verifies the source signature, and only when it matches its prepared record and local boundary. It first durably changes `prepared` to `committed`, then becomes active, and replies `dedicated_ack {readiness}`. Repeated commits and ACKs are idempotent. A crash before durable commit remains prepared; a crash after it restarts active. A fenced source remains fenced after restart and cannot fall back, self-elect, standby, or mint a different transition. Prepared and fenced hosts are excluded from normal standby/takeover. This does not alter ordinary failover.
-
-### 4.18 Warm sessions and takeover
+### 4.17 Warm sessions and takeover
 
 A **warm session** is a client's second connection, to the standby. It lets the
 client switch hosts without a full login.
@@ -766,6 +758,14 @@ larger priority number), it yields to that host:
 
 Chat lines the winner receives this way show up for its clients when they next
 join the channel.
+
+### 4.19 Dedicated cutover
+
+Dedicated preparation is a host-link exchange; it is not activation. The active source captures one exact chain head/hash and complete ordered history commitment, creates a random 32-byte nonce, and sends `dedicated_prepare {readiness}` to its prepared destination. The destination signs that readiness and returns `dedicated_proof`. The source verifies it and replies `dedicated_ack`, leaving both hosts unchanged: the destination is **Ready** and the source remains active.
+
+Only an authenticated client whose fingerprint is the current chain founder can request a transition. It first sends `dedicated_activate {destination_fingerprint,ref}` with no nonce to query readiness. The response is `dedicated_result {ref,status:"pending"|"ready"|"retry"|"error",readiness?,message?}`. The founder must explicitly confirm the returned fingerprint and exact nonce, then send `dedicated_activate {destination_fingerprint,transition_nonce,ref}`. The source rechecks that it is active, the requester remains founder, the destination is still the authorized Ready host, and the exact chain/history commitments and nonce remain unchanged. It checks voice emptiness under the same cutover gate, so a joining voice member cannot race activation. Pending, retry, and error results never fence or activate either host.
+
+Only after that recheck does the source write a durable `fenced` record and becomes non-electable. It signs and retransmits only the same `dedicated_commit`: `{certificate:{readiness, source_fingerprint, destination:HostInfo,signature}}`. The signature is domain-separated and covers source and destination fingerprints, server ID, nonce, all chain/history boundary fields, and every `HostInfo` field. A destination accepts it only from an authenticated chain host whose authorized public key verifies the source signature, and only when it matches its prepared record and local boundary. It first durably changes `prepared` to `committed`, then becomes active, and replies `dedicated_ack {readiness}`. Repeated commits and ACKs are idempotent. A crash before durable commit remains prepared; a crash after it restarts active. A fenced source remains fenced after restart and cannot fall back, self-elect, standby, or mint a different transition. Prepared and fenced hosts are excluded from normal standby/takeover. This does not alter ordinary failover.
 
 ## 5. Errors
 

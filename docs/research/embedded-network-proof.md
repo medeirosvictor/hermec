@@ -132,12 +132,9 @@ private keys or personal network identifiers.
 - Embedded networking does not add HERMEC E2EE and does not change the trusted
   host/SFU model.
 
-## Next delivery order
+## Next steps
 
-1. Package and expose self-managed dedicated hosting first, so AWS/VPS hosting
-   can become usable without waiting for private-network enrollment evidence.
-2. Run the disposable real-network matrix when Victor can supply Tailscale and
-   Headscale test environments.
-3. Build private profile lifecycle and Create/Join UI using the measured
-   provider boundary, gated by those real-network results.
-4. Add guarded hosting-method migration only after both destinations exist.
+Run the disposable real-network matrix when Tailscale and Headscale test
+environments are available, then build the private profile lifecycle and
+Create/Join UI ([plan](../superpowers/plans/2026-10-28-private-network-lifecycle.md)),
+gated by those results.

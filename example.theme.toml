@@ -1,7 +1,7 @@
 # Theme configuration for Hermec GUI client.
 # All colors are hex format #RRGGBB. Missing keys use defaults; unknown keys are rejected.
-# The built-in presets (amber, green, blue, parchment) live in ui/theme/presets/
-# and make good starting points.
+# The built-in presets (amber, green, blue, parchment, slate) live in
+# ui/theme/presets/ and make good starting points.
 
 # Background colour
 bg = "#0A0A08"
@@ -14,6 +14,9 @@ dim = "#694A01"
 
 # Bright colour (highlights, emphasis)
 bright = "#FFCF40"
+
+# Failure/warning marks
+warn = "#E5534B"
 
 # Panel surface colour. Optional: when omitted it is bg mixed 6% toward fg.
 panel = "#15120C"
