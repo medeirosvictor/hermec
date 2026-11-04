@@ -125,6 +125,30 @@ The Settings row `mic gain` cycles your own microphone between 50% and 200%;
 your level meter and what others hear both reflect it. Boosted audio passes
 through a soft limiter, so loud peaks round off instead of crackling.
 
+### Push-to-talk
+
+Settings row `voice mode` switches between `open mic` (default) and
+`push to talk`; `ptt key` cycles Right Ctrl (default), grave (`` ` ``), Caps
+Lock, F13 and Mouse 4. In push-to-talk your microphone transmits only while the
+key is held (plus a 150 ms tail so word endings are not clipped); audio from
+before the press is never sent. The call bar and the "voice connected" panel
+show `PTT` while idle and `TALK` (bright) while transmitting, and your level
+meter stays flat when not transmitting. Others see you speaking only while you
+transmit.
+
+- **Mute still wins:** Ctrl+M or the mute button stops all transmission, key
+  held or not. The bar then shows `PTT muted`.
+- **Local gate:** push-to-talk is applied on your machine and sends nothing to
+  the server, so others do not see a mute icon while you are idle.
+- **Windows:** the key works system-wide, even while another app has focus. It
+  reads only the state of the one chosen key (no keyboard hook, nothing is
+  recorded). The grave key is the one left of `1` on a US layout.
+- **Linux and macOS:** the key works only while the Hermec window has focus;
+  a system-wide hotkey is not implemented yet.
+- While Hermec is focused and a text field is active (chat, settings name, add
+  page), the grave key is ignored so typing never transmits. The other keys do
+  not type, so they work while you chat.
+
 ### Devices and auto-rejoin
 
 The `input` and `output` rows in Settings take effect immediately during a
@@ -204,7 +228,7 @@ the screen from macOS or Linux.
 
 Click the **gear tile** or press **F10** (works when the rail is hidden). The
 page has: name, palette, font, scanlines, curvature, input/output audio device,
-mic gain, text size as a percentage, share quality (720p or 1080p), logs (open
+mic gain, voice mode and push-to-talk key, text size as a percentage, share quality (720p or 1080p), logs (open
 folder), update status, and a help section. Choices, including F1/F2/F3,
 persist to `<user config dir>/hermec/settings.toml`; the `-name` and `-theme`
 flags override it.

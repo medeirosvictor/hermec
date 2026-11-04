@@ -366,6 +366,14 @@ func (c *Client) SetMutedFor(token MuteToken, m bool) error {
 	return nil
 }
 
+// SetTransmitGate opens or closes the local transmit gate for push-to-talk.
+// While closed, the capture source keeps being read (so nothing backs up) but
+// frames are dropped instead of sent, so audio from before the gate opens is
+// never transmitted. It sends nothing to the server: the voice_mute state is
+// unchanged, and explicit mute still wins. It starts open and applies to
+// current and later calls.
+func (c *Client) SetTransmitGate(open bool) { c.gateClosed.Store(!open) }
+
 // ---- read-loop entry points (never block) ----
 
 // onVoiceState is called by the read loop for every voice_state.
@@ -694,8 +702,8 @@ func (cl *call) sendLoop() {
 		if err != nil {
 			return // io.EOF or a dead source ends our stream
 		}
-		if cl.muted.Load() {
-			continue
+		if cl.muted.Load() || cl.c.gateClosed.Load() {
+			continue // muted, or the push-to-talk gate is closed: the frame is dropped
 		}
 		_ = cl.track.WriteSample(media.Sample{Data: frame, Duration: frameDuration})
 	}

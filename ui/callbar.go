@@ -169,6 +169,7 @@ func (g *game) joinCallOn(s *session, ch string, muted, rejoin bool) {
 	if open == nil {
 		open = openAudio
 	}
+	c.SetTransmitGate(!g.set.PushToTalk()) // push-to-talk: nothing flows until the key is held
 	g.vc = voiceCall{busy: true, joining: ch, opKey: s.key, muted: muted}
 	g.callKey = ""
 	s.st.SetInCall("")
@@ -427,6 +428,8 @@ type barLayout struct {
 	muteX0, muteX1, leaveX0, leaveX1 float64
 	shareX0, shareX1                 float64
 	cameraX0, cameraX1               float64
+	pttX0                            float64 // 0 = no push-to-talk tag
+	leftX                            float64 // left edge of the controls
 	meterX, meterW                   float64
 }
 
@@ -461,6 +464,11 @@ func (g *game) barLayout(gm geometry) barLayout {
 	right = l.shareX0 - pad
 	cw := text.Advance(g.cameraLabel(), g.face)
 	l.cameraX1, l.cameraX0 = right, right-cw-pad
+	l.leftX = l.cameraX0
+	if g.set.PushToTalk() {
+		l.pttX0 = l.cameraX0 - text.Advance(pttTagWidest, g.face) - pad
+		l.leftX = l.pttX0
+	}
 	return l
 }
 
@@ -528,7 +536,7 @@ func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
 		}
 		return
 	}
-	title := fitCallTitle(g.callTitle(), state.FormatElapsed(time.Since(g.vc.start)), int((l.cameraX0-pad-l.nameX)/gm.adv))
+	title := fitCallTitle(g.callTitle(), state.FormatElapsed(time.Since(g.vc.start)), int((l.leftX-pad-l.nameX)/gm.adv))
 	g.drawText(dst, title, l.nameX, l.y, th.Bright)
 
 	shareCol := th.FG
@@ -546,6 +554,9 @@ func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
 		cameraCol = th.Bright
 	}
 	g.drawText(dst, g.cameraLabel(), l.cameraX0+pad/2, l.y, cameraCol)
+	if tag := g.pttTag(); tag != "" {
+		g.drawText(dst, tag, l.pttX0+pad/2, l.y, g.pttColor())
+	}
 
 	col, label := th.FG, muteLabel
 	if g.vc.muted {
@@ -557,7 +568,7 @@ func (g *game) drawBar(screen *ebiten.Image, gm geometry) {
 
 	// Own mic level; flat while muted (nothing is being sent).
 	lvl := g.vc.mic.Level()
-	if g.vc.muted {
+	if g.vc.muted || (g.set.PushToTalk() && !g.transmitting) {
 		lvl = 0
 	}
 	drawMeter(dst, float32(l.meterX), float32(l.y+l.h/2-3), float32(l.meterW), 6, lvl, th.Dim, th.Bright)

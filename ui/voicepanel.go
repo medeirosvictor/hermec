@@ -166,6 +166,9 @@ func (g *game) drawVoicePanel(screen *ebiten.Image, gm geometry) {
 		}
 	}
 	titleText, titleCol := "voice connected", th.Bright
+	if tag := g.pttTag(); live && tag != "" {
+		titleText += "  [" + tag + "]"
+	}
 	if !live {
 		titleText, titleCol = "voice", th.Dim
 	}

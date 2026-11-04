@@ -153,9 +153,11 @@ type game struct {
 
 	settingsPath  string
 	set           state.Settings
-	settingsOpen  bool     // settings scene replaces the connect/main scene
-	setRow        int      // focused settings row
-	devIn, devOut []string // device names, enumerated on settings scene entry
+	settingsOpen  bool       // settings scene replaces the connect/main scene
+	gate          state.Gate // push-to-talk transmit gate
+	transmitting  bool       // push-to-talk is open (key held); false in open-mic mode
+	setRow        int        // focused settings row
+	devIn, devOut []string   // device names, enumerated on settings scene entry
 	devCamera     []cameracap.Device
 	autoName      string // name in effect at startup; not persisted unless edited
 	nameDirty     bool   // settings name field edited, not yet saved
@@ -465,6 +467,7 @@ func (g *game) Update() error {
 		g.updateKey()
 	}
 	g.updateVoice()
+	g.stepPTT(time.Now())
 	g.updateDiscovery() // mutates connect.disc, which the hit targets depend on
 	g.dt = frameDT()
 	g.stepBar(g.dt)     // before buildHits: hit rects follow the drawn bar

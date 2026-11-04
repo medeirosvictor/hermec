@@ -30,6 +30,8 @@ const (
 	rowInput
 	rowOutput
 	rowMicGain
+	rowVoiceMode
+	rowPTTKey
 	rowCamera
 	rowShare
 	rowUpdate
@@ -459,6 +461,14 @@ func (g *game) activateSetting(row int) {
 		g.cycleOutput()
 	case rowMicGain:
 		g.cycleMicGain()
+	case rowVoiceMode:
+		g.set.ToggleVoiceMode()
+		g.logf("voice mode: %s", g.set.VoiceModeLabel())
+		g.persistSettings()
+	case rowPTTKey:
+		g.set.CyclePTTKey()
+		g.logf("ptt key: %s", g.set.PTTKeyChoice().ID)
+		g.persistSettings()
 	case rowCamera:
 		g.cycleCameraDevice()
 	case rowSize:
@@ -515,6 +525,8 @@ func (g *game) drawSettings(screen *ebiten.Image) {
 		"input:     " + deviceLabel(g.set.InputDevice, g.devIn),
 		"output:    " + deviceLabel(g.set.OutputDevice, g.devOut),
 		"mic gain:  " + strconv.Itoa(g.set.MicGainPct()) + "%",
+		"voice mode: " + g.set.VoiceModeLabel(),
+		"ptt key:   " + g.set.PTTKeyChoice().Label,
 		"camera:    " + g.cameraDeviceLabel(),
 		"share quality: " + g.set.ShareQualityID(),
 		updateRowLabel(g.updStatus, g.update, g.version()),

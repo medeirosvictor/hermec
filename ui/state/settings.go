@@ -36,6 +36,9 @@ type Settings struct {
 	Volumes map[string]int `toml:"volumes,omitempty"` // fingerprint -> playback percent; absent = 100 (see VolumePct)
 
 	MicGain int `toml:"mic_gain,omitempty"` // percent; 0 = 100 (see MicGainPct)
+
+	VoiceMode string `toml:"voice_mode,omitempty"` // "ptt" = push to talk; "" = open mic
+	PTTKey    string `toml:"ptt_key,omitempty"`    // key id; "" = default (see PTTKeys)
 }
 
 // CurvatureEnabled reports whether the CRT curvature is on; unset means on.

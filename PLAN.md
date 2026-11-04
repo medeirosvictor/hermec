@@ -37,7 +37,9 @@ its acceptance run is pending.
    - Invite links: done (`hermec://join?v=1&addr&id[&name][&pw]`, Copy invite
      link on the tile menu, paste field on Add a Server; OS URL-scheme
      registration is later, needs installer work).
-   - Push-to-talk with a global hotkey, then echo cancellation.
+   - Push-to-talk: done (Settings voice mode / ptt key; local transmit gate;
+     system-wide key on Windows via GetAsyncKeyState, window-focused elsewhere;
+     a global hotkey on Linux/macOS is later). Echo cancellation remains later.
 5. **Code organization, stage 1b** (design with Victor first): split `ui.game`
    into per-feature state structs with their own update/draw; split
    `server/sfu.go` and `client/voice.go`/`share.go` along publish / receive /

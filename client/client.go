@@ -86,6 +86,9 @@ type Client struct {
 
 	writeMu   sync.Mutex // gorilla permits a single concurrent writer
 	voiceOpMu sync.Mutex // orders mute writes with voice call replacement
+	// gateClosed is the local transmit gate (push-to-talk): while set, the
+	// sender reads and drops frames. The server-visible mute state is untouched.
+	gateClosed atomic.Bool
 
 	mu          sync.Mutex // guards waiters and closed
 	waiters     []*joinWaiter

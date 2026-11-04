@@ -34,7 +34,7 @@ Brief for the next session. Roadmap: [PLAN.md](PLAN.md). User docs:
 3. Task 6: remote acceptance on a disposable EC2 instance (checklist C),
    following [docs/aws-ec2-from-zero.md](docs/aws-ec2-from-zero.md). Run the
    rows with Victor; do not provision cloud resources.
-4. Second wave: push-to-talk, then echo cancellation (moderation UI and invite
+4. Second wave: push-to-talk is in (hand test below); echo cancellation next (moderation UI and invite
    links are in; invite links still need checklist A below).
 5. Design the `ui.game` split with Victor, then do it along with the SFU and
    client splits (PLAN 1b). Follow-ups: `server` exports about 19 methods for
@@ -71,6 +71,12 @@ Brief for the next session. Roadmap: [PLAN.md](PLAN.md). User docs:
   link with and without `&pw=`: the Dedicated form is prefilled and nothing
   connects until Validate / Connect. Confirm `servers.toml` never holds the
   password.
+- Push-to-talk: Settings voice mode = push to talk; the peer hears you only
+  while the key is held (no clipped word starts, no audio from before the
+  press) and sees speaking only then; bar shows PTT/TALK. Ctrl+M mutes even with
+  the key held. On Windows the key works with Hermec in the background (try each
+  key: Right Ctrl, grave, Caps Lock, Mouse 4); grave never types into chat or
+  transmits while a text field is active. On Linux/macOS it works only focused.
 - Visual, input, device-permission, firewall, discovery, voice, screen-share and
   camera checks on real desktops; headless tests do not replace them.
 
