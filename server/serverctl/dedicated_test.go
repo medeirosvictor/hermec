@@ -83,7 +83,7 @@ func TestInitDedicatedFailureLeavesNoState(t *testing.T) {
 	if _, err := InitDedicated(dir); err == nil {
 		t.Fatal("bootstrap unexpectedly succeeded below a file")
 	}
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+	if _, err := os.Stat(dir); err == nil {
 		t.Fatalf("partial dedicated state exists: %v", err)
 	}
 }

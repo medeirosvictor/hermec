@@ -139,14 +139,7 @@ func TestDedicatedValidationHeadlessIntegration(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("validation did not reach probe")
 		}
-		select {
-		case _, ok := <-c.Events():
-			if ok {
-				t.Fatal("probe-failed client event stream remained open")
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("probe-failed client was not closed")
-		}
+		waitEventsClosed(t, c, "probe-failed")
 	})
 
 	t.Run("stale completion closes client and commits nothing", func(t *testing.T) {
@@ -177,14 +170,7 @@ func TestDedicatedValidationHeadlessIntegration(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 		g.pumpDedicated()
-		select {
-		case _, ok := <-c.Events():
-			if ok {
-				t.Fatal("stale client event stream remained open")
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("stale client was not closed")
-		}
+		waitEventsClosed(t, c, "stale")
 		if len(g.servers) != 0 || len(g.sess) != 0 {
 			t.Fatalf("stale completion committed entries=%d sessions=%d", len(g.servers), len(g.sess))
 		}
@@ -208,14 +194,7 @@ func TestDedicatedValidationHeadlessIntegration(t *testing.T) {
 			t.Fatal("validation did not reach probe")
 		}
 		g.cancelDedicated()
-		select {
-		case _, ok := <-c.Events():
-			if ok {
-				t.Fatal("cancelled client event stream remained open")
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("cancelled client was not closed")
-		}
+		waitEventsClosed(t, c, "cancelled")
 		if len(g.servers) != 0 || len(g.sess) != 0 {
 			t.Fatalf("cancelled validation committed entries=%d sessions=%d", len(g.servers), len(g.sess))
 		}
@@ -233,4 +212,22 @@ func pumpDedicatedUntil(t *testing.T, g *game, ok func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	g.pumpDedicated()
+}
+
+// waitEventsClosed drains c's events until the stream closes. Events already
+// buffered before the client was closed (such as the login hosts frame) are
+// skipped; only a close proves the client was shut down.
+func waitEventsClosed(t *testing.T, c *client.Client, what string) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case _, ok := <-c.Events():
+			if !ok {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("%s client was not closed", what)
+		}
+	}
 }
