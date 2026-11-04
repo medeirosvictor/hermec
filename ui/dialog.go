@@ -27,7 +27,8 @@ type dialog struct {
 	mode dialogMode
 	key  string
 	nick field         // rename: the text being edited
-	mod  state.ModItem // ban: the entry to append on confirm
+	kind state.ModKind // ban: the action, rebuilt from the chain on confirm
+	tgt  string        // ban: the fingerprint acted on
 	name string        // ban: who, for display
 }
 
@@ -110,7 +111,7 @@ func (g *game) dialogConfirm() {
 		g.servers = state.SetNick(g.servers, d.key, d.nick.String())
 		g.persistServers()
 	case dlgBan:
-		g.modOp(d.key, d.mod)
+		g.modOp(d.key, d.kind, d.tgt)
 	case dlgLeave:
 		if d.key == hostedKey {
 			g.leaveHosted()
@@ -293,11 +294,11 @@ func (g *game) drawDialog(screen *ebiten.Image) {
 	}
 }
 
-// openBanDialog asks to confirm banning it.Target on session key.
-func (g *game) openBanDialog(key string, it state.ModItem) {
+// openBanDialog asks to confirm banning target on session key.
+func (g *game) openBanDialog(key string, kind state.ModKind, target string) {
 	s := g.sess[key]
 	if s == nil {
 		return
 	}
-	g.dlg = dialog{mode: dlgBan, key: key, mod: it, name: state.Ellipsize(g.memberName(s, it.Target), 24)}
+	g.dlg = dialog{mode: dlgBan, key: key, kind: kind, tgt: target, name: state.Ellipsize(g.memberName(s, target), 24)}
 }

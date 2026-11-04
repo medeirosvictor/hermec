@@ -537,7 +537,10 @@ func (g *game) pumpInvite() {
 			*st = addr
 		default:
 			link, err := "", error(nil)
-			if h := g.hosted; h != nil {
+			if h := g.hosted; h != nil && h.id == "" {
+				*st = "can't copy an invite yet: the server ID isn't known"
+				return
+			} else if h != nil {
 				link, err = state.FormatInvite(state.Invite{Addr: addr, ServerID: h.id, Name: state.CleanName(h.name(), state.MaxServerNameRunes)})
 			}
 			if err == nil {

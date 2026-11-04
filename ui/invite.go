@@ -54,6 +54,17 @@ func (g *game) copyInviteLink(inv state.Invite) {
 	}
 }
 
+// guardInvite wipes the paste-invite text unless its input is on screen and
+// focused: leaving the Add page or clicking elsewhere must not leave a
+// password sitting in the field.
+func (g *game) guardInvite() {
+	if g.ai.focus && g.add == addChoose && g.cur().st.Phase == state.PhaseConnect {
+		return
+	}
+	g.ai.focus = false
+	g.ai.clear()
+}
+
 // joinInviteText parses pasted text and starts the matching join. It returns
 // a friendly message for the page on failure and "" on success. The text and
 // anything parsed from it are never logged.
@@ -97,13 +108,22 @@ func (g *game) joinPinned(inv state.Invite) string {
 		return "Enter your name under Join a server first, then paste the link again."
 	}
 	key := g.keyFor(g.realURL(inv.Addr))
+	if s := g.sess[key]; s != nil && s.c != nil {
+		if id := s.c.ServerID(); id != "" && id != inv.ServerID {
+			return "You are already connected to a different server at that address. Leave it first."
+		}
+	}
 	if e, ok := g.entryFor(key); ok {
 		if e.ServerID != "" && e.ServerID != inv.ServerID {
 			return "That address is already saved with a different server ID. Leave that server first."
 		}
 		g.servers = state.PinID(g.servers, key, inv.ServerID)
 	} else if g.sess[key] == nil {
-		g.servers = append([]state.ServerEntry{{URL: key, Label: g.labelFor(key, key), Pending: true, ServerID: inv.ServerID}}, g.servers...)
+		label := state.CleanName(inv.Name, state.MaxServerNameRunes)
+		if label == "" {
+			label = g.labelFor(key, key)
+		}
+		g.servers = append([]state.ServerEntry{{URL: key, Label: label, Pending: true, ServerID: inv.ServerID}}, g.servers...)
 	}
 	s := g.openSession(key, name)
 	if s == nil {
@@ -129,11 +149,12 @@ func (g *game) updateInviteField() {
 	}
 }
 
-// inviteShown is the tail of s that fits room columns, with anything after
-// "pw=" hidden so a typed secret is never drawn.
+// inviteShown is the tail of s that fits room columns, with everything after
+// the "?" hidden so a secret (pw=, however it is spelled or split) is never
+// drawn.
 func inviteShown(s string, room int) string {
-	if i := strings.Index(s, "pw="); i >= 0 {
-		s = s[:i+3] + strings.Repeat("•", len([]rune(s[i+3:])))
+	if i := strings.Index(s, "?"); i >= 0 {
+		s = s[:i+1] + strings.Repeat("•", len([]rune(s[i+1:])))
 	}
 	r := []rune(s)
 	if room < 1 {

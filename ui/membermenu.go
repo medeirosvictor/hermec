@@ -150,9 +150,9 @@ func (g *game) modItems(s *session, fp string) []menuItem {
 	for _, it := range state.ModItems(s.c.Chain().State(), s.c.Fingerprint(), fp) {
 		mi := menuItem{label: it.Label, warn: it.Confirm}
 		if it.Confirm {
-			mi.act = func() { g.openBanDialog(s.key, it) }
+			mi.act = func() { g.openBanDialog(s.key, it.Kind, it.Target) }
 		} else {
-			mi.act = func() { g.modOp(s.key, it) }
+			mi.act = func() { g.modOp(s.key, it.Kind, it.Target) }
 		}
 		items = append(items, mi)
 	}
@@ -177,28 +177,33 @@ func (g *game) bannedItem(key string, ax, ay float64) (menuItem, bool) {
 	if s == nil || s.c == nil || !state.IsManager(s.c.Chain().State(), s.c.Fingerprint()) {
 		return menuItem{}, false
 	}
-	return menuItem{label: "Banned members…", act: func() { g.openBannedMenu(key, ax, ay) }}, true
+	return menuItem{label: "Banned members…", act: func() { g.openBannedMenu(key, ax, ay, 0) }}, true
 }
 
-// openBannedMenu lists the banned fingerprints as menu rows; picking a row
-// unbans that person.
-func (g *game) openBannedMenu(key string, ax, ay float64) {
+// openBannedMenu lists page (0-based) of the banned fingerprints as menu rows;
+// picking a row unbans that person, and the last row opens the next page.
+func (g *game) openBannedMenu(key string, ax, ay float64, page int) {
 	g.closeMenu()
 	s := g.sess[key]
 	if s == nil || s.c == nil {
 		return
 	}
 	rows := state.BannedRows(s.c.Chain().State(), s.c.Fingerprint(), state.KnownNames(s.st))
+	start := page * maxBannedRows
+	if start >= len(rows) { // unbans shrank the list
+		start = max(0, (len(rows)-1)/maxBannedRows*maxBannedRows)
+		page = start / maxBannedRows
+	}
 	var items []menuItem
-	for i, r := range rows {
-		if i == maxBannedRows {
-			items = append(items, menuItem{label: fmt.Sprintf("and %d more", len(rows)-i), act: func() {}})
-			break
-		}
-		items = append(items, menuItem{label: "Unban " + state.Ellipsize(r.Label, 48), act: func() { g.modOp(key, r.Item) }})
+	for i := start; i < len(rows) && i < start+maxBannedRows; i++ {
+		r := rows[i]
+		items = append(items, menuItem{label: "Unban " + state.Ellipsize(r.Label, 48), act: func() { g.modOp(key, state.ModUnban, r.FP) }})
 	}
 	if len(items) == 0 {
 		items = []menuItem{{label: "No banned members", act: func() {}}}
+	}
+	if rest := len(rows) - start - maxBannedRows; rest > 0 {
+		items = append(items, menuItem{label: fmt.Sprintf("and %d more…", rest), act: func() { g.openBannedMenu(key, ax, ay, page+1) }})
 	}
 	for i := range items {
 		act := items[i].act
@@ -212,9 +217,15 @@ func (g *game) openBannedMenu(key string, ax, ay float64) {
 // modOp appends one moderation entry on session key's client in the
 // background; the outcome comes back on sendCh as a friendly status line and
 // the raw error goes to the log.
-func (g *game) modOp(key string, it state.ModItem) {
+func (g *game) modOp(key string, kind state.ModKind, target string) {
 	s := g.sess[key]
 	if s == nil || s.c == nil {
+		return
+	}
+	// Rebuilt now, not when the menu opened: roles and bans may have changed.
+	it, ok := state.ModAction(s.c.Chain().State(), s.c.Fingerprint(), kind, target)
+	if !ok {
+		s.st.Status = "no longer applies"
 		return
 	}
 	c, ch, name := s.c, g.sendCh, g.memberName(s, it.Target)

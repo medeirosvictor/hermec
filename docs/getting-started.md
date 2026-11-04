@@ -114,15 +114,15 @@ Then click a voice channel to join the call. Privacy reminders: participants do
 not see one another's IPs (the server relays media), but the host can read chat
 and relayed traffic, so choose hosts like group admins. Password login sends a
 proof, not the plaintext password; do not share a server password in the same
-channel as the connection details. An invite link made with a password is a
-secret: send it only over a private channel.
+channel as the connection details. A hand-written invite link with `pw=` holds
+the server password and is a secret: send it only over a private channel.
 
 ## Host a server from the app
 
 1. Click **+ → Create my own**, choose a name and a port (7697 by default), and
    allow the Windows Firewall prompt when it appears.
 2. The app starts the server on your computer and opens it as a tile. Share the
-   invite address from the tile's right-click menu: it is your Tailscale address
+   invite link from the tile's right-click menu: it is your Tailscale address
    if you have one, otherwise your LAN address. On Tailscale, share the host
    machine with your friends first.
    The menu item is **Copy invite link**: it copies one

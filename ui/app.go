@@ -467,6 +467,7 @@ func (g *game) Update() error {
 		g.updateKey()
 	}
 	g.updateVoice()
+	g.guardInvite()
 	g.stepPTT(time.Now())
 	g.updateDiscovery() // mutates connect.disc, which the hit targets depend on
 	g.dt = frameDT()

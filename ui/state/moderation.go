@@ -24,8 +24,9 @@ const (
 	ModUnban
 )
 
-// ModItem is one moderation menu entry: what to show and the chain entry to
-// append when it is picked.
+// ModItem is one moderation action: what to show and the chain entry to
+// append. Menus keep only Kind and Target and rebuild it with ModAction when
+// it runs.
 type ModItem struct {
 	Kind    ModKind
 	Label   string
@@ -54,11 +55,13 @@ func ModItems(cs chain.State, viewer, target string) []ModItem {
 	var items []ModItem
 	if hasRoleName(cur, adminRole) {
 		rest := slices.DeleteFunc(slices.Clone(cur), func(r string) bool { return r == adminRole })
-		if len(rest) == 0 {
-			rest = []string{"user"}
+		it := ModItem{Kind: ModRemoveAdmin, Label: "Remove admin", Op: chain.OpGrant,
+			Body: chain.GrantBody{Fingerprint: target, Roles: rest}, Target: target}
+		if sameRoles(rest, cs.Roles().DefaultRoles) { // empty, or what a member gets anyway
+			// Revoking drops the grant, so the member follows the server's defaults.
+			it.Op, it.Body = chain.OpRevoke, chain.FPBody{Fingerprint: target}
 		}
-		items = append(items, ModItem{Kind: ModRemoveAdmin, Label: "Remove admin", Op: chain.OpGrant,
-			Body: chain.GrantBody{Fingerprint: target, Roles: rest}, Target: target})
+		items = append(items, it)
 	} else {
 		items = append(items, ModItem{Kind: ModMakeAdmin, Label: "Make admin", Op: chain.OpGrant,
 			Body: chain.GrantBody{Fingerprint: target, Roles: append(slices.Clone(cur), adminRole)}, Target: target})
@@ -66,6 +69,40 @@ func ModItems(cs chain.State, viewer, target string) []ModItem {
 	items = append(items, ModItem{Kind: ModBan, Label: "Ban…", Confirm: true, Op: chain.OpBan,
 		Body: chain.FPBody{Fingerprint: target}, Target: target})
 	return items
+}
+
+// sameRoles reports whether rest is empty or holds the same roles as def,
+// ignoring order.
+func sameRoles(rest, def []string) bool {
+	if len(rest) == 0 {
+		return true
+	}
+	a, b := slices.Clone(rest), slices.Clone(def)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(a, b)
+}
+
+// ModAction rebuilds the action of the given kind on target from the current
+// chain state, so a menu or dialog opened earlier never acts on stale roles or
+// ban state. ok is false when the action no longer applies.
+func ModAction(cs chain.State, viewer string, kind ModKind, target string) (ModItem, bool) {
+	if kind == ModUnban {
+		if target == "" || !IsManager(cs, viewer) || !cs.Banned(target) {
+			return ModItem{}, false
+		}
+		return unbanItem(target), true
+	}
+	for _, it := range ModItems(cs, viewer, target) {
+		if it.Kind == kind {
+			return it, true
+		}
+	}
+	return ModItem{}, false
+}
+
+func unbanItem(fp string) ModItem {
+	return ModItem{Kind: ModUnban, Label: "Unban", Op: chain.OpUnban, Body: chain.FPBody{Fingerprint: fp}, Target: fp}
 }
 
 // BannedRow is one line of the banned-members list.
@@ -113,8 +150,7 @@ func BannedRows(cs chain.State, viewer string, names map[string]string) []Banned
 		if n := CleanName(names[fp], MaxServerNameRunes); n != "" {
 			label = n + " (" + fp + ")"
 		}
-		rows = append(rows, BannedRow{FP: fp, Label: label, Item: ModItem{Kind: ModUnban, Label: "Unban", Op: chain.OpUnban,
-			Body: chain.FPBody{Fingerprint: fp}, Target: fp}})
+		rows = append(rows, BannedRow{FP: fp, Label: label, Item: unbanItem(fp)})
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Label != rows[j].Label {

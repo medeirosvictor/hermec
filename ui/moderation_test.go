@@ -32,14 +32,14 @@ func TestModerationMenuShowsAndBans(t *testing.T) {
 		t.Fatalf("items = %v", got)
 	}
 	menuAct(g, "Ban…")
-	if g.dlg.mode != dlgBan || g.dlg.mod.Target != mfp {
+	if g.dlg.mode != dlgBan || g.dlg.tgt != mfp {
 		t.Fatalf("dialog = %+v", g.dlg)
 	}
 	g.dialogConfirm()
 	waitChain(t, f, func() bool { return isBanned(f, mfp) })
 	pumpUntil(t, g, func() bool { return g.cur().st.Status == "banned "+g.memberName(g.cur(), mfp) })
 	// The banned list shows them with Unban.
-	g.openBannedMenu(g.cur().key, 10, 10)
+	g.openBannedMenu(g.cur().key, 10, 10, 0)
 	if got := menuLabels(g); len(got) != 1 || !strings.HasPrefix(got[0], "Unban ") {
 		t.Fatalf("banned menu = %v", got)
 	}

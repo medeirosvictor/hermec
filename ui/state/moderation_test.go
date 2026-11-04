@@ -97,9 +97,49 @@ func TestModItemsRoleBodiesKeepOtherRoles(t *testing.T) {
 	if strings.Join(rm.Roles, ",") != "bot" {
 		t.Errorf("remove admin roles = %v", rm.Roles)
 	}
-	only := ModItems(w.cs, w.founder, w.admin)[0].Body.(chain.GrantBody)
-	if strings.Join(only.Roles, ",") != "user" {
-		t.Errorf("remove admin from sole role = %v", only.Roles)
+	only := ModItems(w.cs, w.founder, w.admin)[0]
+	if fp, ok := only.Body.(chain.FPBody); only.Op != chain.OpRevoke || !ok || fp.Fingerprint != w.admin {
+		t.Errorf("remove admin from sole role = %v %v, want revoke", only.Op, only.Body)
+	}
+}
+
+func TestRemoveAdminMatchingDefaultsRevokes(t *testing.T) {
+	w := newModWorld(t, func(add func(chain.Op, any), w *modWorld) {
+		add(chain.OpConfig, chain.ConfigBody{Name: "s", Channels: []string{"general"}, VoiceChannels: []string{"v"},
+			MaxVoice: 1, MaxClients: 1, MaxPerIP: 1,
+			Roles: map[string][]string{"admin": {"manage"}, "guest": {"join_channel"}, "bot": {"send_chat"}}, DefaultRoles: []string{"guest", "bot"}})
+		add(chain.OpGrant, chain.GrantBody{Fingerprint: w.user, Roles: []string{"bot", "guest", "admin"}})
+		add(chain.OpGrant, chain.GrantBody{Fingerprint: w.user2, Roles: []string{"bot", "admin"}})
+	})
+	if it := ModItems(w.cs, w.founder, w.user)[0]; it.Op != chain.OpRevoke {
+		t.Errorf("rest equals defaults: op = %v, want revoke", it.Op)
+	}
+	if it := ModItems(w.cs, w.founder, w.user2)[0]; it.Op != chain.OpGrant {
+		t.Errorf("rest differs from defaults: op = %v, want grant", it.Op)
+	}
+}
+
+func TestModActionUsesCurrentState(t *testing.T) {
+	w := newModWorld(t, func(add func(chain.Op, any), w *modWorld) {
+		add(chain.OpBan, chain.FPBody{Fingerprint: w.user2})
+	})
+	if _, ok := ModAction(w.cs, w.founder, ModMakeAdmin, w.admin); ok {
+		t.Error("make admin on an admin should no longer apply")
+	}
+	if it, ok := ModAction(w.cs, w.founder, ModRemoveAdmin, w.admin); !ok || it.Kind != ModRemoveAdmin {
+		t.Errorf("remove admin = %v %v", it, ok)
+	}
+	if _, ok := ModAction(w.cs, w.founder, ModBan, w.user2); ok {
+		t.Error("ban of a banned member should no longer apply")
+	}
+	if it, ok := ModAction(w.cs, w.founder, ModUnban, w.user2); !ok || it.Op != chain.OpUnban {
+		t.Errorf("unban = %v %v", it, ok)
+	}
+	if _, ok := ModAction(w.cs, w.founder, ModUnban, w.user); ok {
+		t.Error("unban of someone not banned should not apply")
+	}
+	if _, ok := ModAction(w.cs, w.user, ModBan, w.admin); ok {
+		t.Error("non-manager may not ban")
 	}
 }
 
