@@ -50,7 +50,7 @@ func (s Settings) MembersShown() bool {
 
 // Defaults for a first run (no settings file).
 const (
-	firstRunPalette = "slate"
+	firstRunPalette = "green"
 	defaultFont     = "jetbrains-mono"
 )
 
@@ -62,11 +62,12 @@ func (s Settings) FontID() string {
 	return s.Font
 }
 
-// FirstRunSettings are the defaults when no settings file exists: the slate
-// palette and JetBrains Mono. Scanlines stay nil so the theme (scanlines off
-// for slate) decides.
+// FirstRunSettings are the defaults when no settings file exists: the green
+// CRT look with scanlines and curvature on, in JetBrains Mono. Saved settings
+// always win over these.
 func FirstRunSettings() Settings {
-	return Settings{Palette: firstRunPalette, Font: defaultFont}
+	on := true
+	return Settings{Palette: firstRunPalette, Font: defaultFont, Scanlines: &on}
 }
 
 // LoadOrInitSettings is LoadSettings, except that a missing file yields

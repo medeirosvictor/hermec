@@ -138,14 +138,14 @@ func TestMembersRoundTrip(t *testing.T) {
 	}
 }
 
-func TestFirstRunDefaultsAreModern(t *testing.T) {
+func TestFirstRunDefaultsAreGreenCRT(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "settings.toml") // does not exist
 	s, err := LoadOrInitSettings(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Palette != "slate" || s.Font != "jetbrains-mono" || s.FontID() != "jetbrains-mono" || s.Scanlines != nil {
+	if s.Palette != "green" || s.FontID() != "jetbrains-mono" || s.Scanlines == nil || !*s.Scanlines || !s.CurvatureEnabled() {
 		t.Fatalf("first run = %+v", s)
 	}
 }
