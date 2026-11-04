@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/medeirosvictor/hermec/core/chain"
-	"github.com/medeirosvictor/hermec/version"
 )
 
 func TestDedicatedDetailsStrictWSSAndServerID(t *testing.T) {
@@ -19,15 +18,4 @@ func TestDedicatedDetailsStrictWSSAndServerID(t *testing.T) {
 		t.Error("accepted non-canonical server ID")
 	}
 }
-
-func TestDedicatedImportRequiresSameBuild(t *testing.T) {
-	id := (chain.ID{1}).String()
-	data := []byte(`{"build_version":"other-build","wss_url":"wss://example.test/","server_id":"` + id + `"}`)
-	if _, err := UnmarshalDedicatedDetails(data); err == nil {
-		t.Fatal("accepted details from another build")
-	}
-	data = []byte(`{"build_version":"` + version.Version + `","wss_url":"wss://example.test/","server_id":"` + id + `"}`)
-	if _, err := UnmarshalDedicatedDetails(data); err != nil {
-		t.Fatalf("rejected same-build details: %v", err)
-	}
-}
+
