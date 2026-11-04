@@ -19,8 +19,14 @@ Brief for the next session. Roadmap: [PLAN.md](PLAN.md). User docs:
 - Dedicated hosting is built (bootstrap, bundles, `hermec-verify`, desktop Add
   and founder authorize/cutover flows). Its remote acceptance has not run, so
   do not claim remote hosting is available.
-- Done and unit-tested, not yet exercised on real devices or a real release:
+- On `main`, unreleased, for v0.8.1 (unit-tested, CI green, not yet used on
+  real devices): green CRT first-run look; moderation UI (ban with confirm,
+  make/remove admin, paged banned list with unban; no kick op exists);
+  `hermec://join` invite links (copy from tile menu, paste on Add a Server);
+  push-to-talk (fail-closed gate, Windows global key, focused-window key
+  elsewhere); README split into `docs/` guides. Already released in v0.8.0:
   per-person volume, mic gain, mid-call device switching, auto-rejoin, updater.
+- The repo has no LICENSE file; Victor to choose one.
 - `internal/fsutil`, `internal/ratelimit`, `internal/knownhosts`,
   `server/history`, `server/dedicated`, `server/serverctl`, `server/host` and
   `ui/crt` are extracted; `hermec-server` `main()` and `conn.authenticate` are
@@ -28,23 +34,27 @@ Brief for the next session. Roadmap: [PLAN.md](PLAN.md). User docs:
 
 ## Next steps, in order
 
-1. Real-call hand test of v0.8.0 with a friend (checklist A).
-2. Release v0.8.1 to prove one full self-update cycle on Windows and Linux
-   (checklist B).
-3. Task 6: remote acceptance on a disposable EC2 instance (checklist C),
-   following [docs/aws-ec2-from-zero.md](docs/aws-ec2-from-zero.md). Run the
-   rows with Victor; do not provision cloud resources.
-4. Second wave: push-to-talk is in (hand test below); echo cancellation next (moderation UI and invite
-   links are in; invite links still need checklist A below).
+1. Victor sets up the EC2 server (checklist C, [docs/aws-ec2-from-zero.md](docs/aws-ec2-from-zero.md))
+   and invites friends for QA; collect priority fixes.
+2. Release v0.8.1 with everything on `main`; on the VPS update with the
+   installed `update.sh` (also tests the signed server update). Real-call hand
+   test of checklist A, including moderation, invite links and push-to-talk.
+3. Prove one in-app self-update (checklist B) with the next release after the
+   group is on v0.8.1.
+4. Fix the QA findings; echo cancellation.
 5. Design the `ui.game` split with Victor, then do it along with the SFU and
    client splits (PLAN 1b). Follow-ups: `server` exports about 19 methods for
    `server/host` (move the yield sequence behind one call); `cmd/hermec-server`
    `restoreTransition` and `CheckDedicatedState` duplicate a transition-state
    switch (move it into `server/serverctl`).
-6. Private networking: decide between real Tailscale/Headscale evidence and
-   shipping 1.0 without it; then hosting-method migration if it ships.
-7. Call quality, regular-use gate, docs milestone (README split done;
-   architecture and code-map guides open), then v1.0.0.
+6. Private networking ships in 1.0 (Victor, 2026-11-04): real
+   Tailscale/Headscale direct and relay evidence, profile lifecycle and
+   Create/Join flows (checklist D), then hosting-method migration.
+7. Call quality, regular-use gate, architecture and code-map guides, then
+   v1.0.0.
+
+Testing convention (Victor): no test runs during a feature; when a feature
+set is complete, do one review pass, then one test run.
 
 ## Open checklists (real devices)
 
