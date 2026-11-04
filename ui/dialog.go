@@ -19,23 +19,30 @@ const (
 	dlgNone dialogMode = iota
 	dlgRename
 	dlgLeave
+	dlgBan
 )
 
 // dialog is the open modal dialog; key is the saved-list key it is for.
 type dialog struct {
 	mode dialogMode
 	key  string
-	nick field // rename: the text being edited
+	nick field         // rename: the text being edited
+	mod  state.ModItem // ban: the entry to append on confirm
+	name string        // ban: who, for display
 }
 
 const (
 	dialogCols  = 48 // preferred panel width in glyph columns
 	renameHint  = "Only you see this. Leave empty to use the server's name."
 	leaveSuffix = "You can add it back later."
+	banSuffix   = "They are disconnected now and can't rejoin until unbanned."
 )
 
 // title is the dialog heading for entry e.
 func (d dialog) title(e state.ServerEntry) string {
+	if d.mode == dlgBan {
+		return "Ban " + d.name
+	}
 	if d.mode == dlgRename {
 		return "Rename " + state.DisplayName(e)
 	}
@@ -102,6 +109,8 @@ func (g *game) dialogConfirm() {
 	case dlgRename:
 		g.servers = state.SetNick(g.servers, d.key, d.nick.String())
 		g.persistServers()
+	case dlgBan:
+		g.modOp(d.key, d.mod)
 	case dlgLeave:
 		if d.key == hostedKey {
 			g.leaveHosted()
@@ -206,6 +215,9 @@ func (g *game) dialogButtonRect(i int) rectF {
 }
 
 func (g *game) primaryLabel() string {
+	if g.dlg.mode == dlgBan {
+		return "Ban"
+	}
 	if g.dlg.mode == dlgLeave {
 		return "Leave"
 	}
@@ -247,6 +259,12 @@ func (g *game) drawDialog(screen *ebiten.Image) {
 		g.drawCaret(screen, x, y, "> "+string(g.dlg.nick.runes[st:c]))
 		y += lh + pad/2
 		g.drawTextF(screen, g.faceS, state.Ellipsize(renameHint, int(float64(cols)/smallScale)), x, y, th.Dim)
+	} else if g.dlg.mode == dlgBan {
+		g.drawText(screen, state.Ellipsize(g.dlg.title(e), cols), x, y, th.Bright)
+		y += lh + pad
+		g.drawText(screen, state.Ellipsize("Ban "+g.dlg.name+" from this server?", cols), x, y, th.FG)
+		y += lh
+		g.drawTextF(screen, g.faceS, state.Ellipsize(banSuffix, int(float64(cols)/smallScale)), x, y, th.Dim)
 	} else {
 		g.drawText(screen, state.Ellipsize(g.dlg.title(e), cols), x, y, th.Bright)
 		y += lh + pad
@@ -273,4 +291,13 @@ func (g *game) drawDialog(screen *ebiten.Image) {
 		tw := text.Advance(label, g.face)
 		g.drawText(screen, label, b.x0+(b.x1-b.x0-tw)/2, b.y0+(b.y1-b.y0-lh)/2, txt)
 	}
+}
+
+// openBanDialog asks to confirm banning it.Target on session key.
+func (g *game) openBanDialog(key string, it state.ModItem) {
+	s := g.sess[key]
+	if s == nil {
+		return
+	}
+	g.dlg = dialog{mode: dlgBan, key: key, mod: it, name: state.Ellipsize(g.memberName(s, it.Target), 24)}
 }

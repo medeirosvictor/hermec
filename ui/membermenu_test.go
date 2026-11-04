@@ -85,8 +85,11 @@ func waitHosts(t *testing.T, f *founderSrv, cond func(map[string]int) bool) {
 	}
 }
 
-// withVolume is host followed by the volume rows the menu adds for fp.
+// withVolume is host, then moderation, then the volume rows the menu adds for fp.
 func withVolume(g *game, fp string, host ...string) []string {
+	for _, it := range g.modItems(g.cur(), fp) {
+		host = append(host, it.label)
+	}
 	for _, it := range g.volumeItems(fp) {
 		host = append(host, it.label)
 	}

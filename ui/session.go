@@ -91,6 +91,9 @@ type sendResult struct {
 	older string
 	// what names the failed action in the notice; empty is "send".
 	what string
+	// info is the status line for a success; failMsg replaces the generic
+	// "<what> failed" status for an error (the raw error is logged).
+	info, failMsg string
 }
 
 func (s *session) queueChat(c *client.Client, channel, text string) uint64 {
@@ -381,7 +384,9 @@ func (g *game) pumpSessions() {
 	for {
 		select {
 		case r := <-g.sendCh:
-			if s := g.sess[r.key]; s != nil && r.err != nil {
+			if s := g.sess[r.key]; s != nil && r.err == nil && r.info != "" {
+				s.st.Status = r.info
+			} else if s != nil && r.err != nil {
 				if r.chatID != 0 {
 					p, ok := s.takeChat(r.chatID)
 					if !ok {
@@ -392,6 +397,11 @@ func (g *game) pumpSessions() {
 				}
 				if r.older != "" {
 					delete(s.st.Loading, r.older)
+					continue
+				}
+				if r.failMsg != "" {
+					g.logf("%s failed on %s: %v", r.what, s.key, r.err)
+					s.st.Status = r.failMsg
 					continue
 				}
 				what := r.what
