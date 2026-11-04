@@ -10,7 +10,12 @@ import (
 
 func fakeExe(t *testing.T) string {
 	t.Helper()
-	exe := filepath.Join(t.TempDir(), "hermec.exe")
+	// Resolve the temp dir: Apply resolves symlinks (macOS /var -> /private/var).
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(dir, "hermec.exe")
 	if err := os.WriteFile(exe, []byte("OLD"), 0o755); err != nil {
 		t.Fatal(err)
 	}
