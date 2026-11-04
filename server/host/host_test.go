@@ -38,14 +38,25 @@ func threeHostChain(t *testing.T) (c *chain.Chain, a, b, d *identity.Identity) {
 
 // freeAddr returns a loopback address that was free a moment ago, so a host
 // can advertise it before it starts.
+// freeAddr returns a loopback address whose port is free for TCP and UDP
+// alike: a server binds its media UDP socket on its listen port.
 func freeAddr(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for i := 0; i < 20; i++ {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr := ln.Addr().String()
+		pc, err := net.ListenPacket("udp", addr)
+		ln.Close()
+		if err == nil {
+			pc.Close()
+			return addr
+		}
 	}
-	defer ln.Close()
-	return ln.Addr().String()
+	t.Fatal("no port free for both TCP and UDP")
+	return ""
 }
 
 // testHost is a Host under test with a settable known-host list.
