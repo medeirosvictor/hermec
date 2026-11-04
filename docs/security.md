@@ -133,8 +133,9 @@ server config picks a different media port if you need one.
    the server then serves `wss://`) or a network that is already encrypted.
    Tailscale is, and it is what this friend group uses. Without one of them,
    treat chat as visible to anyone on the path.
-7. **Not ready for strangers on the open internet.** There are no invite links
-   yet, so a public server cannot tell welcome visitors from unwelcome ones
+7. **Not ready for strangers on the open internet.** Invite links only carry an
+   address, a server ID and optionally a password; they do not expire or
+   revoke, so a public server cannot tell welcome visitors from unwelcome ones
    (`allowed_keys` helps, and bans work after the fact, though the app has no ban
    control yet). Reach servers through Tailscale or your LAN. Remote dedicated
    hosting has not passed its acceptance run (see

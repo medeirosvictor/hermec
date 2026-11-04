@@ -34,7 +34,9 @@ its acceptance run is pending.
 4. **Second-wave regular-use features:**
    - Moderation UI: done (ban/unban and admin grants from the person and
      server-tile menus; there is no separate kick op, a ban disconnects).
-   - Invite links: one link carrying address, pinned server ID and admission.
+   - Invite links: done (`hermec://join?v=1&addr&id[&name][&pw]`, Copy invite
+     link on the tile menu, paste field on Add a Server; OS URL-scheme
+     registration is later, needs installer work).
    - Push-to-talk with a global hotkey, then echo cancellation.
 5. **Code organization, stage 1b** (design with Victor first): split `ui.game`
    into per-feature state structs with their own update/draw; split

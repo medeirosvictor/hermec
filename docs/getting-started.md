@@ -102,12 +102,20 @@ Click the **+** tile and choose **Join a server**.
 - **Operator-run VPS:** choose **+ → Dedicated server** and follow
   [Dedicated hosting](dedicated-hosting.md).
 - **Anything else:** paste the `ws://` or `wss://` address the host gave you.
+- **An invite link:** if the host sent a `hermec://join?...` link, click **+**,
+  click the **invite link** line and press **Ctrl+V** (Cmd+V on macOS). A
+  `ws://` link joins at once with the server's ID pinned. A `wss://` link opens
+  **Dedicated server** with the address, server ID and (if the link has one)
+  password filled in; press **Validate / Connect** to run the usual checks. A
+  link that does not parse shows a short message and nothing is dialed. Enter
+  your name under **Join a server** first if the app has none saved.
 
 Then click a voice channel to join the call. Privacy reminders: participants do
 not see one another's IPs (the server relays media), but the host can read chat
 and relayed traffic, so choose hosts like group admins. Password login sends a
 proof, not the plaintext password; do not share a server password in the same
-channel as the connection details.
+channel as the connection details. An invite link made with a password is a
+secret: send it only over a private channel.
 
 ## Host a server from the app
 
@@ -117,8 +125,11 @@ channel as the connection details.
    invite address from the tile's right-click menu: it is your Tailscale address
    if you have one, otherwise your LAN address. On Tailscale, share the host
    machine with your friends first.
-3. Friends use **+ → Join a server**, select the discovered server or paste the
-   address.
+   The menu item is **Copy invite link**: it copies one
+   `hermec://join?v=1&addr=...&id=...&name=...` line holding the address, the
+   server's ID and its name.
+3. Friends paste that link into the **invite link** line on **+**, or use
+   **+ → Join a server** and select the discovered server or paste the address.
 
 The server runs while the app is open. App-created servers have no password.
 To keep a server up while you are away, or to host on a VPS, see

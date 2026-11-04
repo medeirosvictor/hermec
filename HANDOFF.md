@@ -34,8 +34,8 @@ Brief for the next session. Roadmap: [PLAN.md](PLAN.md). User docs:
 3. Task 6: remote acceptance on a disposable EC2 instance (checklist C),
    following [docs/aws-ec2-from-zero.md](docs/aws-ec2-from-zero.md). Run the
    rows with Victor; do not provision cloud resources.
-4. Second wave: moderation UI, invite links, push-to-talk, then echo
-   cancellation.
+4. Second wave: push-to-talk, then echo cancellation (moderation UI and invite
+   links are in; invite links still need checklist A below).
 5. Design the `ui.game` split with Victor, then do it along with the SFU and
    client splits (PLAN 1b). Follow-ups: `server` exports about 19 methods for
    `server/host` (move the yield sequence behind one call); `cmd/hermec-server`
@@ -65,6 +65,12 @@ Brief for the next session. Roadmap: [PLAN.md](PLAN.md). User docs:
   "banned X"; server tile > Banned members… > Unban lets them back. Make admin
   and Remove admin change what the other client's menu shows. A plain user sees
   none of these items.
+- Invite links: right-click the hosted tile > Copy invite link; on a second PC
+  click + and paste it into the invite link line (Ctrl+V): it joins pinned. A
+  garbage link shows the friendly message. For a dedicated server, paste a wss
+  link with and without `&pw=`: the Dedicated form is prefilled and nothing
+  connects until Validate / Connect. Confirm `servers.toml` never holds the
+  password.
 - Visual, input, device-permission, firewall, discovery, voice, screen-share and
   camera checks on real desktops; headless tests do not replace them.
 

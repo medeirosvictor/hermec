@@ -29,7 +29,8 @@ stays connected, and switching servers keeps you in your voice call.
   removes the tile and ends a call on it). **Esc** or a click elsewhere closes
   the menu.
 - **Click the "+" tile** to add a server: **Create my own**, **Join a server**
-  or **Dedicated server**.
+  or **Dedicated server**, or paste an invite link into the **invite link** line
+  below them (see [Invite links](#invite-links)).
 - **Tab** or **Ctrl+Up/Down** switch channel.
 - The **Members** button (top right of the chat) shows or hides the member
   list. The list hides itself in narrow windows; your choice is saved in
@@ -38,6 +39,30 @@ stays connected, and switching servers keeps you in your voice call.
   **Ctrl+R** refreshes it.
 - Hover a server or person to see their fingerprint, the real identity (names
   are not verified).
+
+### Invite links
+
+An invite link is one line, `hermec://join?v=1&addr=<ws or wss address>&id=<server
+ID>&name=<name>`, that carries everything a friend needs.
+
+- **Invite someone:** right-click the server's tile and choose **Copy invite
+  link**. It works on the server you host from the app (using your Tailscale
+  address if you have one, otherwise your LAN address) and on dedicated `wss://`
+  servers you have joined, which are shared with their pinned ID. The link
+  contains no password. The app keeps only a derived password key, never the
+  password, so there is no "copy with password" item; a server's password is
+  shared separately.
+- **Join from a link:** click **+**, click the **invite link** line, press
+  **Ctrl+V** (Cmd+V on macOS). `ws://` links join with the server ID pinned, so
+  a different server at that address is refused. `wss://` links open the
+  Dedicated form prefilled; press **Validate / Connect**. On the Dedicated form
+  **Paste invite** reads the clipboard the same way.
+- **Links with a password:** a link may also hold `&pw=<password>` (only for
+  `wss://`; a `ws://` link with a password is refused because it would cross
+  the network in cleartext). Treat such a link as a secret. The app never logs
+  a link or its password and never writes the password to `servers.toml`.
+- The URL scheme is not registered with the operating system yet, so clicking a
+  `hermec://` link in a chat app does nothing; copy it and paste it in Hermec.
 
 ## Chat and history
 

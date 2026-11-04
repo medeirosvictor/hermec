@@ -40,7 +40,8 @@ Voice and video need UDP as well as TCP; see
 Click **+ → Create my own** and give the server a name and a port (7697 by
 default). The app starts the server on your computer, opens it as a tile, and
 shows an invite address (your Tailscale address if you have one, otherwise your
-LAN address) that friends paste into **Join a server**. Windows asks once to
+LAN address); the tile's **Copy invite link** puts a `hermec://join` link on the
+clipboard that friends paste into **+**. Windows asks once to
 allow Hermec on your network; choose Allow so friends can connect. The server
 runs while the app is open. Servers made this way have no password setup UI, so
 anyone who can reach the port can join, including other devices on your home
