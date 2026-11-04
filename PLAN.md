@@ -45,8 +45,8 @@ its acceptance run is pending.
    `server/sfu.go` and `client/voice.go`/`share.go` along publish / receive /
    signalling lines; slim the `server` surface used by `server/host`.
 6. **Embedded private networking:** complete real Tailscale/Headscale direct and
-   relay evidence, then profile lifecycle and Create/Join flows, or decide to
-   ship 1.0 without it. See the
+   relay evidence, then profile lifecycle and Create/Join flows. Required for
+   1.0. See the
    [private-network plan](docs/superpowers/plans/2026-10-28-private-network-lifecycle.md).
 7. **Hosting-method migration:** once both destinations exist, a guarded,
    voice-empty migration preserving identity, membership and history. See the
