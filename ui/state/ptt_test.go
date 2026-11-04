@@ -84,3 +84,23 @@ func TestPTTSettings(t *testing.T) {
 		t.Error("unknown key falls back to default")
 	}
 }
+
+func TestGateHeld(t *testing.T) {
+	var g Gate
+	now := time.Unix(100, 0)
+	in := GateInput{PTT: true, Held: true}
+	g.Step(in, now)
+	if !g.Held() {
+		t.Error("held key not reported")
+	}
+	in.Held = false
+	g.Step(in, now.Add(time.Millisecond))
+	if g.Held() || !g.Open() {
+		t.Errorf("hangover: Held=%v Open=%v, want false/true", g.Held(), g.Open())
+	}
+	in.Held, in.Muted = true, true
+	g.Step(in, now)
+	if g.Held() {
+		t.Error("muted key counted as held")
+	}
+}

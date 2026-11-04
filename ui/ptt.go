@@ -64,13 +64,20 @@ func (g *game) stepPTT(now time.Time) {
 		WindowFocused: ebiten.IsFocused(),
 		KeyTypes:      key.Types,
 	}
-	if in.PTT {
+	if in.PTT && g.barVisible() { // no OS key polling outside a call or join
 		in.Held = pttHeld(key.ID)
 		in.TextFocus = g.textFocused()
 	}
 	g.transmitting = g.gate.Step(in, now) && in.PTT
 	if s := g.callSess(); s != nil && s.c != nil {
-		s.c.SetTransmitGate(!in.PTT || g.transmitting)
+		s.c.SetPushToTalk(in.PTT)
+		switch {
+		case in.Muted:
+			s.c.SetTransmitUntil(time.Time{})
+		case g.gate.Held():
+			// Renewed every tick: a frozen UI loop closes the gate by itself.
+			s.c.SetTransmitUntil(now.Add(state.PTTHangover))
+		}
 	}
 }
 

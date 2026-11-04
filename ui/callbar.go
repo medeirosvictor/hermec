@@ -169,7 +169,7 @@ func (g *game) joinCallOn(s *session, ch string, muted, rejoin bool) {
 	if open == nil {
 		open = openAudio
 	}
-	c.SetTransmitGate(!g.set.PushToTalk()) // push-to-talk: nothing flows until the key is held
+	c.SetPushToTalk(g.set.PushToTalk()) // push-to-talk: closed until the key is held
 	g.vc = voiceCall{busy: true, joining: ch, opKey: s.key, muted: muted}
 	g.callKey = ""
 	s.st.SetInCall("")

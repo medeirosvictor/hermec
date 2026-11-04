@@ -334,3 +334,31 @@ func TestJoinVoiceServerRejects(t *testing.T) {
 		t.Fatal("JoinVoice did not return after Close")
 	}
 }
+
+func TestPushToTalkGateFailsClosed(t *testing.T) {
+	c := &Client{}
+	if c.gateClosed() {
+		t.Error("open mic must ignore the gate")
+	}
+	c.SetPushToTalk(true)
+	if !c.gateClosed() {
+		t.Error("push-to-talk without a deadline must be closed")
+	}
+	c.SetTransmitUntil(time.Now().Add(time.Minute))
+	if c.gateClosed() {
+		t.Error("gate must be open before the deadline")
+	}
+	c.SetTransmitUntil(time.Now().Add(-time.Millisecond))
+	if !c.gateClosed() {
+		t.Error("gate must close after the deadline")
+	}
+	c.SetTransmitUntil(time.Now().Add(time.Minute))
+	c.SetTransmitUntil(time.Time{})
+	if !c.gateClosed() {
+		t.Error("zero time must close the gate")
+	}
+	c.SetPushToTalk(false)
+	if c.gateClosed() {
+		t.Error("leaving push-to-talk must reopen the mic")
+	}
+}

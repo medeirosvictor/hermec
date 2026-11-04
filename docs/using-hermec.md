@@ -142,7 +142,10 @@ transmit.
   the server, so others do not see a mute icon while you are idle.
 - **Windows:** the key works system-wide, even while another app has focus. It
   reads only the state of the one chosen key (no keyboard hook, nothing is
-  recorded). The grave key is the one left of `1` on a US layout.
+  recorded). The grave key is the one left of `1` on a US layout. The key
+  is read only while you are in or joining a call. Holding it does not hide it
+  from the OS or other apps: Right Ctrl combos (Ctrl+M, Ctrl+V) still act
+  while it is held, and Caps Lock still toggles.
 - **Linux and macOS:** the key works only while the Hermec window has focus;
   a system-wide hotkey is not implemented yet.
 - While Hermec is focused and a text field is active (chat, settings name, add

@@ -97,6 +97,7 @@ type GateInput struct {
 type Gate struct {
 	until time.Time // transmit through this instant after the key is released
 	open  bool
+	held  bool // the key counted as held at the last Step
 }
 
 // Step returns whether to transmit now. Muted never transmits, open mic always
@@ -104,6 +105,7 @@ type Gate struct {
 // text-producing key is ignored while the focused window has a text field. The
 // gate lingers PTTHangover after release.
 func (g *Gate) Step(in GateInput, now time.Time) bool {
+	g.held = false
 	if in.Muted {
 		g.open, g.until = false, time.Time{}
 		return false
@@ -115,6 +117,7 @@ func (g *Gate) Step(in GateInput, now time.Time) bool {
 	held := in.Held && !(in.WindowFocused && in.TextFocus && in.KeyTypes)
 	switch {
 	case held:
+		g.held = true
 		g.open = true
 		g.until = now.Add(PTTHangover)
 	case g.open && now.Before(g.until):
@@ -123,6 +126,10 @@ func (g *Gate) Step(in GateInput, now time.Time) bool {
 	}
 	return g.open
 }
+
+// Held reports whether the key counted as held (not muted, not swallowed by a
+// text field) at the last Step; the client's deadline is renewed only then.
+func (g *Gate) Held() bool { return g.held }
 
 // Open reports whether the gate was open at the last Step, for the
 // transmitting indicator and the meter.

@@ -366,13 +366,31 @@ func (c *Client) SetMutedFor(token MuteToken, m bool) error {
 	return nil
 }
 
-// SetTransmitGate opens or closes the local transmit gate for push-to-talk.
-// While closed, the capture source keeps being read (so nothing backs up) but
-// frames are dropped instead of sent, so audio from before the gate opens is
-// never transmitted. It sends nothing to the server: the voice_mute state is
-// unchanged, and explicit mute still wins. It starts open and applies to
-// current and later calls.
-func (c *Client) SetTransmitGate(open bool) { c.gateClosed.Store(!open) }
+// SetPushToTalk switches the local transmit gate on (push-to-talk) or off
+// (open mic, the default; the deadline is then ignored). In push-to-talk mode
+// the gate is closed until SetTransmitUntil opens it, so call it before audio
+// flows.
+func (c *Client) SetPushToTalk(on bool) { c.pttMode.Store(on) }
+
+// SetTransmitUntil opens the push-to-talk gate until t; the zero time closes
+// it. The deadline must be renewed while the key is held, so a stalled caller
+// fails closed by itself. While closed the capture source keeps being read (so
+// nothing backs up) but frames are dropped, so audio from before the gate
+// opens is never transmitted. It sends nothing to the server: the voice_mute
+// state is unchanged, and explicit mute still wins. It applies to current and
+// later calls.
+func (c *Client) SetTransmitUntil(t time.Time) {
+	if t.IsZero() {
+		c.txUntil.Store(0)
+		return
+	}
+	c.txUntil.Store(t.UnixNano())
+}
+
+// gateClosed reports whether the push-to-talk gate is dropping frames now.
+func (c *Client) gateClosed() bool {
+	return c.pttMode.Load() && time.Now().UnixNano() > c.txUntil.Load()
+}
 
 // ---- read-loop entry points (never block) ----
 
@@ -702,7 +720,7 @@ func (cl *call) sendLoop() {
 		if err != nil {
 			return // io.EOF or a dead source ends our stream
 		}
-		if cl.muted.Load() || cl.c.gateClosed.Load() {
+		if cl.muted.Load() || cl.c.gateClosed() {
 			continue // muted, or the push-to-talk gate is closed: the frame is dropped
 		}
 		_ = cl.track.WriteSample(media.Sample{Data: frame, Duration: frameDuration})

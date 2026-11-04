@@ -529,6 +529,7 @@ func (g *game) carryCall(s *session, nu, old *client.Client) bool {
 	sink, _ := g.vc.sink.(client.AudioSink)
 	g.vc.busy, g.vc.opKey = true, s.key
 	hc := g.hostChan()
+	nu.SetPushToTalk(g.set.PushToTalk()) // closed until the key is held, before audio flows
 	go func(s *session, key string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
