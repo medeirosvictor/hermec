@@ -221,6 +221,9 @@ func (g *game) createBtnRect() rectF {
 	return rectF{x, y, x + w, y + lh + pad/2}
 }
 
+// inviteRowY is the y of the paste-invite input under the choices.
+func (g *game) inviteRowY() float64 { return g.addTop() + 6*g.lineH() }
+
 func (g *game) addAddHits() {
 	switch {
 	case g.curKey != "" || g.add == addJoin:
@@ -230,6 +233,8 @@ func (g *game) addAddHits() {
 			r := g.addChoiceRect(i)
 			g.hits.Add(state.Hit{X0: r.x0, Y0: r.y0, X1: r.x1, Y1: r.y1, Kind: state.HitAddChoice, ID: i})
 		}
+		iy := g.inviteRowY()
+		g.hits.Add(state.Hit{X0: g.addX(), Y0: iy, X1: float64(g.w), Y1: iy + g.lineH(), Kind: state.HitAddInvite})
 	case g.add == addDedicated:
 		lh := g.lineH()
 		for i := 0; i < 3; i++ {
@@ -260,14 +265,19 @@ func (g *game) updateAdd() {
 	}
 	switch g.add {
 	case addChoose:
-		if inpututil.IsKeyJustPressed(ebiten.KeyArrowLeft) || inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) {
+		if !g.ai.focus && (inpututil.IsKeyJustPressed(ebiten.KeyArrowLeft) || inpututil.IsKeyJustPressed(ebiten.KeyArrowUp)) {
 			g.addSel = 0
 		}
-		if inpututil.IsKeyJustPressed(ebiten.KeyArrowRight) || inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) {
+		if !g.ai.focus && (inpututil.IsKeyJustPressed(ebiten.KeyArrowRight) || inpututil.IsKeyJustPressed(ebiten.KeyArrowDown)) {
 			g.addSel = (g.addSel + 1) % 3
 		}
-		if ok && h.Kind == state.HitAddChoice {
+		if ok && h.Kind == state.HitAddInvite {
+			g.ai.focus = true
+		} else if ok && h.Kind == state.HitAddChoice {
+			g.ai.focus = false
 			g.chooseAdd(h.ID)
+		} else if g.ai.focus {
+			g.updateInviteField()
 		} else if enterPressed() {
 			g.chooseAdd(g.addSel)
 		}
@@ -278,7 +288,7 @@ func (g *game) updateAdd() {
 			case state.HitDedicatedField:
 				f.focus = h.ID
 			case state.HitDedicatedImport:
-				g.importDedicatedDetails()
+				g.pasteDedicatedInvite()
 				return
 			case state.HitDedicatedValidate:
 				g.validateDedicatedSyntax()
@@ -352,8 +362,23 @@ func (g *game) drawAddPage(screen *ebiten.Image) {
 			g.drawText(screen, labels[i], r.x0+pad, r.y0+lh, col)
 			g.drawTextF(screen, g.faceS, hints[i], r.x0+pad, r.y0+2.5*lh, hc)
 		}
+		iy := g.inviteRowY()
+		marker, label := "  ", "invite link: "
+		if g.ai.focus {
+			marker = "> "
+		}
+		room := g.addCols() - len(marker+label)
+		g.drawText(screen, marker+label+inviteShown(g.ai.f.String(), room), x, iy, th.FG)
+		if g.ai.focus {
+			g.drawCaret(screen, x, iy, marker+label+inviteShown(string(g.ai.f.runes[:g.ai.f.caret()]), room))
+		}
+		if g.ai.msg != "" {
+			g.drawTextF(screen, g.faceS, g.ai.msg, x, iy+lh, th.Warn)
+		} else {
+			g.drawTextF(screen, g.faceS, "Click, then Ctrl+V (Cmd+V) to paste a hermec://join link. A link with pw= holds the server password: keep it secret.", x, iy+lh, th.Dim)
+		}
 		if g.addPrev != "" && g.sess[g.addPrev] != nil {
-			g.drawTextF(screen, g.faceS, "Esc to go back", x, g.addTop()+6*lh, th.Dim)
+			g.drawTextF(screen, g.faceS, "Esc to go back", x, iy+2*lh, th.Dim)
 		}
 		return
 	}
@@ -378,10 +403,12 @@ func (g *game) drawAddPage(screen *ebiten.Image) {
 				g.drawCaret(screen, x, y, prefix)
 			}
 		}
-		g.drawText(screen, "Import", x, g.createRowY(4), th.Bright)
+		g.drawText(screen, "Paste invite", x, g.createRowY(4), th.Bright)
 		g.drawText(screen, "Validate / Connect", x+110, g.createRowY(4), th.Bright)
 		if f.err != "" {
 			g.drawText(screen, f.err, x, g.createRowY(5), th.Warn)
+		} else if f.status != "" {
+			g.drawTextF(screen, g.faceS, f.status, x, g.createRowY(5), th.Dim)
 		}
 		g.drawTextF(screen, g.faceS, "WSS and the supplied server ID are required. Esc to cancel.", x, g.createRowY(6), th.Dim)
 		return

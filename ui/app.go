@@ -113,8 +113,9 @@ type game struct {
 	serversPath string
 	servers     []state.ServerEntry
 	localURL    string            // URL of the in-process server; empty without -local
-	inviteCh    chan inviteResult // address lookups for Copy invite address
+	inviteCh    chan inviteResult // address lookups for Copy invite link
 	inviteBusy  bool              // a lookup is in flight
+	ai          addInvite         // the Add a Server page's paste-invite input
 	hosted      *hostedServer     // the server hosted from the app; nil = no hosted.toml
 	hostedPath  string            // hosted.toml location in effect
 	// createFn creates the hosted server (the Add a Server page's action);

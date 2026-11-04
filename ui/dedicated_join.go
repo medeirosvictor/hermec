@@ -51,51 +51,20 @@ func (f *dedicatedForm) details() (state.DedicatedDetails, error) {
 	return state.ValidateDedicatedDetails(state.DedicatedDetails{WSSURL: strings.TrimSpace(f.wss.String()), ServerID: strings.TrimSpace(f.serverID.String())})
 }
 
-// importDedicatedDetails is deliberately called only by the explicit Import
-// control. Normal focus/paste never reads the clipboard as a credential.
-func (g *game) importDedicatedDetails() {
-	// Replacing either endpoint component makes every outstanding probe stale.
-	// A password belongs to the old endpoint, never to imported details.
+// pasteDedicatedInvite is deliberately called only by the explicit Paste
+// invite control. Normal focus/paste never reads the clipboard as a credential.
+// Whatever the previous draft held (including a password) is replaced.
+func (g *game) pasteDedicatedInvite() {
 	g.invalidateDedicatedValidation()
 	g.df.clearPassword()
 	s, err := clipboardRead()
 	if err != nil {
-		g.df.err = "could not read connection details"
+		g.df.err = "could not read the clipboard"
 		return
 	}
-	d, err := state.UnmarshalDedicatedDetails([]byte(s))
-	if err != nil {
-		g.df.err = "invalid connection details (sender must use the same build)"
-		return
+	if msg := g.joinInviteText(s); msg != "" {
+		g.df.err = msg
 	}
-	g.df.wss.setText(d.WSSURL)
-	g.df.serverID.setText(d.ServerID)
-	g.df.err, g.df.status, g.df.validated = "", "connection details imported", false
-}
-
-func (g *game) copyDedicatedDetails(d state.DedicatedDetails) {
-	b, err := state.MarshalDedicatedDetails(d)
-	if err == nil {
-		err = clipboardWrite(string(b))
-	}
-	if err != nil {
-		g.cur().st.Status = "copy failed"
-	} else {
-		g.cur().st.Status = "connection details copied"
-	}
-}
-
-// dedicatedDetailsFor is also the menu eligibility check. A regular LAN entry
-// cannot become exportable merely because it happens to have a server ID.
-func (g *game) dedicatedDetailsFor(key string) (state.DedicatedDetails, bool) {
-	for _, e := range g.servers {
-		if e.URL != key {
-			continue
-		}
-		d, err := state.ValidateDedicatedDetails(state.DedicatedDetails{WSSURL: e.URL, ServerID: e.ServerID})
-		return d, err == nil
-	}
-	return state.DedicatedDetails{}, false
 }
 
 // dedicatedResult is owned by its worker until pumpDedicated accepts its

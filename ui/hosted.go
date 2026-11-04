@@ -455,7 +455,7 @@ type inviteResult struct {
 }
 
 // copyInvite looks up this machine's addresses in the background; pumpInvite
-// copies the result. A click while a lookup is in flight does nothing.
+// copies the invite link. A click while a lookup is in flight does nothing.
 func (g *game) copyInvite() {
 	h := g.hosted
 	if h == nil || h.srv == nil || g.inviteBusy {
@@ -536,10 +536,17 @@ func (g *game) pumpInvite() {
 		case addr == noInviteAddr:
 			*st = addr
 		default:
-			if err := clipboardWrite(addr); err != nil {
-				*st = "copy failed: " + err.Error()
+			link, err := "", error(nil)
+			if h := g.hosted; h != nil {
+				link, err = state.FormatInvite(state.Invite{Addr: addr, ServerID: h.id, Name: state.CleanName(h.name(), state.MaxServerNameRunes)})
+			}
+			if err == nil {
+				err = clipboardWrite(link)
+			}
+			if err != nil {
+				*st = "copy failed"
 			} else {
-				*st = "copied " + addr
+				*st = "copied invite link"
 			}
 		}
 	default:

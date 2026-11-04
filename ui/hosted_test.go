@@ -213,12 +213,12 @@ func TestHostedMenu(t *testing.T) {
 	g.servers = append(g.servers, state.ServerEntry{URL: "k", Label: "k"})
 	g.openTileMenu(hostedKey, 10, 70)
 	got := menuLabels(g)
-	if !slices.Contains(got, "Copy invite address") || !slices.Contains(got, "Stop hosting") || slices.Contains(got, "Start hosting") {
+	if !slices.Contains(got, "Copy invite link") || !slices.Contains(got, "Stop hosting") || slices.Contains(got, "Start hosting") {
 		t.Fatalf("live items = %v", got)
 	}
 	g.openTileMenu("k", 10, 70)
 	for _, l := range menuLabels(g) {
-		if l == "Copy invite address" || l == "Stop hosting" || l == "Start hosting" {
+		if l == "Copy invite link" || l == "Stop hosting" || l == "Start hosting" {
 			t.Fatalf("plain tile has %q", l)
 		}
 	}
@@ -228,7 +228,7 @@ func TestHostedMenu(t *testing.T) {
 	}
 	g.openTileMenu(hostedKey, 10, 70)
 	got = menuLabels(g)
-	if !slices.Contains(got, "Start hosting") || slices.Contains(got, "Stop hosting") || slices.Contains(got, "Copy invite address") {
+	if !slices.Contains(got, "Start hosting") || slices.Contains(got, "Stop hosting") || slices.Contains(got, "Copy invite link") {
 		t.Fatalf("stopped items = %v", got)
 	}
 	pickMenu(g, hostedKey, "Start hosting")
@@ -260,15 +260,20 @@ func TestHostedMenuCopy(t *testing.T) {
 	port := hostedPort(server.Config{Addr: strings.TrimSuffix(strings.TrimPrefix(g.hosted.url, "ws://"), "/")})
 
 	g.selfAddrs = func(context.Context) (string, string) { return "100.1.2.3", "192.168.1.5" }
-	pickMenu(g, hostedKey, "Copy invite address")
+	pickMenu(g, hostedKey, "Copy invite link")
 	tickUntil(t, g, func() bool { return len(wrote) > 0 })
-	if want := fmt.Sprintf("ws://100.1.2.3:%d/", port); len(wrote) != 1 || wrote[0] != want {
-		t.Fatalf("wrote %v, want %q", wrote, want)
+	want := fmt.Sprintf("ws://100.1.2.3:%d/", port)
+	if len(wrote) != 1 {
+		t.Fatalf("wrote %v, want one invite link", wrote)
+	}
+	inv, err := state.ParseInvite(wrote[0])
+	if err != nil || inv.Addr != want || inv.ServerID != g.hosted.id || inv.Password != "" {
+		t.Fatalf("invite = %+v, %v; want addr %q, id %s, no password", inv, err, want, g.hosted.id)
 	}
 
 	wrote = nil
 	g.selfAddrs = func(context.Context) (string, string) { return "", "" }
-	pickMenu(g, hostedKey, "Copy invite address")
+	pickMenu(g, hostedKey, "Copy invite link")
 	tickUntil(t, g, func() bool { return strings.Contains(g.sess[hostedKey].st.Status, "no network address found") })
 	if len(wrote) != 0 {
 		t.Fatalf("copied %v with no network address", wrote)
@@ -291,12 +296,12 @@ func TestCopyInviteStatusOnHostedSession(t *testing.T) {
 	// Wait on the status line itself. The hosted dial can finish late, and
 	// its SetConnected clears Status, so no extra tick may run once it is set.
 	tickUntil(t, g, func() bool {
-		return strings.HasPrefix(g.sess[hostedKey].st.Status, "copied ws://192.168.1.5:")
+		return strings.HasPrefix(g.sess[hostedKey].st.Status, "copied invite link")
 	})
 	if wrote.Load() != 1 {
 		t.Fatalf("clipboard writes = %d, want 1", wrote.Load())
 	}
-	if got := g.sess[hostedKey].st.Status; !strings.HasPrefix(got, "copied ws://192.168.1.5:") {
+	if got := g.sess[hostedKey].st.Status; !strings.HasPrefix(got, "copied invite link") {
 		t.Errorf("hosted status = %q", got)
 	}
 	if got := g.sess["other"].st.Status; got != "" {

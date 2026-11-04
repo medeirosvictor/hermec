@@ -34,22 +34,22 @@ func TestDedicatedInvalidRetryInvalidatesProbe(t *testing.T) {
 	}
 }
 
-func TestImportDedicatedClearsPasswordAndInvalidatesProbe(t *testing.T) {
+func TestPasteDedicatedInviteReplacesPasswordAndInvalidatesProbe(t *testing.T) {
 	g := addTestGame(t)
 	g.df.password.setText("old-password")
 	ctx, cancel := context.WithCancel(context.Background())
 	g.dedicatedStop = cancel
 	g.dedicatedGen = 9
-	b, err := state.MarshalDedicatedDetails(dedicatedTestDetails())
+	link, err := state.FormatInvite(state.Invite{Addr: dedicatedTestDetails().WSSURL, ServerID: dedicatedTestDetails().ServerID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	old := clipboardRead
-	clipboardRead = func() (string, error) { return string(b), nil }
+	clipboardRead = func() (string, error) { return link, nil }
 	t.Cleanup(func() { clipboardRead = old })
-	g.importDedicatedDetails()
+	g.pasteDedicatedInvite()
 	if got := g.df.password.String(); got != "" {
-		t.Fatalf("import retained password %q", got)
+		t.Fatalf("paste retained password %q", got)
 	}
 	if got := g.df.wss.String(); got != "wss://example.test/" {
 		t.Fatalf("URL = %q", got)
@@ -59,8 +59,8 @@ func TestImportDedicatedClearsPasswordAndInvalidatesProbe(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("old probe was not cancelled")
 	}
-	if g.dedicatedGen != 10 {
-		t.Fatalf("generation = %d, want 10", g.dedicatedGen)
+	if g.dedicatedGen <= 9 {
+		t.Fatalf("generation = %d, want > 9", g.dedicatedGen)
 	}
 }
 

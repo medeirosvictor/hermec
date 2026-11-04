@@ -23,10 +23,11 @@ const (
 	HitHelpBack                               // the back row of the settings help view
 	HitRailRetry                              // retry on a failed rail tile; ID is the tile index
 	HitAddChoice                              // Add a Server choice; ID 0 = Create, 1 = Join, 2 = Dedicated
+	HitAddInvite                              // the paste-invite-link input on the Add a Server page
 	HitCreateField                            // create-form field (text cursor); ID 0 name, 1 port
 	HitCreateBtn                              // the Create button
 	HitDedicatedField                         // dedicated form input; ID 0 URL, 1 server ID, 2 password
-	HitDedicatedImport                        // explicit connection-details clipboard import
+	HitDedicatedImport                        // explicit paste-invite-link button
 	HitDedicatedValidate                      // validate/connect dedicated endpoint
 	HitBarShare                               // call-bar share / stop share button
 	HitBarCamera                              // call-bar camera / stop camera button

@@ -45,7 +45,7 @@ func (g *game) openTileMenu(key string, ax, ay float64) {
 	if h := g.hosted; key == hostedKey && h != nil {
 		if h.srv != nil {
 			items = append(items,
-				menuItem{label: "Copy invite address", act: g.copyInvite},
+				menuItem{label: "Copy invite link", act: g.copyInvite},
 				menuItem{label: "Stop hosting", act: g.stopHosted})
 		} else {
 			items = append(items, menuItem{label: "Start hosting", act: g.startHostedNow})
@@ -57,8 +57,8 @@ func (g *game) openTileMenu(key string, ax, ay float64) {
 	if id := g.serverIDFor(key); id != "" {
 		items = append(items, menuItem{label: "id " + shortID(id), act: func() { g.copyID(id) }})
 	}
-	if d, ok := g.dedicatedDetailsFor(key); ok {
-		items = append(items, menuItem{label: "Copy connection details", act: func() { g.copyDedicatedDetails(d) }})
+	if inv, ok := g.inviteFor(key); ok {
+		items = append(items, menuItem{label: "Copy invite link", act: func() { g.copyInviteLink(inv) }})
 	}
 	if g.dedicatedFounder(key) {
 		items = append(items, menuItem{label: "Manage dedicated host…", act: func() { g.openDedicatedManage(key) }})
