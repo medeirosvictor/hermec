@@ -53,8 +53,8 @@ its acceptance run is pending.
    [noise-suppression trial](docs/superpowers/plans/2026-10-27-noise-suppression-trial.md).
 9. **Regular-use gate:** exercise hosting modes with friends and real
    voice/camera/screen/failover (the open checklists in HANDOFF).
-10. **Documentation:** task-oriented README plus architecture and code-map
-    guides.
+10. **Documentation:** README split done (see the [docs index](docs/README.md));
+    architecture and code-map guides open.
 
 Then tag **v1.0.0**.
 

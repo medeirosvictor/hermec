@@ -1,7 +1,8 @@
 # Hermec: session handoff
 
 Brief for the next session. Roadmap: [PLAN.md](PLAN.md). User docs:
-[README](README.md), [friend quickstart](docs/quickstart-friends.md),
+[README](README.md), [docs index](docs/README.md),
+[getting started](docs/getting-started.md),
 [dedicated guide](docs/dedicated-hosting.md), [AWS EC2 from zero](docs/aws-ec2-from-zero.md),
 [release signing](docs/release-signing.md), [protocol](docs/protocol.md).
 
@@ -42,8 +43,8 @@ Brief for the next session. Roadmap: [PLAN.md](PLAN.md). User docs:
    switch (move it into `server/serverctl`).
 6. Private networking: decide between real Tailscale/Headscale evidence and
    shipping 1.0 without it; then hosting-method migration if it ships.
-7. Call quality, regular-use gate, docs milestone (task-oriented README,
-   architecture and code-map guides), then v1.0.0.
+7. Call quality, regular-use gate, docs milestone (README split done;
+   architecture and code-map guides open), then v1.0.0.
 
 ## Open checklists (real devices)
 
