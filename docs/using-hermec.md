@@ -80,6 +80,22 @@ marked. It applies at once, mid-call, and is saved per person in
 `settings.toml` (100% is not stored). The founder also sees the host controls
 in that menu (see [Hosting](hosting.md#hosting-from-the-app)).
 
+### Moderation
+
+If you are the founder or hold the `manage` permission (the builtin `admin`
+role does), the same person menu also shows **Make admin** or **Remove admin**
+and **Ban…**. Ban asks first, then the server disconnects that person at once
+and refuses them until they are unbanned; their past messages stay. You cannot
+act on yourself or on the founder, and nobody else sees these items. There is
+no separate kick: a ban is the only removal, and **Unban** undoes it.
+
+Right-click the server's tile and choose **Banned members…** (managers only)
+for a list of banned people, by last-known name when the app has seen one and
+by fingerprint otherwise. Pick a row to unban. The status line reports each
+action ("banned Sam", or "couldn't ban Sam: you don't have permission"). The
+server checks every request, so hiding the items is a convenience, not the
+security.
+
 The Settings row `mic gain` cycles your own microphone between 50% and 200%;
 your level meter and what others hear both reflect it. Boosted audio passes
 through a soft limiter, so loud peaks round off instead of crackling.

@@ -106,7 +106,9 @@ listener = ["join_channel"]
 ```
 
 The server and protocol support banning a key: a banned key is disconnected at
-once and refused when it comes back. The app has no ban, kick or grant UI yet.
+once and refused when it comes back. Founders and admins ban, unban and
+make or remove admins from the person and server-tile menus (see
+[Moderation](using-hermec.md#moderation)); there is no kick apart from a ban.
 A ban keeps the banned member's past messages. `allowed_keys` restricts who may
 connect at all (empty or omitted means an open server).
 

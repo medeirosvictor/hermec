@@ -60,6 +60,11 @@ Brief for the next session. Roadmap: [PLAN.md](PLAN.md). User docs:
 - With a node-shared Tailscale friend host: standby takeover, empty-voice
   handback, roster hosting controls, reachability selection, camera and screen
   transfer, Tailscale grants.
+- Moderation with two clients: as founder or admin right-click a member, Ban…
+  and confirm: they drop at once, cannot rejoin, and the status line says
+  "banned X"; server tile > Banned members… > Unban lets them back. Make admin
+  and Remove admin change what the other client's menu shows. A plain user sees
+  none of these items.
 - Visual, input, device-permission, firewall, discovery, voice, screen-share and
   camera checks on real desktops; headless tests do not replace them.
 
@@ -120,7 +125,7 @@ Headscale direct and relay media and standby evidence
   ([protocol §3.1](docs/protocol.md#31-handshake)). Chat history is plain
   unsigned JSONL on the host.
 - No echo cancellation: use headphones. Noise suppression is not in the app.
-- Founder hosting controls exist but there is no UI for bans or grants.
+- Moderation UI (ban, unban, make or remove admin) is built; kick is only a ban.
   macOS/Linux camera and share publishing, window capture, shared-screen audio
   and simulcast are not built.
 - Two clients using one key silence each other; pass `-key` with another file

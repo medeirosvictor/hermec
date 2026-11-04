@@ -32,8 +32,8 @@ its acceptance run is pending.
    the [AWS runbook](docs/aws-ec2-from-zero.md) and the
    [dedicated guide](docs/dedicated-hosting.md).
 4. **Second-wave regular-use features:**
-   - Moderation UI: kick, ban/unban and role grants (the chain and server
-     already enforce them).
+   - Moderation UI: done (ban/unban and admin grants from the person and
+     server-tile menus; there is no separate kick op, a ban disconnects).
    - Invite links: one link carrying address, pinned server ID and admission.
    - Push-to-talk with a global hotkey, then echo cancellation.
 5. **Code organization, stage 1b** (design with Victor first): split `ui.game`
