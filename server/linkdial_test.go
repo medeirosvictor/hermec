@@ -79,8 +79,8 @@ func TestLinkMirrorsChatAndChain(t *testing.T) {
 		t.Fatalf("B history = %+v", msgs)
 	}
 
+	want := ac.Head().Seq + 1 // read before the append: A may apply it before we look
 	appendAs(t, aURL, ak, ac, chain.OpGrant, chain.GrantBody{Fingerprint: identity.Fingerprint(bk.PublicKey()), Roles: []string{"admin"}})
-	want := ac.Head().Seq + 1
 	waitFor(t, "grant on B", func() bool { return b.chain.Head().Seq == want })
 	if !b.roles().Has(identity.Fingerprint(bk.PublicKey()), roles.PermManage) {
 		t.Fatal("B did not refresh its roles after the grant")
