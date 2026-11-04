@@ -18,4 +18,3 @@ func TestDedicatedDetailsStrictWSSAndServerID(t *testing.T) {
 		t.Error("accepted non-canonical server ID")
 	}
 }
-
