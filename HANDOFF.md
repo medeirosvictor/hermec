@@ -7,6 +7,19 @@ Roadmap: [PLAN.md](PLAN.md).
 
 ## Current work
 
+- **v0.8.0 released 2026-11-04** from `main` (`feature/dedicated-hosting`
+  fast-forwarded): first signed release (signature verified independently).
+  It refuses any other build, so a group moves to v0.8.0 together; v0.7.0
+  users update manually once, then the in-app updater takes over.
+- **Road to 1.0.0, in order:** (1) real-call hand test of v0.8.0 with a
+  friend (volume, mic gain, device swap, network drop rejoin, failover);
+  (2) `v0.8.1` to prove one full in-app update cycle on Windows and Linux;
+  (3) Task 6 on a disposable EC2 instance; (4) second wave: moderation UI,
+  invite links, push-to-talk; (5) `ui.game` split (design with Victor);
+  (6) private networking evidence or an explicit decision to ship 1.0
+  without it; (7) regular-use gate with friends, all HANDOFF checklists
+  passed; (8) README/architecture/code-map docs; then tag v1.0.0.
+
 - Branch: `feature/dedicated-hosting` in `.worktrees/dedicated-hosting`.
 - Dedicated Tasks 1–5 are complete locally (`ca6ed69`, `020492f`, `5df0524`
   plus the founder desktop authorization/cutover flow). Task 6's automated gate
