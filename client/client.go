@@ -309,6 +309,11 @@ func (c *Client) send(typ string, payload any) error {
 	defer c.writeMu.Unlock()
 	_ = c.ws.SetWriteDeadline(time.Now().Add(writeTimeout))
 	if err := c.ws.WriteMessage(websocket.TextMessage, raw); err != nil {
+		select {
+		case <-c.done: // Close raced the write
+			return ErrClosed
+		default:
+		}
 		return fmt.Errorf("client: write: %w", err)
 	}
 	return nil
